@@ -223,7 +223,7 @@ pub(crate) fn emit_collection_prefix_arms(
                         symbol: StackSymbolV2::collection_marker(
                             #result_src_idx, #rule_idx, 0,
                         ),
-                        weight: LexicographicWeight::from_cost(
+                        weight: lex_w(
                             0.0, #result_src_idx, #rule_idx,
                         ),
                         new_state: #new_state,
@@ -355,7 +355,7 @@ pub(crate) fn emit_collection_loop_arm(
                                     // BRANCH 1: close — ConsumeAndPop into Unwinding.
                                     mettail_prattail::wpds_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             0.0, *result_src_idx, *rule_idx,
                                         ),
                                         new_state: WpdsState::Unwinding,
@@ -366,7 +366,7 @@ pub(crate) fn emit_collection_loop_arm(
                                     // PrefixDispatch for next element.
                                     mettail_prattail::wpds_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             0.0, *result_src_idx, *rule_idx,
                                         ),
                                         new_state: WpdsState::PrefixDispatch {
@@ -384,7 +384,7 @@ pub(crate) fn emit_collection_loop_arm(
                                         symbol: StackSymbolV2::category_entry(
                                             element_src_idx,
                                         ),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                             *result_src_idx, *rule_idx,
                                         ),
@@ -411,7 +411,7 @@ pub(crate) fn emit_collection_loop_arm(
                                 Some(expected_kv_sep) => {
                                     if token_text == expected_kv_sep {
                                         WpdsStepAction::Consume {
-                                            weight: LexicographicWeight::from_cost(
+                                            weight: lex_w(
                                                 0.0, *result_src_idx, *rule_idx,
                                             ),
                                             // Transition to kv_phase=2 to
@@ -464,7 +464,7 @@ pub(crate) fn emit_collection_loop_arm(
                             // slot's len is now even.
                             WpdsStepAction::Push {
                                 symbol: StackSymbolV2::category_entry(element_src_idx),
-                                weight: LexicographicWeight::from_cost(
+                                weight: lex_w(
                                     0.0, *result_src_idx, *rule_idx,
                                 ),
                                 new_state: WpdsState::PrefixDispatch {

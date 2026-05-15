@@ -2550,6 +2550,25 @@ pub fn lex_one() -> crate::automata::derivation_weight::DerivationWeight<
     DerivationWeight::one_ref()
 }
 
+/// M11.4 (2026-05-14): `From<LexicographicWeight>` impl required by the
+/// recovery dispatch path (`recovery_dispatch::repair_result_to_fork_branch`
+/// and friends) which converts a recovery-derived `LexicographicWeight`
+/// into the walker's `W` via `W::from(lex_w)`. Lifts the lex weight into
+/// a singleton multiset carrying `DerivationSnapshot::unit()` — the
+/// walker injects the parent cursor's real snapshot at Fork-arm apply
+/// time, matching the codegen path.
+impl From<crate::automata::lex_weight::LexicographicWeight>
+    for crate::automata::derivation_weight::DerivationWeight<
+        crate::automata::lex_weight::LexicographicWeight,
+        DerivationSnapshot,
+    >
+{
+    fn from(w: crate::automata::lex_weight::LexicographicWeight) -> Self {
+        use crate::automata::derivation_weight::{DerivationCombine, DerivationWeight};
+        DerivationWeight::singleton(w, DerivationSnapshot::unit())
+    }
+}
+
 impl fmt::Debug for SemanticBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SemanticBuilder")

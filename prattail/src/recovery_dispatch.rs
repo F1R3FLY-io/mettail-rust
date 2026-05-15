@@ -17,7 +17,7 @@
 
 use crate::automata::TokenKind;
 use crate::automata::lex_weight::LexicographicWeight;
-use crate::automata::semiring::Semiring;
+use crate::automata::semiring::SemiringRef;
 use crate::gss::WpdsGss;
 use crate::recovery::{
     FrameKind, RecoveryConfig, RecoveryContext, RecoveryWfst, RepairAction,
@@ -52,7 +52,7 @@ pub struct RecoveryInfra {
 /// `(_gss, frontier_top, pos, state_cat_src_idx, cur_bp)`. Used by
 /// `build_recovery_context` to seed the RecoveryContext's
 /// depth/frame_kind/bracket fields.
-pub struct WalkerRuntimeView<'a, W: Semiring> {
+pub struct WalkerRuntimeView<'a, W: SemiringRef> {
     pub gss: &'a WpdsGss<W>,
     pub frontier_top: Option<&'a WpdsGssNode>,
     pub pos: usize,
@@ -60,7 +60,7 @@ pub struct WalkerRuntimeView<'a, W: Semiring> {
     pub cur_bp: u8,
 }
 
-impl<'a, W: Semiring> WalkerRuntimeView<'a, W> {
+impl<'a, W: SemiringRef> WalkerRuntimeView<'a, W> {
     /// Construct from engine_impl.rs::step parameters.
     pub fn new(
         gss: &'a WpdsGss<W>,
@@ -210,7 +210,7 @@ pub fn emit_recovery_fork<W>(
     infra: &RecoveryInfra,
 ) -> WpdsStepAction<W>
 where
-    W: Semiring + Clone + From<LexicographicWeight>,
+    W: SemiringRef + Clone + From<LexicographicWeight>,
 {
     let pos = runtime_view.pos;
     let cur_bp = runtime_view.cur_bp;
@@ -335,7 +335,7 @@ fn repair_result_to_fork_branch<W>(
     state_cat_src_idx: u16,
 ) -> Option<ForkBranch<W>>
 where
-    W: Semiring + From<LexicographicWeight>,
+    W: SemiringRef + From<LexicographicWeight>,
 {
     let cost_tropical = result.cost.left.value();
     let action_kind_disc = action_kind_discriminator(&result.action);
@@ -442,7 +442,7 @@ fn repair_sequence_to_fork_branch<W>(
     state_cat_src_idx: u16,
 ) -> Option<ForkBranch<W>>
 where
-    W: Semiring + From<LexicographicWeight>,
+    W: SemiringRef + From<LexicographicWeight>,
 {
     if seq.actions.is_empty() {
         return None;

@@ -1021,7 +1021,7 @@ pub(crate) fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
 /// rule. The walker fans out N `BranchCursor`s and `step_fanout` drives
 /// each independently until lex-min selects the surviving branch.
 ///
-/// Per-branch `LexicographicWeight::from_cost(0.0, result_src, rule_idx)`
+/// Per-branch `lex_w(0.0, result_src, rule_idx)`
 /// gives a unique tiebreak by source-order rule_idx — preserving the
 /// trampoline's first-declared-wins convention under tie. Wrong-arity
 /// branches auto-discriminate via parse failure: if the wrong branch's
@@ -1097,7 +1097,7 @@ pub(crate) fn emit_binder_prefix_arms(
                         symbol: StackSymbolV2::rule_at(
                             #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
                         ),
-                        weight: LexicographicWeight::from_cost(
+                        weight: lex_w(
                             0.0, #result_src_idx, #rule_idx,
                         ),
                         new_state: WpdsState::BinderRule {
@@ -1128,7 +1128,7 @@ pub(crate) fn emit_binder_prefix_arms(
                         symbol: StackSymbolV2::rule_at(
                             #result_src_idx, #rule_idx, 1u8, Some(_outer_bp),
                         ),
-                        weight: LexicographicWeight::from_cost(
+                        weight: lex_w(
                             0.0, #result_src_idx, #rule_idx,
                         ),
                         new_state: WpdsState::BinderRule {
@@ -1189,7 +1189,7 @@ pub(crate) fn emit_binder_rule_body(
             arms.push(quote! {
                 (#result_src_idx, #rule_idx, #final_pos) => {
                     return WpdsStepAction::Pop {
-                        weight: LexicographicWeight::one(),
+                        weight: lex_one(),
                         new_state: WpdsState::InfixLoop {
                             cur_bp: *outer_bp,
                         },
@@ -1213,7 +1213,7 @@ pub(crate) fn emit_binder_rule_body(
                                     symbol: StackSymbolV2::rule_at(
                                         #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                     ),
-                                    weight: LexicographicWeight::one(),
+                                    weight: lex_one(),
                                     new_state: WpdsState::BinderRule {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
@@ -1292,7 +1292,7 @@ pub(crate) fn emit_binder_rule_body(
                                                     #result_src_idx, #rule_idx,
                                                     #next_pos, Some(*outer_bp),
                                                 ),
-                                                weight: LexicographicWeight::one(),
+                                                weight: lex_one(),
                                                 new_state: WpdsState::BinderRule {
                                                     result_src_idx: #result_src_idx,
                                                     rule_idx: #rule_idx,
@@ -1331,7 +1331,7 @@ pub(crate) fn emit_binder_rule_body(
                                                     #result_src_idx, #rule_idx,
                                                     #next_pos, Some(*outer_bp),
                                                 ),
-                                                weight: LexicographicWeight::from_cost(
+                                                weight: lex_w(
                                                     0.0, #result_src_idx, #rule_idx,
                                                 ),
                                                 new_state: WpdsState::BinderRule {
@@ -1391,7 +1391,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 symbol: StackSymbolV2::collection_marker(
                                                     #result_src_idx, #rule_idx, #slot_idx,
                                                 ),
-                                                weight: LexicographicWeight::from_cost(
+                                                weight: lex_w(
                                                     mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                     #result_src_idx, #rule_idx,
                                                 ),
@@ -1446,7 +1446,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 #result_src_idx, #rule_idx,
                                                 #next_pos, Some(*outer_bp),
                                             ),
-                                            weight: LexicographicWeight::from_cost(
+                                            weight: lex_w(
                                                 0.0, #result_src_idx, #rule_idx,
                                             ),
                                             new_state: WpdsState::BinderRule {
@@ -1488,7 +1488,7 @@ pub(crate) fn emit_binder_rule_body(
                                                 #result_src_idx, #rule_idx,
                                                 #pos, Some(*outer_bp),
                                             ),
-                                            weight: LexicographicWeight::from_cost(
+                                            weight: lex_w(
                                                 mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                 #result_src_idx, #rule_idx,
                                             ),
@@ -1534,7 +1534,7 @@ pub(crate) fn emit_binder_rule_body(
                                             #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                         ),
                                         push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state: WpdsState::PrefixDispatch {
                                             pos: _pos,
                                             cur_bp: #cur_bp_lit,
@@ -1584,7 +1584,7 @@ pub(crate) fn emit_binder_rule_body(
                                             push_symbol: StackSymbolV2::collection_marker(
                                                 #result_src_idx, #rule_idx, #slot_idx,
                                             ),
-                                            weight: LexicographicWeight::one(),
+                                            weight: lex_one(),
                                             new_state: WpdsState::PrefixDispatch {
                                                 pos: _pos,
                                                 cur_bp: 0u8,
@@ -1604,7 +1604,7 @@ pub(crate) fn emit_binder_rule_body(
                                 replace_symbol: StackSymbolV2::rule_at(
                                     #result_src_idx, #rule_idx, #next_pos, Some(*outer_bp),
                                 ),
-                                weight: LexicographicWeight::one(),
+                                weight: lex_one(),
                                 new_state: WpdsState::BinderRule {
                                     result_src_idx: #result_src_idx,
                                     rule_idx: #rule_idx,
@@ -2014,7 +2014,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             #result_src_idx, #rule_idx,
                                             #next_pos, Some(*outer_bp),
                                         ),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             0.0, #result_src_idx, #rule_idx,
                                         ),
                                         new_state: WpdsState::BinderRule {
@@ -2037,7 +2037,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                     // BRANCH 2: sep — GuardedConsume
                                     mettail_prattail::wpds_walker::ForkBranch {
                                         symbol: StackSymbolV2::category_entry(0),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             0.0, #result_src_idx, #rule_idx,
                                         ),
                                         new_state: WpdsState::BinderListLoop {
@@ -2069,7 +2069,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             #result_src_idx, #rule_idx,
                                             *marker_pos, Some(*outer_bp),
                                         ),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                             #result_src_idx, #rule_idx,
                                         ),
@@ -2120,7 +2120,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                         // Unwinding-RuleAt routes to BinderRule.
                                         mettail_prattail::wpds_walker::ForkBranch {
                                             symbol: StackSymbolV2::category_entry(0),
-                                            weight: LexicographicWeight::from_cost(
+                                            weight: lex_w(
                                                 0.0, #result_src_idx, #rule_idx,
                                             ),
                                             new_state: WpdsState::Unwinding,
@@ -2134,7 +2134,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                         // BRANCH 2: sep → next iteration.
                                         mettail_prattail::wpds_walker::ForkBranch {
                                             symbol: StackSymbolV2::category_entry(0),
-                                            weight: LexicographicWeight::from_cost(
+                                            weight: lex_w(
                                                 0.0, #result_src_idx, #rule_idx,
                                             ),
                                             new_state: WpdsState::BinderListLoop {
@@ -2161,7 +2161,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                 #result_src_idx, #rule_idx,
                                                 1u8, *outer_bp,
                                             ),
-                                            weight: LexicographicWeight::from_cost(
+                                            weight: lex_w(
                                                 mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                 #result_src_idx, #rule_idx,
                                             ),
@@ -2199,7 +2199,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                             #result_src_idx, #rule_idx,
                                                             #next_sp, *outer_bp,
                                                         ),
-                                                        weight: LexicographicWeight::from_cost(
+                                                        weight: lex_w(
                                                             0.0, #result_src_idx, #rule_idx,
                                                         ),
                                                         new_state: WpdsState::BinderListLoop {
@@ -2247,7 +2247,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                     branches: vec![
                                                         mettail_prattail::wpds_walker::ForkBranch {
                                                             symbol: StackSymbolV2::category_entry(0),
-                                                            weight: LexicographicWeight::from_cost(
+                                                            weight: lex_w(
                                                                 0.0, #result_src_idx, #rule_idx,
                                                             ),
                                                             new_state: WpdsState::BinderListLoop {
@@ -2279,7 +2279,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                                 #result_src_idx, #rule_idx,
                                                                 #next_sp, *outer_bp,
                                                             ),
-                                                            weight: LexicographicWeight::from_cost(
+                                                            weight: lex_w(
                                                                 0.0, #result_src_idx, #rule_idx,
                                                             ),
                                                             new_state: WpdsState::BinderListLoop {
@@ -2332,7 +2332,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                                     #next_sp, *outer_bp,
                                                 ),
                                                 push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
-                                                weight: LexicographicWeight::one(),
+                                                weight: lex_one(),
                                                 new_state: WpdsState::PrefixDispatch {
                                                     pos: _pos,
                                                     cur_bp: 0u8,
@@ -2447,7 +2447,7 @@ pub(crate) fn emit_optional_group_body(
                                     symbol: StackSymbolV2::optional_group_at(
                                         #result_src_idx, #rule_idx, 1u8, *outer_bp,
                                     ),
-                                    weight: LexicographicWeight::from_cost(
+                                    weight: lex_w(
                                         0.0, #result_src_idx, #rule_idx,
                                     ),
                                     new_state: WpdsState::OptionalGroup {
@@ -2469,7 +2469,7 @@ pub(crate) fn emit_optional_group_body(
                                     // `action_kind`. We supply a stable
                                     // sentinel to satisfy the field.
                                     symbol: StackSymbolV2::category_entry(0),
-                                    weight: LexicographicWeight::from_cost(
+                                    weight: lex_w(
                                         mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                         #result_src_idx, #rule_idx,
                                     ),
@@ -2507,7 +2507,7 @@ pub(crate) fn emit_optional_group_body(
                                         symbol: StackSymbolV2::optional_group_at(
                                             #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                         ),
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state: WpdsState::OptionalGroup {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
@@ -2534,7 +2534,7 @@ pub(crate) fn emit_optional_group_body(
                                                 #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                             ),
                                             push_symbol: StackSymbolV2::category_entry(#cat_src_idx),
-                                            weight: LexicographicWeight::one(),
+                                            weight: lex_one(),
                                             new_state: WpdsState::PrefixDispatch {
                                                 pos: _pos,
                                                 // Stage 3.27d (G-PREFIX-BP, 2026-04-30):
@@ -2573,7 +2573,7 @@ pub(crate) fn emit_optional_group_body(
                                                 push_symbol: StackSymbolV2::collection_marker(
                                                     #result_src_idx, #rule_idx, #slot_idx,
                                                 ),
-                                                weight: LexicographicWeight::one(),
+                                                weight: lex_one(),
                                                 new_state: WpdsState::PrefixDispatch {
                                                     pos: _pos,
                                                     cur_bp: 0u8,
@@ -2594,7 +2594,7 @@ pub(crate) fn emit_optional_group_body(
                                         symbol: StackSymbolV2::optional_group_at(
                                             #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                         ),
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state: WpdsState::OptionalGroup {
                                             result_src_idx: #result_src_idx,
                                             rule_idx: #rule_idx,
@@ -2617,7 +2617,7 @@ pub(crate) fn emit_optional_group_body(
                                     replace_symbol: StackSymbolV2::optional_group_at(
                                         #result_src_idx, #rule_idx, #next_sp, *outer_bp,
                                     ),
-                                    weight: LexicographicWeight::one(),
+                                    weight: lex_one(),
                                     new_state: WpdsState::OptionalGroup {
                                         result_src_idx: #result_src_idx,
                                         rule_idx: #rule_idx,
@@ -2648,7 +2648,7 @@ pub(crate) fn emit_optional_group_body(
                                 #result_src_idx, #rule_idx,
                                 #outer_next_pos_byte, Some(*outer_bp),
                             ),
-                            weight: LexicographicWeight::one(),
+                            weight: lex_one(),
                             new_state: WpdsState::BinderRule {
                                 result_src_idx: #result_src_idx,
                                 rule_idx: #rule_idx,

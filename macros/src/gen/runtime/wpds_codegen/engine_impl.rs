@@ -179,20 +179,29 @@ pub(crate) fn emit_engine_impl_full(
         #lex_alt_rule_for_fn
 
         impl mettail_prattail::wpds_walker::WpdsStepEngine<
-            mettail_prattail::automata::lex_weight::LexicographicWeight,
+            mettail_prattail::automata::derivation_weight::DerivationWeight<
+                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                mettail_prattail::wpds_runtime::DerivationSnapshot,
+            >,
         > for #engine_ident
         {
             fn step(
                 &self,
                 state: &mettail_prattail::wpds_runtime::WpdsState,
                 _gss: &mettail_prattail::gss::WpdsGss<
-                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                    mettail_prattail::automata::derivation_weight::DerivationWeight<
+                        mettail_prattail::automata::lex_weight::LexicographicWeight,
+                        mettail_prattail::wpds_runtime::DerivationSnapshot,
+                    >,
                 >,
                 frontier_top: Option<&mettail_prattail::gss::WpdsGssNode>,
                 _pos: usize,
                 tokens: &dyn mettail_prattail::wpds_runtime::WpdsTokenSource,
             ) -> mettail_prattail::wpds_walker::WpdsStepAction<
-                mettail_prattail::automata::lex_weight::LexicographicWeight,
+                mettail_prattail::automata::derivation_weight::DerivationWeight<
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                    mettail_prattail::wpds_runtime::DerivationSnapshot,
+                >,
             > {
                 use mettail_prattail::wpds_runtime::{
                     StackSymbolV2, WpdsState,
@@ -200,13 +209,27 @@ pub(crate) fn emit_engine_impl_full(
                 use mettail_prattail::wpds_walker::WpdsStepAction;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 use mettail_prattail::automata::semiring::Semiring;
+                // M11.4 (2026-05-14): codegen weight constructors lifted to
+                // helpers that wrap each lex weight in a singleton
+                // DerivationWeight carrying DerivationSnapshot::unit().
+                // Walker Fork-arm sites (M11.5) inject the parent cursor's
+                // real snapshot via with_snapshot before merging into the
+                // child's accumulated weight.
+                use mettail_prattail::wpds_runtime::{lex_w, lex_w_alt, lex_one};
+                use mettail_prattail::automata::derivation_weight::DerivationWeight;
+                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                // Local alias for the walker's W type — used at
+                // ForkBranch<_> annotation sites where the inner type is
+                // awkward to spell inline.
+                #[allow(non_camel_case_types)]
+                type __DwW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
 
                 match state {
                     WpdsState::Ready { min_bp } => {
                         let primary = StackSymbolV2::category_entry(#primary_src_idx);
                         WpdsStepAction::Push {
                             symbol: primary,
-                            weight: LexicographicWeight::from_cost(0.0, #primary_src_idx, 0),
+                            weight: lex_w(0.0, #primary_src_idx, 0),
                             new_state: WpdsState::PrefixDispatch {
                                 pos: 0,
                                 cur_bp: *min_bp,
@@ -278,14 +301,14 @@ pub(crate) fn emit_engine_impl_full(
                                 if token_is_close || needs_redirect {
                                     let mut __branches: Vec<
                                         mettail_prattail::wpds_walker::ForkBranch<
-                                            LexicographicWeight,
+                                            __DwW,
                                         >,
                                     > = Vec::with_capacity(2);
                                     if token_is_close {
                                         __branches.push(
                                             mettail_prattail::wpds_walker::ForkBranch {
                                                 symbol: StackSymbolV2::category_entry(0),
-                                                weight: LexicographicWeight::from_cost(
+                                                weight: lex_w(
                                                     0.0, result_src_idx, rule_idx,
                                                 ),
                                                 new_state: WpdsState::Unwinding,
@@ -302,7 +325,7 @@ pub(crate) fn emit_engine_impl_full(
                                                 symbol: StackSymbolV2::category_entry(
                                                     element_src_idx,
                                                 ),
-                                                weight: LexicographicWeight::from_cost(
+                                                weight: lex_w(
                                                     mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
                                                     result_src_idx, rule_idx,
                                                 ),
@@ -381,7 +404,7 @@ pub(crate) fn emit_engine_impl_full(
                                             state_cat_src_idx,
                                             *cur_bp,
                                         );
-                                        mettail_prattail::recovery_dispatch::emit_recovery_fork::<LexicographicWeight>(
+                                        mettail_prattail::recovery_dispatch::emit_recovery_fork::<__DwW>(
                                             view,
                                             tokens,
                                             infra,
@@ -419,7 +442,7 @@ pub(crate) fn emit_engine_impl_full(
                                          set at the originating ConsumeAndPush site"
                                     );
                                     WpdsStepAction::Pop {
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state: WpdsState::InfixLoop { cur_bp: outer_bp },
                                     }
                                 }
@@ -503,7 +526,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // unwound, frontier_top is None and the
                                     // outer Unwinding arm emits Accept.
                                     WpdsStepAction::Pop {
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state,
                                     }
                                 }
@@ -539,7 +562,7 @@ pub(crate) fn emit_engine_impl_full(
                                         result_src_idx, rule_idx, slot_idx_for_class3,
                                     ) {
                                         return WpdsStepAction::Pop {
-                                            weight: LexicographicWeight::one(),
+                                            weight: lex_one(),
                                             new_state: WpdsState::Unwinding,
                                         };
                                     }
@@ -663,7 +686,7 @@ pub(crate) fn emit_engine_impl_full(
                                     );
                                     match tokens.peek_text(_pos) {
                                         Some(")") => WpdsStepAction::ConsumeAndPop {
-                                            weight: LexicographicWeight::one(),
+                                            weight: lex_one(),
                                             new_state: WpdsState::InfixLoop {
                                                 cur_bp: outer_bp,
                                             },
@@ -937,7 +960,7 @@ pub(crate) fn emit_engine_impl_full(
 
                         let mut __cands: Vec<
                             mettail_prattail::wpds_walker::ForkBranch<
-                                LexicographicWeight,
+                                __DwW,
                             >,
                         > = Vec::new();
 
@@ -971,7 +994,7 @@ pub(crate) fn emit_engine_impl_full(
                                             result_src, rule_idx, 0, Some(*cur_bp),
                                         )
                                         .with_kind_return(),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
                                             result_src, rule_idx,
                                         ),
@@ -1004,7 +1027,7 @@ pub(crate) fn emit_engine_impl_full(
                                             result_src, rule_idx, 0, Some(*cur_bp),
                                         )
                                         .with_kind_return(),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
                                             result_src, rule_idx,
                                         ),
@@ -1026,7 +1049,7 @@ pub(crate) fn emit_engine_impl_full(
                                         symbol: StackSymbolV2::mixfix_marker(
                                             result_src, rule_idx, 0,
                                         ),
-                                        weight: LexicographicWeight::from_cost(
+                                        weight: lex_w(
                                             mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
                                             result_src, rule_idx,
                                         ),
@@ -1119,7 +1142,7 @@ pub(crate) fn emit_engine_impl_full(
                                     push_symbol: StackSymbolV2::category_entry(
                                         operand_src_idx,
                                     ),
-                                    weight: LexicographicWeight::one(),
+                                    weight: lex_one(),
                                     new_state: WpdsState::PrefixDispatch {
                                         pos: _pos,
                                         cur_bp: 0,
@@ -1169,7 +1192,7 @@ pub(crate) fn emit_engine_impl_full(
                                             *rule_idx,
                                             *completed_idx,
                                         ),
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state: WpdsState::MixfixLiteralRun {
                                             result_src_idx: *result_src_idx,
                                             rule_idx: *rule_idx,
@@ -1181,7 +1204,7 @@ pub(crate) fn emit_engine_impl_full(
                                 } else if *completed_idx + 1 == parts_len {
                                     // Last operand done; Pop the marker.
                                     WpdsStepAction::Pop {
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state: WpdsState::InfixLoop { cur_bp: 0 },
                                     }
                                 } else {
@@ -1212,7 +1235,7 @@ pub(crate) fn emit_engine_impl_full(
                                                     *rule_idx,
                                                     *completed_idx,
                                                 ),
-                                                weight: LexicographicWeight::one(),
+                                                weight: lex_one(),
                                                 new_state: WpdsState::MixfixLiteralRun {
                                                     result_src_idx: *result_src_idx,
                                                     rule_idx: *rule_idx,
@@ -1233,7 +1256,7 @@ pub(crate) fn emit_engine_impl_full(
                                                 push_symbol: StackSymbolV2::category_entry(
                                                     operand_src_idx,
                                                 ),
-                                                weight: LexicographicWeight::one(),
+                                                weight: lex_one(),
                                                 new_state: WpdsState::PrefixDispatch {
                                                     pos: _pos,
                                                     cur_bp: 0,
@@ -1277,7 +1300,7 @@ pub(crate) fn emit_engine_impl_full(
                         let _ = (result_src_idx, rule_idx, element_src_idx, outer_bp);
                         match tokens.peek_text(_pos) {
                             Some("(") => WpdsStepAction::Consume {
-                                weight: LexicographicWeight::one(),
+                                weight: lex_one(),
                                 new_state: WpdsState::PrefixDispatch {
                                     pos: tokens.next_pos(_pos, 0).unwrap_or(_pos + 1),
                                     cur_bp: 0,
@@ -1342,7 +1365,7 @@ pub(crate) fn emit_engine_impl_full(
                         // this state.
                         WpdsStepAction::Push {
                             symbol: StackSymbolV2::category_entry(*source_src_idx),
-                            weight: LexicographicWeight::one(),
+                            weight: lex_one(),
                             new_state: WpdsState::PrefixDispatch {
                                 pos: _pos,
                                 cur_bp: *inner_cur_bp,
@@ -1395,7 +1418,7 @@ pub(crate) fn emit_engine_impl_full(
                                 return match tokens.peek_text(_pos) {
                                     Some(")") => WpdsStepAction::ConsumeAndReplace {
                                         symbol: StackSymbolV2::category_entry(*inner_cat_src_idx),
-                                        weight: LexicographicWeight::one(),
+                                        weight: lex_one(),
                                         new_state: WpdsState::InfixLoop { cur_bp: outer_bp },
                                     },
                                     other => WpdsStepAction::Error(format!(

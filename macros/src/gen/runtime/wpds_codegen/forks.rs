@@ -22,7 +22,7 @@
 //! - **Source-order tiebreak via rule_idx.** Load-bearing per Class A.i
 //!   precedent. All Forks must use rule_idx for deterministic disambiguation.
 //! - **Lex-min weighting.**
-//!   `LexicographicWeight::from_cost(bias, src, rule)` is the standard weight
+//!   `lex_w(bias, src, rule)` is the standard weight
 //!   constructor for new Fork branches; per-tier bias offsets enforce
 //!   inter-tier ordering on weight ties.
 //! - **Cursor explosion mitigation.** Each Fork emission grows the cursor
@@ -113,7 +113,7 @@ pub(crate) fn emit_first_set_fork(
             quote! {
                 mettail_prattail::wpds_walker::ForkBranch {
                     symbol: #symbol,
-                    weight: LexicographicWeight::from_cost(#bias, #src, #rule),
+                    weight: lex_w(#bias, #src, #rule),
                     new_state: #new_state,
                     action_kind: #action_kind,
                 }
@@ -175,7 +175,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                 .map(|n| n.symbol.category_src_idx)
                 .unwrap_or(primary_src_for_fork);
             let mut __branches: Vec<mettail_prattail::wpds_walker::ForkBranch<
-                LexicographicWeight,
+                __DwW,
             >> = Vec::with_capacity(alts.len() + 1);
             // M6c.8.5 (2026-05-14): track whether the primary alt
             // survived the `lex_alt_rule_for` evidence filter. The
@@ -191,9 +191,10 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             let mut __primary_survived: bool = false;
 
             // Branch[0] — PRIMARY (lex_alt_idx = 0).
-            // M6c.6.4.b (2026-05-14): destructure `LexAltRuleInfo` and
-            // dispatch by `kind`. Currently only Atomic emits a branch
-            // (PrefixOp gated until M6c.6.4.d activation).
+            // M6c.6.4.d (2026-05-14): activated PrefixOp branch — same-cat
+            // unary prefix rules (e.g., `Neg`) now emit lex-Fork branches
+            // with `LexAltPrefixOp` action_kind, mirroring the standard
+            // `Fixed(trigger) → ConsumeAndPush(BinderRule)` arm shape.
             if let Some(primary_kind) = tokens.peek_kind(*pos) {
                 if let Some(info) =
                     lex_alt_rule_for_prefix(primary_src, &primary_kind)
@@ -207,7 +208,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             ).with_kind_return();
                             __branches.push(mettail_prattail::wpds_walker::ForkBranch {
                                 symbol: sym,
-                                weight: LexicographicWeight::from_cost_with_lex(
+                                weight: lex_w_alt(
                                     0.0, primary_src, info.rule_idx, 0u16,
                                 ),
                                 new_state: WpdsState::Unwinding,
@@ -221,16 +222,42 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             });
                             __primary_survived = true;
                         }
-                        mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp { .. } => {
-                            // M6c.6.4.b: gated — emission activates at
-                            // M6c.6.4.d. Currently drops the branch
-                            // (preserves pre-M6c.6.4 behavior: standard
-                            // PrefixDispatch arm for `Fixed(trigger)` still
-                            // fires deterministically).
+                        mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp {
+                            body_src_idx,
+                        } => {
+                            let primary_text = tokens.peek_text(*pos).unwrap_or("").to_string();
+                            let primary_next_pos = tokens.next_pos(*pos, 0).unwrap_or(*pos + 1);
+                            // Symbol shape: rule_at(cat, rule_idx, slot=1,
+                            // Some(*cur_bp)) — NO with_kind_return. Mirror
+                            // of standard `Fixed("-")` ConsumeAndPush arm.
+                            let sym = StackSymbolV2::rule_at(
+                                primary_src, info.rule_idx, 1u8, Some(*cur_bp),
+                            );
+                            __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                                symbol: sym,
+                                weight: lex_w_alt(
+                                    0.0, primary_src, info.rule_idx, 0u16,
+                                ),
+                                new_state: WpdsState::BinderRule {
+                                    result_src_idx: primary_src,
+                                    rule_idx: info.rule_idx,
+                                    body_src_idx,
+                                    outer_bp: *cur_bp,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpds_walker::ForkActionKind::LexAltPrefixOp {
+                                        alt_idx: 0u16,
+                                        trigger: primary_text,
+                                        rule_idx: info.rule_idx,
+                                        body_src_idx,
+                                        next_pos: primary_next_pos,
+                                        outer_bp: *cur_bp,
+                                    },
+                            });
+                            __primary_survived = true;
                         }
                         // Other variants are InfixLoop-site only;
-                        // shouldn't appear here. lex_alt_rule_for_prefix
-                        // emits only Atomic + PrefixOp arms.
+                        // shouldn't appear here.
                         _ => {}
                     }
                 }
@@ -250,7 +277,7 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                             ).with_kind_return();
                             __branches.push(mettail_prattail::wpds_walker::ForkBranch {
                                 symbol: sym,
-                                weight: LexicographicWeight::from_cost_with_lex(
+                                weight: lex_w_alt(
                                     0.0, primary_src, info.rule_idx, alt_idx,
                                 ),
                                 new_state: WpdsState::Unwinding,
@@ -263,8 +290,36 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
                                 },
                             });
                         }
-                        mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp { .. } => {
-                            // M6c.6.4.b: gated; activates at M6c.6.4.d.
+                        mettail_prattail::wpds_runtime::LexAltRuleKind::PrefixOp {
+                            body_src_idx,
+                        } => {
+                            let alt_next_pos = tokens
+                                .next_pos(*pos, sec_idx + 1)
+                                .unwrap_or(*pos + 1);
+                            let sym = StackSymbolV2::rule_at(
+                                primary_src, info.rule_idx, 1u8, Some(*cur_bp),
+                            );
+                            __branches.push(mettail_prattail::wpds_walker::ForkBranch {
+                                symbol: sym,
+                                weight: lex_w_alt(
+                                    0.0, primary_src, info.rule_idx, alt_idx,
+                                ),
+                                new_state: WpdsState::BinderRule {
+                                    result_src_idx: primary_src,
+                                    rule_idx: info.rule_idx,
+                                    body_src_idx,
+                                    outer_bp: *cur_bp,
+                                },
+                                action_kind:
+                                    mettail_prattail::wpds_walker::ForkActionKind::LexAltPrefixOp {
+                                        alt_idx,
+                                        trigger: alt.text.to_string(),
+                                        rule_idx: info.rule_idx,
+                                        body_src_idx,
+                                        next_pos: alt_next_pos,
+                                        outer_bp: *cur_bp,
+                                    },
+                            });
                         }
                         _ => {}
                     }

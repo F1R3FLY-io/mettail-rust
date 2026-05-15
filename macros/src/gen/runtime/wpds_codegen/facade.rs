@@ -103,10 +103,22 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::wpds_runtime::WpdsResolveResult;
                 use mettail_prattail::wpds_walker::WpdsWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                // M11.4 (2026-05-14): walker W lifted to
+                // DerivationWeight<LexicographicWeight, DerivationSnapshot>
+                // — multiset semiring that preserves all derivations through
+                // merge_equivalent_cursors. Public signature stays
+                // (Cat, LexicographicWeight) for backward compat; first
+                // multiset entry's lex weight is projected via
+                // `dw.first_inner()`. M11.6b (D5 semver) will lift this
+                // public signature to expose DerivationWeight directly.
+                use mettail_prattail::automata::derivation_weight::DerivationWeight;
+                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                use mettail_prattail::automata::semiring::SemiringRef;
+                type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
-                let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
+                let mut walker = WpdsWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
                     #cat_src_idx_u16,
                     min_bp,
@@ -114,28 +126,32 @@ pub(crate) fn emit_parse_fns(
                 let src = mettail_prattail::wpds_runtime::SliceTokenSource::with_texts(
                     kinds, texts,
                 );
-                // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution.
-                // `run_to_end_of_input` drives until input exhausted /
-                // all-cursors-dead / max_steps; `resolve_at_end_of_input`
-                // collapses the parked frontier to a single weighted result
-                // via Semiring::plus + lex-min selection.
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
                     Ok(()) => match walker.resolve_at_end_of_input(&src) {
                         WpdsResolveResult::Accepted { weights, terms } => {
                             *pos = walker.position();
-                            // M7c (2026-05-13): WpdsResolveResult::Accepted
-                            // is now multi-result. For backward compat,
-                            // pick the FIRST term (M8 will introduce
-                            // AmbiguousResult<Cat> for proper multi-result
-                            // return).
+                            // Pick first term for backward-compat (D5 semver
+                            // in M11.6b lifts this to multi-result).
                             let term = terms
                                 .into_iter()
                                 .next()
                                 .ok_or(WpdsParseError::EmptyResult)?;
-                            let weight = weights
+                            let dw = weights
                                 .into_iter()
                                 .next()
                                 .ok_or(WpdsParseError::EmptyResult)?;
+                            // M11.4 (D5 projection): the first entry of the
+                            // first cursor's multiset is the lex-min winner's
+                            // weight under the existing tiebreak order.
+                            let weight = dw
+                                .first_inner()
+                                .cloned()
+                                .unwrap_or_else(|| {
+                                    // Empty multiset is the additive identity
+                                    // (zero); fall back to LexicographicWeight::one().
+                                    use mettail_prattail::automata::semiring::Semiring;
+                                    LexicographicWeight::one()
+                                });
                             let arc = std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map_err(|_| WpdsParseError::EmptyResult)?;
                             let typed = std::sync::Arc::try_unwrap(arc)
@@ -188,8 +204,14 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::wpds_runtime::WpdsResolveResult;
                 use mettail_prattail::wpds_walker::WpdsWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                // M11.4 (2026-05-14): walker W = DerivationWeight; project
+                // each cursor's multiset back to a single LexicographicWeight
+                // for backward-compat public signature.
+                use mettail_prattail::automata::derivation_weight::DerivationWeight;
+                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
                 const MAX_STEPS: usize = 1_000_000;
-                let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
+                let mut walker = WpdsWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
                     #cat_src_idx_u16,
                     min_bp,
@@ -209,7 +231,19 @@ pub(crate) fn emit_parse_fns(
                                     .unwrap_or_else(|arc| (*arc).clone());
                                 typed_terms.push(typed);
                             }
-                            Ok((typed_terms, weights))
+                            // Project each DerivationWeight to its first-entry
+                            // lex weight for backward-compat Vec<LexicographicWeight>
+                            // return (M11.6a folded into M11.4).
+                            let projected_weights: Vec<LexicographicWeight> = weights
+                                .into_iter()
+                                .map(|dw| {
+                                    dw.first_inner().cloned().unwrap_or_else(|| {
+                                        use mettail_prattail::automata::semiring::Semiring;
+                                        LexicographicWeight::one()
+                                    })
+                                })
+                                .collect();
+                            Ok((typed_terms, projected_weights))
                         }
                         WpdsResolveResult::ParseError { message, position } => {
                             Err(WpdsParseError::ParseFailed {
@@ -280,11 +314,15 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::wpds_runtime::WpdsResolveResult;
                 use mettail_prattail::wpds_walker::WpdsWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
+                // M11.4 (2026-05-14): walker W lifted to DerivationWeight.
+                use mettail_prattail::automata::derivation_weight::DerivationWeight;
+                use mettail_prattail::wpds_runtime::DerivationSnapshot;
+                type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
 
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
-                let mut walker = WpdsWalker::<LexicographicWeight, _>::new_for_category(
+                let mut walker = WpdsWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
                     #cat_src_idx_u16,
                     min_bp,

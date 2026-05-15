@@ -700,7 +700,7 @@ fn collect_first_set(
 /// Some(TokenKind::Fixed(__open)) if __open == "(" && state_cat_src_idx == #c_src => {
 ///     return WpdsStepAction::ConsumeAndPush {
 ///         symbol: StackSymbolV2::grouping_marker(#c_src, *cur_bp),
-///         weight: LexicographicWeight::one(),
+///         weight: lex_one(),
 ///         new_state: WpdsState::PrefixDispatch { pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1), cur_bp: 0 },
 ///         capture_token: false,
 ///     };
@@ -730,7 +730,7 @@ pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
                     symbol: StackSymbolV2::grouping_marker(
                         #result_src_idx, *cur_bp,
                     ),
-                    weight: LexicographicWeight::one(),
+                    weight: lex_one(),
                     new_state: WpdsState::PrefixDispatch {
                         pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                         cur_bp: 0,
@@ -751,7 +751,7 @@ pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
 /// a paren-triggered App rule, this emits a `WpdsStepAction::Fork` over
 /// {grouping_branch, binder_rule_branches...} so lex-min disambiguates
 /// per `feedback_use_wpds_disambiguation_not_heuristics.md`. The grouping
-/// branch uses `LexicographicWeight::one()` (max src/rule indices) so
+/// branch uses `lex_one()` (max src/rule indices) so
 /// any concrete binder rule beats it on lex-min ties.
 ///
 /// Verified empirically across `target/generated/*/wpds.rs`: only Lambda
@@ -790,7 +790,7 @@ pub fn emit_paren_dispatch_arms(
                         symbol: StackSymbolV2::grouping_marker(
                             #result_src_idx, *cur_bp,
                         ),
-                        weight: LexicographicWeight::one(),
+                        weight: lex_one(),
                         new_state: WpdsState::PrefixDispatch {
                             pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                             cur_bp: 0,
@@ -811,7 +811,7 @@ pub fn emit_paren_dispatch_arms(
                 symbol: StackSymbolV2::grouping_marker(
                     #result_src_idx, *cur_bp,
                 ),
-                weight: LexicographicWeight::one(),
+                weight: lex_one(),
                 new_state: WpdsState::PrefixDispatch {
                     pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                     cur_bp: 0,
@@ -832,7 +832,7 @@ pub fn emit_paren_dispatch_arms(
                     symbol: StackSymbolV2::rule_at(
                         #result_src_idx, #rule_idx_lit, 1u8, Some(_outer_bp),
                     ),
-                    weight: LexicographicWeight::from_cost(
+                    weight: lex_w(
                         0.0, #result_src_idx, #rule_idx_lit,
                     ),
                     new_state: WpdsState::BinderRule {
@@ -927,7 +927,7 @@ pub fn emit_prefix_arms_for_category(
     // Fix: bucket by (pat, guard) and emit:
     //   - Single-source bucket → Push (byte-identical to pre-fix).
     //   - Multi-source bucket → Fork over branches with one source each,
-    //     using LexicographicWeight::from_cost(0.0, category, src_idx) so
+    //     using lex_w(0.0, category, src_idx) so
     //     source-order tiebreak (rule_idx slot = src_idx) selects deterministically
     //     while genuine forward-progress lex-min selects the live cursor
     //     across the parse — per `feedback_use_wpds_disambiguation_not_heuristics.md`.
@@ -1216,7 +1216,7 @@ fn emit_cross_cat_prefix_unary_arm(
                 symbol: StackSymbolV2::rule_at(
                     #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                 ).with_kind_return(),
-                weight: LexicographicWeight::from_cost(
+                weight: lex_w(
                     0.0, #category_src_idx, #rule_idx,
                 ),
                 // D-strings fix (2026-05-13): cross-cat prefix-unary
@@ -1406,7 +1406,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         // it restores correctly when this sub-parse unwinds.
                         return WpdsStepAction::Push {
                             symbol: StackSymbolV2::category_entry(#source_src_idx),
-                            weight: LexicographicWeight::one(),
+                            weight: lex_one(),
                             new_state: WpdsState::PrefixDispatch {
                                 pos: *pos,
                                 cur_bp: 0,
@@ -1437,7 +1437,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
-                            weight: LexicographicWeight::from_cost(
+                            weight: lex_w(
                                 0.0, #category_src_idx, #rule_idx,
                             ),
                             new_state: WpdsState::CrossCatDelegate {
@@ -1470,7 +1470,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
-                            weight: LexicographicWeight::from_cost(
+                            weight: lex_w(
                                 mettail_prattail::automata::lex_weight::BP_TIER_PASS2C_SYNTHESIZED,
                                 #category_src_idx, #rule_idx,
                             ),
@@ -1493,7 +1493,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     quote! {
                         mettail_prattail::wpds_walker::ForkBranch {
                             symbol: StackSymbolV2::category_entry(#src_idx),
-                            weight: LexicographicWeight::from_cost(
+                            weight: lex_w(
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_LHS,
                                 #category_src_idx, #src_idx,
                             ),
@@ -1516,7 +1516,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             symbol: StackSymbolV2::rule_at(
                                 #csi, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
-                            weight: LexicographicWeight::from_cost(
+                            weight: lex_w(
                                 0.0, #csi, #rule_idx,
                             ),
                             new_state: WpdsState::Unwinding,
@@ -1535,7 +1535,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
-                            weight: LexicographicWeight::from_cost(
+                            weight: lex_w(
                                 mettail_prattail::automata::lex_weight::BP_TIER_CROSSCAT_PROJECTION,
                                 #category_src_idx, #rule_idx,
                             ),
@@ -1565,7 +1565,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             symbol: StackSymbolV2::rule_at(
                                 #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                             ).with_kind_return(),
-                            weight: LexicographicWeight::from_cost(
+                            weight: lex_w(
                                 mettail_prattail::automata::lex_weight::BP_TIER_PASS2C_SYNTHESIZED,
                                 #category_src_idx, #rule_idx,
                             ),
@@ -1608,7 +1608,7 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
                 symbol: StackSymbolV2::rule_at(
                     #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                 ).with_kind_return(),
-                weight: LexicographicWeight::from_cost(0.0, #category_src_idx, #rule_idx),
+                weight: lex_w(0.0, #category_src_idx, #rule_idx),
                 new_state: WpdsState::Unwinding,
                 capture_token: true,
             };
@@ -1636,7 +1636,7 @@ fn emit_atomic_arm_fork(descs: &[PrefixArmDescriptor]) -> TokenStream {
                 symbol: StackSymbolV2::rule_at(
                     #csi, #rule_idx, 0, Some(_outer_bp),
                 ).with_kind_return(),
-                weight: LexicographicWeight::from_cost(0.0, #csi, #rule_idx),
+                weight: lex_w(0.0, #csi, #rule_idx),
                 new_state: WpdsState::Unwinding,
                 action_kind: mettail_prattail::wpds_walker::ForkActionKind::ConsumeAndCaptureAndPush,
             }
@@ -1729,7 +1729,7 @@ fn emit_atomic_arms(
                         symbol: StackSymbolV2::rule_at(
                             #category_src_idx, #rule_idx, 0, Some(_outer_bp),
                         ).with_kind_return(),
-                        weight: LexicographicWeight::from_cost(0.0, #category_src_idx, #rule_idx),
+                        weight: lex_w(0.0, #category_src_idx, #rule_idx),
                         new_state: WpdsState::Unwinding,
                         // Atomic literal: token is pushed to the builder so the
                         // Pop(Return) action can consume it as ActionArg::Token.
