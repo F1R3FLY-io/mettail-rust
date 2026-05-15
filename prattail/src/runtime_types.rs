@@ -199,6 +199,21 @@ pub enum ParseError {
         repair_description: String,
         range: Range,
     },
+    /// M11.7 (2026-05-14): the walker was configured with
+    /// `CursorBoundingMode::AmbiguityBudget(budget)` and the live frontier
+    /// exceeded that budget at the indicated `position`.
+    ///
+    /// Distinct from `UnexpectedToken` / `UnexpectedEof` because the input
+    /// IS parseable — the parser just produced more ambiguity than the
+    /// caller's budget allows. Callers can react by relaxing the budget,
+    /// switching strategy, or surfacing a user-facing "input too
+    /// ambiguous" message.
+    AmbiguityBudget {
+        budget: usize,
+        actual: usize,
+        range: Range,
+        hint: Option<Cow<'static, str>>,
+    },
 }
 
 impl fmt::Display for ParseError {
@@ -257,6 +272,20 @@ impl fmt::Display for ParseError {
                 repair_description,
                 ..
             } => write!(f, "{} (recovered: {})", original_error, repair_description),
+            ParseError::AmbiguityBudget { budget, actual, range, hint } => {
+                write!(
+                    f,
+                    "{}:{}: input too ambiguous: frontier of {} cursors exceeds budget of {}",
+                    range.start.line + 1,
+                    range.start.column + 1,
+                    actual,
+                    budget,
+                )?;
+                if let Some(h) = hint {
+                    write!(f, "\n  = hint: {}", h)?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -274,6 +303,7 @@ impl ParseError {
             },
             ParseError::TrailingTokens { range, .. } => *range,
             ParseError::RecoveryApplied { range, .. } => *range,
+            ParseError::AmbiguityBudget { range, .. } => *range,
         }
     }
 }

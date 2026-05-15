@@ -391,6 +391,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             })
                         }
+                        Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::AmbiguityBudget {
+                                budget, actual, range,
+                                hint: Some(Cow::Borrowed(
+                                    "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                )),
+                            })
+                        }
                     }
                 }
             };
@@ -468,6 +482,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     .unwrap_or_else(|| "end of input".to_string()),
                                 range,
                                 hint: None,
+                            })
+                        }
+                        Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::AmbiguityBudget {
+                                budget, actual, range,
+                                hint: Some(Cow::Borrowed(
+                                    "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                )),
                             })
                         }
                     }
@@ -586,6 +614,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 })
                             }
+                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, r)| *r)
+                                    .unwrap_or_else(|| {
+                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                    });
+                                Err(ParseError::AmbiguityBudget {
+                                    budget, actual, range,
+                                    hint: Some(Cow::Borrowed(
+                                        "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                    )),
+                                })
+                            }
                         };
                     }
                     // Slice path: no DAG ambiguity, byte-identical to
@@ -656,6 +698,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     .unwrap_or_else(|| "end of input".to_string()),
                                 range,
                                 hint: None,
+                            })
+                        }
+                        Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                            let range = tokens
+                                .get(position)
+                                .map(|(_, r)| *r)
+                                .unwrap_or_else(|| {
+                                    tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                                });
+                            Err(ParseError::AmbiguityBudget {
+                                budget, actual, range,
+                                hint: Some(Cow::Borrowed(
+                                    "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                )),
                             })
                         }
                     }
@@ -731,6 +787,20 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 .unwrap_or_else(|| "end of input".to_string()),
                             range,
                             hint: None,
+                        })
+                    }
+                    Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                        let range = tokens
+                            .get(position)
+                            .map(|(_, r)| *r)
+                            .unwrap_or_else(|| {
+                                tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                            });
+                        Err(ParseError::AmbiguityBudget {
+                            budget, actual, range,
+                            hint: Some(Cow::Borrowed(
+                                "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                            )),
                         })
                     }
                 }
@@ -894,6 +964,24 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                         .unwrap_or_else(|| "end of input".to_string()),
                                     range,
                                     hint: None,
+                                });
+                                (None, errors)
+                            }
+                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position }) => {
+                                let range = tokens
+                                    .get(position)
+                                    .map(|(_, r)| *r)
+                                    .unwrap_or_else(|| {
+                                        tokens
+                                            .last()
+                                            .map(|(_, r)| *r)
+                                            .unwrap_or(Range::zero())
+                                    });
+                                errors.push(ParseError::AmbiguityBudget {
+                                    budget, actual, range,
+                                    hint: Some(Cow::Borrowed(
+                                        "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                    )),
                                 });
                                 (None, errors)
                             }

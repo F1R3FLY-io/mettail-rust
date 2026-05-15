@@ -162,6 +162,9 @@ pub(crate) fn emit_parse_fns(
                         WpdsResolveResult::MaxStepsExceeded { position } => {
                             Err(WpdsParseError::Incomplete { position })
                         }
+                        WpdsResolveResult::AmbiguityBudget { budget, actual, position } => {
+                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position })
+                        }
                     },
                     Err(exceeded) => Err(WpdsParseError::Incomplete {
                         position: exceeded.position,
@@ -248,6 +251,9 @@ pub(crate) fn emit_parse_fns(
                         }
                         WpdsResolveResult::MaxStepsExceeded { position } => {
                             Err(WpdsParseError::Incomplete { position })
+                        }
+                        WpdsResolveResult::AmbiguityBudget { budget, actual, position } => {
+                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position })
                         }
                     },
                     Err(exceeded) => Err(WpdsParseError::Incomplete {
@@ -394,6 +400,12 @@ pub(crate) fn emit_parse_fns(
                     WpdsResolveResult::MaxStepsExceeded { position } => {
                         (Err(WpdsParseError::Incomplete { position }), attempts)
                     }
+                    WpdsResolveResult::AmbiguityBudget { budget, actual, position } => {
+                        (
+                            Err(WpdsParseError::AmbiguityBudget { budget, actual, position }),
+                            attempts,
+                        )
+                    }
                 }
             }
         });
@@ -439,6 +451,18 @@ pub(crate) fn emit_parse_fns(
             Incomplete {
                 position: usize,
             },
+            /// M11.7 (2026-05-14): walker was configured with
+            /// `CursorBoundingMode::AmbiguityBudget(budget)` and the live
+            /// frontier exceeded that budget. `actual` is the frontier
+            /// size that triggered the overflow; `position` is the input
+            /// position at the overflow point. Callers can react by
+            /// relaxing the budget, switching strategy, or surfacing a
+            /// structured "input too ambiguous" error.
+            AmbiguityBudget {
+                budget: usize,
+                actual: usize,
+                position: usize,
+            },
         }
 
         impl std::fmt::Display for WpdsParseError {
@@ -462,6 +486,13 @@ pub(crate) fn emit_parse_fns(
                     }
                     WpdsParseError::Incomplete { position } => {
                         write!(f, "wpds parse incomplete at position {}", position)
+                    }
+                    WpdsParseError::AmbiguityBudget { budget, actual, position } => {
+                        write!(
+                            f,
+                            "wpds parse aborted at position {}: ambiguity budget {} exceeded by frontier of {} cursors",
+                            position, budget, actual,
+                        )
                     }
                 }
             }

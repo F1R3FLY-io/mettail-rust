@@ -658,6 +658,76 @@ pub enum WpdsResolveResult<W: SemiringRef> {
     /// Driver hit `max_steps` budget before reaching EOI. Caller may
     /// resume by extending the budget.
     MaxStepsExceeded { position: usize },
+    /// M11.7 (2026-05-14): the walker was configured with
+    /// `CursorBoundingMode::AmbiguityBudget(budget)` and the live frontier
+    /// exceeded that budget during a `step_fanout` iteration.
+    ///
+    /// **Mandate-compliant alternative to `BeamSize`**: unlike beam pruning
+    /// (which silently drops cursors via lex-min), the ambiguity budget
+    /// fails LOUDLY when the parse's cursor count would exceed the budget.
+    /// Callers can react: relax the budget, switch to a less-ambiguous
+    /// grammar variant, surface a structured "input too ambiguous" error
+    /// to the user, etc.
+    ///
+    /// `budget` is the configured limit; `actual` is the frontier size
+    /// that triggered the overflow; `position` is the input position when
+    /// the overflow was detected.
+    AmbiguityBudget {
+        budget: usize,
+        actual: usize,
+        position: usize,
+    },
+}
+
+/// M11.7 (2026-05-14): cursor-count bounding policy for the walker.
+///
+/// Replaces the M11.4-era `WpdsWalker::beam_size: Option<usize>` field
+/// with an explicit enum that makes the THREE possible bounding modes
+/// (unbounded / beam pruning / ambiguity budget) mutually exclusive at
+/// the type level — impossible to set both `BeamSize` and
+/// `AmbiguityBudget` simultaneously.
+///
+/// **Default**: `Unbounded` — pure ambiguity preservation, no cursor
+/// dropping. This is the M11 mandate-compliant baseline.
+///
+/// **Escape hatches** (opt-in):
+/// - `BeamSize(k)`: legacy beam pruning. Drops cursors beyond the top-K
+///   by lex-min weight at every step_fanout iteration. **MANDATE
+///   VIOLATION**: silently discards derivations via weight-based pick-one
+///   without evidence. Retained as an escape hatch for adversarial inputs
+///   that exhaust memory budget; prefer `AmbiguityBudget` for
+///   mandate-compliant cursor-count bounding.
+/// - `AmbiguityBudget(n)`: hard-cap the frontier size at `n` cursors. If
+///   the frontier would exceed `n`, the walker emits a structured
+///   `WpdsResolveResult::AmbiguityBudget` error rather than silently
+///   dropping cursors. Caller can detect the overflow and react (relax
+///   budget, switch strategy, surface to user). Mandate-compliant: no
+///   weight-based pick-one; the error is the evidence.
+///
+/// **Mutual exclusion**: the enum constructor enforces that exactly one
+/// mode is active at a time. `WpdsWalker::with_bounding_mode(mode)`
+/// replaces the prior `with_beam_size(k)` API; the legacy methods are
+/// retained as thin shims (`with_beam_size(k)` →
+/// `with_bounding_mode(CursorBoundingMode::BeamSize(k))`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CursorBoundingMode {
+    /// Default — pure ambiguity preservation; no cursor dropping.
+    Unbounded,
+    /// Legacy beam pruning. **MANDATE VIOLATION**: drops cursors by
+    /// lex-min weight at every step_fanout iteration. Use only as an
+    /// escape hatch for adversarial inputs; prefer
+    /// `AmbiguityBudget` for principled bounding.
+    BeamSize(usize),
+    /// Mandate-compliant cursor-count bounding. When the live frontier
+    /// would exceed the budget, emit a structured `AmbiguityBudget`
+    /// error rather than silently dropping cursors.
+    AmbiguityBudget(usize),
+}
+
+impl Default for CursorBoundingMode {
+    fn default() -> Self {
+        CursorBoundingMode::Unbounded
+    }
 }
 
 /// Stage 3.5b (2026-05-01): error returned by `WpdsWalker::run_to_end_of_input`

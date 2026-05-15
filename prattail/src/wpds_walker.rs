@@ -415,8 +415,12 @@ pub struct WpdsWalker<W: SemiringRef, E: WpdsStepEngine<W>> {
     engine: E,
     /// Most recently pushed GSS node id (the conceptual top).
     top_node: Option<crate::gss::GssNodeId>,
-    /// Optional beam pruning bound.
-    beam_size: Option<usize>,
+    /// M11.7 (2026-05-14): cursor-count bounding policy.
+    /// Default `Unbounded` (M11 mandate-compliant baseline). Opt-in to
+    /// `BeamSize(k)` (legacy beam pruning, mandate-violating escape hatch)
+    /// or `AmbiguityBudget(n)` (structured-error overflow,
+    /// mandate-compliant). See `CursorBoundingMode` docs for details.
+    bounding_mode: crate::wpds_runtime::CursorBoundingMode,
     /// Phase A.1: walker-owned accumulator for captured parse artifacts
     /// (tokens, identifiers, sub-terms). Semantic actions consume from
     /// and push back to this builder.
@@ -1631,6 +1635,31 @@ where
 ///
 /// These four deltas are NOT used by any non-recovery emitter — the
 /// detection is robust against accidental conflation.
+/// M11.7 (2026-05-14): decode the `AMBIGUITY_BUDGET_EXCEEDED:` sentinel
+/// `WpdsState::Error` message emitted by `maybe_prune_frontier`.
+///
+/// Returns `Some((budget, actual, position))` if the message has the
+/// sentinel shape; `None` otherwise (a regular parse-failed error).
+///
+/// Sentinel format (set in `maybe_prune_frontier`):
+///   "AMBIGUITY_BUDGET_EXCEEDED: budget={n} actual={k} position={pos}"
+fn parse_ambiguity_budget_sentinel(message: &str) -> Option<(usize, usize, usize)> {
+    let rest = message.strip_prefix("AMBIGUITY_BUDGET_EXCEEDED: ")?;
+    let mut budget: Option<usize> = None;
+    let mut actual: Option<usize> = None;
+    let mut position: Option<usize> = None;
+    for tok in rest.split_whitespace() {
+        if let Some(v) = tok.strip_prefix("budget=") {
+            budget = v.parse().ok();
+        } else if let Some(v) = tok.strip_prefix("actual=") {
+            actual = v.parse().ok();
+        } else if let Some(v) = tok.strip_prefix("position=") {
+            position = v.parse().ok();
+        }
+    }
+    Some((budget?, actual?, position?))
+}
+
 fn is_recovery_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
     branches.iter().any(|b| {
         matches!(
@@ -1793,7 +1822,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             weight: W::one_ref(),
             engine,
             top_node: None,
-            beam_size: None,
+            bounding_mode: crate::wpds_runtime::CursorBoundingMode::Unbounded,
             builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
@@ -1844,7 +1873,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             weight: W::one_ref(),
             engine,
             top_node: Some(top_id),
-            beam_size: None,
+            bounding_mode: crate::wpds_runtime::CursorBoundingMode::Unbounded,
             builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
@@ -1890,7 +1919,7 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
             weight: config.weight,
             engine,
             top_node,
-            beam_size: None,
+            bounding_mode: crate::wpds_runtime::CursorBoundingMode::Unbounded,
             builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
@@ -2075,8 +2104,42 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     pub fn publish_to_hang_dump_slot(&self) {}
 
     /// Enable beam pruning to at most `k` branches per frontier (builder style).
+    ///
+    /// **MANDATE VIOLATION** (M11.7, 2026-05-14): beam pruning silently
+    /// drops cursors via lex-min weight without evidence — violates the
+    /// "never disambiguate early" principle. Use only as an adversarial-
+    /// input escape hatch; prefer
+    /// [`Self::with_ambiguity_budget`] for mandate-compliant cursor-count
+    /// bounding (structured error on overflow rather than silent drop).
+    ///
+    /// Thin shim over [`Self::with_bounding_mode`]
+    /// (`CursorBoundingMode::BeamSize(k)`). Mutually exclusive with
+    /// `with_ambiguity_budget` — setting one replaces the other.
     pub fn with_beam_size(mut self, k: usize) -> Self {
-        self.beam_size = Some(k);
+        self.bounding_mode = crate::wpds_runtime::CursorBoundingMode::BeamSize(k);
+        self
+    }
+
+    /// M11.7 (2026-05-14): enable mandate-compliant cursor-count
+    /// bounding. When the live frontier would exceed `n` cursors, the
+    /// walker transitions to `WpdsState::Error` and the resolve step
+    /// returns `WpdsResolveResult::AmbiguityBudget { budget, actual,
+    /// position }` rather than silently dropping cursors.
+    ///
+    /// Mutually exclusive with [`Self::with_beam_size`] — setting one
+    /// replaces the other.
+    pub fn with_ambiguity_budget(mut self, n: usize) -> Self {
+        self.bounding_mode = crate::wpds_runtime::CursorBoundingMode::AmbiguityBudget(n);
+        self
+    }
+
+    /// M11.7 (2026-05-14): set the cursor-bounding mode directly. Replaces
+    /// any prior bounding mode. Mutually-exclusive by construction.
+    pub fn with_bounding_mode(
+        mut self,
+        mode: crate::wpds_runtime::CursorBoundingMode,
+    ) -> Self {
+        self.bounding_mode = mode;
         self
     }
 
@@ -2103,8 +2166,21 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     /// Same effect as [`Self::with_beam_size`] but mutates `self` instead
     /// of consuming. Useful when the walker is already wrapped (e.g., by
     /// a recovery driver holding a `&mut`).
+    ///
+    /// **MANDATE VIOLATION**: see [`Self::with_beam_size`] for the
+    /// rationale. Passing `None` resets bounding to `Unbounded`. Mutually
+    /// exclusive with the ambiguity budget — setting one mode replaces
+    /// the other.
     pub fn set_beam_size(&mut self, k: Option<usize>) {
-        self.beam_size = k;
+        self.bounding_mode = match k {
+            Some(n) => crate::wpds_runtime::CursorBoundingMode::BeamSize(n),
+            None => crate::wpds_runtime::CursorBoundingMode::Unbounded,
+        };
+    }
+
+    /// M11.7 (2026-05-14): set the cursor-bounding mode in-place.
+    pub fn set_bounding_mode(&mut self, mode: crate::wpds_runtime::CursorBoundingMode) {
+        self.bounding_mode = mode;
     }
 
     pub fn weight(&self) -> &W {
@@ -2130,8 +2206,22 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
     }
 
     /// Optional beam pruning bound (None = unlimited).
+    ///
+    /// M11.7 backward-compat accessor: returns `Some(k)` iff the bounding
+    /// mode is `BeamSize(k)`. For `AmbiguityBudget(n)` or `Unbounded`,
+    /// returns `None`. Use [`Self::bounding_mode`] to read the full mode
+    /// (including `AmbiguityBudget`).
     pub fn beam_size(&self) -> Option<usize> {
-        self.beam_size
+        match self.bounding_mode {
+            crate::wpds_runtime::CursorBoundingMode::BeamSize(k) => Some(k),
+            _ => None,
+        }
+    }
+
+    /// M11.7 (2026-05-14): read the full cursor-bounding mode (one of
+    /// `Unbounded`, `BeamSize(k)`, or `AmbiguityBudget(n)`).
+    pub fn bounding_mode(&self) -> crate::wpds_runtime::CursorBoundingMode {
+        self.bounding_mode
     }
 
     /// Snapshot the current configuration for checkpointing.
@@ -2560,15 +2650,43 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
                         },
                     }
                 }
-                WpdsState::Error { message } => WpdsResolveResult::ParseError {
-                    message,
-                    position: self.pos,
-                },
+                WpdsState::Error { message } => {
+                    // M11.7 (2026-05-14): decode the AMBIGUITY_BUDGET_EXCEEDED
+                    // sentinel emitted by `maybe_prune_frontier` and surface
+                    // as a structured `AmbiguityBudget` resolve result.
+                    if let Some((budget, actual, position)) =
+                        parse_ambiguity_budget_sentinel(&message)
+                    {
+                        WpdsResolveResult::AmbiguityBudget {
+                            budget,
+                            actual,
+                            position,
+                        }
+                    } else {
+                        WpdsResolveResult::ParseError {
+                            message,
+                            position: self.pos,
+                        }
+                    }
+                }
                 other => WpdsResolveResult::ParseError {
                     message: format!("incomplete parse in state {:?}", other),
                     position: self.pos,
                 },
             };
+        }
+        // Fanout mode: also decode the AMBIGUITY_BUDGET_EXCEEDED sentinel
+        // BEFORE the per-cursor accepting/dead classification.
+        if let WpdsState::Error { ref message } = self.state {
+            if let Some((budget, actual, position)) =
+                parse_ambiguity_budget_sentinel(message)
+            {
+                return WpdsResolveResult::AmbiguityBudget {
+                    budget,
+                    actual,
+                    position,
+                };
+            }
         }
         // Fanout mode: resolve over branch_cursors.
         // Stage 3.5b (2026-05-01): use `pos >= tokens.len()` rather than
@@ -5353,50 +5471,67 @@ impl<W: SemiringRef + crate::wpds_runtime::SnapshotWeight, E: WpdsStepEngine<W>>
         }];
     }
 
-    /// Stage 3.4 (2026-04-30): beam pruning over `branch_cursors`.
+    /// Stage 3.4 (2026-04-30): cursor-count bounding over `branch_cursors`.
     ///
-    /// When `beam_size = Some(k)` and the cursor count exceeds `k`, sort
-    /// cursors by weight (lex-min via `Semiring::plus` — see
-    /// `pick_lex_min_resolved` for the same comparator pattern) and
-    /// truncate to the top-`k`. When `beam_size = None`, no-op.
-    ///
-    /// The `plus`-based comparator works for any min-like semiring
-    /// (`LexicographicWeight`, `TropicalWeight`). For semirings whose
-    /// `plus` is not min-like (e.g., `BooleanWeight`'s OR), pruning is
-    /// effectively disabled — `cursor_a.plus(&cursor_b) == cursor_a`
-    /// loses its "a <= b" interpretation. This is acceptable; production
-    /// walkers always use `LexicographicWeight`.
+    /// M11.7 (2026-05-14): dispatches on [`CursorBoundingMode`]:
+    /// - `Unbounded` (default): no-op. Mandate-compliant baseline.
+    /// - `BeamSize(k)`: legacy beam pruning. **MANDATE VIOLATION**: drops
+    ///   cursors beyond the top-`k` by lex-min weight without evidence.
+    ///   Use only as an adversarial-input escape hatch.
+    /// - `AmbiguityBudget(n)`: if `branch_cursors.len() > n`, transition
+    ///   the walker to `WpdsState::Error` with an "AMBIGUITY_BUDGET_EXCEEDED:"
+    ///   sentinel prefix the resolve step decodes into
+    ///   `WpdsResolveResult::AmbiguityBudget`. Mandate-compliant: no
+    ///   silent dropping; caller observes the structured error and reacts.
     ///
     /// Called from `step_fanout` after the per-cursor step pass so the
-    /// pruned frontier is the input to the next saturation iteration.
+    /// pruned/checked frontier is the input to the next saturation
+    /// iteration.
     fn maybe_prune_frontier(&mut self) {
-        let beam = match self.beam_size {
-            Some(k) => k,
-            None => return, // unlimited beam, no pruning
-        };
-        if self.branch_cursors.len() <= beam {
-            return;
-        }
-        // Stable sort by weight ascending under the `plus`-based lex-min
-        // comparator. Keeps source-order for ties (matching
-        // `pick_lex_min_resolved`'s tie-break semantics).
-        self.branch_cursors.sort_by(|a, b| {
-            let merged = a.weight.plus_ref(&b.weight);
-            // a wins iff a.plus(b) == a (a is the lex-smaller).
-            // On `a == b`, both equal merged → Ordering::Equal.
-            let a_wins = merged == a.weight;
-            let b_wins = merged == b.weight;
-            match (a_wins, b_wins) {
-                (true, true) => std::cmp::Ordering::Equal,
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                // Neither wins under plus-based ordering — tropical/lex
-                // semirings always satisfy at least one. Fall back to
-                // Equal so the sort is stable and deterministic.
-                (false, false) => std::cmp::Ordering::Equal,
+        match self.bounding_mode {
+            crate::wpds_runtime::CursorBoundingMode::Unbounded => {}
+            crate::wpds_runtime::CursorBoundingMode::BeamSize(k) => {
+                if self.branch_cursors.len() <= k {
+                    return;
+                }
+                // Stable sort by weight ascending under the `plus`-based
+                // lex-min comparator. Keeps source-order for ties (matching
+                // `pick_lex_min_resolved`'s tie-break semantics).
+                //
+                // **MANDATE VIOLATION**: drops cursors below the top-K
+                // without evidence. Retained only for adversarial-input
+                // recovery; see [`CursorBoundingMode::BeamSize`] docs.
+                self.branch_cursors.sort_by(|a, b| {
+                    let merged = a.weight.plus_ref(&b.weight);
+                    let a_wins = merged == a.weight;
+                    let b_wins = merged == b.weight;
+                    match (a_wins, b_wins) {
+                        (true, true) => std::cmp::Ordering::Equal,
+                        (true, false) => std::cmp::Ordering::Less,
+                        (false, true) => std::cmp::Ordering::Greater,
+                        (false, false) => std::cmp::Ordering::Equal,
+                    }
+                });
+                self.branch_cursors.truncate(k);
             }
-        });
-        self.branch_cursors.truncate(beam);
+            crate::wpds_runtime::CursorBoundingMode::AmbiguityBudget(n) => {
+                let actual = self.branch_cursors.len();
+                if actual <= n {
+                    return;
+                }
+                // Mandate-compliant overflow: transition the walker to an
+                // Error state encoding the budget violation in the sentinel-
+                // prefixed message. `resolve_at_end_of_input` decodes the
+                // sentinel and returns `WpdsResolveResult::AmbiguityBudget
+                // { budget, actual, position }`.
+                self.state = WpdsState::Error {
+                    message: format!(
+                        "AMBIGUITY_BUDGET_EXCEEDED: budget={} actual={} position={}",
+                        n, actual, self.pos,
+                    ),
+                };
+            }
+        }
     }
 
     // Phase 5.6-tail follow-up (2026-05-12): two more orphaned methods
