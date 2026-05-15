@@ -6435,12 +6435,18 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
 
         // SPPF mirror: pop arity children from sppf_stack, intern Packing,
         // intern Symbol(cat_src_idx, lo, hi), link, push Symbol id.
-        // Pre-condition for soundness: cursor.sppf_stack.len() >= arity.
-        // Defensive: if the cursor's SPPF stack is short of arity (which
-        // can happen during dual-mode bootstrap on collection-using or
-        // optional-scope-using rules that haven't fully mirrored), skip
-        // the SPPF op rather than panic — the builder side is correct
-        // and tests pass; SPPF gaps will be filled by C4-C5.
+        // Pre-condition: cursor.sppf_stack.len() >= arity. Phase 3.1.1 (Bug P):
+        // debug_assert exposes gap sites — every emit_push_* that fires
+        // before a reduce MUST mirror via a corresponding sppf_stack.push.
+        debug_assert!(
+            cursor.sppf_stack.len() >= arity,
+            "Bug P: sppf_stack underflow in emit_fire_action: cat={} rule={} arity={} have={} (builder side: {})",
+            cat_src_idx,
+            rule_idx,
+            arity,
+            cursor.sppf_stack.len(),
+            cursor.builder.len(),
+        );
         if cursor.sppf_stack.len() >= arity {
             let split_at = cursor.sppf_stack.len() - arity;
             let children: Vec<crate::sppf::SppfId> =
