@@ -2715,6 +2715,12 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             if let Some(cursor) = self.branch_cursors.first() {
                 self.builder = (*cursor.builder).clone();
             }
+            // C6: extract the singleton cursor's SPPF root.
+            let det_sppf_root = self
+                .branch_cursors
+                .first()
+                .and_then(|c| c.sppf_stack.last().copied())
+                .unwrap_or(crate::sppf::SPPF_ID_NONE);
             return match self.state.clone() {
                 WpdaState::Accepted => {
                     let term = self.builder.take_dyn_result();
@@ -2723,6 +2729,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                         Some(t) => WpdaResolveResult::Accepted {
                             weights: vec![weight],
                             terms: vec![t],
+                            roots: vec![det_sppf_root],
                         },
                         None => WpdaResolveResult::ParseError {
                             message: "walker accepted but builder result was empty".to_string(),
@@ -2805,6 +2812,13 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 // mock W (no snapshot semantics).
                 let winner_idx = accepting_indices[0];
                 let winner_weight = self.branch_cursors[winner_idx].weight.clone();
+                // C6: capture the winner's SPPF root BEFORE commit_winner
+                // (which may reset cursor.sppf_stack).
+                let winner_sppf_root = self.branch_cursors[winner_idx]
+                    .sppf_stack
+                    .last()
+                    .copied()
+                    .unwrap_or(crate::sppf::SPPF_ID_NONE);
                 let snapshots = crate::wpda_runtime::SnapshotWeight::entries_snapshots(
                     &self.branch_cursors[winner_idx].weight,
                 );
@@ -2816,6 +2830,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                         Some(t) => WpdaResolveResult::Accepted {
                             weights: vec![winner_weight],
                             terms: vec![t],
+                            roots: vec![winner_sppf_root],
                         },
                         None => WpdaResolveResult::ParseError {
                             message: "winner committed but builder result was empty"
@@ -2827,11 +2842,17 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 let mut weights: Vec<W> = Vec::with_capacity(snapshots.len());
                 let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> =
                     Vec::with_capacity(snapshots.len());
+                let mut roots: Vec<crate::sppf::SppfId> = Vec::with_capacity(snapshots.len());
                 for snap_arc in snapshots {
                     let mut snap_builder: SemanticBuilder = (*snap_arc).clone();
                     if let Some(t) = snap_builder.take_dyn_result() {
                         weights.push(winner_weight.clone());
                         terms.push(t);
+                        // C6: each snapshot-derivation references the
+                        // SAME winner_sppf_root (Symbol-dedup). C7 will
+                        // switch realization to use this root instead of
+                        // the snapshot builder.
+                        roots.push(winner_sppf_root);
                     }
                 }
                 if weights.is_empty() {
@@ -2841,7 +2862,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                         position: self.pos,
                     };
                 }
-                WpdaResolveResult::Accepted { weights, terms }
+                WpdaResolveResult::Accepted { weights, terms, roots }
             }
             _ => {
                 // M7c (2026-05-13): preserve all Accepted derivations as
@@ -2858,8 +2879,16 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 let mut weights: Vec<W> = Vec::with_capacity(accepting_indices.len());
                 let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> =
                     Vec::with_capacity(accepting_indices.len());
+                let mut roots: Vec<crate::sppf::SppfId> =
+                    Vec::with_capacity(accepting_indices.len());
                 for &idx in &accepting_indices {
                     let cursor_weight = self.branch_cursors[idx].weight.clone();
+                    // C6: per-cursor SPPF root from the top of sppf_stack.
+                    let cursor_root = self.branch_cursors[idx]
+                        .sppf_stack
+                        .last()
+                        .copied()
+                        .unwrap_or(crate::sppf::SPPF_ID_NONE);
                     let snapshots =
                         crate::wpda_runtime::SnapshotWeight::entries_snapshots(
                             &self.branch_cursors[idx].weight,
@@ -2871,6 +2900,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                         if let Some(t) = cursor_builder.take_dyn_result() {
                             weights.push(cursor_weight);
                             terms.push(t);
+                            roots.push(cursor_root);
                         }
                     } else {
                         // Production W path: each multiset entry's snapshot
@@ -2884,6 +2914,11 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                             if let Some(t) = snap_builder.take_dyn_result() {
                                 weights.push(cursor_weight.clone());
                                 terms.push(t);
+                                // C6: snapshot-derivations share the same
+                                // cursor's SPPF root via Symbol-dedup;
+                                // realization at this root fans out via
+                                // packings to recover the per-snapshot AST.
+                                roots.push(cursor_root);
                             }
                         }
                     }
@@ -2903,7 +2938,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                         position: self.pos,
                     };
                 }
-                WpdaResolveResult::Accepted { weights, terms }
+                WpdaResolveResult::Accepted { weights, terms, roots }
             }
         }
     }

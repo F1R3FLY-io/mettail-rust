@@ -650,6 +650,17 @@ pub enum WpdaResolveResult<W: SemiringRef> {
     Accepted {
         weights: Vec<W>,
         terms: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+        /// Option C / C6 (2026-05-15): each accepting cursor's SPPF root
+        /// id. Parallel to `weights` and `terms` (same length). Used by
+        /// the SPPF realization path (`sppf_realize::realize_all`) in
+        /// C7+ once the facade switches over. Through C6-C8 the SPPF
+        /// path coexists with `terms`; C9 removes `terms` entirely.
+        ///
+        /// `crate::sppf::SPPF_ID_NONE` sentinel here means the cursor
+        /// had no SPPF root (e.g., empty sppf_stack at EOI), which
+        /// indicates a dual-mode bootstrap gap rather than a structural
+        /// problem.
+        roots: Vec<crate::sppf::SppfId>,
     },
     /// Zero accepting configurations at EOI — input cannot be parsed by
     /// the grammar. `position` is where the cursor stalled (max position

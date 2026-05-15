@@ -132,7 +132,7 @@ pub(crate) fn emit_parse_fns(
                 );
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
                     Ok(()) => match walker.resolve_at_end_of_input(&src) {
-                        WpdaResolveResult::Accepted { weights, terms } => {
+                        WpdaResolveResult::Accepted { weights, terms, roots: _ } => {
                             *pos = walker.position();
                             // Pick first term + its associated DerivationWeight
                             // for backward-compat single-result return. Callers
@@ -215,7 +215,7 @@ pub(crate) fn emit_parse_fns(
                 );
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
-                        WpdaResolveResult::Accepted { weights, terms } => {
+                        WpdaResolveResult::Accepted { weights, terms, roots: _ } => {
                             *pos = walker.position();
                             if terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
