@@ -332,9 +332,19 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     let with_weight = #with_weight_fn;
                     let mut pos = 0usize;
                     match with_weight(&kinds, &texts, &mut pos, 0) {
-                        Ok((result, weight)) => {
+                        Ok((result, dw)) => {
+                            // M11.6b (D5 semver, 2026-05-14): `dw` is now a
+                            // `DerivationWeight<LexicographicWeight,
+                            // DerivationSnapshot>` multiset. Project to the
+                            // first entry's lex weight for the confidence
+                            // calculation — backward-compat with the
+                            // pre-M11.6b `LexicographicWeight` direct access.
+                            let cost = dw
+                                .first_inner()
+                                .map(|w| w.primary.0)
+                                .unwrap_or(0.0);
                             // exp(-cost) ∈ (0, 1]; clamp for NaN/Inf.
-                            let confidence = (-weight.primary.0).exp();
+                            let confidence = (-cost).exp();
                             let confidence = if confidence.is_finite() && confidence > 0.0 {
                                 confidence.min(1.0)
                             } else {

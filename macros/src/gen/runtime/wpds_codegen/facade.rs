@@ -96,21 +96,25 @@ pub(crate) fn emit_parse_fns(
             ) -> Result<
                 (
                     #cat_ident,
-                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                    mettail_prattail::automata::derivation_weight::DerivationWeight<
+                        mettail_prattail::automata::lex_weight::LexicographicWeight,
+                        mettail_prattail::wpds_runtime::DerivationSnapshot,
+                    >,
                 ),
                 WpdsParseError,
             > {
                 use mettail_prattail::wpds_runtime::WpdsResolveResult;
                 use mettail_prattail::wpds_walker::WpdsWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
-                // M11.4 (2026-05-14): walker W lifted to
-                // DerivationWeight<LexicographicWeight, DerivationSnapshot>
-                // — multiset semiring that preserves all derivations through
-                // merge_equivalent_cursors. Public signature stays
-                // (Cat, LexicographicWeight) for backward compat; first
-                // multiset entry's lex weight is projected via
-                // `dw.first_inner()`. M11.6b (D5 semver) will lift this
-                // public signature to expose DerivationWeight directly.
+                // M11.6b (D5 semver, 2026-05-14): public return type now
+                // exposes the full `DerivationWeight<...>` multiset rather
+                // than projecting to `LexicographicWeight` via `first_inner`.
+                // Callers that only want the headline lex weight can call
+                // `dw.first_inner()` themselves; callers that want all
+                // derivations' weights can iterate `dw.entries`. Migrates
+                // ~15-25 call sites mechanically (each adds a
+                // `.first_inner().cloned().unwrap_or_else(|| ::one())`
+                // when they need the scalar).
                 use mettail_prattail::automata::derivation_weight::DerivationWeight;
                 use mettail_prattail::wpds_runtime::DerivationSnapshot;
                 use mettail_prattail::automata::semiring::SemiringRef;
@@ -130,8 +134,10 @@ pub(crate) fn emit_parse_fns(
                     Ok(()) => match walker.resolve_at_end_of_input(&src) {
                         WpdsResolveResult::Accepted { weights, terms } => {
                             *pos = walker.position();
-                            // Pick first term for backward-compat (D5 semver
-                            // in M11.6b lifts this to multi-result).
+                            // Pick first term + its associated DerivationWeight
+                            // for backward-compat single-result return. Callers
+                            // that want all derivations should use
+                            // `parse_<Cat>_via_wpds_all_with_source`.
                             let term = terms
                                 .into_iter()
                                 .next()
@@ -140,23 +146,11 @@ pub(crate) fn emit_parse_fns(
                                 .into_iter()
                                 .next()
                                 .ok_or(WpdsParseError::EmptyResult)?;
-                            // M11.4 (D5 projection): the first entry of the
-                            // first cursor's multiset is the lex-min winner's
-                            // weight under the existing tiebreak order.
-                            let weight = dw
-                                .first_inner()
-                                .cloned()
-                                .unwrap_or_else(|| {
-                                    // Empty multiset is the additive identity
-                                    // (zero); fall back to LexicographicWeight::one().
-                                    use mettail_prattail::automata::semiring::Semiring;
-                                    LexicographicWeight::one()
-                                });
                             let arc = std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map_err(|_| WpdsParseError::EmptyResult)?;
                             let typed = std::sync::Arc::try_unwrap(arc)
                                 .unwrap_or_else(|arc| (*arc).clone());
-                            Ok((typed, weight))
+                            Ok((typed, dw))
                         }
                         WpdsResolveResult::ParseError { message, position } => {
                             Err(WpdsParseError::ParseFailed {
