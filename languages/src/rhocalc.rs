@@ -990,44 +990,27 @@ language! {
             if let Name::NQuote(ref p) = n.as_ref(),
             let res = p.as_ref().clone();
 
-        // many-step to a result
-        relation path(Proc, Proc);
-        path(p0, p1) <-- rw_proc(p0, p1);
-        path(p0, p2) <-- path(p0, p1), path(p1, p2);
-
-        // or we can store every step!
-        relation path_vec(Vec<Proc>);
-        path_vec(xs) <--
-            proc(x0), rw_proc(x0,x1),
-            let xs = vec![x0.clone(), x1.clone()];
-        path_vec(zs) <--
-            path_vec(xs), path_vec(ys),
-            if xs.last() == ys.first(),
-            let zs = [xs.as_slice(), ys.as_slice()].concat();
-
-        // paths where term size (display length) strictly decreases at every step
-        // TODO: currently makes execution slow; investigate why
-        // relation shrinking_path(Vec<Proc>);
-        // shrinking_path(xs) <--
-        //     path_vec(xs),
-        //     if xs.windows(2).all(|w| w[0].to_string().len() > w[1].to_string().len());
-
-        // context-labelled transition system:
-        // p -c-> q if c(p)~>q
-        relation trans(Proc, Proc, Proc);
-        trans(p,c,q) <--
-            step_term(p), proc(c),
-            if let Proc::LamProc(_) = c,
-            let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())),
-            let res = app.normalize(),
-            path(res.clone(), q);
-
-        trans(p,c,q) <--
-            step_term(p), proc(c),
-            if let Proc::MLamProc(_) = c,
-            let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]),
-            let res = app.normalize(),
-            path(res.clone(), q);
+        // Phase 1 (2026-05-16): removed `path`, `path_vec`, `trans` relations.
+        // All three had zero downstream consumers: `run_ascent` result
+        // extraction (`runtime/src/language.rs:330-343`) reads only
+        // `proc` / `rw_proc` / `eq_proc` via AscentResults.normal_forms /
+        // rewrites_from; `trans`'s sole reader was the commented-out
+        // `garbage` relation; `path` was read only by `trans`; `path_vec`
+        // had no consumer at all (kept historically per commit 94250ed as
+        // a syntactic demo that the macro parser handles `relation(Vec<T>)`).
+        // The `path_vec` self-concatenation rule (`path_vec(zs) <-- path_vec(xs),
+        // path_vec(ys), if xs.last() == ys.first(), ...`) was mathematically
+        // unbounded: any rw_proc graph with dense joins produced strictly-
+        // growing Vec<Proc> facts ([a,b,c] + [a,b,c] → [a,b,c,b,c] → ...).
+        // Empirically this caused 8 GB OOM in ~6 min on `{1+2+3}` reducer
+        // tests (chained_add, grouped_mul, str_of_add, str_of_eq,
+        // str_of_zero_gt_zero). The author's own TODO comment at the (now
+        // removed) `shrinking_path` stub acknowledged the issue.
+        //
+        // Future direction: if shrinking-step semantics are wanted, the
+        // principled implementation is `shrink_step(p,q) <-- rw_proc(p,q),
+        // if p.to_string().len() > q.to_string().len()` — bounded by
+        // |rw_proc|, no transitive Vec<Proc> accumulation.
 
         // contexts for testing (TODO: auto-generate)
         // proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
