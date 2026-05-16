@@ -407,6 +407,22 @@ pub enum WpdaStepAction<W: SemiringRef> {
 /// at their own pace. The walker tracks state, GSS, cursor position, and
 /// cumulative weight; it consults the [`WpdaEngine`] for per-language
 /// decisions.
+/// Phase 3.1.6 (C7b cycle-handling, 2026-05-15): node-color for the
+/// tri-color DFS in `realize_root_to_terms`. WHITE = unvisited (absent
+/// from the colors map); GRAY = currently on the DFS stack;
+/// BLACK = memoized (Phase::Leave complete).
+///
+/// Encountering a GRAY at Phase::Enter is a back-edge — the SPPF has a
+/// cycle (same-cat Symbol-dedup at the same `(nt, lo, hi)`). Per
+/// Scott-Johnstone 2010 GLL §5, cycles contribute NO new derivations
+/// beyond the non-cyclic packings; cyclic packings are skipped at the
+/// Symbol arm of `realize_node_leave`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RealizeColor {
+    Gray,
+    Black,
+}
+
 pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     state: WpdaState,
     gss: WpdaGss<W>,
@@ -2874,9 +2890,23 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                         roots.push(winner_sppf_root);
                     }
                 }
+                // C7b cycle-handling (Phase 3.1.6, 2026-05-15): even when
+                // the snapshot multiset path produced no extractable
+                // terms (M11 regression on cross-cat / cyclic-grammar
+                // paths), the SPPF root is independently valid. Return
+                // Accepted with the SPPF root and a synthetic weight so
+                // the facade can realize via `realize_root_to_terms`.
                 if weights.is_empty() {
+                    if winner_sppf_root != crate::sppf::SPPF_ID_NONE {
+                        return WpdaResolveResult::Accepted {
+                            weights: vec![winner_weight],
+                            terms: Vec::new(),
+                            roots: vec![winner_sppf_root],
+                        };
+                    }
                     return WpdaResolveResult::ParseError {
-                        message: "winner committed but multiset snapshots had no extractable terms"
+                        message: "winner committed but no terms extractable from \
+                                  either snapshot path or SPPF root"
                             .to_string(),
                         position: self.pos,
                     };
@@ -2990,57 +3020,85 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         }
         let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>> =
             std::collections::HashMap::new();
-        // Bottom-up realization via explicit work-stack to avoid host-stack
-        // recursion on deep parses (per project mandate). Two phases per
-        // node id: Enter pushes children to be visited; Leave combines
-        // results.
+        // Phase 3.1.6 (C7b cycle-handling, 2026-05-15): tri-color DFS per
+        // Scott-Johnstone GLL parsing 2010 §5 ("Cyclic productions and
+        // unit-rules") and Tomita 1986 §6.3 ("Cyclic Grammars").
+        //
+        // SPPF can have cycles when same-cat reduces hit Symbol-dedup at
+        // the same (nt, lo, hi) span. The cycle represents an unbounded
+        // ambiguity-class that, by the GLL soundness theorem, contributes
+        // NO new derivations beyond the non-cyclic packings at the same
+        // Symbol. Detect back-edges at Phase::Enter and short-circuit:
+        // - WHITE: unvisited
+        // - GRAY: currently on the DFS stack (in-progress)
+        // - BLACK: memoized (Phase::Leave completed)
+        //
+        // Encountering a GRAY at Phase::Enter is a back-edge. Record an
+        // empty memo entry and continue — the cyclic packing's
+        // contribution is discarded at the Symbol arm of
+        // realize_node_leave (skip-gray-child logic).
+        //
+        // See /home/dylon/.claude/plans/sppf-cycle-handling-principled.md.
+        let mut colors: std::collections::HashMap<crate::sppf::SppfId, RealizeColor> =
+            std::collections::HashMap::new();
         enum Phase {
             Enter,
             Leave,
         }
         let mut stack: Vec<(crate::sppf::SppfId, Phase)> = vec![(root, Phase::Enter)];
         while let Some((id, phase)) = stack.pop() {
-            if memo.contains_key(&id) {
-                continue;
-            }
             match phase {
-                Phase::Enter => {
-                    stack.push((id, Phase::Leave));
-                    match self.sppf.node(id) {
-                        Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                            for &p in self.sppf.packings_of(id) {
-                                if !memo.contains_key(&p) {
-                                    stack.push((p, Phase::Enter));
-                                }
-                            }
-                        }
-                        Some(crate::sppf::SppfNode::Packing { children, .. }) => {
-                            for &c in children {
-                                if !memo.contains_key(&c) {
-                                    stack.push((c, Phase::Enter));
-                                }
-                            }
-                        }
-                        Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
-                            // Recursively realize each collected SppfId so
-                            // the Collection arg's contents are materialized.
-                            if let Some(items) = self.sppf_collection_arena.get(*cid as usize) {
-                                for &item in items {
-                                    if !memo.contains_key(&item) {
-                                        stack.push((item, Phase::Enter));
+                Phase::Enter => match colors.get(&id) {
+                    Some(RealizeColor::Black) => continue,
+                    Some(RealizeColor::Gray) => {
+                        // Back-edge — cycle detected. Record empty
+                        // contribution; do NOT re-traverse. The realize
+                        // pass will skip cyclic packings via colors lookup.
+                        memo.entry(id).or_insert_with(Vec::new);
+                        continue;
+                    }
+                    None => {
+                        colors.insert(id, RealizeColor::Gray);
+                        stack.push((id, Phase::Leave));
+                        match self.sppf.node(id) {
+                            Some(crate::sppf::SppfNode::Symbol { .. }) => {
+                                for &p in self.sppf.packings_of(id) {
+                                    if colors.get(&p) != Some(&RealizeColor::Black) {
+                                        stack.push((p, Phase::Enter));
                                     }
                                 }
                             }
-                        }
-                        Some(_) | None => {
-                            // Leaves (Terminal, Epsilon, OptAbsent, Predicate)
-                            // have no children to traverse.
+                            Some(crate::sppf::SppfNode::Packing { children, .. }) => {
+                                for &c in children {
+                                    if colors.get(&c) != Some(&RealizeColor::Black) {
+                                        stack.push((c, Phase::Enter));
+                                    }
+                                }
+                            }
+                            Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
+                                // Recursively realize each collected SppfId so
+                                // the Collection arg's contents are materialized.
+                                if let Some(items) =
+                                    self.sppf_collection_arena.get(*cid as usize)
+                                {
+                                    for &item in items {
+                                        if colors.get(&item) != Some(&RealizeColor::Black) {
+                                            stack.push((item, Phase::Enter));
+                                        }
+                                    }
+                                }
+                            }
+                            Some(_) | None => {
+                                // Leaves (Terminal, Epsilon, OptAbsent, Predicate)
+                                // have no children to traverse.
+                            }
                         }
                     }
-                }
+                },
                 Phase::Leave => {
-                    let realized = self.realize_node_leave(id, &memo, limit);
+                    let realized = self.realize_node_leave(id, &memo, &colors, limit);
                     memo.insert(id, realized);
+                    colors.insert(id, RealizeColor::Black);
                 }
             }
         }
@@ -3064,6 +3122,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         &self,
         id: crate::sppf::SppfId,
         memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>>,
+        colors: &std::collections::HashMap<crate::sppf::SppfId, RealizeColor>,
         limit: Option<usize>,
     ) -> Vec<ActionArg> {
         match self.sppf.node(id) {
@@ -3147,17 +3206,33 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             }
             Some(crate::sppf::SppfNode::Symbol { .. }) => {
                 // Concat all packings' realizations.
+                //
+                // Phase 3.1.6 cycle-skip (2026-05-15): per Scott-Johnstone
+                // 2010 GLL §5, a packing whose memo Vec is empty AND
+                // whose color is still Gray represents a cycle-via-this-
+                // packing — its derivations are STRICTLY redundant with
+                // the non-cyclic packings of this Symbol. Skip it.
+                //
+                // BLACK packings with empty memo are legitimate
+                // "produces-nothing" terminal-equivalents (e.g.,
+                // OptAbsent under an empty optional); include them.
                 let mut out: Vec<ActionArg> = Vec::new();
                 for &p in self.sppf.packings_of(id) {
-                    if let Some(p_results) = memo.get(&p) {
-                        for arg in p_results {
-                            if let Some(cap) = limit {
-                                if out.len() >= cap {
-                                    return out;
-                                }
+                    let p_color = colors.get(&p).copied();
+                    let p_results = match memo.get(&p) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    if p_results.is_empty() && p_color == Some(RealizeColor::Gray) {
+                        continue; // cycle back-edge — skip
+                    }
+                    for arg in p_results {
+                        if let Some(cap) = limit {
+                            if out.len() >= cap {
+                                return out;
                             }
-                            out.push(arg.clone());
                         }
+                        out.push(arg.clone());
                     }
                 }
                 out
@@ -3191,8 +3266,18 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     Some(v) => v,
                     None => return Vec::new(),
                 };
-                let mut next: Vec<Vec<ActionArg>> =
-                    Vec::with_capacity(combos.len().saturating_mul(child_results.len().max(1)));
+                // C7b memory-safety fix (Phase 3.1.6, 2026-05-15):
+                // pre-allocating combos×child_results ignored the `limit`
+                // cap and produced O(N^K) RAM even though the inner loop
+                // bounded the result. Cap pre-allocation at `limit` so
+                // wide-fanout productions don't OOM during realization.
+                let unbounded_capacity =
+                    combos.len().saturating_mul(child_results.len().max(1));
+                let pre_alloc = match limit {
+                    Some(cap) => cap.min(unbounded_capacity),
+                    None => unbounded_capacity,
+                };
+                let mut next: Vec<Vec<ActionArg>> = Vec::with_capacity(pre_alloc);
                 for combo in &combos {
                     for arg in child_results {
                         let mut ext = combo.clone();
@@ -3258,8 +3343,15 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     return Vec::new();
                 }
             };
-            let mut next: Vec<Vec<ActionArg>> =
-                Vec::with_capacity(combos.len().saturating_mul(child_results.len().max(1)));
+            // Same C7b memory-safety fix as above: cap pre-allocation at
+            // `limit` to bound O(N^K) RAM on wide-fanout productions.
+            let unbounded_capacity =
+                combos.len().saturating_mul(child_results.len().max(1));
+            let pre_alloc = match limit {
+                Some(cap) => cap.min(unbounded_capacity),
+                None => unbounded_capacity,
+            };
+            let mut next: Vec<Vec<ActionArg>> = Vec::with_capacity(pre_alloc);
             for combo in &combos {
                 for arg in child_results {
                     let mut ext = combo.clone();

@@ -256,8 +256,16 @@ pub fn realize_into<R: ActionResolver>(
                             let child_results = memo
                                 .get(&child_id)
                                 .expect("child visited before its parent packing");
-                            let mut next: Vec<Vec<R::Out>> =
-                                Vec::with_capacity(combos.len() * child_results.len().max(1));
+                            // C7b memory-safety fix (Phase 3.1.6,
+                            // 2026-05-15): cap pre-allocation at `limit`
+                            // to bound O(N^K) RAM on wide-fanout productions.
+                            let unbounded_capacity =
+                                combos.len().saturating_mul(child_results.len().max(1));
+                            let pre_alloc = match limit {
+                                Some(cap) => cap.min(unbounded_capacity),
+                                None => unbounded_capacity,
+                            };
+                            let mut next: Vec<Vec<R::Out>> = Vec::with_capacity(pre_alloc);
                             for combo in &combos {
                                 for child_value in child_results {
                                     let mut extended = combo.clone();

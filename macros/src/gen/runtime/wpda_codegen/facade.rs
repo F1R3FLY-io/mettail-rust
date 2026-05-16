@@ -132,13 +132,20 @@ pub(crate) fn emit_parse_fns(
                 );
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
                     Ok(()) => match walker.resolve_at_end_of_input(&src) {
-                        WpdaResolveResult::Accepted { weights, terms, roots: _ } => {
+                        WpdaResolveResult::Accepted { weights, roots, .. } => {
                             *pos = walker.position();
-                            // Pick first term + its associated DerivationWeight
-                            // for backward-compat single-result return. Callers
-                            // that want all derivations should use
-                            // `parse_<Cat>_via_wpda_all_with_source`.
-                            let term = terms
+                            // C7b (Phase 3.1.6, 2026-05-15): realize the
+                            // first SPPF root. Packing-fanout produces ALL
+                            // derivations of the root Symbol; here we take
+                            // the first for backward-compat single-result
+                            // return. Callers wanting all derivations should
+                            // use `parse_<Cat>_via_wpda_all_with_source`.
+                            let root = roots
+                                .first()
+                                .copied()
+                                .ok_or(WpdaParseError::EmptyResult)?;
+                            let term = walker
+                                .realize_root_to_terms(root, Some(1))
                                 .into_iter()
                                 .next()
                                 .ok_or(WpdaParseError::EmptyResult)?;
@@ -215,18 +222,31 @@ pub(crate) fn emit_parse_fns(
                 );
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
-                        WpdaResolveResult::Accepted { weights, terms, roots: _ } => {
+                        WpdaResolveResult::Accepted { weights, roots, .. } => {
                             *pos = walker.position();
-                            if terms.is_empty() {
-                                return Err(WpdaParseError::EmptyResult);
+                            // C7b (Phase 3.1.6, 2026-05-15): realize all
+                            // SPPF roots; packing-fanout produces the
+                            // ambiguity-preserving Vec<Cat>. `Some(64)` caps
+                            // exponential AST counts (plan §4.3).
+                            const REALIZE_CAP: usize = 64;
+                            let mut typed_terms: Vec<#cat_ident> = Vec::new();
+                            for &root in &roots {
+                                if typed_terms.len() >= REALIZE_CAP {
+                                    break;
+                                }
+                                for term in walker.realize_root_to_terms(root, Some(REALIZE_CAP)) {
+                                    let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                        .map_err(|_| WpdaParseError::EmptyResult)?;
+                                    let typed = std::sync::Arc::try_unwrap(arc)
+                                        .unwrap_or_else(|arc| (*arc).clone());
+                                    typed_terms.push(typed);
+                                    if typed_terms.len() >= REALIZE_CAP {
+                                        break;
+                                    }
+                                }
                             }
-                            let mut typed_terms: Vec<#cat_ident> = Vec::with_capacity(terms.len());
-                            for term in terms {
-                                let arc = std::sync::Arc::downcast::<#cat_ident>(term)
-                                    .map_err(|_| WpdaParseError::EmptyResult)?;
-                                let typed = std::sync::Arc::try_unwrap(arc)
-                                    .unwrap_or_else(|arc| (*arc).clone());
-                                typed_terms.push(typed);
+                            if typed_terms.is_empty() {
+                                return Err(WpdaParseError::EmptyResult);
                             }
                             // Project each DerivationWeight to its first-entry
                             // lex weight for backward-compat Vec<LexicographicWeight>
@@ -376,11 +396,19 @@ pub(crate) fn emit_parse_fns(
                     })
                     .collect();
                 match resolve {
-                    WpdaResolveResult::Accepted { terms, .. } => {
+                    WpdaResolveResult::Accepted { roots, .. } => {
                         *pos = walker.position();
-                        // M7c (2026-05-13): pick the first term for
-                        // backward-compat (M8 returns AmbiguousResult).
-                        let result = match terms.into_iter().next() {
+                        // C7b (Phase 3.1.6, 2026-05-15): realize the first
+                        // SPPF root for backward-compat single-result return.
+                        let pick = roots
+                            .first()
+                            .and_then(|&root|
+                                walker
+                                    .realize_root_to_terms(root, Some(1))
+                                    .into_iter()
+                                    .next()
+                            );
+                        let result = match pick {
                             Some(term) => std::sync::Arc::downcast::<#cat_ident>(term)
                                 .map(|arc| std::sync::Arc::try_unwrap(arc)
                                     .unwrap_or_else(|arc| (*arc).clone()))
