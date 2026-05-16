@@ -2810,6 +2810,50 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 };
             }
         }
+        // Phase E Fix A (2026-05-16): Premature-Accepted cursor filter.
+        //
+        // A cursor in `WpdaState::Accepted` but with `cursor.pos < eof_node`
+        // is evidence-failed: it committed to a parse path (typically a
+        // lex-Fork max-munch branch, or a cross-cat delegate path that
+        // popped CategoryEntry without re-entering InfixLoop) that
+        // produced a SHORT parse without consuming all input. Per the
+        // user mandate's rule-out-by-evidence clause
+        // (feedback_never_disambiguate_early), such cursors are not
+        // semantically valid acceptances and must be dropped here, BEFORE
+        // the `accepting_indices` filter — otherwise the downstream
+        // multi-cursor unfold would still emit terms from these cursors
+        // via the SPPF root path if `is_accepting_config` returns true on
+        // their (stale) builder shape.
+        //
+        // Generality: applies to any grammar with lex-ambiguous atomic
+        // literals sharing prefixes with operator triggers (e.g.,
+        // Calculator's `Int { pattern: r"-?[0-9]+" }` where `-3` can lex
+        // as one IntegerLit OR as `[-, 3]`). When both lex-Fork branches
+        // reach EOI, both survive this filter; the multiset merge yields
+        // Ambiguous([...]) and the evaluator chooses based on evidence
+        // (which alt evaluates to a non-Err normal form).
+        //
+        // This filter complements the existing `accepting_indices`
+        // filter at line ~2825 (`is_logical_eoi && is_accepting_config`)
+        // by removing premature cursors from `branch_cursors` itself —
+        // ensuring that any downstream commit_winner_at_eoi or SPPF
+        // root extraction operates on the surviving (EOI-reached) set.
+        {
+            let eof = tokens.eof_node();
+            let len_before = self.branch_cursors.len();
+            self.branch_cursors.retain(|c| {
+                !matches!(c.inner_state, WpdaState::Accepted) || c.pos >= eof
+            });
+            // No further work if all were premature.
+            if self.branch_cursors.is_empty() && len_before > 0 {
+                return WpdaResolveResult::ParseError {
+                    message: "all Accepted cursors had unconsumed input \
+                              (premature lex-Fork acceptance)"
+                        .to_string(),
+                    position: self.pos,
+                };
+            }
+        }
         // Fanout mode: resolve over branch_cursors.
         // Stage 3.5b (2026-05-01): use `pos >= tokens.len()` rather than
         // `pos == tokens.len()`. Real-grammar codegen never advances pos
