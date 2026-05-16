@@ -96,29 +96,23 @@ pub(crate) fn emit_parse_fns(
             ) -> Result<
                 (
                     #cat_ident,
-                    mettail_prattail::automata::derivation_weight::DerivationWeight<
-                        mettail_prattail::automata::lex_weight::LexicographicWeight,
-                        mettail_prattail::wpda_runtime::DerivationSnapshot,
-                    >,
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
                 ),
                 WpdaParseError,
             > {
                 use mettail_prattail::wpda_runtime::WpdaResolveResult;
                 use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
-                // M11.6b (D5 semver, 2026-05-14): public return type now
-                // exposes the full `DerivationWeight<...>` multiset rather
-                // than projecting to `LexicographicWeight` via `first_inner`.
-                // Callers that only want the headline lex weight can call
-                // `dw.first_inner()` themselves; callers that want all
-                // derivations' weights can iterate `dw.entries`. Migrates
-                // ~15-25 call sites mechanically (each adds a
-                // `.first_inner().cloned().unwrap_or_else(|| ::one())`
-                // when they need the scalar).
-                use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpda_runtime::DerivationSnapshot;
+                // Phase 3.1.7 (C10, 2026-05-15): walker W reverted from
+                // M11's DerivationWeight<...> multiset to plain
+                // LexicographicWeight. The SPPF arena carries derivation
+                // ambiguity (Tomita 1986 §6.3 / Scott-Johnstone 2010 §3 —
+                // SPPF is a set of derivations with structural dedup);
+                // W carries only the cursor-merge path-cost tiebreak.
+                // Public return type reverts to (Cat, LexicographicWeight)
+                // — the M11.6b D5 break is undone.
                 use mettail_prattail::automata::semiring::SemiringRef;
-                type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
+                type DW = LexicographicWeight;
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via run_to_end_of_input_env_aware.
                 const MAX_STEPS: usize = 1_000_000;
@@ -208,12 +202,9 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::wpda_runtime::WpdaResolveResult;
                 use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
-                // M11.4 (2026-05-14): walker W = DerivationWeight; project
-                // each cursor's multiset back to a single LexicographicWeight
-                // for backward-compat public signature.
-                use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpda_runtime::DerivationSnapshot;
-                type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
+                // Phase 3.1.7 (C10, 2026-05-15): walker W = LexicographicWeight.
+                // SPPF arena owns derivation ambiguity; W owns path cost.
+                type DW = LexicographicWeight;
                 const MAX_STEPS: usize = 1_000_000;
                 let mut walker = WpdaWalker::<DW, _>::new_for_category(
                     #engine_ident::default(),
@@ -248,19 +239,9 @@ pub(crate) fn emit_parse_fns(
                             if typed_terms.is_empty() {
                                 return Err(WpdaParseError::EmptyResult);
                             }
-                            // Project each DerivationWeight to its first-entry
-                            // lex weight for backward-compat Vec<LexicographicWeight>
-                            // return (M11.6a folded into M11.4).
-                            let projected_weights: Vec<LexicographicWeight> = weights
-                                .into_iter()
-                                .map(|dw| {
-                                    dw.first_inner().cloned().unwrap_or_else(|| {
-                                        use mettail_prattail::automata::semiring::Semiring;
-                                        LexicographicWeight::one()
-                                    })
-                                })
-                                .collect();
-                            Ok((typed_terms, projected_weights))
+                            // C10: `weights` is already Vec<LexicographicWeight>
+                            // post-revert.
+                            Ok((typed_terms, weights))
                         }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
@@ -334,10 +315,8 @@ pub(crate) fn emit_parse_fns(
                 use mettail_prattail::wpda_runtime::WpdaResolveResult;
                 use mettail_prattail::wpda_walker::WpdaWalker;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
-                // M11.4 (2026-05-14): walker W lifted to DerivationWeight.
-                use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpda_runtime::DerivationSnapshot;
-                type DW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
+                // Phase 3.1.7 (C10, 2026-05-15): walker W = LexicographicWeight.
+                type DW = LexicographicWeight;
 
                 // Stage 6 G6+ (2026-05-02): default 1M; PRATTAIL_MAX_STEPS env
                 // var overrides via run_to_end_of_input_env_aware.

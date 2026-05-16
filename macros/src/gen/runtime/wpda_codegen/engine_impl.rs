@@ -179,29 +179,20 @@ pub(crate) fn emit_engine_impl_full(
         #lex_alt_rule_for_fn
 
         impl mettail_prattail::wpda_walker::WpdaEngine<
-            mettail_prattail::automata::derivation_weight::DerivationWeight<
-                mettail_prattail::automata::lex_weight::LexicographicWeight,
-                mettail_prattail::wpda_runtime::DerivationSnapshot,
-            >,
+            mettail_prattail::automata::lex_weight::LexicographicWeight,
         > for #engine_ident
         {
             fn step(
                 &self,
                 state: &mettail_prattail::wpda_runtime::WpdaState,
                 _gss: &mettail_prattail::gss::WpdaGss<
-                    mettail_prattail::automata::derivation_weight::DerivationWeight<
-                        mettail_prattail::automata::lex_weight::LexicographicWeight,
-                        mettail_prattail::wpda_runtime::DerivationSnapshot,
-                    >,
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
                 >,
                 frontier_top: Option<&mettail_prattail::gss::WpdaGssNode>,
                 _pos: usize,
                 tokens: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
             ) -> mettail_prattail::wpda_walker::WpdaStepAction<
-                mettail_prattail::automata::derivation_weight::DerivationWeight<
-                    mettail_prattail::automata::lex_weight::LexicographicWeight,
-                    mettail_prattail::wpda_runtime::DerivationSnapshot,
-                >,
+                mettail_prattail::automata::lex_weight::LexicographicWeight,
             > {
                 use mettail_prattail::wpda_runtime::{
                     StackSymbolV2, WpdaState,
@@ -218,11 +209,12 @@ pub(crate) fn emit_engine_impl_full(
                 use mettail_prattail::wpda_runtime::{lex_w, lex_w_alt, lex_one};
                 use mettail_prattail::automata::derivation_weight::DerivationWeight;
                 use mettail_prattail::wpda_runtime::DerivationSnapshot;
-                // Local alias for the walker's W type — used at
-                // ForkBranch<_> annotation sites where the inner type is
-                // awkward to spell inline.
+                // Phase 3.1.7 (C10, 2026-05-15): walker `W` is plain
+                // `LexicographicWeight` — Option C plan §8 C10 atomic
+                // revert. SPPF arena carries derivation ambiguity; W
+                // carries only path-cost tiebreak.
                 #[allow(non_camel_case_types)]
-                type __DwW = DerivationWeight<LexicographicWeight, DerivationSnapshot>;
+                type __DwW = LexicographicWeight;
 
                 match state {
                     WpdaState::Ready { min_bp } => {

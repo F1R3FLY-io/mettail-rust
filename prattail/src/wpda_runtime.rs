@@ -2597,57 +2597,40 @@ pub fn lex_w(
     cost: f64,
     src_idx: u16,
     rule_idx: u16,
-) -> crate::automata::derivation_weight::DerivationWeight<
-    crate::automata::lex_weight::LexicographicWeight,
-    DerivationSnapshot,
-> {
-    use crate::automata::derivation_weight::{DerivationCombine, DerivationWeight};
-    use crate::automata::lex_weight::LexicographicWeight;
-    DerivationWeight::singleton(
-        LexicographicWeight::from_cost(cost, src_idx, rule_idx),
-        DerivationSnapshot::unit(),
-    )
+) -> crate::automata::lex_weight::LexicographicWeight {
+    // Phase 3.1.7 (C10, 2026-05-15): per Option C plan §8 C10 the walker
+    // `W` reverts from `DerivationWeight<LexicographicWeight,
+    // DerivationSnapshot>` (M11 multiset semiring) to plain
+    // `LexicographicWeight`. The SPPF arena carries derivation ambiguity
+    // (Tomita 1986 §6.3 / Scott-Johnstone 2010 §3 — packed parse forest
+    // is a *set* of derivations with structural dedup); `W` carries only
+    // path-cost tiebreak. Eliminates M11's O(merges²) multiset blow-up.
+    crate::automata::lex_weight::LexicographicWeight::from_cost(cost, src_idx, rule_idx)
 }
 
-/// Construct a `DerivationWeight` carrying a single `LexicographicWeight`
-/// with explicit `lex_alt_idx`. Used by lex-Fork emission paths where a
-/// lex DAG position has multiple `TokenKind` alternatives.
-///
-/// See [`lex_w`] for the derivation-component semantics.
+/// Construct a `LexicographicWeight` with explicit `lex_alt_idx`. Used
+/// by lex-Fork emission paths where a lex DAG position has multiple
+/// `TokenKind` alternatives.
 #[inline]
 pub fn lex_w_alt(
     cost: f64,
     src_idx: u16,
     rule_idx: u16,
     lex_alt_idx: u16,
-) -> crate::automata::derivation_weight::DerivationWeight<
-    crate::automata::lex_weight::LexicographicWeight,
-    DerivationSnapshot,
-> {
-    use crate::automata::derivation_weight::{DerivationCombine, DerivationWeight};
-    use crate::automata::lex_weight::LexicographicWeight;
-    DerivationWeight::singleton(
-        LexicographicWeight::from_cost_with_lex(cost, src_idx, rule_idx, lex_alt_idx),
-        DerivationSnapshot::unit(),
+) -> crate::automata::lex_weight::LexicographicWeight {
+    crate::automata::lex_weight::LexicographicWeight::from_cost_with_lex(
+        cost, src_idx, rule_idx, lex_alt_idx,
     )
 }
 
-/// Construct the multiplicative identity for the codegen's W:
-/// `DerivationWeight::one_ref()` — a singleton multiset with
-/// `LexicographicWeight::one()` and `DerivationSnapshot::unit()`.
+/// Construct the multiplicative identity `LexicographicWeight::one()`.
 ///
-/// Equivalent to `DerivationWeight::one_ref()` but exported as a
-/// terse helper for codegen ergonomics. Imported via `use
-/// mettail_prattail::wpda_runtime::lex_one;` in the emitted step()
-/// body.
+/// Imported via `use mettail_prattail::wpda_runtime::lex_one;` in the
+/// emitted step() body.
 #[inline]
-pub fn lex_one() -> crate::automata::derivation_weight::DerivationWeight<
-    crate::automata::lex_weight::LexicographicWeight,
-    DerivationSnapshot,
-> {
-    use crate::automata::derivation_weight::DerivationWeight;
-    use crate::automata::semiring::SemiringRef;
-    DerivationWeight::one_ref()
+pub fn lex_one() -> crate::automata::lex_weight::LexicographicWeight {
+    use crate::automata::semiring::Semiring;
+    crate::automata::lex_weight::LexicographicWeight::one()
 }
 
 /// M11.4 (2026-05-14): `From<LexicographicWeight>` impl required by the
