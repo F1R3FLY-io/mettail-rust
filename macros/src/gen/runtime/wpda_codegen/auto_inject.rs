@@ -271,6 +271,73 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
         }
     }
 
+    // Phase A.2+A.3 (2026-05-16): post-process NormCast rules to embed
+    // a `Premise::SyntheticInjGuard` premise excluding all auto-injected
+    // injection variants targeting the cascade's source_cat. This bounds
+    // the cross-cat coercion cascade at depth 1 per source term — see
+    // ~/.claude/plans/phase-a-cascade-option-c-refined.md (Option C.5).
+    //
+    // The exclusion list is derived AFTER all synth_terms are emitted
+    // (so `<X>To<source_cat>` injections emitted in later loop iterations
+    // are correctly captured). Empty exclusion list = no guard premise
+    // emitted (zero-cost for grammars without cross-cat injection
+    // targeting source_cat).
+    //
+    // Grammar-general: applies to any grammar whose `kind_to_cats x
+    // lossless_targets()` enumeration yields multi-hop cascades.
+    let injections_into: std::collections::BTreeMap<String, Vec<Ident>> = {
+        let mut m: std::collections::BTreeMap<String, Vec<Ident>> = Default::default();
+        for r in &synth_terms {
+            // synth_terms entries are all auto-injected `<X>To<C>` rules
+            // whose label has been emitted; r.category is the TARGET cat
+            // (i.e., where the cast variant lives).
+            m.entry(r.category.to_string())
+                .or_default()
+                .push(r.label.clone());
+        }
+        // Deterministic ordering for reproducible codegen output.
+        for variants in m.values_mut() {
+            variants.sort_by_key(|i| i.to_string());
+        }
+        m
+    };
+    for rw in synth_rewrites.iter_mut() {
+        if !rw.is_auto_injected {
+            continue;
+        }
+        let name = rw.name.to_string();
+        if !name.starts_with("NormCast") {
+            continue;
+        }
+        // Parse source_cat from "NormCast<Src>To<Tgt>In<Result>". The
+        // boundary is the FIRST "To" after "NormCast". `Src` must be a
+        // valid category name (no embedded "To" or "In" substrings in
+        // category names is enforced grammar-wide).
+        let after_prefix = &name["NormCast".len()..];
+        let Some(to_idx) = after_prefix.find("To") else {
+            continue;
+        };
+        let src_cat = &after_prefix[..to_idx];
+        let Some(variants) = injections_into.get(src_cat) else {
+            continue;
+        };
+        if variants.is_empty() {
+            continue;
+        }
+        // The LHS pattern `Cast<Src>(v)` registers `v` in
+        // `lhs_clauses.bindings`. At codegen time, the SyntheticInjGuard
+        // lowering looks up `bindings[inner_var.to_string()]` to obtain
+        // the actual Rust-side expression — honoring the Apply-pattern
+        // lowering's positional rename (`v` → `s_f<i>` → `s_f<i>_deref`).
+        let inner_var = Ident::new("v", Span::call_site());
+        let source_category = Ident::new(src_cat, Span::call_site());
+        rw.premises.push(Premise::SyntheticInjGuard {
+            inner_var,
+            source_category,
+            excluded_variants: variants.clone(),
+        });
+    }
+
     AutoInjectionOutput {
         terms: synth_terms,
         rewrites: synth_rewrites,

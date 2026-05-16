@@ -704,26 +704,40 @@ fn generate_positioned_condition_clauses(
                 }
             },
             Condition::SyntheticInjGuard { inner_var, source_category, excluded_variants } => {
-                // Phase A (2026-05-16): emit `if !matches!(inner_var,
+                // Phase A (2026-05-16): emit `if !matches!(inner_expr,
                 //     <Src>::<v1>(_) | <Src>::<v2>(_) | ...)`.
                 //
-                // This is a single-discriminant pattern-rejection guard
-                // for auto-injected NormCast rewrite rules. Bounds the
-                // coercion cascade at depth 1 per source term —
-                // preventing unbounded `Cast<Src>(SrcToTgt(SrcToOther(...)))`
-                // chains while preserving user-rewrite-produced casts
-                // (whose inner is NOT in `excluded_variants`).
+                // Single-discriminant pattern-rejection guard for auto-
+                // injected NormCast rewrite rules. Bounds the coercion
+                // cascade at depth 1 per source term — preventing
+                // unbounded `Cast<Src>(SrcToTgt(SrcToOther(...)))` chains
+                // while preserving user-rewrite-produced casts (whose
+                // inner is NOT in `excluded_variants`).
+                //
+                // The `inner_var` is the AST-side Pattern::Var name from
+                // the LHS pattern (e.g., `v` from `Cast<Src>(v)`). The
+                // codegen-side variable that holds the matched value is
+                // looked up via `lhs_clauses.bindings[inner_var]`. This
+                // honors the Apply-pattern lowering which renames `v` to
+                // a positional `s_f<i>` and emits a `s_f<i>_deref` clause
+                // — `bindings[inner_var].expression` gives the right
+                // token stream regardless of the renaming.
                 //
                 // Empty exclusion list = no clause emitted (no behavioral
                 // change for grammars without auto-injected NormCast).
                 if !excluded_variants.is_empty() {
+                    let inner_expr = lhs_clauses
+                        .bindings
+                        .get(&inner_var.to_string())
+                        .map(|b| b.expression.clone())
+                        .unwrap_or_else(|| quote! { #inner_var });
                     let patterns: Vec<TokenStream> = excluded_variants
                         .iter()
                         .map(|v| quote! { #source_category::#v(_) })
                         .collect();
                     positioned.push(PositionedClause {
                         clause: quote! {
-                            if !matches!(#inner_var, #(#patterns)|*)
+                            if !matches!(&#inner_expr, #(#patterns)|*)
                         },
                         earliest_position: earliest,
                     });
