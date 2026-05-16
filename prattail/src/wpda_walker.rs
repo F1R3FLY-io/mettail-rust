@@ -1891,7 +1891,7 @@ fn extract_dispatch_config<W: SemiringRef>(
     }
 }
 
-impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
+impl<W: SemiringRef, E: WpdaEngine<W>>
     WpdaWalker<W, E>
 {
     /// Construct a fresh walker in `Ready { min_bp }` state.
@@ -7897,7 +7897,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>> Drop for WpdaWalker<W, E> {
     }
 }
 
-impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
+impl<W: SemiringRef, E: WpdaEngine<W>>
     WpdaWalker<W, E>
 {
     /// Drive the walker reactively with a [`WalkerConsumer`] attached.

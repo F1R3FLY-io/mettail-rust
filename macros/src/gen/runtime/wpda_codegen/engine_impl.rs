@@ -200,19 +200,14 @@ pub(crate) fn emit_engine_impl_full(
                 use mettail_prattail::wpda_walker::WpdaStepAction;
                 use mettail_prattail::automata::lex_weight::LexicographicWeight;
                 use mettail_prattail::automata::semiring::Semiring;
-                // M11.4 (2026-05-14): codegen weight constructors lifted to
-                // helpers that wrap each lex weight in a singleton
-                // DerivationWeight carrying DerivationSnapshot::unit().
-                // Walker Fork-arm sites (M11.5) inject the parent cursor's
-                // real snapshot via with_snapshot before merging into the
-                // child's accumulated weight.
+                // C11.5 (2026-05-16): unused DerivationWeight + DerivationSnapshot
+                // imports deleted alongside the C10 W revert. The M11.4 weight
+                // wrappers no longer carry a snapshot — `lex_w`/`lex_w_alt`/
+                // `lex_one` directly construct LexicographicWeight values.
                 use mettail_prattail::wpda_runtime::{lex_w, lex_w_alt, lex_one};
-                use mettail_prattail::automata::derivation_weight::DerivationWeight;
-                use mettail_prattail::wpda_runtime::DerivationSnapshot;
                 // Phase 3.1.7 (C10, 2026-05-15): walker `W` is plain
-                // `LexicographicWeight` — Option C plan §8 C10 atomic
-                // revert. SPPF arena carries derivation ambiguity; W
-                // carries only path-cost tiebreak.
+                // `LexicographicWeight` — SPPF arena carries derivation
+                // ambiguity; W carries only path-cost tiebreak.
                 #[allow(non_camel_case_types)]
                 type __DwW = LexicographicWeight;
 
