@@ -503,6 +503,36 @@ pub(crate) fn emit_engine_impl_full(
                                                 WpdaState::Unwinding
                                             }
                                         }
+                                        None => {
+                                            // Phase E Fix B (2026-05-16): root-level
+                                            // CategoryEntry pop. Re-enter InfixLoop
+                                            // (cur_bp: 0) so post-atomic postfix /
+                                            // infix operators get a chance to
+                                            // dispatch before the parse terminates.
+                                            //
+                                            // Without this, cross-cat-delegate
+                                            // atomics that reach a root-level CE
+                                            // (i.e., `pred_kind = None`) fall through
+                                            // to `Unwinding → Accept` while trailing
+                                            // postfix operators remain unconsumed,
+                                            // producing a SHORT parse. Belt-and-
+                                            // suspenders with the walker-side
+                                            // Phase E Fix A premature-Accepted
+                                            // filter (wpda_walker.rs::resolve_at_end_of_input):
+                                            // Fix B prevents the premature Accept
+                                            // from happening; Fix A catches any
+                                            // residual ones via rule-out by evidence.
+                                            //
+                                            // Grammar-general: applies to any
+                                            // root-level CE pop regardless of
+                                            // category, operator config, or grammar
+                                            // shape. Honors mandate — if both
+                                            // lex-Fork branches survive and produce
+                                            // distinct ASTs, the multiset merge
+                                            // yields Ambiguous(..) and the evaluator
+                                            // picks based on evidence.
+                                            WpdaState::InfixLoop { cur_bp: 0 }
+                                        }
                                         _ => WpdaState::Unwinding,
                                     };
                                     // Phase 5 fix: when no special transition
