@@ -311,18 +311,35 @@ impl<T: Clone + Hash + Eq> PartialEq for HashBag<T> {
 
 impl<T: Clone + Hash + Eq> Eq for HashBag<T> {}
 
-// Hash: hash all (element, count) pairs in a deterministic order
-impl<T: Clone + Hash + Eq + fmt::Debug> Hash for HashBag<T> {
+// Hash: hash all (element, count) pairs in a deterministic order.
+//
+// We can't assume `T: Ord`, so the sort key must be derived from `T: Hash` alone.
+// Using `format!("{:?}", k)` (prior implementation) was O(element_repr × digit²) for
+// element types containing BigInt — `Debug::fmt` routes through `Display::to_str_radix`
+// which is quadratic in digit count. For PPar(HashBag<Proc>) terms produced by
+// rhocalc reducers, this caused 30+ second hangs on simple inputs.
+//
+// The replacement uses a per-element `FxHasher` u64 as the sort key. This is
+// O(element_hash_cost) per element, with the same determinism guarantee (the
+// hash is a deterministic function of `T`). Collisions only reorder ties; all
+// elements are still rehashed into `state` afterward, so the resulting hash
+// remains deterministic across runs.
+impl<T: Clone + Hash + Eq> Hash for HashBag<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        // Hash total count first
         self.total_count.hash(state);
 
-        // Collect and sort entries for deterministic hashing
-        // We use Debug format for sorting since we can't assume T: Ord
-        let mut entries: Vec<_> = self.counts.iter().collect();
-        entries.sort_by_key(|(k, _)| format!("{:?}", k));
+        let mut entries: Vec<(&T, u64, usize)> = self
+            .counts
+            .iter()
+            .map(|(k, &c)| {
+                let mut h = FxHasher::default();
+                k.hash(&mut h);
+                (k, h.finish(), c)
+            })
+            .collect();
+        entries.sort_unstable_by_key(|&(_, key, _)| key);
 
-        for (elem, &count) in entries {
+        for (elem, _, count) in entries {
             elem.hash(state);
             count.hash(state);
         }
