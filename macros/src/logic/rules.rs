@@ -254,6 +254,9 @@ fn condition_cost(condition: &Condition) -> u32 {
             mettail_ast::language::BehavioralPred::AcMatch { .. } => 25,
             _ => 20,
         },
+        // Phase A (2026-05-16): synthetic-injection guard is a single
+        // discriminant comparison via `matches!` — cheapest possible.
+        Condition::SyntheticInjGuard { .. } => 1,
     }
 }
 
@@ -268,6 +271,8 @@ fn condition_binds(condition: &Condition) -> HashSet<String> {
             // subsequent args are result bindings.
             args.iter().skip(1).map(|a| a.to_string()).collect()
         }
+        // Phase A: synthetic-injection guard is pure rejection; binds nothing.
+        Condition::SyntheticInjGuard { .. } => HashSet::new(),
         _ => HashSet::new(),
     }
 }
@@ -308,6 +313,14 @@ fn condition_requires(condition: &Condition) -> HashSet<String> {
             // Behavioral guards require all free variables referenced in
             // the predicate to be bound by LHS or prior conditions.
             collect_pred_free_vars(pred)
+        }
+        Condition::SyntheticInjGuard { inner_var, .. } => {
+            // Phase A: synthetic-injection guard requires the inner_var
+            // to be bound by a prior `if let Cast<Src>(ref v) = s` clause
+            // in the LHS pattern lowering.
+            let mut required = HashSet::new();
+            required.insert(inner_var.to_string());
+            required
         }
     }
 }
@@ -690,6 +703,32 @@ fn generate_positioned_condition_clauses(
                     });
                 }
             },
+            Condition::SyntheticInjGuard { inner_var, source_category, excluded_variants } => {
+                // Phase A (2026-05-16): emit `if !matches!(inner_var,
+                //     <Src>::<v1>(_) | <Src>::<v2>(_) | ...)`.
+                //
+                // This is a single-discriminant pattern-rejection guard
+                // for auto-injected NormCast rewrite rules. Bounds the
+                // coercion cascade at depth 1 per source term —
+                // preventing unbounded `Cast<Src>(SrcToTgt(SrcToOther(...)))`
+                // chains while preserving user-rewrite-produced casts
+                // (whose inner is NOT in `excluded_variants`).
+                //
+                // Empty exclusion list = no clause emitted (no behavioral
+                // change for grammars without auto-injected NormCast).
+                if !excluded_variants.is_empty() {
+                    let patterns: Vec<TokenStream> = excluded_variants
+                        .iter()
+                        .map(|v| quote! { #source_category::#v(_) })
+                        .collect();
+                    positioned.push(PositionedClause {
+                        clause: quote! {
+                            if !matches!(#inner_var, #(#patterns)|*)
+                        },
+                        earliest_position: earliest,
+                    });
+                }
+            },
         }
     }
 
@@ -964,6 +1003,19 @@ fn premise_to_condition(premise: &mettail_ast::language::Premise) -> Option<Cond
         // `Congruence { source, target }` is only meaningful in rewrite rules;
         // equations never carry it, so we just omit it from the condition list.
         mettail_ast::language::Premise::Congruence { .. } => None,
+        // Phase A (2026-05-16): SyntheticInjGuard lowers 1:1 to a
+        // Condition variant of the same shape. The codegen for
+        // Condition::SyntheticInjGuard emits the `if !matches!(...)`
+        // clause inline.
+        mettail_ast::language::Premise::SyntheticInjGuard {
+            inner_var,
+            source_category,
+            excluded_variants,
+        } => Some(Condition::SyntheticInjGuard {
+            inner_var: inner_var.clone(),
+            source_category: source_category.clone(),
+            excluded_variants: excluded_variants.clone(),
+        }),
     }
 }
 

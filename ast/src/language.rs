@@ -132,6 +132,32 @@ pub enum Premise {
     /// Embeds a full quantified behavioral predicate as a rule premise.
     /// Evaluated via `prattail::evaluate_quantified()` at runtime.
     BehavioralGuard(BehavioralPred),
+
+    /// Phase A (2026-05-16): synthetic-injection-aware guard for
+    /// auto-injected NormCast rewrite rules. Emitted exclusively by
+    /// `make_cast_canonicalization_rule` in
+    /// `macros/src/gen/runtime/wpda_codegen/auto_inject.rs`.
+    ///
+    /// Lowers at codegen to a literal pattern-rejection clause:
+    /// ```ignore
+    /// if !matches!(<inner_var>, <source_category>::<v1>(_)
+    ///                         | <source_category>::<v2>(_) | ...)
+    /// ```
+    /// where the excluded variants are the labels of auto-injected
+    /// `<X>To<source_category>` constructors. The guard rejects inputs
+    /// where the inner field of a `Cast<source>` is already wrapped by
+    /// an auto-injected injection variant — preventing unbounded
+    /// re-canonicalization while preserving user-rewrite-produced
+    /// casts (whose inner is NOT an auto-injection variant).
+    ///
+    /// Grammar-general: derives from `lossless_targets()` enumeration
+    /// at codegen. Empty exclusion list = no guard emitted. Applies to
+    /// any grammar declaring native-type lattices.
+    SyntheticInjGuard {
+        inner_var: Ident,
+        source_category: Ident,
+        excluded_variants: Vec<Ident>,
+    },
 }
 
 /// Equation in unified judgement syntax
@@ -196,6 +222,16 @@ pub enum Condition {
     /// Generated from `Premise::BehavioralGuard` and evaluated at runtime
     /// by calling `prattail::evaluate_quantified()`.
     BehavioralGuard(BehavioralPred),
+
+    /// Phase A (2026-05-16): synthetic-injection guard. Lowered from
+    /// `Premise::SyntheticInjGuard` (see that variant's docs for full
+    /// semantics). At codegen time, emits a literal `if !matches!(...)`
+    /// clause excluding the listed variants. Grammar-general.
+    SyntheticInjGuard {
+        inner_var: Ident,
+        source_category: Ident,
+        excluded_variants: Vec<Ident>,
+    },
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

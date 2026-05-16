@@ -407,6 +407,13 @@ fn validate_premise(
             validate_premise(body, pattern_vars, &inner_bound)?;
         },
         Premise::Congruence { .. } | Premise::RelationQuery { .. } => {},
+        // Phase A (2026-05-16): synthetic-injection guard is emitted
+        // exclusively by codegen for auto-injected NormCast rules. It
+        // references the auto-injected rule's inner_var (which IS in
+        // pattern_vars by construction) and an exclusion list of
+        // grammar-derived constructor labels. No user-facing validation
+        // needed; codegen-emitted variant.
+        Premise::SyntheticInjGuard { .. } => {},
         Premise::BehavioralGuard(_) => {
             // Behavioral guards are evaluated at runtime via LogicT;
             // no pattern-variable validation needed here.

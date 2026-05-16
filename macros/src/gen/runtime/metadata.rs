@@ -548,6 +548,16 @@ fn premise_to_display_string(p: &Premise) -> String {
             // simulator metadata bridge.
             format!("guard({})", behavioral_pred_to_display(pred))
         },
+        Premise::SyntheticInjGuard { inner_var, source_category, excluded_variants } => {
+            // Phase A (2026-05-16): synthetic-injection guard display.
+            let variants: Vec<_> = excluded_variants.iter().map(|v| v.to_string()).collect();
+            format!(
+                "synthetic_inj_guard({}, {}, [{}])",
+                inner_var,
+                source_category,
+                variants.join(", "),
+            )
+        },
     }
 }
 
