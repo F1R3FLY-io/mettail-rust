@@ -3206,9 +3206,22 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         // Cartesian product over children's realized args.
         let mut combos: Vec<Vec<ActionArg>> = vec![Vec::with_capacity(arity)];
         for &c in children {
+            // Bug I fix (Phase 3.1.4): panic loudly on missing memo. The
+            // realize_root_to_terms BFS guarantees Phase::Leave executes
+            // ONLY after every child's Phase::Leave; a missing memo
+            // indicates a traversal bug, not legitimate "no derivation."
             let child_results = match memo.get(&c) {
                 Some(v) => v,
-                None => return Vec::new(),
+                None => {
+                    debug_assert!(
+                        false,
+                        "Bug I: realize_packing_call missing memo for child SppfId {} \
+                         while realizing Packing rule_idx={:#x}. \
+                         Indicates traversal bug in realize_root_to_terms BFS.",
+                        c, rule_idx,
+                    );
+                    return Vec::new();
+                }
             };
             let mut next: Vec<Vec<ActionArg>> =
                 Vec::with_capacity(combos.len().saturating_mul(child_results.len().max(1)));
@@ -3305,7 +3318,19 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             let popped = sb.pop_args(arity);
             (action_fn)(&mut sb, popped);
             let post_len = sb.len();
-            if post_len == pre_len - arity + 1 {
+            // Bug J fix (Phase 3.1.4): debug_assert action contract.
+            // Per cat-A invariant (fire_action_for_on_builder, line
+            // 5712-5752), every action_fn pushes EXACTLY ONE Term on
+            // success. Silently dropping the result on mismatch hides
+            // a real bug; let it panic in debug for visibility.
+            let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
+            debug_assert_eq!(
+                post_len, expected_len,
+                "Bug J: action did not push exactly one Term after pop. \
+                 rule_idx={:#x} cat={} local_rule={} arity={} pre_len={} post_len={} expected={}",
+                rule_idx, cat, local_rule_idx, arity, pre_len, post_len, expected_len,
+            );
+            if post_len == expected_len {
                 if let Some(t) = sb.take_dyn_result() {
                     // The realized term's type_name is set by the
                     // action's push_term; we approximate via "Cat" name
