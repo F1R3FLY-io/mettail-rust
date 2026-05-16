@@ -2839,92 +2839,47 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 position: max_dead_pos,
             },
             1 => {
-                // M11.5 (2026-05-14): even when ONE cursor is accepting, its
-                // weight.entries multiset may carry MULTIPLE derivations from
-                // prior merges (each entry's snapshot has a distinct AST).
-                // Iterate the multiset like the multi-cursor branch below to
-                // surface all derivations. Falls back to cursor.builder for
-                // mock W (no snapshot semantics).
+                // C8.1 (2026-05-16): the M11 multiset snapshot-iteration arm was
+                // deleted alongside the C10 W revert to LexicographicWeight.
+                // SPPF arena is now the structural ambiguity source; the
+                // facade uses `realize_root_to_terms(winner_sppf_root)` to
+                // recover the Vec<Cat>. The C7b cycle-fallback (Accepted
+                // with empty terms but valid root) is preserved.
                 let winner_idx = accepting_indices[0];
                 let winner_weight = self.branch_cursors[winner_idx].weight.clone();
-                // C6: capture the winner's SPPF root BEFORE commit_winner
-                // (which may reset cursor.sppf_stack).
                 let winner_sppf_root = self.branch_cursors[winner_idx]
                     .sppf_stack
                     .last()
                     .copied()
                     .unwrap_or(crate::sppf::SPPF_ID_NONE);
-                let snapshots = crate::wpda_runtime::SnapshotWeight::entries_snapshots(
-                    &self.branch_cursors[winner_idx].weight,
-                );
                 self.commit_winner_at_eoi(winner_idx);
-                if snapshots.is_empty() {
-                    // Mock W path — pre-M11.5 behavior.
-                    let term = self.builder.take_dyn_result();
-                    return match term {
-                        Some(t) => WpdaResolveResult::Accepted {
-                            weights: vec![winner_weight],
-                            terms: vec![t],
-                            roots: vec![winner_sppf_root],
-                        },
-                        None => WpdaResolveResult::ParseError {
-                            message: "winner committed but builder result was empty"
-                                .to_string(),
-                            position: self.pos,
-                        },
-                    };
-                }
-                let mut weights: Vec<W> = Vec::with_capacity(snapshots.len());
-                let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> =
-                    Vec::with_capacity(snapshots.len());
-                let mut roots: Vec<crate::sppf::SppfId> = Vec::with_capacity(snapshots.len());
-                for snap_arc in snapshots {
-                    let mut snap_builder: SemanticBuilder = (*snap_arc).clone();
-                    if let Some(t) = snap_builder.take_dyn_result() {
-                        weights.push(winner_weight.clone());
-                        terms.push(t);
-                        // C6: each snapshot-derivation references the
-                        // SAME winner_sppf_root (Symbol-dedup). C7 will
-                        // switch realization to use this root instead of
-                        // the snapshot builder.
-                        roots.push(winner_sppf_root);
-                    }
-                }
-                // C7b cycle-handling (Phase 3.1.6, 2026-05-15): even when
-                // the snapshot multiset path produced no extractable
-                // terms (M11 regression on cross-cat / cyclic-grammar
-                // paths), the SPPF root is independently valid. Return
-                // Accepted with the SPPF root and a synthetic weight so
-                // the facade can realize via `realize_root_to_terms`.
-                if weights.is_empty() {
-                    if winner_sppf_root != crate::sppf::SPPF_ID_NONE {
-                        return WpdaResolveResult::Accepted {
+                let term = self.builder.take_dyn_result();
+                match term {
+                    Some(t) => WpdaResolveResult::Accepted {
+                        weights: vec![winner_weight],
+                        terms: vec![t],
+                        roots: vec![winner_sppf_root],
+                    },
+                    None if winner_sppf_root != crate::sppf::SPPF_ID_NONE => {
+                        WpdaResolveResult::Accepted {
                             weights: vec![winner_weight],
                             terms: Vec::new(),
                             roots: vec![winner_sppf_root],
-                        };
+                        }
                     }
-                    return WpdaResolveResult::ParseError {
-                        message: "winner committed but no terms extractable from \
-                                  either snapshot path or SPPF root"
+                    None => WpdaResolveResult::ParseError {
+                        message: "winner committed but builder yielded no term and SPPF root absent"
                             .to_string(),
                         position: self.pos,
-                    };
+                    },
                 }
-                WpdaResolveResult::Accepted { weights, terms, roots }
             }
             _ => {
-                // M7c (2026-05-13): preserve all Accepted derivations as
-                // multi-result rather than collapsing via lex-min.
-                //
-                // M11.5 (2026-05-14): per-cursor multiset unfold — each
-                // cursor's `weight.entries` carries one `(W, snapshot)` pair
-                // per derivation captured at merge time (via
-                // `SnapshotWeight::with_builder_snapshot` at Fork-arm sites).
-                // For each cursor, extract a term from EACH snapshot's
-                // builder clone. Mock W (no snapshot semantics) returns
-                // empty `entries_snapshots` → fall back to `cursor.builder`
-                // for one term per cursor (pre-M11.5 behavior preserved).
+                // C8.1 (2026-05-16): the M11 multiset snapshot-iteration arm
+                // (per-cursor `entries_snapshots()` unfold) was deleted
+                // alongside C10. Each accepting cursor contributes its own
+                // builder term + SPPF root. M7c multi-result semantics
+                // are preserved via the per-cursor loop.
                 let mut weights: Vec<W> = Vec::with_capacity(accepting_indices.len());
                 let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> =
                     Vec::with_capacity(accepting_indices.len());
@@ -2932,44 +2887,17 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     Vec::with_capacity(accepting_indices.len());
                 for &idx in &accepting_indices {
                     let cursor_weight = self.branch_cursors[idx].weight.clone();
-                    // C6: per-cursor SPPF root from the top of sppf_stack.
                     let cursor_root = self.branch_cursors[idx]
                         .sppf_stack
                         .last()
                         .copied()
                         .unwrap_or(crate::sppf::SPPF_ID_NONE);
-                    let snapshots =
-                        crate::wpda_runtime::SnapshotWeight::entries_snapshots(
-                            &self.branch_cursors[idx].weight,
-                        );
-                    if snapshots.is_empty() {
-                        // Mock W path: extract from the cursor's own builder.
-                        let mut cursor_builder: SemanticBuilder =
-                            (*self.branch_cursors[idx].builder).clone();
-                        if let Some(t) = cursor_builder.take_dyn_result() {
-                            weights.push(cursor_weight);
-                            terms.push(t);
-                            roots.push(cursor_root);
-                        }
-                    } else {
-                        // Production W path: each multiset entry's snapshot
-                        // carries one derivation's AST root. Extract from
-                        // each. The `cursor.weight` is cloned once and
-                        // pushed per term (entries share the same outer W
-                        // projection — D5 callers downstream can re-project
-                        // per-entry via `first_inner` if needed).
-                        for snap_arc in snapshots {
-                            let mut snap_builder: SemanticBuilder = (*snap_arc).clone();
-                            if let Some(t) = snap_builder.take_dyn_result() {
-                                weights.push(cursor_weight.clone());
-                                terms.push(t);
-                                // C6: snapshot-derivations share the same
-                                // cursor's SPPF root via Symbol-dedup;
-                                // realization at this root fans out via
-                                // packings to recover the per-snapshot AST.
-                                roots.push(cursor_root);
-                            }
-                        }
+                    let mut cursor_builder: SemanticBuilder =
+                        (*self.branch_cursors[idx].builder).clone();
+                    if let Some(t) = cursor_builder.take_dyn_result() {
+                        weights.push(cursor_weight);
+                        terms.push(t);
+                        roots.push(cursor_root);
                     }
                 }
                 // Commit the first accepting cursor as the live winner
@@ -2977,7 +2905,6 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 // `walker.state()`, etc.). Done BEFORE the empty-terms
                 // check so synthetic test mocks that produce no Terms
                 // still observe walker.state transitioning to Accepted.
-                // The multi-result is RETURNED via `weights`/`terms`.
                 let winner_idx = accepting_indices[0];
                 self.commit_winner_at_eoi(winner_idx);
                 if weights.is_empty() {
@@ -5775,28 +5702,15 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 }
                 std::collections::hash_map::Entry::Occupied(o) => {
                     let idx = *o.get();
-                    // M11.5 (2026-05-14): inject each cursor's CURRENT builder
-                    // snapshot into its weight entries BEFORE the plus_ref
-                    // multiset union, so both cursors' ASTs are preserved in
-                    // the combined multiset. At merge time, cursor.builder
-                    // reflects the cursor's evolved state (post-Fork-arm
-                    // mutations, post-action firing) — distinct from the
-                    // sibling's builder if the cursors are observationally
-                    // equivalent on (state, gss_node, pos, ...) but
-                    // operationally distinct (different ASTs).
-                    //
-                    // Pre-M11.5 the snapshot capture was at Fork-arm time,
-                    // which captured the PRE-fork parent state (identical for
-                    // all siblings, useless for distinguishing them at merge).
-                    let existing_w_snap = crate::wpda_runtime::SnapshotWeight::with_builder_snapshot(
-                        merged[idx].weight.clone(),
-                        &merged[idx].builder,
-                    );
-                    let cursor_w_snap = crate::wpda_runtime::SnapshotWeight::with_builder_snapshot(
-                        cursor.weight.clone(),
-                        &cursor.builder,
-                    );
-                    let combined = existing_w_snap.plus_ref(&cursor_w_snap);
+                    // C8.2 (2026-05-16): the M11.5 builder-snapshot injection
+                    // (capturing per-cursor builder state into weight entries
+                    // for multiset-union preservation) was deleted alongside
+                    // the C10 W revert. With W = LexicographicWeight,
+                    // `SnapshotWeight::with_builder_snapshot` was a no-op
+                    // identity wrapper; structural ambiguity now lives in the
+                    // SPPF arena (Symbol-dedup at `(nt, lo, hi)` collapses
+                    // observationally-equivalent cursors' shared SPPF root).
+                    let combined = merged[idx].weight.plus_ref(&cursor.weight);
                     let weight_strict_win = combined != merged[idx].weight;
                     let weight_tied = !weight_strict_win
                         && combined == cursor.weight;
