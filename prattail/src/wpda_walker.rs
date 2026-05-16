@@ -1093,6 +1093,21 @@ pub struct BranchCursor<W: SemiringRef> {
     /// and `sppf_stack[mark..]` becomes the children of a freshly-interned
     /// Packing tagged with the optional-present rule_idx sentinel.
     pub optional_scope_marks: Vec<usize>,
+    /// Bug N (Phase 3.1.5): per-cursor stack of in-progress binder scopes.
+    /// Each entry is `(depth, accumulated_names)`:
+    ///   - `emit_start_binder_scope` pushes a new entry.
+    ///   - `emit_extend_binder_scope` appends a name to the top entry.
+    ///   - `apply_effect_to_cursor(BuilderDelta::EndBinderScope)` pops
+    ///     the top entry, interns it into `SppfNode::BinderScope`, and
+    ///     pushes the SppfId onto `sppf_stack` so the rule's Packing
+    ///     captures it as a child (mirroring the `ActionArg::BinderScope`
+    ///     that the builder side pushes onto `builder.stack`).
+    ///
+    /// This mirrors `builder.binder_scopes` (an `im::Vector<BinderHandle>`)
+    /// in SPPF terms so realization can reconstruct
+    /// `ActionArg::BinderScope` without depending on parse-time builder
+    /// state.
+    pub binder_scope_marks: Vec<(u16, Vec<String>)>,
     // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
     // alternative state violated WPDS stack purity (the multiset grew
     // monotonically with no pop counterpart, and was excluded from
@@ -1151,6 +1166,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             builder: Arc::clone(&self.builder),
             sppf_stack: self.sppf_stack.clone(),
             optional_scope_marks: self.optional_scope_marks.clone(),
+            binder_scope_marks: self.binder_scope_marks.clone(),
         }
     }
 }
@@ -1230,6 +1246,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Option C / C2: seed cursor's SPPF stack is empty (no reduces yet).
             sppf_stack: Vec::new(),
             optional_scope_marks: Vec::new(),
+            binder_scope_marks: Vec::new(),
         }
     }
 
@@ -1282,6 +1299,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Arc::clone above on the builder Arc bump cost basis.
             sppf_stack: parent.sppf_stack.clone(),
             optional_scope_marks: parent.optional_scope_marks.clone(),
+            binder_scope_marks: parent.binder_scope_marks.clone(),
         }
     }
 }
@@ -2425,6 +2443,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     // not from a cursor's stack.
                     sppf_stack: Vec::new(),
                     optional_scope_marks: Vec::new(),
+                    binder_scope_marks: Vec::new(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -3110,6 +3129,22 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 // realize_packing_call).
                 vec![ActionArg::CollectionId(*cid as u8)]
             }
+            Some(crate::sppf::SppfNode::BinderScope { names_text, depth }) => {
+                // Bug N (Phase 3.1.5): reconstruct the ActionArg::BinderScope
+                // arg from the SPPF mirror. The builder side already pushed
+                // this arg onto its args-stack at parse time (via
+                // builder.end_binder_scope inside apply_effect_to_cursor); at
+                // realization time we recreate the BinderHandle from the
+                // interned TextHandles + depth, and the parent Packing's
+                // realize_packing_call forwards via push_raw_arg.
+                let names: Vec<String> = names_text
+                    .iter()
+                    .map(|&h| self.sppf.text(h).to_string())
+                    .collect();
+                vec![ActionArg::BinderScope(
+                    crate::wpda_runtime::BinderHandle::new(names, *depth),
+                )]
+            }
             Some(crate::sppf::SppfNode::Symbol { .. }) => {
                 // Concat all packings' realizations.
                 let mut out: Vec<ActionArg> = Vec::new();
@@ -3607,6 +3642,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                     // construction; the deterministic-mode singleton resets.
                     sppf_stack: Vec::new(),
                     optional_scope_marks: Vec::new(),
+                    binder_scope_marks: Vec::new(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -3680,10 +3716,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 // for non-recovery deltas), leaving cursor.builder
                 // missing the SpliceIntoCollection / other Class-3
                 // inner-walk effects.
-                Self::apply_effect_to_builder(
-                    Arc::make_mut(&mut cursor.builder),
-                    &effect,
-                );
+                self.apply_effect_to_cursor(cursor, &effect);
                 // Phase 5.6-tail-D (2026-05-12): only recovery deltas
                 // land in the journal — non-recovery effects are already
                 // applied to cursor.builder above.
@@ -4121,6 +4154,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -4176,6 +4210,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -4242,6 +4277,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4284,6 +4320,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -4319,6 +4356,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -4387,6 +4425,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -4434,6 +4473,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -4482,15 +4522,13 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
                             // to child.builder via Arc::make_mut so the
                             // post-install state has these mutations.
-                            Self::apply_effect_to_builder(
-                                Arc::make_mut(&mut child.builder),
-                                &effect,
-                            );
+                            self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
                                 child.recovery_deltas.push(effect);
@@ -4568,6 +4606,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -4642,6 +4681,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
@@ -4727,6 +4767,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
+                                binder_scope_marks: cursor.binder_scope_marks.clone(),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -4884,10 +4925,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                             // Phase 5.5 (2026-05-12): eagerly apply effect
                             // to child.builder via Arc::make_mut so the
                             // post-install state has these mutations.
-                            Self::apply_effect_to_builder(
-                                Arc::make_mut(&mut child.builder),
-                                &effect,
-                            );
+                            self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
                                 child.recovery_deltas.push(effect);
@@ -5047,10 +5085,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                             } else {
                                 self.emit_extend_binder_scope(&mut child, text.clone());
                             }
-                            Self::apply_effect_to_builder(
-                                Arc::make_mut(&mut child.builder),
-                                &effect,
-                            );
+                            self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
                                 child.recovery_deltas.push(effect);
@@ -5094,10 +5129,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            Self::apply_effect_to_builder(
-                                Arc::make_mut(&mut child.builder),
-                                &effect,
-                            );
+                            self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
                                 child.recovery_deltas.push(effect);
@@ -5176,10 +5208,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                                 child_source_priority,
                             );
                             for effect in effects {
-                                Self::apply_effect_to_builder(
-                                    Arc::make_mut(&mut child.builder),
-                                    &effect,
-                                );
+                                self.apply_effect_to_cursor(&mut child, &effect);
                                 if Self::is_recovery_delta(&effect) {
                                     child.recovery_deltas.push(effect);
                                 }
@@ -6091,6 +6120,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             // reduces continue building on top of the committed history.
             sppf_stack: winner.sppf_stack,
             optional_scope_marks: winner.optional_scope_marks,
+            binder_scope_marks: winner.binder_scope_marks,
         }];
     }
 
@@ -6233,6 +6263,44 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 // mutable_token_source, NOT cursor.builder. They're
                 // applied by commit_winner's recovery-arm replay.
             }
+        }
+    }
+
+    /// Bug N (Phase 3.1.5): SPPF-aware effect application. Applies the
+    /// effect to `cursor.builder` via the static `apply_effect_to_builder`,
+    /// then mirrors the relevant ops onto `cursor.binder_scope_marks` and
+    /// `cursor.sppf_stack`:
+    ///
+    /// - `StartBinderScope { names }`: push `(depth, names)` onto
+    ///   `binder_scope_marks` so the matching EndBinderScope can capture
+    ///   the full name list.
+    /// - `EndBinderScope`: pop the topmost mark, intern an
+    ///   `SppfNode::BinderScope` from `(depth, names)`, push its SppfId
+    ///   onto `sppf_stack`. Mirrors the builder's push of
+    ///   `ActionArg::BinderScope` onto its active args stack.
+    ///
+    /// Other effects (Collection ops, recovery deltas) require no SPPF
+    /// mirror at this site — the collection mirror is in
+    /// `emit_start_collection` / `emit_push_collection_id` /
+    /// `emit_splice_into_collection`, and recovery deltas mutate the
+    /// mutable token source, not the AST.
+    fn apply_effect_to_cursor(&mut self, cursor: &mut BranchCursor<W>, effect: &BuilderDelta) {
+        // Builder side first (matches pre-existing semantics).
+        Self::apply_effect_to_builder(Arc::make_mut(&mut cursor.builder), effect);
+        // SPPF + cursor-state mirror.
+        match effect {
+            BuilderDelta::StartBinderScope { names } => {
+                let depth = cursor.binder_scope_marks.len() as u16;
+                cursor.binder_scope_marks.push((depth, names.clone()));
+            }
+            BuilderDelta::EndBinderScope => {
+                if let Some((depth, names)) = cursor.binder_scope_marks.pop() {
+                    let sid = self.sppf.intern_binder_scope(&names, depth);
+                    cursor.sppf_stack.push(sid);
+                }
+            }
+            // Collection / recovery effects: no SPPF mirror here.
+            _ => {}
         }
     }
 
@@ -6406,18 +6474,24 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
 
     #[inline(always)]
     fn emit_start_binder_scope(&mut self, cursor: &mut BranchCursor<W>, names: Vec<String>) {
-        // C3 dual-mode: binder scopes do not contribute to the SPPF tree
-        // shape (they're metadata for capture-resolution at realization
-        // time). The walker-side binder state lives in cursor.builder for
-        // dual-mode through C8; the SPPF-side resolver consults the
-        // realization-time scope context built bottom-up from BinderIdent
-        // terminals. No SPPF op required here.
+        // Bug N (Phase 3.1.5): record the in-progress scope on the cursor
+        // mirror. The corresponding `apply_effect_to_cursor(EndBinderScope)`
+        // pops this mark, interns an `SppfNode::BinderScope`, and pushes
+        // its SppfId onto `sppf_stack` — matching the builder side's
+        // push of `ActionArg::BinderScope` onto args.
+        let depth = cursor.binder_scope_marks.len() as u16;
+        cursor.binder_scope_marks.push((depth, names.clone()));
         Arc::make_mut(&mut cursor.builder).start_binder_scope(names);
     }
 
     #[inline(always)]
     fn emit_extend_binder_scope(&mut self, cursor: &mut BranchCursor<W>, name: String) {
-        // C3 dual-mode: same as emit_start_binder_scope — metadata only.
+        // Bug N (Phase 3.1.5): append to the top in-progress scope's
+        // name accumulator so subsequent EndBinderScope captures the
+        // full name list.
+        if let Some(top) = cursor.binder_scope_marks.last_mut() {
+            top.1.push(name.clone());
+        }
         Arc::make_mut(&mut cursor.builder).extend_binder_scope(name);
     }
 

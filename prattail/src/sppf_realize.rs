@@ -87,6 +87,13 @@ pub trait ActionResolver {
     fn resolve_predicate(&self, handle: u32) -> Self::Out {
         panic!("ActionResolver::resolve_predicate called with handle={} but resolver does not support predicates", handle);
     }
+
+    /// Resolve a `BinderScope` leaf. The user AST gets an
+    /// `ActionArg::BinderScope(BinderHandle{names, depth})`-shaped value.
+    fn resolve_binder_scope(&self, names: Vec<String>, depth: u16) -> Self::Out {
+        let _ = (names, depth);
+        panic!("ActionResolver::resolve_binder_scope called but resolver does not support binder scopes");
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -164,7 +171,8 @@ pub fn realize_into<R: ActionResolver>(
                     | Some(SppfNode::Epsilon { .. })
                     | Some(SppfNode::CollectionId { .. })
                     | Some(SppfNode::OptAbsent { .. })
-                    | Some(SppfNode::Predicate { .. }) => {
+                    | Some(SppfNode::Predicate { .. })
+                    | Some(SppfNode::BinderScope { .. }) => {
                         // No children.
                     }
                     Some(SppfNode::Symbol { .. }) => {
@@ -209,6 +217,13 @@ pub fn realize_into<R: ActionResolver>(
                     }
                     Some(SppfNode::Predicate { handle }) => {
                         vec![resolver.resolve_predicate(*handle)]
+                    }
+                    Some(SppfNode::BinderScope { names_text, depth }) => {
+                        let names: Vec<String> = names_text
+                            .iter()
+                            .map(|&h| sppf.text(h).to_string())
+                            .collect();
+                        vec![resolver.resolve_binder_scope(names, *depth)]
                     }
                     Some(SppfNode::Symbol { .. }) => {
                         // Concatenate all packings' realizations.

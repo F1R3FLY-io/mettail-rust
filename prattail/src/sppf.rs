@@ -194,6 +194,26 @@ pub enum SppfNode {
         /// Index into `WpdaWalker::sppf_predicate_arena`.
         handle: u32,
     },
+
+    /// Bug N fix (Phase 3.1.5, 2026-05-15): completed binder scope —
+    /// produced when `apply_effect_to_cursor` processes a
+    /// `BuilderDelta::EndBinderScope` effect. The walker side pops the
+    /// active `BinderHandle` from `builder.binder_scopes` and pushes it
+    /// as `ActionArg::BinderScope` onto the args stack. The SPPF mirror
+    /// records the same materialization as a `BinderScope` leaf so
+    /// realization can reconstruct `ActionArg::BinderScope` from the
+    /// SPPF alone (without depending on the parse-time `builder.binder_scopes`).
+    ///
+    /// Names are stored as TextHandles into the SPPF's `text_arena`;
+    /// realization decodes them via `Sppf::text(handle)`. Dedup'd by
+    /// `(depth, hash(names_text))`.
+    BinderScope {
+        /// One TextHandle per declared binder name.
+        names_text: Vec<TextHandle>,
+        /// Nesting depth at the time the scope was opened — matches
+        /// `BinderHandle.depth`.
+        depth: u16,
+    },
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -243,6 +263,10 @@ pub struct Sppf {
     dedup_collection_id: FxHashMap<u32, SppfId>,
     dedup_opt_absent: FxHashMap<u32, SppfId>,
     dedup_predicate: FxHashMap<u32, SppfId>,
+    /// Bug N (Phase 3.1.5): dedup BinderScope by `(depth, names_hash)`.
+    /// Two cursors emitting the same scope contents at the same depth
+    /// collapse to the same SppfId.
+    dedup_binder_scope: FxHashMap<(u16, u64), SppfId>,
 
     // Derived indices — strictly rebuildable from `symbol_packings`. Rebuilt
     // on checkpoint restore.
@@ -377,6 +401,27 @@ impl Sppf {
         id
     }
 
+    /// Intern a `BinderScope` leaf (Bug N fix). Names are interned via
+    /// `intern_text`; the returned SppfId references a `SppfNode::BinderScope`
+    /// containing `Vec<TextHandle>` + depth. Dedup'd by `(depth, hash(names))`.
+    pub fn intern_binder_scope(&mut self, names: &[String], depth: u16) -> SppfId {
+        use rustc_hash::FxHasher;
+        let mut h = FxHasher::default();
+        for n in names {
+            n.hash(&mut h);
+        }
+        let key = (depth, h.finish());
+        if let Some(&id) = self.dedup_binder_scope.get(&key) {
+            return id;
+        }
+        let names_text: Vec<TextHandle> =
+            names.iter().map(|n| self.intern_text(n)).collect();
+        let id = self.nodes.len() as SppfId;
+        self.nodes.push(SppfNode::BinderScope { names_text, depth });
+        self.dedup_binder_scope.insert(key, id);
+        id
+    }
+
     /// Link a Packing to a Symbol. Idempotent (O(1) check). The link is
     /// appended to `symbol_packings` only if not already present.
     ///
@@ -468,9 +513,11 @@ impl Sppf {
                 SppfNode::Packing { children, .. } => {
                     cur = *children.first()?;
                 }
-                // CollectionId and Predicate are walker-arena references
-                // without an intrinsic span; treat as position-less.
-                SppfNode::CollectionId { .. } | SppfNode::Predicate { .. } => return None,
+                // CollectionId, Predicate, BinderScope are walker-arena
+                // references / metadata without an intrinsic span.
+                SppfNode::CollectionId { .. }
+                | SppfNode::Predicate { .. }
+                | SppfNode::BinderScope { .. } => return None,
             }
         }
     }
@@ -493,7 +540,9 @@ impl Sppf {
                 SppfNode::Packing { children, .. } => {
                     cur = *children.last()?;
                 }
-                SppfNode::CollectionId { .. } | SppfNode::Predicate { .. } => return None,
+                SppfNode::CollectionId { .. }
+                | SppfNode::Predicate { .. }
+                | SppfNode::BinderScope { .. } => return None,
             }
         }
     }
@@ -552,6 +601,7 @@ impl Sppf {
         self.dedup_collection_id.retain(|_, &mut id| id < n);
         self.dedup_opt_absent.retain(|_, &mut id| id < n);
         self.dedup_predicate.retain(|_, &mut id| id < n);
+        self.dedup_binder_scope.retain(|_, &mut id| id < n);
 
         // 3. Rebuild derived indices from the (now-truncated) symbol_packings.
         self.link_dedup.clear();
