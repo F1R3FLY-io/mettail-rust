@@ -193,6 +193,7 @@ pub fn realize_into<R: ActionResolver>(
                         token_kind,
                         text_handle,
                         pos,
+                        pushed_via_push_ident: _,
                     }) => {
                         let text = sppf.text(*text_handle);
                         vec![resolver.resolve_terminal(token_kind, text, *pos)]
@@ -326,7 +327,7 @@ mod tests {
     #[test]
     fn realize_single_terminal() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"));
+        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let results = realize_all(&s, t, &StringResolver, None);
         assert_eq!(results, vec!["x"]);
     }
@@ -334,9 +335,9 @@ mod tests {
     #[test]
     fn realize_single_packing() {
         let mut s = Sppf::new();
-        let t1 = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"));
-        let t2 = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None);
-        let t3 = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(2), Some("y"));
+        let t1 = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
+        let t2 = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None, false);
+        let t3 = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(2), Some("y"), false);
         let p = s.intern_packing(0, vec![t1, t2, t3]);
         let results = realize_all(&s, p, &StringResolver, None);
         assert_eq!(results.len(), 1);
@@ -347,7 +348,7 @@ mod tests {
     #[test]
     fn realize_symbol_with_one_packing() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"));
+        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let p = s.intern_packing(0, vec![t]);
         let sym = s.intern_symbol(0, 0, 1);
         s.link_packing_to_symbol(sym, p);
@@ -358,7 +359,7 @@ mod tests {
     #[test]
     fn realize_symbol_with_multiple_packings() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"));
+        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let p1 = s.intern_packing(0, vec![t]);
         let p2 = s.intern_packing(1, vec![t]);
         let sym = s.intern_symbol(0, 0, 1);
@@ -379,11 +380,11 @@ mod tests {
         const RULE_MUL: u32 = 1;
         const RULE_VAR: u32 = 2;
 
-        let t_a = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("a"));
-        let t_plus = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None);
-        let t_b = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(2), Some("b"));
-        let t_mul = s.intern_terminal(k_fixed("*"), PosOrSynth::Real(3), None);
-        let t_c = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(4), Some("c"));
+        let t_a = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("a"), false);
+        let t_plus = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None, false);
+        let t_b = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(2), Some("b"), false);
+        let t_mul = s.intern_terminal(k_fixed("*"), PosOrSynth::Real(3), None, false);
+        let t_c = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(4), Some("c"), false);
 
         let p_a = s.intern_packing(RULE_VAR, vec![t_a]);
         let p_b = s.intern_packing(RULE_VAR, vec![t_b]);
@@ -439,7 +440,7 @@ mod tests {
     fn realize_respects_limit() {
         // Symbol with 5 packings, limit=2.
         let mut s = Sppf::new();
-        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"));
+        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let sym = s.intern_symbol(0, 0, 1);
         for rule in 0..5u32 {
             let p = s.intern_packing(rule, vec![t]);
@@ -460,7 +461,7 @@ mod tests {
     #[test]
     fn realize_packing_with_epsilon_child() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"));
+        let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let eps = s.intern_epsilon(1);
         let p = s.intern_packing(0, vec![t, eps]);
         let results = realize_all(&s, p, &StringResolver, None);
@@ -474,8 +475,8 @@ mod tests {
         fn build() -> (Sppf, SppfId) {
             let mut s = Sppf::new();
             let nt_e: u32 = 0;
-            let t_a = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("a"));
-            let t_b = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(1), Some("b"));
+            let t_a = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("a"), false);
+            let t_b = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(1), Some("b"), false);
             let p1 = s.intern_packing(0, vec![t_a, t_b]);
             let p2 = s.intern_packing(1, vec![t_a, t_b]);
             let sym = s.intern_symbol(nt_e, 0, 2);

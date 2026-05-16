@@ -116,6 +116,19 @@ pub enum SppfNode {
         /// Position. `Real` for input tokens, `Synthesized` for recovery
         /// insertions.
         pos: PosOrSynth,
+        /// Bug E fix (Phase 3.1.3, 2026-05-15): discriminator indicating
+        /// which builder push-helper produced this Terminal. `true` =
+        /// `emit_push_ident` (builder pushed `ActionArg::Ident{name,pos}`).
+        /// `false` = `emit_push_token` (builder pushed
+        /// `ActionArg::Token{kind,text,pos}`).
+        ///
+        /// Required because `emit_push_token` can be called with
+        /// `TokenKind::Ident` for general token captures (e.g., `Func(name:
+        /// Ident, body: Block)`), while `emit_push_ident` is reserved for
+        /// binder-ident sites. The realization pass must reconstruct the
+        /// correct `ActionArg` variant; without this flag it would
+        /// mismatch when `token_kind == Ident`.
+        pushed_via_push_ident: bool,
     },
 
     /// A non-terminal Symbol node. ONE per `(non_terminal_tag, lo_pos, hi_pos)`
@@ -218,7 +231,12 @@ pub struct Sppf {
 
     // Dedup tables. On checkpoint restore, filter to drop entries pointing to
     // truncated ids. FxHashMap (deterministic) per plan §11.5 I3.
-    dedup_terminal: FxHashMap<(TokenKind, PosOrSynth), SppfId>,
+    /// Bug E fix (Phase 3.1.3): key includes `pushed_via_push_ident: bool`
+    /// so emit_push_token's Terminal{kind=Ident, …} doesn't dedup with
+    /// emit_push_ident's Terminal{kind=Ident, …} at the same position.
+    /// They produce different ActionArgs at realization (Token vs Ident);
+    /// they must be distinct SPPF nodes.
+    dedup_terminal: FxHashMap<(TokenKind, PosOrSynth, bool), SppfId>,
     dedup_symbol: FxHashMap<(u32, u32, u32), SppfId>,
     dedup_packing: FxHashMap<(u32, u64), SppfId>,
     dedup_epsilon: FxHashMap<u32, SppfId>,
@@ -242,15 +260,24 @@ impl Sppf {
 
     /// Intern a terminal leaf. Returns an existing id if a structurally
     /// identical terminal was already interned, else allocates.
+    ///
+    /// `pushed_via_push_ident`: Bug E discriminator. `true` if the
+    /// walker's `emit_push_ident` (which produces `ActionArg::Ident` on
+    /// the builder side) called this; `false` if `emit_push_token`
+    /// (`ActionArg::Token`). Distinct values at the same `(kind, pos)`
+    /// produce DISTINCT Terminal SppfIds so realization can reconstruct
+    /// the right ActionArg variant.
     pub fn intern_terminal(
         &mut self,
         token_kind: TokenKind,
         pos: PosOrSynth,
         text: Option<&str>,
+        pushed_via_push_ident: bool,
     ) -> SppfId {
-        // Dedup key: (kind, pos). Two terminals at the same position with the
-        // same kind ARE the same terminal — `text` is determined by kind+pos.
-        let key = (token_kind.clone(), pos);
+        // Dedup key: (kind, pos, pushed_via_push_ident). Two terminals at the
+        // same position with the same kind and same push-helper origin ARE the
+        // same terminal — `text` is determined by kind+pos.
+        let key = (token_kind.clone(), pos, pushed_via_push_ident);
         if let Some(&id) = self.dedup_terminal.get(&key) {
             return id;
         }
@@ -263,6 +290,7 @@ impl Sppf {
             token_kind,
             text_handle,
             pos,
+            pushed_via_push_ident,
         });
         self.dedup_terminal.insert(key, id);
         id
@@ -570,8 +598,8 @@ mod tests {
     #[test]
     fn intern_terminal_returns_same_id_for_same_key() {
         let mut s = Sppf::new();
-        let a = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None);
-        let b = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None);
+        let a = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None, false);
+        let b = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None, false);
         assert_eq!(a, b);
         assert_eq!(s.len(), 1);
     }
@@ -579,8 +607,8 @@ mod tests {
     #[test]
     fn intern_terminal_distinguishes_pos() {
         let mut s = Sppf::new();
-        let a = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None);
-        let b = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None);
+        let a = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None, false);
+        let b = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None, false);
         assert_ne!(a, b);
         assert_eq!(s.len(), 2);
     }
@@ -588,8 +616,8 @@ mod tests {
     #[test]
     fn intern_terminal_distinguishes_kind() {
         let mut s = Sppf::new();
-        let a = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None);
-        let b = s.intern_terminal(k_fixed("-"), PosOrSynth::Real(0), None);
+        let a = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None, false);
+        let b = s.intern_terminal(k_fixed("-"), PosOrSynth::Real(0), None, false);
         assert_ne!(a, b);
         assert_eq!(s.len(), 2);
     }
@@ -597,8 +625,8 @@ mod tests {
     #[test]
     fn intern_terminal_real_and_synth_dont_collide() {
         let mut s = Sppf::new();
-        let real = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(5), Some("x"));
-        let synth = s.intern_terminal(TokenKind::Ident, PosOrSynth::Synthesized(5), Some("x"));
+        let real = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(5), Some("x"), false);
+        let synth = s.intern_terminal(TokenKind::Ident, PosOrSynth::Synthesized(5), Some("x"), false);
         assert_ne!(real, synth);
         assert_eq!(s.len(), 2);
     }
@@ -606,7 +634,7 @@ mod tests {
     #[test]
     fn intern_terminal_preserves_text() {
         let mut s = Sppf::new();
-        let id = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("foo"));
+        let id = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("foo"), false);
         match s.node(id) {
             Some(SppfNode::Terminal { text_handle, .. }) => {
                 assert_eq!(s.text(*text_handle), "foo");
@@ -618,7 +646,7 @@ mod tests {
     #[test]
     fn intern_terminal_none_text_uses_sentinel() {
         let mut s = Sppf::new();
-        let id = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None);
+        let id = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(0), None, false);
         match s.node(id) {
             Some(SppfNode::Terminal { text_handle, .. }) => {
                 assert_eq!(*text_handle, TEXT_HANDLE_NONE);
@@ -665,7 +693,7 @@ mod tests {
     #[test]
     fn intern_packing_returns_same_id_for_same_rule_and_children() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let a = s.intern_packing(0, vec![t]);
         let b = s.intern_packing(0, vec![t]);
         assert_eq!(a, b);
@@ -674,7 +702,7 @@ mod tests {
     #[test]
     fn intern_packing_distinguishes_rule_idx() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let a = s.intern_packing(0, vec![t]);
         let b = s.intern_packing(1, vec![t]);
         assert_ne!(a, b);
@@ -683,8 +711,8 @@ mod tests {
     #[test]
     fn intern_packing_distinguishes_children_order() {
         let mut s = Sppf::new();
-        let t1 = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
-        let t2 = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None);
+        let t1 = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
+        let t2 = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None, false);
         let a = s.intern_packing(0, vec![t1, t2]);
         let b = s.intern_packing(0, vec![t2, t1]);
         assert_ne!(a, b);
@@ -693,7 +721,7 @@ mod tests {
     #[test]
     fn intern_packing_distinguishes_children_count() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let a = s.intern_packing(0, vec![t]);
         let b = s.intern_packing(0, vec![t, t]);
         assert_ne!(a, b);
@@ -717,7 +745,7 @@ mod tests {
     #[test]
     fn link_packing_to_symbol_records_link() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let p = s.intern_packing(0, vec![t]);
         let sym = s.intern_symbol(0, 0, 1);
         s.link_packing_to_symbol(sym, p);
@@ -728,7 +756,7 @@ mod tests {
     #[test]
     fn link_packing_to_symbol_idempotent() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let p = s.intern_packing(0, vec![t]);
         let sym = s.intern_symbol(0, 0, 1);
         s.link_packing_to_symbol(sym, p);
@@ -741,7 +769,7 @@ mod tests {
     #[test]
     fn link_packing_to_symbol_records_multiple_packings() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let p1 = s.intern_packing(0, vec![t]);
         let p2 = s.intern_packing(1, vec![t]);
         let sym = s.intern_symbol(0, 0, 1);
@@ -763,9 +791,9 @@ mod tests {
     #[test]
     fn arena_is_append_only_after_intern() {
         let mut s = Sppf::new();
-        let t1 = s.intern_terminal(k_fixed("a"), PosOrSynth::Real(0), None);
+        let t1 = s.intern_terminal(k_fixed("a"), PosOrSynth::Real(0), None, false);
         let snapshot = s.node(t1).cloned();
-        let _ = s.intern_terminal(k_fixed("b"), PosOrSynth::Real(1), None);
+        let _ = s.intern_terminal(k_fixed("b"), PosOrSynth::Real(1), None, false);
         let _ = s.intern_symbol(0, 0, 1);
         let _ = s.intern_packing(0, vec![t1]);
         // t1's node identity is preserved.
@@ -775,7 +803,7 @@ mod tests {
     #[test]
     fn symbol_node_immutable_when_packings_added() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let sym = s.intern_symbol(0, 0, 1);
         let symbol_snapshot = s.node(sym).cloned();
         let p1 = s.intern_packing(0, vec![t]);
@@ -811,11 +839,11 @@ mod tests {
         const RULE_VAR: u32 = 2;
 
         // Leaf terminals at positions 0..5.
-        let t_a = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("a"));
-        let t_plus = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None);
-        let t_b = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(2), Some("b"));
-        let t_mul = s.intern_terminal(k_fixed("*"), PosOrSynth::Real(3), None);
-        let t_c = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(4), Some("c"));
+        let t_a = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("a"), false);
+        let t_plus = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None, false);
+        let t_b = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(2), Some("b"), false);
+        let t_mul = s.intern_terminal(k_fixed("*"), PosOrSynth::Real(3), None, false);
+        let t_c = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(4), Some("c"), false);
 
         // Leaf Symbols: E(a), E(b), E(c).
         let p_a = s.intern_packing(RULE_VAR, vec![t_a]);
@@ -870,8 +898,8 @@ mod tests {
         const RULE_R1: u32 = 0;
         const RULE_R2: u32 = 1;
 
-        let t0 = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
-        let t1 = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None);
+        let t0 = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
+        let t1 = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None, false);
 
         // Cursor C0: S -> R1 [x, y]
         let p1 = s.intern_packing(RULE_R1, vec![t0, t1]);
@@ -894,13 +922,13 @@ mod tests {
     #[test]
     fn checkpoint_then_restore_yields_same_state() {
         let mut s = Sppf::new();
-        let _ = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let _ = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let _ = s.intern_symbol(0, 0, 1);
         let cp = s.checkpoint();
         let len_before = s.len();
         let link_before = s.link_count();
 
-        let t = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None);
+        let t = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None, false);
         let p = s.intern_packing(0, vec![t]);
         let sym = s.intern_symbol(0, 1, 2);
         s.link_packing_to_symbol(sym, p);
@@ -915,15 +943,15 @@ mod tests {
     #[test]
     fn restore_filters_stale_dedup_entries() {
         let mut s = Sppf::new();
-        let _ = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let _ = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let cp = s.checkpoint();
 
         // Add a terminal post-checkpoint; restore should evict it from dedup.
-        let pre_id = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None);
+        let pre_id = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None, false);
         s.restore_to_checkpoint(cp);
 
         // Same key after restore: must allocate a new id, NOT return the stale one.
-        let post_id = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None);
+        let post_id = s.intern_terminal(k_fixed("y"), PosOrSynth::Real(1), None, false);
         let _ = pre_id;
         // After restore + re-intern, the y@1 terminal lives at the same nodes index
         // as before (because we truncated to cp.nodes_len then appended one).
@@ -933,7 +961,7 @@ mod tests {
     #[test]
     fn restore_rebuilds_packings_by_symbol_index() {
         let mut s = Sppf::new();
-        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None);
+        let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let p1 = s.intern_packing(0, vec![t]);
         let sym = s.intern_symbol(0, 0, 1);
         s.link_packing_to_symbol(sym, p1);
@@ -952,12 +980,12 @@ mod tests {
     #[test]
     fn restore_preserves_unrelated_dedup_entries() {
         let mut s = Sppf::new();
-        let kept_id = s.intern_terminal(k_fixed("a"), PosOrSynth::Real(0), None);
+        let kept_id = s.intern_terminal(k_fixed("a"), PosOrSynth::Real(0), None, false);
         let cp = s.checkpoint();
-        let _ = s.intern_terminal(k_fixed("b"), PosOrSynth::Real(1), None);
+        let _ = s.intern_terminal(k_fixed("b"), PosOrSynth::Real(1), None, false);
         s.restore_to_checkpoint(cp);
         // Re-intern the kept terminal — must return the same id.
-        let again = s.intern_terminal(k_fixed("a"), PosOrSynth::Real(0), None);
+        let again = s.intern_terminal(k_fixed("a"), PosOrSynth::Real(0), None, false);
         assert_eq!(again, kept_id);
     }
 
@@ -979,8 +1007,8 @@ mod tests {
         let mut s1 = Sppf::new();
         let mut s2 = Sppf::new();
         for i in 0..16u32 {
-            let t1 = s1.intern_terminal(TokenKind::Ident, PosOrSynth::Real(i), Some(&format!("v{}", i)));
-            let t2 = s2.intern_terminal(TokenKind::Ident, PosOrSynth::Real(i), Some(&format!("v{}", i)));
+            let t1 = s1.intern_terminal(TokenKind::Ident, PosOrSynth::Real(i), Some(&format!("v{}", i)), false);
+            let t2 = s2.intern_terminal(TokenKind::Ident, PosOrSynth::Real(i), Some(&format!("v{}", i)), false);
             assert_eq!(t1, t2);
             let p1 = s1.intern_packing(0, vec![t1]);
             let p2 = s2.intern_packing(0, vec![t2]);

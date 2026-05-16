@@ -3052,6 +3052,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 token_kind,
                 text_handle,
                 pos,
+                pushed_via_push_ident,
             }) => {
                 let text = self.sppf.text(*text_handle).to_string();
                 let pos_usize = match pos {
@@ -3059,18 +3060,23 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                         *p as usize
                     }
                 };
-                // Ident terminals become ActionArg::Ident; other tokens
-                // become ActionArg::Token.
-                let arg = match token_kind {
-                    TokenKind::Ident => ActionArg::Ident {
+                // Bug E fix (Phase 3.1.3): branch on the discriminator from
+                // emit_* origin, NOT on TokenKind::Ident. emit_push_ident
+                // produces ActionArg::Ident regardless of kind (always
+                // Ident); emit_push_token produces ActionArg::Token even
+                // when kind happens to be Ident (cross-cat-projection,
+                // general-token-capture paths).
+                let arg = if *pushed_via_push_ident {
+                    ActionArg::Ident {
                         name: text,
                         pos: pos_usize,
-                    },
-                    other => ActionArg::Token {
-                        kind: other.clone(),
+                    }
+                } else {
+                    ActionArg::Token {
+                        kind: token_kind.clone(),
                         text,
                         pos: pos_usize,
-                    },
+                    }
                 };
                 vec![arg]
             }
@@ -6330,11 +6336,14 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
     ) {
         // C3 dual-mode: intern a Terminal in the SPPF arena alongside the
         // existing builder push. Text is preserved if non-empty.
+        // Bug E (Phase 3.1.3): pushed_via_push_ident=false signals
+        // emit_push_token origin → realization produces ActionArg::Token.
         let text_opt = if text.is_empty() { None } else { Some(text.as_str()) };
         let sid = self.sppf.intern_terminal(
             kind.clone(),
             crate::sppf::PosOrSynth::Real(pos as u32),
             text_opt,
+            false,
         );
         cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_token(kind, text, pos);
@@ -6343,10 +6352,13 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
     #[inline(always)]
     fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
         // C3 dual-mode: SPPF terminal with TokenKind::Ident + the name text.
+        // Bug E (Phase 3.1.3): pushed_via_push_ident=true signals
+        // emit_push_ident origin → realization produces ActionArg::Ident.
         let sid = self.sppf.intern_terminal(
             TokenKind::Ident,
             crate::sppf::PosOrSynth::Real(pos as u32),
             Some(name.as_str()),
+            true,
         );
         cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_ident(name, pos);
