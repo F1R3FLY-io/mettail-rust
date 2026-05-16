@@ -3176,35 +3176,26 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 .map(|args| ActionArg::Optional(Some(args)))
                 .collect();
         }
-        // Real rule. We need to look up the action via the engine, but the
-        // engine's action_for is indexed by (cat_src_idx, rule_idx_within_cat).
-        // Our `rule_idx` here is the engine's rule_idx_within_cat directly
-        // (emit_fire_action passes symbol.rule_index_in_category as u32).
-        // The cat_src_idx is implicit in the parent Symbol — but at this
-        // call site we don't have the parent context. We scan all cats:
-        // the packing's rule_idx + arity-match disambiguates in practice
-        // (the engine.action_for tables are sparse). This is correct but
-        // O(num_cats); future C7+ optimization can precompute a global
-        // (rule_idx → cat_src_idx) map at engine setup time.
+        // Bug A fix (Phase 3.1.2, 2026-05-15): the Packing.rule_idx is a
+        // GLOBAL rule id encoded as `(cat_src_idx << 16) | rule_idx_within_cat`
+        // by emit_fire_action. Decode directly — no linear scan, no
+        // collision risk when two cats share a local rule_idx.
         let arity = children.len();
-        let mut cat_src_idx: Option<u16> = None;
-        for cs in 0..1024u16 {
-            if let Some(e) = self.engine.action_for(cs, rule_idx as u16) {
-                if e.arity as usize == arity {
-                    cat_src_idx = Some(cs);
-                    break;
-                }
-            }
-        }
-        let cat = match cat_src_idx {
-            Some(c) => c,
-            None => return Vec::new(), // No matching action — realization stub.
-        };
-        let action_entry = self.engine.action_for(cat, rule_idx as u16);
+        let cat = (rule_idx >> 16) as u16;
+        let local_rule_idx = (rule_idx & 0xFFFF) as u16;
+        let action_entry = self.engine.action_for(cat, local_rule_idx);
         let action_fn = match action_entry {
             Some(e) => e.action_fn,
-            None => return Vec::new(),
+            None => return Vec::new(), // No matching action — realization stub.
         };
+        debug_assert_eq!(
+            action_entry.unwrap().arity as usize,
+            arity,
+            "Bug A guard: Packing.rule_idx encodes ({cat}, {local_rule_idx}) but action_entry.arity ({}) != Packing.children.len() ({arity}). \
+             This indicates a corrupt SPPF or a mismatched intern_packing/action_for. \
+             rule_idx={rule_idx:#x}",
+            action_entry.unwrap().arity,
+        );
 
         // Cartesian product over children's realized args.
         let mut combos: Vec<Vec<ActionArg>> = vec![Vec::with_capacity(arity)];
@@ -6414,12 +6405,22 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
         // C3 dual-mode: capture symbol identity for SPPF, look up arity
         // BEFORE firing (the entry table is invariant; arity is the same
         // pre- and post-action).
+        //
+        // Bug A fix (Phase 3.1.2, 2026-05-15): encode the GLOBAL rule id
+        // as `(cat_src_idx << 16) | rule_idx_within_cat`. This makes the
+        // Packing identity carry the parent cat unambiguously, so
+        // realize_packing_call can decode cat directly without a linear
+        // scan over 0..1024 (which collides when two cats have rules
+        // with the same local rule_idx + arity — e.g., `LitInt` at
+        // rule_idx=0 in both Int and BigInt categories in calc_op).
         let cat_src_idx = symbol.category_src_idx;
-        let rule_idx = symbol.rule_index_in_category as u32;
+        let local_rule_idx = symbol.rule_index_in_category;
+        let global_rule_idx: u32 =
+            ((cat_src_idx as u32) << 16) | (local_rule_idx as u32);
         let hi_pos = cursor.pos as u32;
         let arity = self
             .engine
-            .action_for(cat_src_idx, symbol.rule_index_in_category)
+            .action_for(cat_src_idx, local_rule_idx)
             .map(|e| e.arity as usize)
             .unwrap_or(0);
 
@@ -6442,7 +6443,7 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
             cursor.sppf_stack.len() >= arity,
             "Bug P: sppf_stack underflow in emit_fire_action: cat={} rule={} arity={} have={} (builder side: {})",
             cat_src_idx,
-            rule_idx,
+            local_rule_idx,
             arity,
             cursor.sppf_stack.len(),
             cursor.builder.len(),
@@ -6457,7 +6458,9 @@ impl<W: SemiringRef + crate::wpda_runtime::SnapshotWeight, E: WpdaEngine<W>>
                 .first()
                 .and_then(|&c| self.sppf.span_lo(c))
                 .unwrap_or(hi_pos);
-            let packing_id = self.sppf.intern_packing(rule_idx, children);
+            // Bug A fix: store global_rule_idx (cat<<16|local) so
+            // realization can decode parent cat without scanning.
+            let packing_id = self.sppf.intern_packing(global_rule_idx, children);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
             cursor.sppf_stack.push(symbol_id);
