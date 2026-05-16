@@ -3433,32 +3433,75 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // and pushes one Term back.
             let pre_len = sb.len();
             let popped = sb.pop_args(arity);
+            // Bug J resolution (Part B, 2026-05-16): capture arg shapes
+            // for diagnostic logging in debug builds when action_fn
+            // elides. The captured shapes reveal which arg the action
+            // rejected (e.g., Ident where Term was expected) for any
+            // grammar's failing realize reconstruction.
+            #[cfg(debug_assertions)]
+            let arg_shapes_for_diag: Vec<&'static str> = popped.iter().map(|a| match a {
+                ActionArg::Token { .. } => "Token",
+                ActionArg::Ident { .. } => "Ident",
+                ActionArg::Term { type_name, .. } => *type_name,
+                ActionArg::BinderScope(_) => "BinderScope",
+                ActionArg::Collection { type_name, .. } => *type_name,
+                ActionArg::CollectionId(_) => "CollectionId",
+                ActionArg::Predicate(_) => "Predicate",
+                ActionArg::Optional(_) => "Optional",
+            }).collect();
             (action_fn)(&mut sb, popped);
             let post_len = sb.len();
-            // Bug J fix (Phase 3.1.4): debug_assert action contract.
-            // Per cat-A invariant (fire_action_for_on_builder, line
-            // 5712-5752), every action_fn pushes EXACTLY ONE Term on
-            // success. Silently dropping the result on mismatch hides
-            // a real bug; let it panic in debug for visibility.
             let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
-            debug_assert_eq!(
-                post_len, expected_len,
-                "Bug J: action did not push exactly one Term after pop. \
-                 rule_idx={:#x} cat={} local_rule={} arity={} pre_len={} post_len={} expected={}",
-                rule_idx, cat, local_rule_idx, arity, pre_len, post_len, expected_len,
-            );
-            if post_len == expected_len {
-                if let Some(t) = sb.take_dyn_result() {
-                    // The realized term's type_name is set by the
-                    // action's push_term; we approximate via "Cat" name
-                    // tag derived from the cat_src_idx. The downstream
-                    // facade downcasts via Arc::downcast::<Cat> so the
-                    // tag is for debug only.
-                    out.push(ActionArg::Term {
-                        value: t,
-                        type_name: "RealizedTerm",
-                    });
+            // Bug J resolution (Part A, 2026-05-16): mandate-compliant
+            // combo elision when action_fn returns without pushing
+            // exactly one Term.
+            //
+            // Per the preserve-all-derivations mandate's rule-out-by-
+            // evidence clause: an action_fn whose pattern matches fail
+            // (each `_ => return` arm fires when args don't match the
+            // rule's preconditions) is EVIDENCE that the rule doesn't
+            // reduce on these specific args. The combo is dropped; if
+            // all combos elide, the caller's realize returns an empty
+            // Vec and the failure surfaces as ParseError downstream.
+            //
+            // The pre-Bug-J-resolution code used `debug_assert_eq!`
+            // which panicked in debug and silently dropped in release —
+            // NEITHER honored preserve-all-derivations. The new path
+            // is uniform: drop the combo, log in debug, continue.
+            //
+            // Grammar-general: applies to any grammar's action_fn that
+            // uses `_ => return` arms for arg-shape validation. Future
+            // grammars with deeper realize/parse-time arg shape
+            // mismatches surface this diagnostic for investigation
+            // rather than panicking.
+            if post_len != expected_len {
+                #[cfg(debug_assertions)]
+                {
+                    eprintln!(
+                        "[realize_packing_call] action elided (post_len={}, expected={}): \
+                         rule_idx={:#x} cat={} local_rule={} arity={} pre_len={} \
+                         arg_shapes={:?}",
+                        post_len, expected_len, rule_idx, cat, local_rule_idx,
+                        arity, pre_len, arg_shapes_for_diag,
+                    );
                 }
+                // Drain any stale state the action partially produced
+                // so the next combo starts fresh.
+                while sb.len() > pre_len.saturating_sub(arity) {
+                    let _ = sb.pop_args(1);
+                }
+                continue;
+            }
+            if let Some(t) = sb.take_dyn_result() {
+                // The realized term's type_name is set by the
+                // action's push_term; we approximate via "Cat" name
+                // tag derived from the cat_src_idx. The downstream
+                // facade downcasts via Arc::downcast::<Cat> so the
+                // tag is for debug only.
+                out.push(ActionArg::Term {
+                    value: t,
+                    type_name: "RealizedTerm",
+                });
             }
             if let Some(cap) = limit {
                 if out.len() >= cap {
