@@ -170,12 +170,38 @@ fn wpds_parse_float_lit() {
 }
 
 #[test]
-fn wpds_parse_rejects_non_integer_in_int_slot() {
+fn wpds_parse_accepts_bool_via_cross_cat_projection_in_int_slot() {
+    // B.2 (Phase E Stage 1, 2026-05-16): test renamed + assertion flipped.
+    //
+    // Previously named `wpds_parse_rejects_non_integer_in_int_slot`, this
+    // test asserted that the parser rejects `BooleanLit("true")` at an
+    // Int slot. Post-Stage-1.1 (cross-cat-projection), the parser
+    // INTENTIONALLY accepts via the auto-injected `BoolToInt` cast
+    // constructor: `BooleanLit("true")` lexes to `Bool::BoolLit(true)`,
+    // which projects to `Int::BoolToInt(Box::new(Bool::BoolLit(true)))`
+    // via the user-defined `BoolToInt . v:Bool |- v : Int` rule (or its
+    // auto-injected equivalent).
+    //
+    // This is the intended cross-cat-projection semantics, NOT a bug.
+    // The original test was written before the feature shipped.
     let kinds = vec![TokenKind::BooleanLit];
     let texts = vec!["true"];
     let mut pos = 0usize;
     let result = parse_Int_via_wpda(&kinds, &texts, &mut pos, 0);
-    assert!(result.is_err(), "expected error, got {:?}", result);
+    match &result {
+        Ok(Int::BoolToInt(inner)) => match inner.as_ref() {
+            Bool::BoolLit(true) => {}
+            other => panic!(
+                "expected Int::BoolToInt(Bool::BoolLit(true)), \
+                 got Int::BoolToInt({:?})",
+                other
+            ),
+        },
+        other => panic!(
+            "expected Int::BoolToInt(Bool::BoolLit(true)), got {:?}",
+            other
+        ),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────
