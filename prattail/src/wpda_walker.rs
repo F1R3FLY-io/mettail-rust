@@ -3304,6 +3304,29 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         let mut out: Vec<ActionArg> = Vec::with_capacity(combos.len());
         for args in combos {
             let mut sb = SemanticBuilder::new();
+            // B.1 (Phase E Stage 1, 2026-05-16): Bug C fix — pre-allocate
+            // collection slots 0..=max(CollectionId) in `args` BEFORE the
+            // push loop. Without this, monotonic `sb.start_collection()`
+            // returns slot ids in encounter order, but the realize-time
+            // encounter order can differ from parse-time allocation
+            // order (e.g., `{open(n, 0) | n[{0}]}` produces a packing
+            // whose args list contains CollectionId(1) before
+            // CollectionId(0)). Pre-allocating all slots up to the max
+            // makes the per-id splice-into-collection branches operate
+            // on already-existing slots rather than allocating in
+            // arrival order. The previous `debug_assert_eq!(slot_id, *id)`
+            // gate would panic on out-of-order encounters.
+            let max_coll_id: Option<u32> = args.iter()
+                .filter_map(|a| match a {
+                    ActionArg::CollectionId(id) => Some(*id as u32),
+                    _ => None,
+                })
+                .max();
+            if let Some(max_id) = max_coll_id {
+                for _ in 0..=max_id {
+                    let _ = sb.start_collection();
+                }
+            }
             // Push args one-by-one. The push semantics must match what
             // the walker's emit-helpers would have done so the action's
             // pop_args call shape is preserved.
@@ -3321,15 +3344,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         sb.push_term_arc(Arc::clone(value));
                     }
                     ActionArg::CollectionId(id) => {
-                        // Open and populate the collection slot the
-                        // CollectionId references, then push the
-                        // CollectionId arg. action_fn will pop_args and
-                        // drain the collection.
-                        let slot_id = sb.start_collection();
-                        debug_assert_eq!(
-                            slot_id, *id,
-                            "realize_root_to_terms: collection id mismatch"
-                        );
+                        // B.1: slot already pre-allocated above; no
+                        // start_collection call here. Splice items into
+                        // the slot the CollectionId references, then
+                        // push the CollectionId arg. action_fn will
+                        // pop_args and drain the collection.
                         if let Some(items) = self.sppf_collection_arena.get(*id as usize) {
                             // Each item is realized as an ActionArg::Term
                             // in `memo`; push them onto sb so
