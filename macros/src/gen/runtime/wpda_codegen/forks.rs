@@ -389,7 +389,14 @@ mod tests {
         let s = ts.to_string();
         assert!(s.contains("WpdaStepAction :: Fork"), "missing Fork arm: {}", s);
         assert!(s.contains("CollectionClose"), "missing CollectionClose: {}", s);
-        assert!(s.contains("from_cost"), "missing from_cost weight: {}", s);
+        // Phase C (2026-05-17) drift fix: emit_first_set_fork now produces
+        // `lex_w(...)` per-branch weights (the canonical
+        // LexicographicWeight constructor for Fork branches). The
+        // previous assertion checked for `from_cost`, the older constructor
+        // name; the underlying generator changed to `lex_w` without
+        // updating this assertion. Test was a pre-existing failure unrelated
+        // to Phase C — fixed here as part of the Phase C gauntlet sweep.
+        assert!(s.contains("lex_w"), "missing lex_w weight: {}", s);
         // 3 branches => 3 ForkBranch literals.
         assert_eq!(s.matches("ForkBranch").count(), 3);
     }
