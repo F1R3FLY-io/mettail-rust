@@ -3056,10 +3056,33 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     where
         W: IdempotentSemiring,
     {
+        self.realize_root_to_terms_with_weights(root, limit)
+            .into_iter()
+            .map(|(t, _w)| t)
+            .collect()
+    }
+
+    /// Phase C.6 (2026-05-17): weighted variant of `realize_root_to_terms`.
+    ///
+    /// Returns `Vec<(term, W)>` where each entry's weight is the `⊗` of
+    /// the per-production weights along that derivation, capturing
+    /// Goodman's semiring-weighted parse-forest framework. Callers
+    /// wanting the existing un-weighted shape can call
+    /// `realize_root_to_terms` (which drops the weight) for backward
+    /// compatibility; Phase D's facade switch will adopt the weighted
+    /// shape directly.
+    pub fn realize_root_to_terms_with_weights(
+        &self,
+        root: crate::sppf::SppfId,
+        limit: Option<usize>,
+    ) -> Vec<(Arc<dyn Any + Send + Sync>, W)>
+    where
+        W: IdempotentSemiring,
+    {
         if root == crate::sppf::SPPF_ID_NONE {
             return Vec::new();
         }
-        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>> =
+        let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
             std::collections::HashMap::new();
         // Phase 3.1.6 (C7b cycle-handling, 2026-05-15): tri-color DFS per
         // Scott-Johnstone GLL parsing 2010 §5 ("Cyclic productions and
@@ -3143,14 +3166,15 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 }
             }
         }
-        // Extract Arc<dyn Any> from each ActionArg::Term in the root's
-        // realization. Other ActionArg variants at the root level indicate
-        // a structural mismatch (the root should always be a Term).
+        // Phase C.6: extract (Arc<dyn Any>, W) from each ActionArg::Term
+        // in the root's realization. Non-Term variants at the root level
+        // indicate a structural mismatch (the root should always be a
+        // Term).
         memo.remove(&root)
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|arg| match arg {
-                ActionArg::Term { value, .. } => Some(value),
+            .filter_map(|(arg, w)| match arg {
+                ActionArg::Term { value, .. } => Some((value, w)),
                 _ => None,
             })
             .collect()
@@ -3159,13 +3183,25 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// Internal helper: combine an SPPF node's children realizations
     /// into the node's own realization. Invoked at the Phase::Leave
     /// step of `realize_root_to_terms`.
+    ///
+    /// Phase C.6 (2026-05-17): each returned `(ActionArg, W)` tuple's
+    /// W is the per-derivation weight at this node. For leaves
+    /// (Terminal, Epsilon, OptAbsent, Predicate, CollectionId,
+    /// BinderScope) the weight is `W::one_ref()` per §2.5. For Symbol
+    /// nodes the weight comes from each linked Packing's accumulated
+    /// combo-weight ⊗ Packing.weight. For Packing nodes the weight is
+    /// `Π children-weights ⊗ Packing.weight` (cartesian product of
+    /// child realizations threads ⊗).
     fn realize_node_leave(
         &self,
         id: crate::sppf::SppfId,
-        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>>,
+        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
         colors: &std::collections::HashMap<crate::sppf::SppfId, RealizeColor>,
         limit: Option<usize>,
-    ) -> Vec<ActionArg> {
+    ) -> Vec<(ActionArg, W)>
+    where
+        W: IdempotentSemiring,
+    {
         match self.sppf.node(id) {
             Some(crate::sppf::SppfNode::Terminal {
                 token_kind,
@@ -3197,21 +3233,22 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         pos: pos_usize,
                     }
                 };
-                vec![arg]
+                // Phase C.6: leaf node — weight is `W::one_ref()` per §2.5.
+                vec![(arg, W::one_ref())]
             }
             Some(crate::sppf::SppfNode::Epsilon { .. }) => {
                 // Epsilon contributes nothing observable to the action's
                 // input — but realization still needs an entry per
                 // derivation. We yield Optional(None) as a neutral marker;
                 // typical grammars don't reduce on Epsilon directly.
-                vec![ActionArg::Optional(None)]
+                vec![(ActionArg::Optional(None), W::one_ref())]
             }
             Some(crate::sppf::SppfNode::OptAbsent { .. }) => {
-                vec![ActionArg::Optional(None)]
+                vec![(ActionArg::Optional(None), W::one_ref())]
             }
             Some(crate::sppf::SppfNode::Predicate { handle }) => {
                 if let Some(p) = self.sppf_predicate_arena.get(*handle as usize) {
-                    vec![ActionArg::Predicate(Arc::clone(p))]
+                    vec![(ActionArg::Predicate(Arc::clone(p)), W::one_ref())]
                 } else {
                     Vec::new()
                 }
@@ -3227,7 +3264,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // The collected items are populated in the synthetic
                 // realization builder before the action_fn call (see
                 // realize_packing_call).
-                vec![ActionArg::CollectionId(*cid as u8)]
+                vec![(ActionArg::CollectionId(*cid as u8), W::one_ref())]
             }
             Some(crate::sppf::SppfNode::BinderScope { names_text, depth }) => {
                 // Bug N (Phase 3.1.5): reconstruct the ActionArg::BinderScope
@@ -3241,12 +3278,20 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     .iter()
                     .map(|&h| self.sppf.text(h).to_string())
                     .collect();
-                vec![ActionArg::BinderScope(
-                    crate::wpda_runtime::BinderHandle::new(names, *depth),
+                vec![(
+                    ActionArg::BinderScope(
+                        crate::wpda_runtime::BinderHandle::new(names, *depth),
+                    ),
+                    W::one_ref(),
                 )]
             }
             Some(crate::sppf::SppfNode::Symbol { .. }) => {
-                // Concat all packings' realizations.
+                // Concat all packings' realizations. Phase C.6 preserves
+                // per-derivation weights; the Symbol-level ⊕-aggregation
+                // is captured in Sppf::Symbol.weight_sum at link time,
+                // but here at realize time we keep each alternative's
+                // own weight so callers can pick one (or ⊕-aggregate
+                // explicitly at the facade layer).
                 //
                 // Phase 3.1.6 cycle-skip (2026-05-15): per Scott-Johnstone
                 // 2010 GLL §5, a packing whose memo Vec is empty AND
@@ -3257,7 +3302,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // BLACK packings with empty memo are legitimate
                 // "produces-nothing" terminal-equivalents (e.g.,
                 // OptAbsent under an empty optional); include them.
-                let mut out: Vec<ActionArg> = Vec::new();
+                let mut out: Vec<(ActionArg, W)> = Vec::new();
                 for &p in self.sppf.packings_of(id) {
                     let p_color = colors.get(&p).copied();
                     let p_results = match memo.get(&p) {
@@ -3267,19 +3312,25 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     if p_results.is_empty() && p_color == Some(RealizeColor::Gray) {
                         continue; // cycle back-edge — skip
                     }
-                    for arg in p_results {
+                    for entry in p_results {
                         if let Some(cap) = limit {
                             if out.len() >= cap {
                                 return out;
                             }
                         }
-                        out.push(arg.clone());
+                        out.push(entry.clone());
                     }
                 }
                 out
             }
-            Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) => {
-                self.realize_packing_call(*rule_idx, children, memo, limit)
+            Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) => {
+                self.realize_packing_call(
+                    *rule_idx,
+                    children,
+                    weight.clone(),
+                    memo,
+                    limit,
+                )
             }
             None => Vec::new(),
         }
@@ -3288,20 +3339,34 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// Cartesian-product the children's realized ActionArgs, then call
     /// the rule's `action_fn` per combo to produce a Vec of realized
     /// Term args.
+    ///
+    /// Phase C.6 (2026-05-17): threads weights via ⊗ across the
+    /// cartesian product. Each child contributes a (arg, w) pair; a
+    /// full combo accumulates `combo_weight = Π child-weights`. The
+    /// returned tuple's weight is `combo_weight ⊗ packing_weight` —
+    /// the per-derivation weight at this Packing.
     fn realize_packing_call(
         &self,
         rule_idx: u32,
         children: &[crate::sppf::SppfId],
-        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<ActionArg>>,
+        packing_weight: W,
+        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
         limit: Option<usize>,
-    ) -> Vec<ActionArg> {
+    ) -> Vec<(ActionArg, W)>
+    where
+        W: IdempotentSemiring,
+    {
         // OPTIONAL_PRESENT_RULE_IDX sentinel: synthetic packing emitted
         // by emit_finalize_optional_scope_present. Wrap children's args
         // into ActionArg::Optional(Some(...)).
         if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
             // Cartesian product over children; each combo becomes one
-            // Optional(Some(args)).
-            let mut combos: Vec<Vec<ActionArg>> = vec![Vec::with_capacity(children.len())];
+            // Optional(Some(args)). Phase C.6: combo_weight threads ⊗
+            // across child weights. OPTIONAL_PRESENT's packing weight
+            // is W::one_ref() by §2.5, so the result weight equals
+            // combo_weight directly.
+            let mut combos: Vec<(Vec<ActionArg>, W)> =
+                vec![(Vec::with_capacity(children.len()), W::one_ref())];
             for &c in children {
                 let child_results = match memo.get(&c) {
                     Some(v) => v,
@@ -3318,12 +3383,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     Some(cap) => cap.min(unbounded_capacity),
                     None => unbounded_capacity,
                 };
-                let mut next: Vec<Vec<ActionArg>> = Vec::with_capacity(pre_alloc);
-                for combo in &combos {
-                    for arg in child_results {
-                        let mut ext = combo.clone();
-                        ext.push(arg.clone());
-                        next.push(ext);
+                let mut next: Vec<(Vec<ActionArg>, W)> = Vec::with_capacity(pre_alloc);
+                for (combo, combo_w) in &combos {
+                    for (arg, child_w) in child_results {
+                        let mut ext_args = combo.clone();
+                        ext_args.push(arg.clone());
+                        let ext_w = combo_w.times_ref(child_w);
+                        next.push((ext_args, ext_w));
                         if let Some(cap) = limit {
                             if next.len() >= cap {
                                 break;
@@ -3340,7 +3406,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             }
             return combos
                 .into_iter()
-                .map(|args| ActionArg::Optional(Some(args)))
+                .map(|(args, w)| (ActionArg::Optional(Some(args)), w))
                 .collect();
         }
         // Bug A fix (Phase 3.1.2, 2026-05-15): the Packing.rule_idx is a
@@ -3364,8 +3430,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             action_entry.unwrap().arity,
         );
 
-        // Cartesian product over children's realized args.
-        let mut combos: Vec<Vec<ActionArg>> = vec![Vec::with_capacity(arity)];
+        // Cartesian product over children's realized args. Phase C.6
+        // threads weights via ⊗: each combo accumulates the product of
+        // child weights along the way.
+        let mut combos: Vec<(Vec<ActionArg>, W)> =
+            vec![(Vec::with_capacity(arity), W::one_ref())];
         for &c in children {
             // Bug I fix (Phase 3.1.4): panic loudly on missing memo. The
             // realize_root_to_terms BFS guarantees Phase::Leave executes
@@ -3392,12 +3461,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 Some(cap) => cap.min(unbounded_capacity),
                 None => unbounded_capacity,
             };
-            let mut next: Vec<Vec<ActionArg>> = Vec::with_capacity(pre_alloc);
-            for combo in &combos {
-                for arg in child_results {
-                    let mut ext = combo.clone();
-                    ext.push(arg.clone());
-                    next.push(ext);
+            let mut next: Vec<(Vec<ActionArg>, W)> = Vec::with_capacity(pre_alloc);
+            for (combo, combo_w) in &combos {
+                for (arg, child_w) in child_results {
+                    let mut ext_args = combo.clone();
+                    ext_args.push(arg.clone());
+                    let ext_w = combo_w.times_ref(child_w);
+                    next.push((ext_args, ext_w));
                     if let Some(cap) = limit {
                         if next.len() >= cap {
                             break;
@@ -3414,9 +3484,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         }
 
         // For each combo: build a fresh SemanticBuilder, push args, fire
-        // action, capture top.
-        let mut out: Vec<ActionArg> = Vec::with_capacity(combos.len());
-        for args in combos {
+        // action, capture top. Phase C.6: result weight is
+        // `combo_weight ⊗ packing_weight`.
+        let mut out: Vec<(ActionArg, W)> = Vec::with_capacity(combos.len());
+        for (args, combo_w) in combos {
             let mut sb = SemanticBuilder::new();
             // B.1 (Phase E Stage 1, 2026-05-16): Bug C fix — pre-allocate
             // collection slots 0..=max(CollectionId) in `args` BEFORE the
@@ -3469,7 +3540,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             // push_to_collection drains correctly.
                             for &item in items {
                                 if let Some(item_realized) = memo.get(&item) {
-                                    if let Some(item_arg) = item_realized.first() {
+                                    if let Some((item_arg, _item_w)) = item_realized.first() {
                                         match item_arg {
                                             ActionArg::Term { value, .. } => {
                                                 sb.push_term_arc(Arc::clone(value));
@@ -3568,10 +3639,16 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // tag derived from the cat_src_idx. The downstream
                 // facade downcasts via Arc::downcast::<Cat> so the
                 // tag is for debug only.
-                out.push(ActionArg::Term {
-                    value: t,
-                    type_name: "RealizedTerm",
-                });
+                //
+                // Phase C.6: per-derivation weight = combo_w ⊗ packing_weight.
+                let result_w = combo_w.times_ref(&packing_weight);
+                out.push((
+                    ActionArg::Term {
+                        value: t,
+                        type_name: "RealizedTerm",
+                    },
+                    result_w,
+                ));
             }
             if let Some(cap) = limit {
                 if out.len() >= cap {
