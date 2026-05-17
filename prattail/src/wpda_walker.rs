@@ -61,7 +61,7 @@ use im::OrdSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::automata::semiring::SemiringRef;
+use crate::automata::semiring::{IdempotentSemiring, SemiringRef};
 use crate::automata::TokenKind;
 use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
@@ -3037,11 +3037,25 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// materialization of it. Side-effecting `action_fn`s are forbidden
     /// (plan §10.1) because realization may invoke a given action
     /// multiple times across ambiguous derivations.
+    ///
+    /// Phase C.4 (2026-05-17): the `W: IdempotentSemiring` bound is
+    /// required for the cycle-skip discipline in the tri-color DFS
+    /// (Scott-Johnstone GLL §5) to be semantically safe. Idempotent
+    /// semirings satisfy `w ⊕ w = w`, so skipping a back-edge packing
+    /// does not lose weight contributions — its weight is already
+    /// captured at the symbol where the cycle returns. For non-
+    /// idempotent semirings (Counting, Log, Entropy, NBest, etc.)
+    /// the cycle subgraph requires `matrix_star` fixpoint iteration;
+    /// see Q2.A migration path in
+    /// `~/.claude/plans/phase-c-sppf-w-resolved.md`.
     pub fn realize_root_to_terms(
         &self,
         root: crate::sppf::SppfId,
         limit: Option<usize>,
-    ) -> Vec<Arc<dyn Any + Send + Sync>> {
+    ) -> Vec<Arc<dyn Any + Send + Sync>>
+    where
+        W: IdempotentSemiring,
+    {
         if root == crate::sppf::SPPF_ID_NONE {
             return Vec::new();
         }
