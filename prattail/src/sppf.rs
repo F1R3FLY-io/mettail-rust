@@ -750,6 +750,317 @@ impl<W: SemiringRef> Sppf<W> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Phase C-bis Commit 2 (2026-05-17): Tarjan SCC + PackingFactored
+// helpers for closed-semiring cycle handling.
+//
+// Per `docs/design/plans/closed-semiring-cycle-handling.md` §7 Steps 1
+// and 3. These helpers expose SCC structure and per-packing
+// decomposition that the Newton-method solver (in
+// `prattail/src/automata/semiring.rs::solve_scc_weights_newton`)
+// consumes.
+//
+// Currently `#[allow(dead_code)]` until Commit 3 wires them into
+// `wpda_walker.rs::realize_root_to_terms_with_weights`.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Strongly-connected component identifier (index into the SCC vector
+/// returned by [`Sppf::tarjan_sccs`]). Stable per-realize-call only —
+/// not preserved across calls.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SccId(pub usize);
+
+/// Phase C-bis (2026-05-17, per
+/// `docs/design/plans/closed-semiring-cycle-handling.md` §7 Step 3):
+/// factored representation of an SPPF Packing for its contribution to
+/// a non-trivial SCC's inside-weight fixpoint.
+///
+/// Preserves the full structural decomposition (in-SCC children +
+/// outside-product) — does NOT prematurely flatten into a linear
+/// A-matrix entry. This is essential for Newton's method
+/// (per Esparza-Kiefer-Luttenberger 2007) to compute the correct
+/// multi-variable Leibniz differential for **multi-call** packings
+/// (those with more than one in-SCC child).
+///
+/// **Fields**:
+///
+/// - `target_i`: SCC-local index of the parent Symbol `s_i` (this
+///   Packing is in `packings_of(s_i)`).
+/// - `outside_product`: per-production `Packing.weight` multiplied
+///   by the inside-weights of all children OUTSIDE the SCC. Constant
+///   with respect to the cyclic unknowns.
+/// - `in_scc_children`: SCC-local indices of the children INSIDE
+///   the SCC, in **source order**. Order matters: the partial
+///   derivative `∂f/∂Y[c_k]` depends on which factor `Y[c_k]` is
+///   differentiated with respect to (the multi-variable Leibniz rule
+///   leaves the OTHER factors in place at their current iterate).
+///
+/// **Why `SmallVec<[usize; 4]>`**: most production packings have ≤ 4
+/// in-SCC children (binary operators: 2; ternary/n-ary mixfix: 3-4).
+/// Inline storage avoids heap allocation in the common case.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct PackingFactored<W: SemiringRef> {
+    /// SCC-local index of the parent Symbol s_i.
+    pub target_i: usize,
+    /// `Packing.weight ⊗ Π_{c ∈ Packing.children, c ∉ SCC} memo[c].weight_sum`.
+    pub outside_product: W,
+    /// SCC-local indices of in-SCC children, in source order.
+    pub in_scc_children: Vec<usize>,
+}
+
+impl<W: SemiringRef> Sppf<W> {
+    /// Phase C-bis (2026-05-17, per
+    /// `docs/design/plans/closed-semiring-cycle-handling.md` §7 Step 1):
+    /// strongly-connected components of the **Symbol-induced subgraph**
+    /// reachable from `root`.
+    ///
+    /// **Vertices**: every `SppfNode::Symbol` reachable from `root`.
+    ///
+    /// **Edges**: `S_i → S_j` iff some `Packing ∈ packings_of(S_i)`
+    /// has `S_j` (a Symbol) among `children`. Packings, Terminals,
+    /// Epsilons, CollectionIds, Predicates, BinderScopes are
+    /// transparent edge-bearers — they don't appear as vertices.
+    ///
+    /// **Why Symbol-only**: SPPF cycles always traverse at least one
+    /// Symbol (they arise from `(nt, lo, hi)` dedup collisions, which
+    /// only Symbols experience). Non-Symbol nodes are inherently
+    /// acyclic (Packings link to children but children never link back
+    /// to Packings; Terminals are leaves; etc.).
+    ///
+    /// **Algorithm**: iterative Tarjan (Sedgewick 4ed §4.2.3), adapted
+    /// from the reference impl at `buchi.rs:798-851`. Avoids
+    /// host-stack recursion on deep SPPFs.
+    ///
+    /// **Complexity**: O(V + E) where V = reachable Symbol count,
+    /// E = sum of `packings_of(s).len() × children.len()` over all
+    /// reachable Symbols `s`.
+    ///
+    /// **Output**: SCCs in reverse-topological order (leaf SCCs
+    /// first). Each inner `Vec<SppfId>` is one SCC; singleton Vecs
+    /// are trivial SCCs (no self-loop is detected here — the caller
+    /// must inspect packings for self-loop detection).
+    ///
+    /// Returns an empty vec if `root` is not a Symbol or `root` is
+    /// `SPPF_ID_NONE`.
+    #[allow(dead_code)]
+    pub fn tarjan_sccs(&self, root: SppfId) -> Vec<Vec<SppfId>> {
+        // Map SppfId → contiguous internal index for Vec-based state.
+        // Visit all reachable Symbol nodes; assign each a sequential id.
+        if root == SPPF_ID_NONE {
+            return Vec::new();
+        }
+        let mut id_of: FxHashMap<SppfId, usize> = FxHashMap::default();
+        let mut symbols: Vec<SppfId> = Vec::new();
+        let mut adj: Vec<Vec<usize>> = Vec::new();
+        // BFS/DFS to enumerate reachable Symbols.
+        let mut dfs_stack: Vec<SppfId> = Vec::new();
+        let mut visited_collect: FxHashSet<SppfId> = FxHashSet::default();
+        dfs_stack.push(root);
+        while let Some(id) = dfs_stack.pop() {
+            if !visited_collect.insert(id) {
+                continue;
+            }
+            match self.node(id) {
+                Some(SppfNode::Symbol { .. }) => {
+                    if !id_of.contains_key(&id) {
+                        let new_idx = symbols.len();
+                        id_of.insert(id, new_idx);
+                        symbols.push(id);
+                        adj.push(Vec::new()); // filled below
+                    }
+                    // Traverse packings → children (children that are
+                    // Symbols become out-edges from this Symbol).
+                    for &p in self.packings_of(id) {
+                        if let Some(SppfNode::Packing { children, .. }) = self.node(p) {
+                            for &c in children {
+                                if matches!(self.node(c), Some(SppfNode::Symbol { .. })) {
+                                    dfs_stack.push(c);
+                                }
+                            }
+                        }
+                    }
+                }
+                Some(SppfNode::Packing { children, .. }) => {
+                    for &c in children {
+                        dfs_stack.push(c);
+                    }
+                }
+                Some(SppfNode::CollectionId { .. })
+                | Some(SppfNode::Terminal { .. })
+                | Some(SppfNode::Epsilon { .. })
+                | Some(SppfNode::OptAbsent { .. })
+                | Some(SppfNode::Predicate { .. })
+                | Some(SppfNode::BinderScope { .. })
+                | None => {
+                    // Leaves / non-Symbol — no out-edges in the Symbol graph.
+                }
+            }
+        }
+        // Build the adjacency list for the Symbol-only graph.
+        for (s_idx, &s) in symbols.iter().enumerate() {
+            for &p in self.packings_of(s) {
+                if let Some(SppfNode::Packing { children, .. }) = self.node(p) {
+                    for &c in children {
+                        if matches!(self.node(c), Some(SppfNode::Symbol { .. })) {
+                            if let Some(&c_idx) = id_of.get(&c) {
+                                // Note: we do NOT dedup the edge; if a packing
+                                // references the same Symbol multiple times,
+                                // each occurrence is a separate edge for Tarjan
+                                // (which doesn't care about parallel edges, but
+                                // a self-loop must be detectable).
+                                adj[s_idx].push(c_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Iterative Tarjan SCC (adapted from buchi.rs:798-851).
+        let n = symbols.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut index_of: Vec<Option<usize>> = vec![None; n];
+        let mut lowlink: Vec<usize> = vec![0; n];
+        let mut on_stack: Vec<bool> = vec![false; n];
+        let mut tarjan_stack: Vec<usize> = Vec::new();
+        let mut sccs: Vec<Vec<SppfId>> = Vec::new();
+        let mut idx_counter = 0usize;
+        for v_start in 0..n {
+            if index_of[v_start].is_some() {
+                continue;
+            }
+            // Initialize iterative-Tarjan state for v_start.
+            index_of[v_start] = Some(idx_counter);
+            lowlink[v_start] = idx_counter;
+            idx_counter += 1;
+            tarjan_stack.push(v_start);
+            on_stack[v_start] = true;
+            let mut call_stack: Vec<(usize, usize)> = vec![(v_start, 0)];
+            while let Some(&mut (node, ref mut ni)) = call_stack.last_mut() {
+                if *ni < adj[node].len() {
+                    let w = adj[node][*ni];
+                    *ni += 1;
+                    if index_of[w].is_none() {
+                        index_of[w] = Some(idx_counter);
+                        lowlink[w] = idx_counter;
+                        idx_counter += 1;
+                        tarjan_stack.push(w);
+                        on_stack[w] = true;
+                        call_stack.push((w, 0));
+                    } else if on_stack[w] {
+                        let w_index = index_of[w].expect("w should have an index");
+                        if w_index < lowlink[node] {
+                            lowlink[node] = w_index;
+                        }
+                    }
+                } else {
+                    let node_lowlink = lowlink[node];
+                    let node_index = index_of[node].expect("node should have an index");
+                    if node_lowlink == node_index {
+                        // Root of an SCC — pop until we re-emerge.
+                        let mut scc = Vec::new();
+                        loop {
+                            let w = tarjan_stack
+                                .pop()
+                                .expect("tarjan stack should not be empty mid-SCC");
+                            on_stack[w] = false;
+                            scc.push(symbols[w]);
+                            if w == node {
+                                break;
+                            }
+                        }
+                        sccs.push(scc);
+                    }
+                    call_stack.pop();
+                    if let Some(&(parent, _)) = call_stack.last() {
+                        if lowlink[node] < lowlink[parent] {
+                            lowlink[parent] = lowlink[node];
+                        }
+                    }
+                }
+            }
+        }
+        sccs
+    }
+
+    /// Phase C-bis (2026-05-17): does this Symbol have a self-loop in
+    /// the Symbol-induced graph? A Symbol has a self-loop iff some
+    /// `Packing ∈ packings_of(symbol)` contains `symbol` itself as
+    /// one of its children.
+    ///
+    /// Used to detect non-trivial singleton SCCs: a 1-Symbol SCC is
+    /// non-trivial (cyclic) iff this returns `true`.
+    #[allow(dead_code)]
+    pub fn has_self_loop(&self, symbol: SppfId) -> bool {
+        if !matches!(self.node(symbol), Some(SppfNode::Symbol { .. })) {
+            return false;
+        }
+        for &p in self.packings_of(symbol) {
+            if let Some(SppfNode::Packing { children, .. }) = self.node(p) {
+                if children.iter().any(|&c| c == symbol) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Phase C-bis (2026-05-17, per
+    /// `docs/design/plans/closed-semiring-cycle-handling.md` §7 Step 3):
+    /// factor a single Packing into its [`PackingFactored<W>`] form
+    /// for inclusion in the Newton-method solver.
+    ///
+    /// **Arguments**:
+    /// - `scc`: the SCC's Symbol membership, in SCC-local-index order
+    ///   (i.e., `scc[i]` is the SppfId of the Symbol at local index `i`).
+    /// - `packing_id`: the Packing to factor.
+    /// - `parent_symbol_idx`: SCC-local index of the parent Symbol
+    ///   `s_i` (the Symbol whose `packings_of` contains `packing_id`).
+    /// - `idx`: SppfId → SCC-local-index map (built once per SCC).
+    /// - `memo_outside`: realize-time inside-weight map for non-SCC
+    ///   children. Children not in this map default to `W::one_ref()`
+    ///   (treats missing children as identity, consistent with
+    ///   "no contribution" semantics).
+    ///
+    /// **Panics**: if `packing_id` is not a `SppfNode::Packing`.
+    #[allow(dead_code)]
+    pub fn factor_scc_packing(
+        &self,
+        packing_id: SppfId,
+        parent_symbol_idx: usize,
+        idx: &FxHashMap<SppfId, usize>,
+        memo_outside: &FxHashMap<SppfId, W>,
+    ) -> PackingFactored<W> {
+        let (weight, children) = match self.node(packing_id) {
+            Some(SppfNode::Packing { weight, children, .. }) => (weight.clone(), children),
+            _ => panic!(
+                "factor_scc_packing: SppfId {} is not a Packing",
+                packing_id
+            ),
+        };
+        let mut outside_product = weight;
+        let mut in_scc_children = Vec::new();
+        for &c in children {
+            if matches!(self.node(c), Some(SppfNode::Symbol { .. })) {
+                if let Some(&j) = idx.get(&c) {
+                    in_scc_children.push(j);
+                    continue;
+                }
+            }
+            let w_c = memo_outside.get(&c).cloned().unwrap_or_else(W::one_ref);
+            outside_product = outside_product.times_ref(&w_c);
+        }
+        PackingFactored {
+            target_i: parent_symbol_idx,
+            outside_product,
+            in_scc_children,
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1453,5 +1764,122 @@ mod tests {
         let i = W::one_ref();
         assert_eq!(a.times_ref(&i), a);
         assert_eq!(i.times_ref(&a), a);
+    }
+
+    // ── Phase C-bis Commit 2 (2026-05-17): Tarjan SCC + factoring tests ──
+    //
+    // Per `docs/design/plans/closed-semiring-cycle-handling.md` §10:
+    // CSCH-1, CSCH-2, CSCH-3 — Tarjan correctness on trivial / unit-cycle /
+    // mutual-recursion shapes.
+
+    /// CSCH-1: Tarjan on a 3-Symbol linear chain (no cycles) returns
+    /// 3 singleton SCCs.
+    #[test]
+    fn csch_1_tarjan_linear_chain() {
+        let mut s: Sppf<W> = Sppf::new();
+        // Build chain: Sym_A → Pack → Sym_B → Pack → Sym_C
+        let term_z = s.intern_terminal(k_fixed("z"), PosOrSynth::Real(0), None, false);
+        let p_c = s.intern_packing(0, vec![term_z], one());
+        let sym_c = s.intern_symbol(2, 2, 3);
+        s.link_packing_to_symbol(sym_c, p_c);
+
+        let p_b = s.intern_packing(0, vec![sym_c], one());
+        let sym_b = s.intern_symbol(1, 1, 3);
+        s.link_packing_to_symbol(sym_b, p_b);
+
+        let p_a = s.intern_packing(0, vec![sym_b], one());
+        let sym_a = s.intern_symbol(0, 0, 3);
+        s.link_packing_to_symbol(sym_a, p_a);
+
+        let sccs = s.tarjan_sccs(sym_a);
+        assert_eq!(sccs.len(), 3, "expected 3 trivial SCCs; got {:?}", sccs);
+        for scc in &sccs {
+            assert_eq!(scc.len(), 1, "each SCC should be singleton");
+        }
+        // No SCC member should have a self-loop.
+        for scc in &sccs {
+            assert!(!s.has_self_loop(scc[0]));
+        }
+    }
+
+    /// CSCH-2: Tarjan on a unit cycle `Sym_A → Pack → Sym_A` returns
+    /// 1 SCC of size 1 with self-loop detected.
+    #[test]
+    fn csch_2_tarjan_unit_cycle() {
+        let mut s: Sppf<W> = Sppf::new();
+        // Need to intern Symbol BEFORE Packing so we can reference it in children.
+        let sym_a = s.intern_symbol(0, 0, 1);
+        let p_self = s.intern_packing(0, vec![sym_a], one());
+        s.link_packing_to_symbol(sym_a, p_self);
+
+        let sccs = s.tarjan_sccs(sym_a);
+        assert_eq!(sccs.len(), 1, "expected 1 SCC; got {:?}", sccs);
+        assert_eq!(sccs[0].len(), 1, "SCC should be singleton");
+        assert_eq!(sccs[0][0], sym_a);
+        assert!(s.has_self_loop(sym_a), "unit-cycle Symbol should have self-loop");
+    }
+
+    /// CSCH-3: Tarjan on mutual recursion `Sym_A ↔ Sym_B` returns
+    /// 1 SCC of size 2.
+    #[test]
+    fn csch_3_tarjan_mutual_recursion() {
+        let mut s: Sppf<W> = Sppf::new();
+        let sym_a = s.intern_symbol(0, 0, 1);
+        let sym_b = s.intern_symbol(1, 0, 1);
+        // P_ab: Sym_A's packing references Sym_B.
+        let p_ab = s.intern_packing(0, vec![sym_b], one());
+        s.link_packing_to_symbol(sym_a, p_ab);
+        // P_ba: Sym_B's packing references Sym_A.
+        let p_ba = s.intern_packing(1, vec![sym_a], one());
+        s.link_packing_to_symbol(sym_b, p_ba);
+
+        let sccs = s.tarjan_sccs(sym_a);
+        assert_eq!(sccs.len(), 1, "expected 1 SCC; got {:?}", sccs);
+        let scc = &sccs[0];
+        assert_eq!(scc.len(), 2);
+        let scc_set: std::collections::HashSet<_> = scc.iter().copied().collect();
+        assert!(scc_set.contains(&sym_a));
+        assert!(scc_set.contains(&sym_b));
+        // Neither Symbol has a self-loop in the literal sense (no Packing
+        // contains itself as a child); only the SCC structure indicates cycle.
+        assert!(!s.has_self_loop(sym_a));
+        assert!(!s.has_self_loop(sym_b));
+    }
+
+    /// CSCH-2-bonus: a Symbol with NO packings has no self-loop.
+    #[test]
+    fn csch_2_no_packing_no_self_loop() {
+        let mut s: Sppf<W> = Sppf::new();
+        let sym = s.intern_symbol(0, 0, 1);
+        assert!(!s.has_self_loop(sym));
+    }
+
+    /// `tarjan_sccs(SPPF_ID_NONE)` returns empty.
+    #[test]
+    fn tarjan_handles_sentinel_root() {
+        let s: Sppf<W> = Sppf::new();
+        let sccs = s.tarjan_sccs(SPPF_ID_NONE);
+        assert!(sccs.is_empty());
+    }
+
+    /// `factor_scc_packing` on a packing with only outside children: empty
+    /// `in_scc_children`, `outside_product = packing.weight ⊗ Π memo[c]`.
+    #[test]
+    fn factor_scc_packing_no_in_scc_children() {
+        let mut s: Sppf<W> = Sppf::new();
+        let t1 = s.intern_terminal(k_fixed("a"), PosOrSynth::Real(0), None, false);
+        let t2 = s.intern_terminal(k_fixed("b"), PosOrSynth::Real(1), None, false);
+        let p = s.intern_packing(0, vec![t1, t2], one());
+        let sym = s.intern_symbol(0, 0, 2);
+        s.link_packing_to_symbol(sym, p);
+
+        let scc = vec![sym];
+        let idx: FxHashMap<SppfId, usize> = scc.iter().enumerate().map(|(i, &s)| (s, i)).collect();
+        let memo_outside: FxHashMap<SppfId, W> = FxHashMap::default();
+        let factored = s.factor_scc_packing(p, 0, &idx, &memo_outside);
+        assert_eq!(factored.target_i, 0);
+        assert!(factored.in_scc_children.is_empty());
+        // Terminals weren't in memo → identity contribution.
+        assert_eq!(factored.outside_product, one());
     }
 }
