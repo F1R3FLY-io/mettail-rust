@@ -2067,6 +2067,122 @@ fn generate_language_struct_multi(
         }
     };
 
+    // Phase D.6/D.7 (2026-05-17): per-cat extract bodies feeding shared
+    // accumulators — used by the Ambiguous union-extract block below to
+    // emit results from EVERY category in scope, not just the first
+    // alt's category. Pre-Phase-D the Ambiguous arm was `unreachable!()`
+    // because the peel canonicalized to a single alt before dispatch;
+    // with Phase D.1's all-alts seeding, every category's relations
+    // may carry results, so the extract must read from all of them.
+    let multi_cat_union_extract_blocks: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
+            let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+            let eq_ind = format_ident!("__eq_{}_ind_common", cat.to_string().to_lowercase());
+            let variant = format_ident!("{}", cat);
+            quote! {
+                {
+                    let all_terms_cat: Vec<#cat> = prog.#cat_lower
+                        .iter()
+                        .map(|(p,)| p.clone())
+                        .collect();
+                    let rewrites_cat: Vec<(#cat, #cat)> = prog.#rw_rel
+                        .iter()
+                        .map(|(from, to)| (from.clone(), to.clone()))
+                        .collect();
+                    for t in &all_terms_cat {
+                        let wrapped = #inner_enum_name::#variant(t.clone());
+                        let term_id = {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+                            let mut hasher = DefaultHasher::new();
+                            wrapped.hash(&mut hasher);
+                            hasher.finish()
+                        };
+                        let has_rewrites = rewrites_cat.iter().any(|(from, _)| from == t);
+                        __all_term_infos.push(mettail_runtime::TermInfo {
+                            term_id,
+                            display: format!("{}", t),
+                            is_normal_form: !has_rewrites,
+                        });
+                    }
+                    for (from, to) in &rewrites_cat {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let w_from = #inner_enum_name::#variant(from.clone());
+                        let w_to = #inner_enum_name::#variant(to.clone());
+                        let mut h1 = DefaultHasher::new();
+                        let mut h2 = DefaultHasher::new();
+                        w_from.hash(&mut h1);
+                        w_to.hash(&mut h2);
+                        __all_rewrites.push(mettail_runtime::Rewrite {
+                            from_id: h1.finish(),
+                            to_id: h2.finish(),
+                            rule_name: Some("rewrite".to_string()),
+                        });
+                    }
+                    {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::collections::{HashMap, HashSet};
+                        use std::hash::{Hash, Hasher};
+                        let hash_of = |t: &#cat| -> u64 {
+                            let wrapped = #inner_enum_name::#variant(t.clone());
+                            let mut h = DefaultHasher::new();
+                            wrapped.hash(&mut h);
+                            h.finish()
+                        };
+                        let mut classes: HashMap<u64, HashSet<u64>> = HashMap::new();
+                        for ((a, b), _) in ascent::internal::RelIndexReadAll::iter_all(&prog.#eq_ind) {
+                            let ha = hash_of(a);
+                            let hb = hash_of(b);
+                            if ha != hb {
+                                classes.entry(ha).or_default().insert(hb);
+                                classes.entry(hb).or_default().insert(ha);
+                            }
+                        }
+                        let mut seen: HashSet<u64> = HashSet::new();
+                        for (id, peers) in &classes {
+                            if seen.contains(id) { continue; }
+                            let mut class: HashSet<u64> = peers.clone();
+                            class.insert(*id);
+                            for &member in &class { seen.insert(member); }
+                            if class.len() > 1 {
+                                __all_equivalences.push(mettail_runtime::EquivClass {
+                                    term_ids: class.into_iter().collect(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // Phase D union-extract block: invoked from the Ambiguous arm to
+    // gather results from every category in scope. Custom relation
+    // extraction stays single-cat (custom_relations is a HashMap and
+    // its extraction routine reads from the active prog regardless of
+    // dispatch-cat).
+    let multi_cat_union_extract: TokenStream = quote! {
+        {
+            let mut __all_term_infos: Vec<mettail_runtime::TermInfo> = Vec::new();
+            let mut __all_rewrites: Vec<mettail_runtime::Rewrite> = Vec::new();
+            let mut __all_equivalences: Vec<mettail_runtime::EquivClass> = Vec::new();
+            let mut custom_relations = std::collections::HashMap::new();
+            #custom_relation_extraction
+            #(#multi_cat_union_extract_blocks)*
+            mettail_runtime::AscentResults {
+                all_terms: __all_term_infos,
+                rewrites: __all_rewrites,
+                equivalences: __all_equivalences,
+                custom_relations,
+            }
+        }
+    };
+
     // Extract arms: read results from the appropriate relation after Ascent fixpoint.
     // Term IDs must match the wrapper's term_id() which hashes the inner enum (e.g. CalculatorTermInner::Str(t)),
     // so we hash the enum variant wrapping each term for TermInfo and Rewrite.
@@ -2604,28 +2720,35 @@ fn generate_language_struct_multi(
             .collect();
 
         quote! {
-            // Stack-safe Ambiguous peel: iteratively walk the nested
-            // Ambiguous chain via a borrowed cursor. Zero recursion, zero
-            // per-layer clones — the final resolved alternative is cloned
-            // exactly once when the loop exits.
-            let resolved: #inner_enum_name = {
-                let mut cur: &#inner_enum_name = &term.0;
-                loop {
-                    match cur {
-                        #inner_enum_name::Ambiguous(alts) => {
-                            cur = alts.first()
-                                .expect("Ambiguous must have 2+ alternatives");
-                        }
-                        _ => break,
-                    }
-                }
-                cur.clone()
-            };
-            let term_ref = &resolved;
+            // Phase D (2026-05-17): Ambiguous-first dispatch.
+            //
+            // When `term.0` is `Ambiguous`, the input represents N parse
+            // alternatives that may span MULTIPLE categories. The core
+            // struct only has relations for core categories — using it
+            // would silently drop any alt in a non-core cat. Route
+            // Ambiguous to the FULL struct (which has all relations)
+            // and use the union extract to gather results from every
+            // category's relation.
+            //
+            // Non-Ambiguous inputs follow the pre-Phase-D core-vs-full
+            // dispatch keyed on the single category's variant.
+            if matches!(&term.0, #inner_enum_name::Ambiguous(_)) {
+                #pre_stratum_block
+                #stratum_run_block
+                let mut prog = #prog_struct_name::default();
+                #prog_seed_match
+                #seed_from_pre_stratum
+                #seed_main_from_strata
+                #ground_seed_block_multi
+                prog.run();
+                #depth_check_block
+                return #multi_cat_union_extract;
+            }
+            let term_ref = &term.0;
             match term_ref {
-                // Unreachable — we peeled every Ambiguous above.
+                // Already filtered above by the Ambiguous-first dispatch.
                 #inner_enum_name::Ambiguous(_) => unreachable!(
-                    "run_ascent_typed: Ambiguous survived the peel loop"
+                    "run_ascent_typed: Ambiguous already routed by Phase D dispatch"
                 ),
                 // Core categories: use the smaller core struct (fewer SCC rules)
                 #(#core_variant_patterns)|* => {
@@ -2664,43 +2787,26 @@ fn generate_language_struct_multi(
             }
         }
     } else {
-        // Single struct (no SCC splitting) — original behavior
+        // Single struct (no SCC splitting) — Phase D Ambiguous-aware
+        // dispatch. There's only one prog struct (#prog_struct_name)
+        // so dispatch is simpler: always run the same struct; pick
+        // extract based on whether the input is Ambiguous.
         quote! {
-            // Stack-safe Ambiguous peel (iterative).
-            let resolved: #inner_enum_name = {
-                let mut cur: &#inner_enum_name = &term.0;
-                loop {
-                    match cur {
-                        #inner_enum_name::Ambiguous(alts) => {
-                            cur = alts.first()
-                                .expect("Ambiguous must have 2+ alternatives");
-                        }
-                        _ => break,
-                    }
-                }
-                cur.clone()
-            };
-            let term_ref = &resolved;
-            match term_ref {
-                #inner_enum_name::Ambiguous(_) => unreachable!(
-                    "run_ascent_typed: Ambiguous survived the peel loop"
-                ),
-                _ => {
-                    #pre_stratum_block
-                    #stratum_run_block
-                    let mut prog = #prog_struct_name::default();
-                    #prog_seed_match
-                    #seed_from_pre_stratum
-                    #seed_main_from_strata
-                    #ground_seed_block_multi
-                    prog.run();
-                    // A-RT05: Post-fixpoint depth check
-                    #depth_check_block
-                    match term_ref {
-                        #(#extract_arms)*
-                        #inner_enum_name::Ambiguous(_) => unreachable!(),
-                    }
-                }
+            #pre_stratum_block
+            #stratum_run_block
+            let mut prog = #prog_struct_name::default();
+            #prog_seed_match
+            #seed_from_pre_stratum
+            #seed_main_from_strata
+            #ground_seed_block_multi
+            prog.run();
+            // A-RT05: Post-fixpoint depth check
+            #depth_check_block
+            match &term.0 {
+                // Phase D (2026-05-17): Ambiguous → union extract
+                // across all cats (every alt's category contributes).
+                #inner_enum_name::Ambiguous(_) => #multi_cat_union_extract,
+                #(#extract_arms)*
             }
         }
     };
