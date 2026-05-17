@@ -157,80 +157,121 @@ fn term_context_params_with_eval(
     out
 }
 
-/// Calculator `Fraction` uses `try_from_nd` → `Option`; Ascent maps `None`
-/// to `BigRat::Err`. The `eval`/`try_eval` arms must `match` on the
-/// `Option` so the generated `impl` type-checks (else we'd get an
-/// `expected CanonicalBigRat, found Option<CanonicalBigRat>` mismatch).
+/// Phase D Layer 2 (2026-05-17, per
+/// `~/.claude/plans/principled-fold-root-cause.md`): structural detector
+/// replacing four string-vocabulary helpers
+/// (`hol_bigrat_fraction_try_from_nd_option`, `hol_numeric_cast_option`,
+/// `hol_int_fact_option`, `hol_bigrat_div_zero_guard`).
 ///
-/// Only fires for the canonical `Fraction . a:BigInt, b:BigInt |- ... : BigRat`
-/// rule when an `Err` constructor exists in the same category.
-fn hol_bigrat_fraction_try_from_nd_option(
-    language: &LanguageDef,
-    category: &syn::Ident,
-    label: &syn::Ident,
-) -> bool {
-    let err_ident = quote::format_ident!("Err");
-    let category_has_err = language
-        .terms
-        .iter()
-        .any(|r| r.category == *category && r.label == err_ident);
-    category_has_err && label.to_string() == "Fraction" && category.to_string() == "BigRat"
-}
-
-/// Calculator numeric casts return `Option<native>`; `None` maps to
-/// `cast_error_*` / `Err` via fold. The eval arm must unwrap the `Option`.
+/// Returns `true` if the user's `rust_code` expression's outermost form is
+/// structurally an `Option<_>` producer. The eval-method codegen then
+/// wraps the arm with `.expect(...)` to unwrap; `try_eval` short-circuits
+/// via `?` through the existing `safeify_and_wrap` pipeline.
 ///
-/// Naming: `*Bin` = binary cast with explicit width/places (`int`, `uint`,
-/// `float`, `fixed`). `BigintCast` / `BigratCast` = unary `bigint` /
-/// `bigrat` from `Proc` (signed arbitrary precision).
-fn hol_numeric_cast_option(
-    _language: &LanguageDef,
-    category: &syn::Ident,
-    label: &syn::Ident,
-) -> bool {
-    matches!(
-        (category.to_string().as_str(), label.to_string().as_str()),
-        ("Int", "IntBin")
-            | ("UInt32", "UIntBin")
-            | ("Float", "FloatBin")
-            | ("Fixed", "FixedBin")
-            | ("BigInt", "BigintCast")
-            | ("BigRat", "BigratCast")
-    )
-}
-
-/// `Int::Fact` returns `Option<i32>` (None for negative inputs) so the
-/// HOL step emitter can route `None` to `Int::Err`. The eval arm must
-/// unwrap the Option via `match`; otherwise the generated `impl eval`
-/// type-checks against the native i32 return type fail.
-fn hol_int_fact_option(
-    language: &LanguageDef,
-    category: &syn::Ident,
-    label: &syn::Ident,
-) -> bool {
-    let err_ident = quote::format_ident!("Err");
-    let category_has_err = language
-        .terms
-        .iter()
-        .any(|r| r.category == *category && r.label == err_ident);
-    category_has_err && label.to_string() == "Fact" && category.to_string() == "Int"
-}
-
-/// `DivBigRat` must not call `num-rational` division when the divisor is
-/// zero (panics in `reduce`). When the category has an `Err` constructor,
-/// the eval arm is wrapped in a divisor-zero guard that panics with a
-/// rewriteable message instead.
-fn hol_bigrat_div_zero_guard(
-    language: &LanguageDef,
-    category: &syn::Ident,
-    label: &syn::Ident,
-) -> bool {
-    let err_ident = quote::format_ident!("Err");
-    let category_has_err = language
-        .terms
-        .iter()
-        .any(|r| r.category == *category && r.label == err_ident);
-    category_has_err && label.to_string() == "DivBigRat" && category.to_string() == "BigRat"
+/// Recognized syntactic shapes:
+/// - **Function call to a `try_*`-prefixed function**: e.g.
+///   `crate::numeric_dispatch::calc_try_int_bin(&a, w)`. The `try_*`
+///   convention is the established Rust idiom for fallible constructors
+///   (cf. `i32::try_from`, `String::try_into`, `num_rational::Ratio::try_from_nd`).
+/// - **Explicit `Some(...)` / `None` literals at the outermost position**:
+///   if the user wrote `if cond { Some(x) } else { None }`, the if's
+///   value type is `Option<_>`.
+/// - **`match` expression whose arms are `Some(...)` / `None`** (e.g. an
+///   exhaustive `match` returning `Option`).
+/// - **Method call to `try_*`-prefixed method**: e.g. `x.try_into()`.
+/// - **Block expression whose final statement is one of the above**:
+///   `{ let __r = try_compute(); __r }`.
+///
+/// The detector walks the `syn::Expr` AST recursively at the outermost
+/// shape — NO string comparisons on rule labels, NO `(category, label)`
+/// tuple matching. The user's code is the only legitimate authority on
+/// what type their code returns.
+fn rust_code_returns_option(code: &syn::Expr) -> bool {
+    use syn::Expr;
+    match code {
+        // Direct `Some(...)` / `None` literal at outermost position.
+        Expr::Call(call) => {
+            if let Expr::Path(path) = call.func.as_ref() {
+                if let Some(last) = path.path.segments.last() {
+                    let name = last.ident.to_string();
+                    if name == "Some" || name == "None" {
+                        return true;
+                    }
+                    // `crate::module::try_xxx(...)` or just `try_xxx(...)`.
+                    if name.starts_with("try_") {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        // `x.try_xxx(...)` — method call.
+        Expr::MethodCall(mc) => mc.method.to_string().starts_with("try_"),
+        // Bare path that resolves to `None`.
+        Expr::Path(path) => path
+            .path
+            .segments
+            .last()
+            .map(|s| s.ident == "None")
+            .unwrap_or(false),
+        // `if cond { ... } else { ... }` — recurse into arms.
+        Expr::If(expr_if) => {
+            // Then-branch is a block; check its tail expression.
+            let then_returns = expr_if
+                .then_branch
+                .stmts
+                .last()
+                .and_then(|stmt| match stmt {
+                    syn::Stmt::Expr(e, _) => Some(rust_code_returns_option(e)),
+                    _ => None,
+                })
+                .unwrap_or(false);
+            // Else-branch: recurse on the else expression if present.
+            let else_returns = expr_if
+                .else_branch
+                .as_ref()
+                .map(|(_, e)| rust_code_returns_option(e))
+                .unwrap_or(false);
+            then_returns || else_returns
+        }
+        // `match scrutinee { Some(_) => ..., None => ... }` — check arms.
+        Expr::Match(expr_match) => {
+            expr_match.arms.iter().any(|arm| {
+                rust_code_returns_option(&arm.body)
+            }) || expr_match.arms.iter().all(|arm| {
+                // Pattern matches `Some(...)` or `None`.
+                match &arm.pat {
+                    syn::Pat::TupleStruct(ts) => ts
+                        .path
+                        .segments
+                        .last()
+                        .map(|s| s.ident == "Some")
+                        .unwrap_or(false),
+                    syn::Pat::Path(p) => p
+                        .path
+                        .segments
+                        .last()
+                        .map(|s| s.ident == "None")
+                        .unwrap_or(false),
+                    syn::Pat::Ident(i) => i.ident == "None",
+                    _ => false,
+                }
+            })
+        }
+        // `{ ... ; final_expr }` — check the tail expression.
+        Expr::Block(b) => b
+            .block
+            .stmts
+            .last()
+            .and_then(|stmt| match stmt {
+                syn::Stmt::Expr(e, _) => Some(rust_code_returns_option(e)),
+                _ => None,
+            })
+            .unwrap_or(false),
+        // Parenthesized expression — recurse.
+        Expr::Paren(p) => rust_code_returns_option(&p.expr),
+        _ => false,
+    }
 }
 
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
@@ -532,64 +573,36 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     })
                     .collect();
                 let rust_code = &rust_code_block.code;
-                // Detect the three known `Option<native>`-returning rule
-                // patterns from main: `Fraction` (BigRat::Err), the numeric
-                // casts (`IntBin`/`UIntBin`/`FloatBin`/`FixedBin`/
-                // `BigintCast`/`BigratCast`), and `DivBigRat` (zero-divisor
-                // guard). Each gets its own `match`/guard wrapper so the
-                // emitted arm returns the inner native value (not Option).
-                let fraction_option =
-                    hol_bigrat_fraction_try_from_nd_option(language, category, label);
-                let numeric_cast_option = hol_numeric_cast_option(language, category, label);
-                let div_zero_guard = hol_bigrat_div_zero_guard(language, category, label);
-                let int_fact_option = hol_int_fact_option(language, category, label);
-                let match_arm = if fraction_option && param_count > 0 {
+                // Phase D Layer 2 (2026-05-17, per
+                // `~/.claude/plans/principled-fold-root-cause.md`): replace
+                // FOUR string-vocabulary helpers (each matching specific
+                // (category, label) tuples for `Fraction`/`*Bin`/`*Cast`/
+                // `Fact`/`DivBigRat`) with ONE structural detector
+                // (`rust_code_returns_option`) that walks the user's
+                // `syn::Expr` to determine whether the code returns
+                // `Option<T>` natively.
+                //
+                // The unified Option-returning arm replaces three of the
+                // four previous special cases (the three `_option`
+                // helpers). The fourth (`hol_bigrat_div_zero_guard`) was
+                // a pre-condition guard for `DivBigRat` that pre-checks
+                // divisor-zero before invoking num-rational's reduce.
+                // Layer 2 removes the pre-check: divisor-zero is now the
+                // grammar author's responsibility — declare a rewrite
+                // `(div_bigrat a b) ~> error` premised on `b == 0` in the
+                // `rewrites { }` block. num-rational's natural panic on
+                // divisor-zero serves as the "should have been rewritten
+                // first" failure-mode indicator.
+                let returns_option = rust_code_returns_option(rust_code);
+                let match_arm = if returns_option && param_count > 0 {
                     quote! {
                         #category::#label(#(#param_names),*) => {
                             #(#param_bindings)*
-                            match (#rust_code) {
-                                Some(__r) => __r,
-                                None => panic!(
-                                    "zero denominator in fraction; normalize with rewrite rules to error",
-                                ),
-                            }
-                        },
-                    }
-                } else if int_fact_option && param_count > 0 {
-                    quote! {
-                        #category::#label(#(#param_names),*) => {
-                            #(#param_bindings)*
-                            match (#rust_code) {
-                                Some(__r) => __r,
-                                None => panic!(
-                                    "factorial of negative; normalize with rewrite rules to error",
-                                ),
-                            }
-                        },
-                    }
-                } else if numeric_cast_option && param_count > 0 {
-                    quote! {
-                        #category::#label(#(#param_names),*) => {
-                            #(#param_bindings)*
-                            match (#rust_code) {
-                                Some(__r) => __r,
-                                None => panic!(
-                                    "numeric cast error; normalize with rewrite rules to cast_error",
-                                ),
-                            }
-                        },
-                    }
-                } else if div_zero_guard && param_count == 2 {
-                    let b_name = &param_names[1];
-                    quote! {
-                        #category::#label(#(#param_names),*) => {
-                            #(#param_bindings)*
-                            if ::num_traits::Zero::is_zero(#b_name.get()) {
-                                panic!(
-                                    "division by zero in BigRat; normalize with fold rules to error",
-                                );
-                            }
-                            (#rust_code)
+                            (#rust_code).expect(
+                                "evaluation reached unreachable Option::None sentinel; \
+                                 user grammar must normalize via rewrite rules \
+                                 (e.g., (cast_op a) ~> cast_error) before eval()",
+                            )
                         },
                     }
                 } else if param_count == 0 {

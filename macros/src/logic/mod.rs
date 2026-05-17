@@ -2673,22 +2673,27 @@ fn generate_fold_big_step_rules(
                             if let #category::#err_ident = t;
                     });
                 }
-                for cast_err in
-                    ["CastErrInt", "CastErrUInt32", "CastErrFloat", "CastErrFixed", "CastErrBigInt"]
-                {
-                    let cast_err_ident = format_ident!("{}", cast_err);
-                    if language.terms.iter().any(|r| {
-                        r.category == *category
-                            && r.label == cast_err_ident
-                            && common::fold_field_count(r) == 0
-                    }) {
-                        rules.push(quote! {
-                            #fold_rel(t.clone(), t.clone()) <--
-                                #cat_rel(t),
-                                if let #category::#cast_err_ident = t;
-                        });
-                    }
-                }
+                // Phase D Layer 2 (2026-05-17, per
+                // `~/.claude/plans/principled-fold-root-cause.md`): the
+                // CastErrX literal-folds-to-self loop is DELETED.
+                //
+                // Pre-Layer-2 this loop enumerated 5 calculator-specific
+                // CastErr variant names and emitted a fold-fixpoint
+                // rule for each. The loop existed because the cross-cat
+                // fold path (`mod.rs:2925-3018`) directly produced these
+                // CastErrX terms, and the fold codegen needed to guarantee
+                // their fold-fixpoint contract.
+                //
+                // Layer 2 removes the auto-emission of CastErrX terms from
+                // the cross-cat fold path (replaced by uniform `Option<Cat>`
+                // shape + grammar-authored failure-surfacing rewrites).
+                // The CastErrX fold-fixpoint guarantee is now the grammar
+                // author's responsibility — analogous to any other zero-arg
+                // variant the grammar declares without a dedicated fold rule.
+                //
+                // The `Err`-variant fold-fixpoint at lines 2666-2674
+                // above stays; it serves the same role for the generic
+                // `Err` variant that grammar authors commonly declare.
             }
 
             for rule in &language.terms {
@@ -2923,99 +2928,40 @@ fn generate_fold_big_step_rules(
                     }
                     let label = &rule.label;
                     let rust_code = &rule.rust_code.as_ref().unwrap().code;
-                    let label_str = label.to_string();
-                    let res_expr = if matches!(
-                        label_str.as_str(),
-                        "IntBin"
-                            | "UIntBin"
-                            | "FloatBin"
-                            | "FixedBin"
-                            | "BigintCast"
-                            | "BigratCast"
-                    ) {
-                        if label_str == "BigratCast" {
-                            quote! {
-                                match (#rust_code) {
-                                    Some(__v) => #category::RatLit(__v),
-                                    None => #category::Err,
-                                }
-                            }
-                        } else if label_str == "BigintCast" {
-                            quote! {
-                                match (#rust_code) {
-                                    Some(__v) => #category::NumLit(__v),
-                                    None => #category::CastErrBigInt,
-                                }
-                            }
-                        } else if label_str == "IntBin" {
-                            quote! {
-                                match (#rust_code) {
-                                    Some(__v) => #category::NumLit(__v),
-                                    None => #category::CastErrInt,
-                                }
-                            }
-                        } else if label_str == "UIntBin" {
-                            quote! {
-                                match (#rust_code) {
-                                    Some(__v) => #category::NumLit(__v),
-                                    None => #category::CastErrUInt32,
-                                }
-                            }
-                        } else if label_str == "FloatBin" {
-                            quote! {
-                                match (#rust_code) {
-                                    Some(__v) => #category::FloatLit(__v),
-                                    None => #category::CastErrFloat,
-                                }
-                            }
-                        } else if label_str == "FixedBin" {
-                            quote! {
-                                match (#rust_code) {
-                                    Some(__v) => #category::FixedLit(__v),
-                                    None => #category::CastErrFixed,
-                                }
-                            }
-                        } else {
-                            // Phase D Layer 1.5 (2026-05-17): cross-cat fold
-                            // rule res_expr — was `Cat::Lit((rust_code))`
-                            // which inlines user `.eval()` calls raw and
-                            // panics on Var-bearing sub-terms. Wrap in
-                            // safeify_and_wrap so that `.eval()` rewrites
-                            // to `.try_eval()?`, then guard with
-                            // `if let Some(__v) = ..., let res = Cat::Lit(__v)`.
-                            let safe_rust_code = crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code);
-                            quote! {
-                                {
-                                    let __safe = #safe_rust_code;
-                                    __safe.map(|__v| #category::#num_lit(__v))
-                                }
-                            }
-                        }
-                    } else {
-                        // Phase D Layer 1.5 (2026-05-17): same fix for the
-                        // default branch (non-BigratCast/IntBin/etc.).
-                        let safe_rust_code = crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code);
-                        quote! {
-                            {
-                                let __safe = #safe_rust_code;
-                                __safe.map(|__v| #category::#num_lit(__v))
-                            }
-                        }
-                    };
-                    // res_expr is now `Option<Cat>` for the safeified branches,
-                    // and `Cat` (direct) for the legacy BigratCast/IntBin/etc.
-                    // arms that already handle their own None case via match.
-                    // Detect which shape by re-examining label_str.
-                    let res_is_option = !matches!(
-                        label_str.as_str(),
-                        "IntBin" | "UIntBin" | "FloatBin" | "FixedBin"
-                            | "BigintCast" | "BigratCast"
-                    );
-                    let bind_res: TokenStream = if res_is_option {
-                        quote! { if let Some(res) = #res_expr; }
-                    } else {
-                        quote! { let res = #res_expr; }
-                    };
+                    // Principled root-cause fix (Phase D Layer 2, 2026-05-17,
+                    // per `~/.claude/plans/principled-fold-root-cause.md`):
+                    // unify cross-cat fold to a single `Option<Cat>` shape.
+                    //
+                    // Pre-Layer-2 this block had THREE responsibilities:
+                    //   1. Compute the value (via `rust_code`).
+                    //   2. Decide whether the user's `rust_code` returns
+                    //      `T` or `Option<T>` (was: string-match on rule
+                    //      label among `IntBin | UIntBin | FloatBin | ...`).
+                    //   3. Decide which `Cat::Err` variant to surface on
+                    //      `None` (was: per-label hardcoded `CastErrInt` /
+                    //      `CastErrUInt32` / etc.).
+                    //
+                    // Responsibilities 2 and 3 conflated COMPUTE with the
+                    // REWRITE layer's domain (failure-as-AST-term). Layer 2
+                    // removes the conflation:
+                    //   - `safeify_and_wrap` ALREADY handles T vs Option<T>
+                    //     uniformly via the `Lift`/`LiftPlain` autoref trait
+                    //     at `runtime/src/lib.rs:167-251`. We trust it.
+                    //   - Failure-as-Err-term is the grammar author's
+                    //     responsibility, expressed as user-authored
+                    //     rewrite rules in the `rewrites { }` block. The
+                    //     codegen never asks "which Err variant" because
+                    //     the GRAMMAR ANSWERS that question directly.
+                    //
+                    // After Layer 2: fold rules either succeed (producing
+                    // `Cat::Lit(v)`) or fall through (term stays as e.g.
+                    // `int_bin(a, w)` — "stuck cast"). Grammars wanting
+                    // explicit `Cat::CastErrInt` materialization add a
+                    // rewrite rule. See `languages/src/calculator.rs`
+                    // failure-surfacing block.
+                    let safe = crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code);
+                    let res_expr = quote! { #safe.map(|__v| #category::#num_lit(__v)) };
+                    let bind_res: TokenStream = quote! { if let Some(res) = #res_expr; };
                     if param_count == 1 {
                         let p0 = &param_names[0];
                         let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
@@ -3398,20 +3344,26 @@ fn generate_fold_big_step_rules(
                 let label = &rule.label;
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
 
-                // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
-                // Exception: numeric cast folds that *finalize* to `Err` on failure (invalid width, NaN, …)
-                // must still produce `fold_proc(_, Err)` so the trigger rewrites to `error`.
-                let label_str = label.to_string();
-                let fold_fold_through_err = matches!(
-                    label_str.as_str(),
-                    "IntBinProc"
-                        | "UIntBinProc"
-                        | "FloatBinProc"
-                        | "FixedBinProc"
-                        | "BigintCastProc"
-                        | "BigratCastProc"
-                );
-                let filter_err = if category_has_err && !fold_fold_through_err {
+                // Phase D Layer 2 (2026-05-17, per
+                // `~/.claude/plans/principled-fold-root-cause.md`): the
+                // `fold_fold_through_err` exception is DELETED.
+                //
+                // Pre-Layer-2 this exception identified six calculator-
+                // specific `*Proc`-suffixed cast rules whose synthetically-
+                // emitted `Cat::Err`/`Cat::CastErrX` results had to bypass
+                // the filter so `fold_proc(_, Err)` could fire trigger
+                // rewrites. The exception was necessary because the
+                // cross-cat fold path auto-emitted those Err terms.
+                //
+                // Layer 2 removed the auto-emission. Cast rules now produce
+                // either `Cat::Lit(v)` (success) or "stuck" terms (failure
+                // surfaces via user-authored rewrites in the grammar's
+                // `rewrites { }` block). The filter applies uniformly:
+                // only `fold_proc(_, non-Err)` results are surfaced — and
+                // the grammar author's rewrite rules (which DO produce Err
+                // terms) feed `rw_proc(stuck_cast, Err)` separately, which
+                // then propagates through the normal eq/rw machinery.
+                let filter_err = if category_has_err {
                     quote! {
                         ,
                         if (match & res { #category :: #err_label => false , _ => true })
