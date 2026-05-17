@@ -221,6 +221,29 @@ fn rewrite_method_call(mc: &ExprMethodCall) -> Option<Expr> {
         });
     }
 
+    // Phase D Layer 1 (2026-05-17): `.eval()` (zero-arg) — user-grammar
+    // code in fold rules often calls `.eval()` on AST node references
+    // (e.g., `Proc::ProcBigInt(n) => n.as_ref().eval()` in
+    // `Bool::ProcToBool`). The `eval()` method panics on Var-bearing /
+    // unreduced terms; `try_eval()` returns `Option`. Under Phase D's
+    // all-alts seeding, fold-rule LHSs can match against alts whose
+    // sub-terms haven't been reduced yet, so calling `eval()` would
+    // panic — the regressing pattern in 46 edge_case tests.
+    //
+    // Rewriting `<recv>.eval()` → `(<recv>).try_eval()?` makes user
+    // grammar code Var-safe by construction. The enclosing
+    // `safeify_and_wrap` closure returns `Option<_>`, so `?` short-
+    // circuits to None on Var-bearing terms — evidence-driven rule-out
+    // per the preserve-all-derivations mandate (P3: try_eval=None IS
+    // evidence the term didn't reduce). The arm whose `.eval()` short-
+    // circuits simply doesn't contribute its term to the result; other
+    // alts whose sub-terms ARE reduced contribute normally.
+    if args.is_empty() && method_name == "eval" {
+        return Some(syn::parse_quote! {
+            (#recv).try_eval()?
+        });
+    }
+
     // Single-arg arithmetic methods.
     if args.len() == 1 {
         match method_name.as_str() {

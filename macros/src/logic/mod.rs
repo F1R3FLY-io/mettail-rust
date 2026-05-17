@@ -2976,10 +2976,45 @@ fn generate_fold_big_step_rules(
                                 }
                             }
                         } else {
-                            quote! { #category::#num_lit((#rust_code)) }
+                            // Phase D Layer 1.5 (2026-05-17): cross-cat fold
+                            // rule res_expr — was `Cat::Lit((rust_code))`
+                            // which inlines user `.eval()` calls raw and
+                            // panics on Var-bearing sub-terms. Wrap in
+                            // safeify_and_wrap so that `.eval()` rewrites
+                            // to `.try_eval()?`, then guard with
+                            // `if let Some(__v) = ..., let res = Cat::Lit(__v)`.
+                            let safe_rust_code = crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code);
+                            quote! {
+                                {
+                                    let __safe = #safe_rust_code;
+                                    __safe.map(|__v| #category::#num_lit(__v))
+                                }
+                            }
                         }
                     } else {
-                        quote! { #category::#num_lit((#rust_code)) }
+                        // Phase D Layer 1.5 (2026-05-17): same fix for the
+                        // default branch (non-BigratCast/IntBin/etc.).
+                        let safe_rust_code = crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code);
+                        quote! {
+                            {
+                                let __safe = #safe_rust_code;
+                                __safe.map(|__v| #category::#num_lit(__v))
+                            }
+                        }
+                    };
+                    // res_expr is now `Option<Cat>` for the safeified branches,
+                    // and `Cat` (direct) for the legacy BigratCast/IntBin/etc.
+                    // arms that already handle their own None case via match.
+                    // Detect which shape by re-examining label_str.
+                    let res_is_option = !matches!(
+                        label_str.as_str(),
+                        "IntBin" | "UIntBin" | "FloatBin" | "FixedBin"
+                            | "BigintCast" | "BigratCast"
+                    );
+                    let bind_res: TokenStream = if res_is_option {
+                        quote! { if let Some(res) = #res_expr; }
+                    } else {
+                        quote! { let res = #res_expr; }
                     };
                     if param_count == 1 {
                         let p0 = &param_names[0];
@@ -3000,7 +3035,7 @@ fn generate_fold_big_step_rules(
                                 if let #category::#label(inner) = s,
                                 #inner_fold_rel(inner.as_ref().clone(), lv),
                                 let #p0 = lv,
-                                let res = #res_expr;
+                                #bind_res
                         });
                     } else {
                         let p0 = &param_names[0];
@@ -3057,7 +3092,7 @@ fn generate_fold_big_step_rules(
                                 #proc_bag_guard
                                 let #p0 = lv,
                                 let #p1 = rv,
-                                let res = #res_expr;
+                                #bind_res
                         });
                     }
                 }
