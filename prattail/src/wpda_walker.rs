@@ -508,7 +508,7 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     ///
     /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §1, §2.
     #[allow(dead_code)] // C3 wires the first emit-helper writer; C6 wires the first reader.
-    sppf: crate::sppf::Sppf,
+    sppf: crate::sppf::Sppf<W>,
     /// Option C / C3: SPPF-side collection slots. One inner Vec per
     /// `emit_start_collection` call; `emit_splice_into_collection(id)`
     /// pops the top of the current cursor's `sppf_stack` and appends to
@@ -3208,7 +3208,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 }
                 out
             }
-            Some(crate::sppf::SppfNode::Packing { rule_idx, children }) => {
+            Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) => {
                 self.realize_packing_call(*rule_idx, children, memo, limit)
             }
             None => Vec::new(),
@@ -6683,7 +6683,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 .unwrap_or(hi_pos);
             // Bug A fix: store global_rule_idx (cat<<16|local) so
             // realization can decode parent cat without scanning.
-            let packing_id = self.sppf.intern_packing(global_rule_idx, children);
+            //
+            // Phase C.1 (2026-05-17): intern_packing now takes a per-production
+            // weight. Pre-C.3 placeholder = `W::one_ref()`; C.3 will replace
+            // this with `cursor.pending_packing_weight` (consumed-and-reset).
+            let packing_id = self
+                .sppf
+                .intern_packing(global_rule_idx, children, W::one_ref());
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
             cursor.sppf_stack.push(symbol_id);
@@ -6876,9 +6882,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             if mark <= cursor.sppf_stack.len() {
                 let children: Vec<crate::sppf::SppfId> =
                     cursor.sppf_stack.drain(mark..).collect();
-                let packing_id = self
-                    .sppf
-                    .intern_packing(Self::OPTIONAL_PRESENT_RULE_IDX, children);
+                // Phase C.1 (2026-05-17): synthetic OPTIONAL_PRESENT always
+                // interns with `W::one_ref()` per the weight semantics table
+                // in `~/.claude/plans/phase-c-sppf-w-resolved.md` §2.5.
+                let packing_id = self.sppf.intern_packing(
+                    Self::OPTIONAL_PRESENT_RULE_IDX,
+                    children,
+                    W::one_ref(),
+                );
                 cursor.sppf_stack.push(packing_id);
             }
         }

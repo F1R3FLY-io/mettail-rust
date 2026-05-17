@@ -31,6 +31,7 @@
 //! type (`RealizeFrame`). This honors the project's "no host-stack recursion"
 //! mandate (cf. `prattail/src/wpda_walker.rs` trampoline design).
 
+use crate::automata::semiring::SemiringRef;
 use crate::sppf::{Sppf, SppfId, SppfNode};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -110,8 +111,8 @@ pub trait ActionResolver {
 /// `limit` caps the realization at the first `limit` results to bound
 /// exponential AST counts on adversarial inputs (plan §4.3). `None` means
 /// unbounded.
-pub fn realize_all<R: ActionResolver>(
-    sppf: &Sppf,
+pub fn realize_all<W: SemiringRef, R: ActionResolver>(
+    sppf: &Sppf<W>,
     root: SppfId,
     resolver: &R,
     limit: Option<usize>,
@@ -122,8 +123,8 @@ pub fn realize_all<R: ActionResolver>(
 }
 
 /// As `realize_all`, but appends to a caller-supplied `Vec`.
-pub fn realize_into<R: ActionResolver>(
-    sppf: &Sppf,
+pub fn realize_into<W: SemiringRef, R: ActionResolver>(
+    sppf: &Sppf<W>,
     root: SppfId,
     resolver: &R,
     limit: Option<usize>,
@@ -248,7 +249,7 @@ pub fn realize_into<R: ActionResolver>(
                         }
                         acc
                     }
-                    Some(SppfNode::Packing { rule_idx, children }) => {
+                    Some(SppfNode::Packing { rule_idx, children, .. }) => {
                         // Cartesian product of children's realizations, then
                         // resolve_packing for each.
                         let mut combos: Vec<Vec<R::Out>> = vec![Vec::with_capacity(children.len())];
@@ -312,8 +313,17 @@ pub fn realize_into<R: ActionResolver>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automata::lex_weight::LexicographicWeight;
     use crate::automata::TokenKind;
     use crate::sppf::{PosOrSynth, Sppf};
+
+    /// Phase C: tests pin a concrete W = LexicographicWeight (the production
+    /// walker's default).
+    type W = LexicographicWeight;
+
+    fn one() -> W {
+        W::one_ref()
+    }
 
     /// Builds s-expressions for testing.
     struct StringResolver;
@@ -349,7 +359,7 @@ mod tests {
 
     #[test]
     fn realize_single_terminal() {
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let results = realize_all(&s, t, &StringResolver, None);
         assert_eq!(results, vec!["x"]);
@@ -357,11 +367,11 @@ mod tests {
 
     #[test]
     fn realize_single_packing() {
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let t1 = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let t2 = s.intern_terminal(k_fixed("+"), PosOrSynth::Real(1), None, false);
         let t3 = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(2), Some("y"), false);
-        let p = s.intern_packing(0, vec![t1, t2, t3]);
+        let p = s.intern_packing(0, vec![t1, t2, t3], one());
         let results = realize_all(&s, p, &StringResolver, None);
         assert_eq!(results.len(), 1);
         assert!(results[0].contains("x"));
@@ -370,9 +380,9 @@ mod tests {
 
     #[test]
     fn realize_symbol_with_one_packing() {
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
-        let p = s.intern_packing(0, vec![t]);
+        let p = s.intern_packing(0, vec![t], one());
         let sym = s.intern_symbol(0, 0, 1);
         s.link_packing_to_symbol(sym, p);
         let results = realize_all(&s, sym, &StringResolver, None);
@@ -381,10 +391,10 @@ mod tests {
 
     #[test]
     fn realize_symbol_with_multiple_packings() {
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
-        let p1 = s.intern_packing(0, vec![t]);
-        let p2 = s.intern_packing(1, vec![t]);
+        let p1 = s.intern_packing(0, vec![t], one());
+        let p2 = s.intern_packing(1, vec![t], one());
         let sym = s.intern_symbol(0, 0, 1);
         s.link_packing_to_symbol(sym, p1);
         s.link_packing_to_symbol(sym, p2);
@@ -397,7 +407,7 @@ mod tests {
     #[test]
     fn realize_tomita_ambiguous_expression_yields_two() {
         // Same grammar as sppf::tests::tomita_ambiguous_expression.
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let nt_e: u32 = 0;
         const RULE_ADD: u32 = 0;
         const RULE_MUL: u32 = 1;
@@ -409,9 +419,9 @@ mod tests {
         let t_mul = s.intern_terminal(k_fixed("*"), PosOrSynth::Real(3), None, false);
         let t_c = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(4), Some("c"), false);
 
-        let p_a = s.intern_packing(RULE_VAR, vec![t_a]);
-        let p_b = s.intern_packing(RULE_VAR, vec![t_b]);
-        let p_c = s.intern_packing(RULE_VAR, vec![t_c]);
+        let p_a = s.intern_packing(RULE_VAR, vec![t_a], one());
+        let p_b = s.intern_packing(RULE_VAR, vec![t_b], one());
+        let p_c = s.intern_packing(RULE_VAR, vec![t_c], one());
         let e_a = s.intern_symbol(nt_e, 0, 1);
         let e_b = s.intern_symbol(nt_e, 2, 3);
         let e_c = s.intern_symbol(nt_e, 4, 5);
@@ -419,16 +429,16 @@ mod tests {
         s.link_packing_to_symbol(e_b, p_b);
         s.link_packing_to_symbol(e_c, p_c);
 
-        let p_bc_mul = s.intern_packing(RULE_MUL, vec![e_b, t_mul, e_c]);
+        let p_bc_mul = s.intern_packing(RULE_MUL, vec![e_b, t_mul, e_c], one());
         let e_bc = s.intern_symbol(nt_e, 2, 5);
         s.link_packing_to_symbol(e_bc, p_bc_mul);
 
-        let p_ab_add = s.intern_packing(RULE_ADD, vec![e_a, t_plus, e_b]);
+        let p_ab_add = s.intern_packing(RULE_ADD, vec![e_a, t_plus, e_b], one());
         let e_ab = s.intern_symbol(nt_e, 0, 3);
         s.link_packing_to_symbol(e_ab, p_ab_add);
 
-        let p_top_add = s.intern_packing(RULE_ADD, vec![e_a, t_plus, e_bc]);
-        let p_top_mul = s.intern_packing(RULE_MUL, vec![e_ab, t_mul, e_c]);
+        let p_top_add = s.intern_packing(RULE_ADD, vec![e_a, t_plus, e_bc], one());
+        let p_top_mul = s.intern_packing(RULE_MUL, vec![e_ab, t_mul, e_c], one());
         let e_top = s.intern_symbol(nt_e, 0, 5);
         s.link_packing_to_symbol(e_top, p_top_add);
         s.link_packing_to_symbol(e_top, p_top_mul);
@@ -462,11 +472,11 @@ mod tests {
     #[test]
     fn realize_respects_limit() {
         // Symbol with 5 packings, limit=2.
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let sym = s.intern_symbol(0, 0, 1);
         for rule in 0..5u32 {
-            let p = s.intern_packing(rule, vec![t]);
+            let p = s.intern_packing(rule, vec![t], one());
             s.link_packing_to_symbol(sym, p);
         }
         let results = realize_all(&s, sym, &StringResolver, Some(2));
@@ -475,7 +485,7 @@ mod tests {
 
     #[test]
     fn realize_epsilon() {
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let eps = s.intern_epsilon(3);
         let results = realize_all(&s, eps, &StringResolver, None);
         assert_eq!(results, vec!["ε"]);
@@ -483,10 +493,10 @@ mod tests {
 
     #[test]
     fn realize_packing_with_epsilon_child() {
-        let mut s = Sppf::new();
+        let mut s: Sppf<W> = Sppf::new();
         let t = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("x"), false);
         let eps = s.intern_epsilon(1);
-        let p = s.intern_packing(0, vec![t, eps]);
+        let p = s.intern_packing(0, vec![t, eps], one());
         let results = realize_all(&s, p, &StringResolver, None);
         assert_eq!(results, vec!["(r0 x ε)"]);
     }
@@ -495,13 +505,13 @@ mod tests {
     /// the same SPPF and same realization. Determinism guard (plan §11.5 I3).
     #[test]
     fn determinism_independent_rebuilds_realize_identically() {
-        fn build() -> (Sppf, SppfId) {
-            let mut s = Sppf::new();
+        fn build() -> (Sppf<W>, SppfId) {
+            let mut s: Sppf<W> = Sppf::new();
             let nt_e: u32 = 0;
             let t_a = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(0), Some("a"), false);
             let t_b = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(1), Some("b"), false);
-            let p1 = s.intern_packing(0, vec![t_a, t_b]);
-            let p2 = s.intern_packing(1, vec![t_a, t_b]);
+            let p1 = s.intern_packing(0, vec![t_a, t_b], W::one_ref());
+            let p2 = s.intern_packing(1, vec![t_a, t_b], W::one_ref());
             let sym = s.intern_symbol(nt_e, 0, 2);
             s.link_packing_to_symbol(sym, p1);
             s.link_packing_to_symbol(sym, p2);
