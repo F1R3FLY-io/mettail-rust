@@ -166,6 +166,135 @@ impl<T: Semiring> SemiringRef for T {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// StarSemiringRef — star semiring without the Copy requirement
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Star semiring trait without the `Copy` requirement (Phase C-bis,
+/// 2026-05-17, per
+/// `docs/design/plans/closed-semiring-cycle-handling.md` §8).
+///
+/// Mirrors [`StarSemiring`] for the heap-allocated semiring family.
+/// Operations take `&self` and return owned values.
+///
+/// **Mathematical content** identical to [`StarSemiring`]: `a*` is the
+/// Kleene closure `1 ⊕ a ⊕ a² ⊕ ...` — the closed-form solution to the
+/// recurrence `Y = aY ⊕ 1`.
+///
+/// **Used by**: `matrix_star_ref` (Lehmann's algorithm) and
+/// `solve_scc_weights_newton` (Newton's method per
+/// [Esparza-Kiefer-Luttenberger 2007]). The non-`Copy` variant lets
+/// closed-semiring cycle handling work uniformly across both `Copy`
+/// semirings (TropicalWeight, BooleanWeight, etc.) and heap-allocated
+/// ones (FreeWeight, ParikhWeight<D>).
+///
+/// [Esparza-Kiefer-Luttenberger 2007]:
+/// https://link.springer.com/chapter/10.1007/978-3-540-73208-2_17
+pub trait StarSemiringRef: SemiringRef {
+    /// Kleene star: `a* = 1 ⊕ a ⊕ a² ⊕ ...`
+    ///
+    /// For probability-like semirings (`LogWeight`, etc.) where
+    /// `1 - a` may diverge, implementations return [`Self::zero_ref`]
+    /// to signal divergence (the additive-identity acts as the
+    /// "diverged sentinel" under monotone semantics).
+    fn star_ref(&self) -> Self;
+
+    /// Kleene plus: `a⁺ = a ⊗ a*` — star without the identity term.
+    fn plus_star_ref(&self) -> Self {
+        self.times_ref(&self.star_ref())
+    }
+}
+
+/// Blanket implementation: every `StarSemiring` (which requires `Copy`)
+/// automatically satisfies `StarSemiringRef`.
+impl<T: StarSemiring> StarSemiringRef for T {
+    #[inline]
+    fn star_ref(&self) -> Self {
+        self.star()
+    }
+
+    #[inline]
+    fn plus_star_ref(&self) -> Self {
+        self.plus_star()
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// matrix_star_ref — Lehmann's algorithm (1977) for closed semirings,
+// SemiringRef variant
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Compute `A* = (I ⊕ A)*` via Lehmann's algorithm (1977) over a
+/// closed semiring, using the `SemiringRef` interface (no `Copy`
+/// requirement on the weight type).
+///
+/// Phase C-bis (2026-05-17, per
+/// `docs/design/plans/closed-semiring-cycle-handling.md` §7 Step 4 &
+/// §8): the parallel of [`matrix_star`] for heap-allocated semirings
+/// such as `FreeWeight`. Both share the identical Kleene-Floyd-Warshall
+/// triple-nested loop:
+///
+/// ```text
+/// for k in 0..n:
+///     k_star = A[k][k].star()
+///     for i in 0..n:
+///         for j in 0..n:
+///             A[i][j] = A[i][j] ⊕ A[i][k] ⊗ k_star ⊗ A[k][j]
+/// ```
+///
+/// **Complexity**: O(n³) time, O(n²) space.
+///
+/// **Output**: a fresh `Vec<Vec<W>>` such that `A*[i][j]` is the
+/// `⊕`-aggregation of all paths from vertex `i` to vertex `j`
+/// (including paths that loop arbitrarily many times through any
+/// vertex).
+///
+/// **Usage in PraTTaIL**: the per-iteration linear solver inside
+/// `solve_scc_weights_newton`. Also serves directly for the
+/// linear-fast-path (single-call SCCs where the Newton iteration
+/// reduces to one Lehmann step).
+///
+/// **Panics**: if `adj` is non-square (some row length differs from `adj.len()`).
+pub fn matrix_star_ref<W: StarSemiringRef>(adj: &[Vec<W>]) -> Vec<Vec<W>> {
+    let n = adj.len();
+    assert!(
+        adj.iter().all(|row| row.len() == n),
+        "matrix_star_ref: adj must be square (n × n)"
+    );
+    // Initialize: dist[i][j] = (I ⊕ A)[i][j].
+    // The diagonal carries `one_ref() ⊕ adj[i][i]` (the zero-length-path
+    // identity contribution); off-diagonal entries are just `adj[i][j]`.
+    // This matches `matrix_star`'s convention (semiring.rs:2865-2878) so
+    // that the two functions return numerically-equivalent closures on
+    // the same input.
+    let mut dist: Vec<Vec<W>> = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut row = Vec::with_capacity(n);
+        for j in 0..n {
+            if i == j {
+                row.push(W::one_ref().plus_ref(&adj[i][j]));
+            } else {
+                row.push(adj[i][j].clone());
+            }
+        }
+        dist.push(row);
+    }
+    // Floyd-Warshall over star semiring (Lehmann 1977).
+    for k in 0..n {
+        let k_star = dist[k][k].star_ref();
+        for i in 0..n {
+            for j in 0..n {
+                // dist[i][j] = dist[i][j] ⊕ dist[i][k] ⊗ k_star ⊗ dist[k][j]
+                let aik = dist[i][k].clone();
+                let akj = dist[k][j].clone();
+                let term = aik.times_ref(&k_star).times_ref(&akj);
+                dist[i][j] = dist[i][j].plus_ref(&term);
+            }
+        }
+    }
+    dist
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // TropicalWeight
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -5862,6 +5991,135 @@ mod tests {
 
             // Idempotent plus
             assert_eq!(a.plus_ref(&a), a);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Phase C-bis Commit 1 (2026-05-17): StarSemiringRef + matrix_star_ref
+    // tests. Per docs/design/plans/closed-semiring-cycle-handling.md §10
+    // (CSCH-7 + CSCH-8).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// CSCH-7: `matrix_star_ref` reproduces `matrix_star` for `Copy`
+    /// semirings (regression guard ensuring the ref-style and value-style
+    /// Lehmann implementations stay in lockstep). Boolean variant.
+    #[test]
+    fn csch_7_matrix_star_ref_matches_matrix_star_boolean() {
+        let f = BooleanWeight::new(false);
+        let t = BooleanWeight::new(true);
+        // Same DAG as test_matrix_star_boolean_dag: 0→1→2.
+        let adj = vec![
+            vec![f, t, f],
+            vec![f, f, t],
+            vec![f, f, f],
+        ];
+        let star_val = matrix_star(&adj);
+        let star_ref = matrix_star_ref(&adj);
+        assert_eq!(
+            star_val, star_ref,
+            "matrix_star_ref must agree with matrix_star on the same input"
+        );
+    }
+
+    /// CSCH-7: `matrix_star_ref` on tropical shortest-paths matches
+    /// `matrix_star`.
+    #[test]
+    fn csch_7_matrix_star_ref_matches_matrix_star_tropical() {
+        let inf = TropicalWeight::infinity();
+        let adj = vec![
+            vec![inf, TropicalWeight::new(2.0), TropicalWeight::new(10.0)],
+            vec![inf, inf, TropicalWeight::new(3.0)],
+            vec![inf, inf, inf],
+        ];
+        let star_val = matrix_star(&adj);
+        let star_ref = matrix_star_ref(&adj);
+        for i in 0..3 {
+            for j in 0..3 {
+                let v = star_val[i][j].value();
+                let r = star_ref[i][j].value();
+                if v.is_infinite() {
+                    assert!(r.is_infinite(), "({i},{j}): val=inf, ref={r}");
+                } else {
+                    assert!(
+                        (v - r).abs() < 1e-12,
+                        "({i},{j}): val={v}, ref={r}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// CSCH-7: `matrix_star_ref` on cyclic Boolean (all-reach-all) matches
+    /// `matrix_star` (specifically exercises Lehmann's cycle handling
+    /// path).
+    #[test]
+    fn csch_7_matrix_star_ref_cyclic_boolean() {
+        let f = BooleanWeight::new(false);
+        let t = BooleanWeight::new(true);
+        let adj = vec![
+            vec![f, t, f],
+            vec![f, f, t],
+            vec![t, f, f],
+        ];
+        let star_ref = matrix_star_ref(&adj);
+        // Cycle → everything reachable from everything.
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    star_ref[i][j].is_reachable(),
+                    "matrix_star_ref({i},{j}) should be reachable in a cycle"
+                );
+            }
+        }
+    }
+
+    /// `matrix_star_ref` rejects non-square input.
+    #[test]
+    #[should_panic(expected = "matrix_star_ref: adj must be square")]
+    fn csch_7_matrix_star_ref_rejects_non_square() {
+        let _ = matrix_star_ref(&vec![vec![BooleanWeight::new(false); 3]; 2]);
+    }
+
+    /// CSCH-8: `LexicographicWeight::star` returns `one_ref()` (idempotent
+    /// collapse). Phase C-bis assumes this invariant when computing cyclic
+    /// realize weights under the production walker semiring.
+    #[test]
+    fn csch_8_lex_weight_star_collapses_to_one() {
+        use crate::automata::lex_weight::LexicographicWeight;
+        let a = LexicographicWeight::from_cost(1.5, 3, 4);
+        let b = LexicographicWeight::from_cost(0.0, 0, 0);
+        let c = LexicographicWeight::one_ref();
+        // Under idempotency, a* = 1 ⊕ a ⊕ a² ⊕ ... = 1.
+        assert_eq!(a.star_ref(), LexicographicWeight::one_ref());
+        assert_eq!(b.star_ref(), LexicographicWeight::one_ref());
+        assert_eq!(c.star_ref(), LexicographicWeight::one_ref());
+        // plus_star_ref(a) = a ⊗ a* = a ⊗ 1 = a.
+        assert_eq!(a.plus_star_ref(), a);
+    }
+
+    /// CSCH-8: `matrix_star_ref` runs on `LexicographicWeight` matrices.
+    /// Confirms that Lehmann's algorithm terminates correctly under the
+    /// production walker's weight type — the integration end-to-end.
+    #[test]
+    fn csch_8_matrix_star_ref_on_lex_weight() {
+        use crate::automata::lex_weight::LexicographicWeight;
+        let zero = LexicographicWeight::zero_ref();
+        let one = LexicographicWeight::one_ref();
+        let a = LexicographicWeight::from_cost(1.0, 1, 0);
+        // 3×3 DAG with a single non-trivial edge.
+        let adj = vec![
+            vec![zero.clone(), a.clone(), zero.clone()],
+            vec![zero.clone(), zero.clone(), a.clone()],
+            vec![zero.clone(), zero.clone(), zero.clone()],
+        ];
+        let closure = matrix_star_ref(&adj);
+        // Diagonal entries should be `one` (a* collapses; identity).
+        for i in 0..3 {
+            assert_eq!(
+                closure[i][i],
+                one,
+                "diagonal at ({i},{i}) should be one under idempotent star"
+            );
         }
     }
 }

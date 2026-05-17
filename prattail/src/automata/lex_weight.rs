@@ -156,7 +156,7 @@ use std::cmp::Ordering;
 use std::fmt;
 
 use crate::automata::semiring::{
-    CompleteSemiring, DetectableZero, IdempotentSemiring, Semiring, TropicalWeight,
+    CompleteSemiring, DetectableZero, IdempotentSemiring, Semiring, StarSemiring, TropicalWeight,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -468,6 +468,41 @@ impl fmt::Display for LexicographicWeight {
 impl DetectableZero for LexicographicWeight {}
 impl IdempotentSemiring for LexicographicWeight {}
 impl CompleteSemiring for LexicographicWeight {}
+
+/// Phase C-bis (2026-05-17, per
+/// `docs/design/plans/closed-semiring-cycle-handling.md` §8): Kleene
+/// star for the production walker weight type.
+///
+/// **Mathematical content**: `a* = 1 ⊕ a ⊕ a² ⊕ ...`. Under
+/// `LexicographicWeight`'s tropical / lex-min `⊕`, this geometric
+/// sum collapses (since `⊕` is idempotent: `a ⊕ a = a`). Concretely:
+///
+/// - If `self` is the multiplicative identity (`one_ref()`): `a* = 1 ⊕ 1
+///   ⊕ ... = 1` (idempotent).
+/// - If `self.primary > 0`: under tropical `min`, `min(1, a, 2a, ...) = 1`
+///   (because `2a ≥ a ≥ 1 = 0` for primary ≥ 0).
+/// - If `self.primary < 0`: under tropical `min`, the geometric sum
+///   diverges to `-∞` — but `LexicographicWeight` represents weights
+///   with finite `f64` primary, so this case is structurally absent
+///   under PraTTaIL's WPDA usage.
+///
+/// In all practically-reachable cases for cyclic SPPF realize,
+/// `LexicographicWeight::star(self) = Self::one()`. This matches the
+/// existing cycle-skip behavior at `wpda_walker.rs:3348`, which under
+/// idempotency is equivalent to "include the cyclic packing exactly
+/// once with multiplier 1."
+///
+/// **Lex tiebreak**: returns the canonical `one_ref()` (lex_alt_idx
+/// = 0, src_idx = 0, rule_idx = 0). The cycle-aggregated weight has
+/// no specific "winning" alt/src/rule (it represents the closed sum,
+/// not a particular path), so the identity-element tiebreak is the
+/// correct semantic.
+impl StarSemiring for LexicographicWeight {
+    #[inline]
+    fn star(&self) -> Self {
+        Self::one()
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Tests
