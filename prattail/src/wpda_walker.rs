@@ -1124,6 +1124,34 @@ pub struct BranchCursor<W: SemiringRef> {
     /// `ActionArg::BinderScope` without depending on parse-time builder
     /// state.
     pub binder_scope_marks: Vec<(u16, Vec<String>)>,
+    /// Phase C.2/C.3 (2026-05-17): per-Fork-arm weight increment that has
+    /// not yet been consumed by `emit_fire_action::intern_packing`.
+    ///
+    /// Semantics (Q1.A+ in `~/.claude/plans/phase-c-sppf-w-resolved.md`):
+    /// - Initial value at `seed_from_live`: `W::one_ref()`.
+    /// - At each Fork-arm child cursor construction:
+    ///   `child.pending_packing_weight =
+    ///       parent.pending_packing_weight.times_ref(&branch_weight)`.
+    /// - `emit_fire_action` consumes: `mem::replace(&mut p, W::one_ref())`
+    ///   and passes the consumed weight to `intern_packing` as the
+    ///   per-production weight.
+    /// - Synthetic `OPTIONAL_PRESENT_RULE_IDX` packings interned via
+    ///   `emit_finalize_optional_scope_present` do NOT consume the field;
+    ///   they always intern with `W::one_ref()` (§2.5 of the plan).
+    ///
+    /// Why a separate field from `cursor.weight`: `cursor.weight` is the
+    /// CUMULATIVE path-cost from the root, used for cursor-merge tiebreak
+    /// (`pick_lex_min_resolved`). Using it as Packing.weight would
+    /// double-count when realize threads `⊗` through the packing's
+    /// children. `pending_packing_weight` tracks ONLY the weight
+    /// contributed since the last `emit_fire_action` interned a packing,
+    /// matching Goodman's per-production weight semantics.
+    ///
+    /// NOT part of `ConfigKey` — operational per-cursor state, not a
+    /// merge-equivalence key (two cursors that have accumulated different
+    /// pending weights can still merge by ConfigKey; the merge tiebreak
+    /// preserves one cursor's pending via Vec-write semantics).
+    pub pending_packing_weight: W,
     // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
     // alternative state violated WPDS stack purity (the multiset grew
     // monotonically with no pop counterpart, and was excluded from
@@ -1147,6 +1175,8 @@ where
             // diagnostic — shows how many cursors share this builder
             // before the next mutation triggers copy-on-write.
             .field("builder_arc_refcount", &Arc::strong_count(&self.builder))
+            // Phase C.2 (2026-05-17): unconsumed per-production weight.
+            .field("pending_packing_weight", &self.pending_packing_weight)
             .finish()
     }
 }
@@ -1183,6 +1213,15 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             sppf_stack: self.sppf_stack.clone(),
             optional_scope_marks: self.optional_scope_marks.clone(),
             binder_scope_marks: self.binder_scope_marks.clone(),
+            // Phase C.2/C.3 (2026-05-17): clone the pending weight too.
+            // Clone is the right Fork-arm parent-to-child semantics
+            // _only when no new branch weight is being applied_; the
+            // canonical Fork-arm path (fork_child + inline literals)
+            // computes `parent.pending.times_ref(&branch.weight)` and
+            // does NOT go through Clone. So clone here means "duplicate
+            // an in-progress cursor without semantic change" (e.g.
+            // tiebreak snapshots, debug dumps).
+            pending_packing_weight: self.pending_packing_weight.clone(),
         }
     }
 }
@@ -1263,6 +1302,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             sppf_stack: Vec::new(),
             optional_scope_marks: Vec::new(),
             binder_scope_marks: Vec::new(),
+            // Phase C.2 (2026-05-17): seed cursor has not entered any Fork-
+            // arm yet, so no pending per-production weight has accumulated.
+            pending_packing_weight: W::one_ref(),
         }
     }
 
@@ -1283,6 +1325,7 @@ impl<W: SemiringRef> BranchCursor<W> {
         parent: &Self,
         pos: usize,
         weight: W,
+        branch_weight: W,
         new_state: WpdaState,
         source_priority: u32,
     ) -> Self {
@@ -1316,6 +1359,14 @@ impl<W: SemiringRef> BranchCursor<W> {
             sppf_stack: parent.sppf_stack.clone(),
             optional_scope_marks: parent.optional_scope_marks.clone(),
             binder_scope_marks: parent.binder_scope_marks.clone(),
+            // Phase C.3 (2026-05-17): per-Q1.A+, Fork-arm child cursors
+            // multiply the parent's unconsumed weight by the new branch's
+            // weight. The next `emit_fire_action` will consume this
+            // (mem::replace + W::one_ref()) and use it as the produced
+            // packing's per-production weight.
+            pending_packing_weight: parent
+                .pending_packing_weight
+                .times_ref(&branch_weight),
         }
     }
 }
@@ -2460,6 +2511,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     sppf_stack: Vec::new(),
                     optional_scope_marks: Vec::new(),
                     binder_scope_marks: Vec::new(),
+                    // Phase C.2 (2026-05-17): post-resolution singleton
+                    // starts a fresh per-production weight chain. The
+                    // pre-resolution pending (if any) was consumed by the
+                    // emit_fire_actions that produced the resolved root.
+                    pending_packing_weight: W::one_ref(),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -3768,6 +3824,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     sppf_stack: Vec::new(),
                     optional_scope_marks: Vec::new(),
                     binder_scope_marks: Vec::new(),
+                    // Phase C.2 (2026-05-17): post-Drop reset clears the
+                    // pending weight chain — the dropped cursor's unused
+                    // per-production weight is discarded with the cursor.
+                    pending_packing_weight: W::one_ref(),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -4280,6 +4340,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -4336,6 +4402,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -4403,6 +4475,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4446,6 +4524,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -4482,6 +4566,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -4551,6 +4641,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -4599,6 +4695,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -4648,6 +4750,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -4732,6 +4840,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -4807,6 +4921,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
@@ -4893,6 +5013,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
+                                // Phase C.3 (2026-05-17): Fork-arm child
+                                // accumulates branch weight into pending,
+                                // for the next emit_fire_action to consume.
+                                pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .times_ref(&branch.weight),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -4933,6 +5059,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -4964,6 +5094,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5012,6 +5146,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5043,6 +5181,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5093,6 +5235,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5140,6 +5286,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5195,6 +5345,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5251,6 +5405,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5289,6 +5447,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -5329,6 +5491,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 cursor,
                                 pos_after,
                                 cursor.weight.times_ref(&branch.weight),
+                                // Phase C.3 (2026-05-17): pass branch.weight
+                                // for `pending_packing_weight` accumulation
+                                // (parent.pending ⊗ branch.weight).
+                                branch.weight.clone(),
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
@@ -6233,6 +6399,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             sppf_stack: winner.sppf_stack,
             optional_scope_marks: winner.optional_scope_marks,
             binder_scope_marks: winner.binder_scope_marks,
+            // Phase C.2 (2026-05-17): preserve the winner's pending weight
+            // chain so subsequent reduces continue accumulating from where
+            // the winner left off. Identical rationale to sppf_stack.
+            pending_packing_weight: winner.pending_packing_weight,
         }];
     }
 
@@ -6684,12 +6854,17 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // Bug A fix: store global_rule_idx (cat<<16|local) so
             // realization can decode parent cat without scanning.
             //
-            // Phase C.1 (2026-05-17): intern_packing now takes a per-production
-            // weight. Pre-C.3 placeholder = `W::one_ref()`; C.3 will replace
-            // this with `cursor.pending_packing_weight` (consumed-and-reset).
+            // Phase C.3 (2026-05-17): consume `cursor.pending_packing_weight`
+            // and pass it as this production's weight. Reset the field to
+            // `W::one_ref()` so subsequent productions start fresh per
+            // Q1.A+ in `~/.claude/plans/phase-c-sppf-w-resolved.md` §2.3.
+            let packing_weight = std::mem::replace(
+                &mut cursor.pending_packing_weight,
+                W::one_ref(),
+            );
             let packing_id = self
                 .sppf
-                .intern_packing(global_rule_idx, children, W::one_ref());
+                .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
             cursor.sppf_stack.push(symbol_id);
