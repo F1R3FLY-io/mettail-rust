@@ -61,7 +61,7 @@ use im::OrdSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::automata::semiring::{IdempotentSemiring, SemiringRef};
+use crate::automata::semiring::{IdempotentSemiring, SemiringRef, StarSemiringRef};
 use crate::automata::TokenKind;
 use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
@@ -2783,7 +2783,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         tokens: &dyn WpdaTokenSource,
     ) -> WpdaResolveResult<W>
     where
-        W: 'static + IdempotentSemiring,
+        W: 'static + IdempotentSemiring + StarSemiringRef,
     {
         // Phase 5.6-tail-B (2026-05-12): the pre-tail deterministic-mode fast-path
         // returned directly using `self.builder.take_dyn_result()`. Under
@@ -3079,18 +3079,28 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// (Scott-Johnstone GLL §5) to be semantically safe. Idempotent
     /// semirings satisfy `w ⊕ w = w`, so skipping a back-edge packing
     /// does not lose weight contributions — its weight is already
-    /// captured at the symbol where the cycle returns. For non-
-    /// idempotent semirings (Counting, Log, Entropy, NBest, etc.)
-    /// the cycle subgraph requires `matrix_star` fixpoint iteration;
-    /// see Q2.A migration path in
-    /// `~/.claude/plans/phase-c-sppf-w-resolved.md`.
+    /// captured at the symbol where the cycle returns.
+    ///
+    /// Phase C-bis (2026-05-17, per
+    /// `docs/design/plans/closed-semiring-cycle-handling.md`): the
+    /// bound is RELAXED to `W: StarSemiringRef`, which is strictly
+    /// broader. For idempotent semirings (the production case via
+    /// `LexicographicWeight`), the existing tri-color skip path
+    /// continues to apply unchanged — and is correct because
+    /// `star(a) = one()` collapses under idempotency. For non-
+    /// idempotent semirings (Counting, Log, Entropy, NBest), the
+    /// Newton-method solver at
+    /// `automata/semiring.rs::solve_scc_weights_newton` provides
+    /// the closed-semiring fixpoint via Lehmann's algorithm. The
+    /// Newton path is invoked automatically when the realize walk
+    /// encounters a non-trivial SCC.
     pub fn realize_root_to_terms(
         &self,
         root: crate::sppf::SppfId,
         limit: Option<usize>,
     ) -> Vec<Arc<dyn Any + Send + Sync>>
     where
-        W: IdempotentSemiring,
+        W: StarSemiringRef,
     {
         self.realize_root_to_terms_with_weights(root, limit)
             .into_iter()
@@ -3107,19 +3117,29 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// `realize_root_to_terms` (which drops the weight) for backward
     /// compatibility; Phase D's facade switch will adopt the weighted
     /// shape directly.
+    ///
+    /// Phase C-bis (2026-05-17): bound relaxed to `W: StarSemiringRef`
+    /// per the closed-semiring cycle-handling plan.
     pub fn realize_root_to_terms_with_weights(
         &self,
         root: crate::sppf::SppfId,
         limit: Option<usize>,
     ) -> Vec<(Arc<dyn Any + Send + Sync>, W)>
     where
-        W: IdempotentSemiring,
+        W: StarSemiringRef,
     {
         if root == crate::sppf::SPPF_ID_NONE {
             return Vec::new();
         }
         let mut memo: std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>> =
             std::collections::HashMap::new();
+        // Phase C-bis (2026-05-17): cycle-detection flag for lazy
+        // Tarjan SCC + Newton multiplier pass. The expensive SCC
+        // work runs only if `has_cycle` is set (a back-edge was
+        // observed during the tri-color DFS). For acyclic SPPFs
+        // (the typical case) the realize path runs at the same cost
+        // as before Commit 3.
+        let mut has_cycle = false;
         // Phase 3.1.6 (C7b cycle-handling, 2026-05-15): tri-color DFS per
         // Scott-Johnstone GLL parsing 2010 §5 ("Cyclic productions and
         // unit-rules") and Tomita 1986 §6.3 ("Cyclic Grammars").
@@ -3154,6 +3174,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         // Back-edge — cycle detected. Record empty
                         // contribution; do NOT re-traverse. The realize
                         // pass will skip cyclic packings via colors lookup.
+                        // Phase C-bis: also flag has_cycle so the
+                        // post-pass invokes Tarjan + Newton.
+                        has_cycle = true;
                         memo.entry(id).or_insert_with(Vec::new);
                         continue;
                     }
@@ -3202,6 +3225,29 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 }
             }
         }
+        // Phase C-bis (2026-05-17, per
+        // `docs/design/plans/closed-semiring-cycle-handling.md` §11
+        // Commit 3): if the DFS detected a back-edge, post-process
+        // memo with the Newton multiplier `star(aggregate)` per
+        // non-trivial SCC. Acyclic SPPFs skip this entirely — no
+        // Tarjan, no Newton, same cost as before Commit 3.
+        if has_cycle {
+            let sccs = self.sppf.tarjan_sccs(root);
+            for scc in &sccs {
+                if scc.len() == 1 && !self.sppf.has_self_loop(scc[0]) {
+                    continue; // trivial SCC — no Newton needed
+                }
+                let solved = self.solve_scc_aggregate(scc, &memo);
+                for (local_pos, &symbol_id) in scc.iter().enumerate() {
+                    let multiplier = solved[local_pos].star_ref();
+                    if let Some(results) = memo.get_mut(&symbol_id) {
+                        for entry in results.iter_mut() {
+                            entry.1 = multiplier.times_ref(&entry.1);
+                        }
+                    }
+                }
+            }
+        }
         // Phase C.6: extract (Arc<dyn Any>, W) from each ActionArg::Term
         // in the root's realization. Non-Term variants at the root level
         // indicate a structural mismatch (the root should always be a
@@ -3236,7 +3282,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         limit: Option<usize>,
     ) -> Vec<(ActionArg, W)>
     where
-        W: IdempotentSemiring,
+        W: StarSemiringRef,
     {
         match self.sppf.node(id) {
             Some(crate::sppf::SppfNode::Terminal {
@@ -3338,6 +3384,15 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // BLACK packings with empty memo are legitimate
                 // "produces-nothing" terminal-equivalents (e.g.,
                 // OptAbsent under an empty optional); include them.
+                //
+                // Phase C-bis (2026-05-17): if has_cycle was set during
+                // the DFS, the post-pass in
+                // `realize_root_to_terms_with_weights` applies the
+                // Newton multiplier `star(aggregate)` to memo entries
+                // of Symbols in non-trivial SCCs. For idempotent W
+                // (production `LexicographicWeight`) `star = one` so
+                // this is identity; for non-idempotent W the multiplier
+                // captures the cycle's closed-semiring contribution.
                 let mut out: Vec<(ActionArg, W)> = Vec::new();
                 for &p in self.sppf.packings_of(id) {
                     let p_color = colors.get(&p).copied();
@@ -3372,6 +3427,74 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         }
     }
 
+    /// Phase C-bis (2026-05-17, per
+    /// `docs/design/plans/closed-semiring-cycle-handling.md` §11 Commit 3):
+    /// solve the closed-semiring fixpoint for a non-trivial SCC via
+    /// Newton's method.
+    ///
+    /// Returns a `Vec<W>` of aggregate weights, one per SCC member, in
+    /// the same order as `scc`. The aggregate at index `i` is the
+    /// total inside-weight at `scc[i]` accounting for all derivations
+    /// including cycle iterations.
+    ///
+    /// **Algorithm** (per Esparza-Kiefer-Luttenberger 2007 for
+    /// multi-call SCCs, fast-path linear closed form when all
+    /// in-SCC packings have ≤1 in-SCC child):
+    /// 1. Build SCC-local-index map `idx: SppfId → usize`.
+    /// 2. Compute `memo_outside`: for each Symbol child of any in-SCC
+    ///    packing that is OUTSIDE the SCC, its inside-weight via
+    ///    `⊕`-aggregation over `memo` (Goodman 1999 §3).
+    /// 3. Factor each packing of each SCC Symbol via
+    ///    [`crate::sppf::Sppf::factor_scc_packing`].
+    /// 4. Invoke
+    ///    [`crate::automata::semiring::solve_scc_weights_newton`].
+    fn solve_scc_aggregate(
+        &self,
+        scc: &[crate::sppf::SppfId],
+        memo: &std::collections::HashMap<crate::sppf::SppfId, Vec<(ActionArg, W)>>,
+    ) -> Vec<W>
+    where
+        W: StarSemiringRef,
+    {
+        let mut idx: rustc_hash::FxHashMap<crate::sppf::SppfId, usize> =
+            rustc_hash::FxHashMap::default();
+        for (i, &id) in scc.iter().enumerate() {
+            idx.insert(id, i);
+        }
+        let mut memo_outside: rustc_hash::FxHashMap<crate::sppf::SppfId, W> =
+            rustc_hash::FxHashMap::default();
+        for &symbol in scc {
+            for &p in self.sppf.packings_of(symbol) {
+                if let Some(crate::sppf::SppfNode::Packing { children, .. }) =
+                    self.sppf.node(p)
+                {
+                    for &c in children {
+                        if idx.contains_key(&c) || memo_outside.contains_key(&c) {
+                            continue;
+                        }
+                        let w = match memo.get(&c) {
+                            Some(results) => results
+                                .iter()
+                                .fold(W::zero_ref(), |acc, (_arg, w)| acc.plus_ref(w)),
+                            None => W::one_ref(),
+                        };
+                        memo_outside.insert(c, w);
+                    }
+                }
+            }
+        }
+        let mut packings: Vec<crate::sppf::PackingFactored<W>> = Vec::new();
+        for (i, &symbol) in scc.iter().enumerate() {
+            for &p in self.sppf.packings_of(symbol) {
+                packings.push(
+                    self.sppf
+                        .factor_scc_packing(p, i, &idx, &memo_outside),
+                );
+            }
+        }
+        crate::automata::semiring::solve_scc_weights_newton(scc.len(), &packings, 64)
+    }
+
     /// Cartesian-product the children's realized ActionArgs, then call
     /// the rule's `action_fn` per combo to produce a Vec of realized
     /// Term args.
@@ -3390,7 +3513,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         limit: Option<usize>,
     ) -> Vec<(ActionArg, W)>
     where
-        W: IdempotentSemiring,
+        W: StarSemiringRef,
     {
         // OPTIONAL_PRESENT_RULE_IDX sentinel: synthetic packing emitted
         // by emit_finalize_optional_scope_present. Wrap children's args
