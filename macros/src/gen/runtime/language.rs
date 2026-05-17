@@ -728,10 +728,17 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                         // consumers (REPL/LSP/parity tests) can detect that
                         // ambiguity disambiguation took place. See
                         // `prattail/docs/design/wpds-migration-survey.md` (M10).
-                        mettail_runtime::diagnostics::emit_d11(
+                        //
+                        // Phase D.8 (2026-05-17, M14.5): emit the enriched
+                        // variant carrying the full alt-display list, so
+                        // consumers see every alternative the parser
+                        // preserved (not just the count + lex-best).
+                        let alt_displays: Vec<std::string::String> =
+                            alts.iter().map(|a| format!("{}", a)).collect();
+                        mettail_runtime::diagnostics::emit_d11_with_alts(
                             stringify!(#inner_enum_name),
                             "",
-                            alts.len(),
+                            &alt_displays,
                         );
                         write!(f, "{}", alts[0])
                     }
@@ -3539,10 +3546,26 @@ fn generate_language_trait_impl_multi(
                 };
                 match &typed_term.0 {
                     #inner_enum_name::Ambiguous(alts) => {
-                        if let Some(first) = alts.first() {
-                            let sub = #term_name(first.clone());
-                            self.infer_var_type(&sub, var_name)
-                        } else { None }
+                        // Phase D.6 (2026-05-17, M14.3): UNION over alts'
+                        // inferred types. Pre-D.6 this picked `alts[0]`
+                        // (a P4 violation). The new path collects every
+                        // alt's inferred type for var_name and constructs
+                        // a `TermType::Ambiguous(Vec<TermType>)` union
+                        // via `TermType::union` (which collapses to a
+                        // single TermType when all alts agree, or to
+                        // `Unknown` when none have the var).
+                        let mut tys: Vec<mettail_runtime::TermType> = Vec::new();
+                        for alt in alts.iter() {
+                            let sub = #term_name(alt.clone());
+                            if let Some(ty) = self.infer_var_type(&sub, var_name) {
+                                tys.push(ty);
+                            }
+                        }
+                        if tys.is_empty() {
+                            None
+                        } else {
+                            Some(mettail_runtime::TermType::union(tys))
+                        }
                     }
                     #(#infer_var_type_arms),*
                 }
@@ -4011,12 +4034,22 @@ fn generate_cek_decompose_multi(
             };
             match &typed.0 {
                 #inner_enum_name::Ambiguous(alts) => {
-                    // Decompose first alternative
-                    if let Some(first) = alts.first() {
-                        let sub = #term_name(first.clone());
-                        return self.decompose_into_cek(&sub, evaluator);
+                    // Phase D.3 (2026-05-17, M13.3): try ALL alternatives
+                    // instead of just the first. Per P3 in the master
+                    // plan (preserve-all-derivations through decomposition),
+                    // the previous `alts.first()` peel collapsed to a
+                    // single derivation. The new path tries each alt
+                    // and succeeds if ANY alternative's decomposition
+                    // succeeds — matching the parser's "alts is a Vec of
+                    // valid parses" contract.
+                    let mut any_ok = false;
+                    for alt in alts {
+                        let sub = #term_name(alt.clone());
+                        if self.decompose_into_cek(&sub, evaluator) {
+                            any_ok = true;
+                        }
                     }
-                    return false;
+                    return any_ok;
                 }
                 #(#dispatch_arms)*
             }

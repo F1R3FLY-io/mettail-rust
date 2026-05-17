@@ -99,6 +99,36 @@ pub fn emit_d11(language: &str, category: &str, alt_count: usize) {
     });
 }
 
+/// Phase D.8 (2026-05-17, M14.5): enriched D11 emission with the
+/// complete alt-display list.
+///
+/// `alt_displays`: typically the result of `inner.all_displays()` —
+/// one `String` per parse alternative. The diagnostic message includes
+/// the full list so consumers (REPL/LSP/parity tests) see every
+/// alternative the parser preserved, not just the lex-best primary.
+///
+/// Use this variant when you have the displays handy (e.g., from the
+/// Display impl on Ambiguous, or from a diagnostic-enrichment pass
+/// over a failed evaluation). The plain [`emit_d11`] remains for
+/// call sites that only have the alt count.
+pub fn emit_d11_with_alts(language: &str, category: &str, alt_displays: &[String]) {
+    let alt_count = alt_displays.len();
+    let alt_list = if alt_displays.is_empty() {
+        String::from("[]")
+    } else {
+        format!("[{}]", alt_displays.join(" | "))
+    };
+    emit(Diagnostic {
+        code: "D11".to_string(),
+        language: language.to_string(),
+        category: category.to_string(),
+        message: format!(
+            "Display canonicalization: {} alternatives present, lex-best primary chosen; alts={}",
+            alt_count, alt_list,
+        ),
+    });
+}
+
 /// Drain the thread-local diagnostic queue, returning all pending messages.
 ///
 /// Consumers (REPL, LSP, tests) call this periodically to surface warnings.

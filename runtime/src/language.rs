@@ -32,6 +32,15 @@ pub enum TermType {
     Arrow(Box<TermType>, Box<TermType>),
     /// Multi-argument function type: [Domain* -> Codomain]
     MultiArrow(Box<TermType>, Box<TermType>),
+    /// Phase D.7 (2026-05-17, M14.4): union type capturing inference
+    /// over an `Ambiguous(Vec<Inner>)` term. Each alternative's
+    /// inferred type lives in the inner vec; downstream callers can
+    /// inspect every typing or pick one.
+    ///
+    /// Constructor `union(types)` deduplicates and collapses
+    /// trivial cases: empty → `Unknown`; single-elem → that element;
+    /// otherwise the resulting `Ambiguous(Vec<TermType>)`.
+    Ambiguous(Vec<TermType>),
     /// Unknown type (inference failed or not applicable)
     Unknown,
 }
@@ -42,6 +51,11 @@ impl fmt::Display for TermType {
             TermType::Base(name) => write!(f, "{}", name),
             TermType::Arrow(domain, codomain) => write!(f, "[{} -> {}]", domain, codomain),
             TermType::MultiArrow(domain, codomain) => write!(f, "[{}* -> {}]", domain, codomain),
+            TermType::Ambiguous(types) => {
+                // Render as a pipe-separated union: `Int | Bool | Float`.
+                let parts: Vec<String> = types.iter().map(|t| format!("{}", t)).collect();
+                write!(f, "{}", parts.join(" | "))
+            }
             TermType::Unknown => write!(f, "?"),
         }
     }
@@ -61,6 +75,33 @@ impl TermType {
     /// Create a multi-argument function type
     pub fn multi_arrow(domain: TermType, codomain: TermType) -> Self {
         TermType::MultiArrow(Box::new(domain), Box::new(codomain))
+    }
+
+    /// Phase D.7 (2026-05-17, M14.4): construct an `Ambiguous` union
+    /// type with trivial-case folding. Pass in any number of
+    /// alternatives; the constructor deduplicates them and collapses:
+    ///   - empty input  → `Unknown`
+    ///   - 1 unique     → the single element (no wrapper)
+    ///   - 2+ unique    → `Ambiguous(Vec<TermType>)`
+    pub fn union(types: Vec<TermType>) -> Self {
+        // Flatten nested Ambiguous and deduplicate.
+        let mut seen: Vec<TermType> = Vec::with_capacity(types.len());
+        for ty in types {
+            let to_add: Vec<TermType> = match ty {
+                TermType::Ambiguous(inner) => inner,
+                other => vec![other],
+            };
+            for t in to_add {
+                if !seen.contains(&t) {
+                    seen.push(t);
+                }
+            }
+        }
+        match seen.len() {
+            0 => TermType::Unknown,
+            1 => seen.into_iter().next().expect("checked len == 1"),
+            _ => TermType::Ambiguous(seen),
+        }
     }
 
     /// Check if this is a function type
