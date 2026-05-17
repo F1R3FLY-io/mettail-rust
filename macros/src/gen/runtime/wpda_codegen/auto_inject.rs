@@ -331,6 +331,29 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
         // lowering's positional rename (`v` → `s_f<i>` → `s_f<i>_deref`).
         let inner_var = Ident::new("v", Span::call_site());
         let source_category = Ident::new(src_cat, Span::call_site());
+        // Phase A.5 (2026-05-17): codegen-time diagnostic log listing
+        // the synthetic-injection exclusion set per NormCast rule. The
+        // `eprintln!` runs DURING macro expansion (i.e., at cargo build
+        // time), surfacing the cascade-bounding behavior to users who
+        // want to audit which auto-injection variants are excluded
+        // from each cast rule.
+        //
+        // Gated on the `WPDA_CODEGEN_DIAG` env var (set by `cargo build`
+        // -E or via a build-time `--config env.WPDA_CODEGEN_DIAG=1`) so
+        // it doesn't pollute the standard build log. Look for entries
+        // like:
+        //   [phase-a.5] NormCastIntToBigRatInProc: excluding from Int:
+        //     [BoolToInt, UInt32ToInt]
+        if std::env::var("WPDA_CODEGEN_DIAG").is_ok() {
+            let variants_str: Vec<String> =
+                variants.iter().map(|v| v.to_string()).collect();
+            eprintln!(
+                "[phase-a.5] {}: excluding from {}: [{}]",
+                name,
+                src_cat,
+                variants_str.join(", "),
+            );
+        }
         rw.premises.push(Premise::SyntheticInjGuard {
             inner_var,
             source_category,
