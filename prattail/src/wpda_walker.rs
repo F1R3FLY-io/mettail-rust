@@ -2783,7 +2783,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         tokens: &dyn WpdaTokenSource,
     ) -> WpdaResolveResult<W>
     where
-        W: 'static,
+        W: 'static + IdempotentSemiring,
     {
         // Phase 5.6-tail-B (2026-05-12): the pre-tail deterministic-mode fast-path
         // returned directly using `self.builder.take_dyn_result()`. Under
@@ -2803,6 +2803,15 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // correctly.
         if self.deterministic {
             // Install singleton cursor's builder.
+            //
+            // Phase F.0 (2026-05-17, per
+            // `~/.claude/plans/phase-f-cursor-builder-deletion.md`): the
+            // install is left in place because `self.builder` has public
+            // accessors used by codegen facades. The take_dyn_result()
+            // call below is replaced with `realize_root_to_terms` —
+            // the SPPF root is already captured at det_sppf_root, and
+            // realize gives a structurally-equivalent extraction
+            // independent of cursor.builder.
             if let Some(cursor) = self.branch_cursors.first() {
                 self.builder = (*cursor.builder).clone();
             }
@@ -2814,7 +2823,16 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 .unwrap_or(crate::sppf::SPPF_ID_NONE);
             return match self.state.clone() {
                 WpdaState::Accepted => {
-                    let term = self.builder.take_dyn_result();
+                    // Phase F.0: extract via realize_root_to_terms instead
+                    // of cursor.builder.take_dyn_result(). Same shape:
+                    // returns Vec<Arc<dyn Any>>, take first.
+                    let term = if det_sppf_root != crate::sppf::SPPF_ID_NONE {
+                        self.realize_root_to_terms(det_sppf_root, Some(1))
+                            .into_iter()
+                            .next()
+                    } else {
+                        None
+                    };
                     let weight = self.weight.clone();
                     match term {
                         Some(t) => WpdaResolveResult::Accepted {
@@ -2823,7 +2841,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             roots: vec![det_sppf_root],
                         },
                         None => WpdaResolveResult::ParseError {
-                            message: "walker accepted but builder result was empty".to_string(),
+                            message: "walker accepted but SPPF realize yielded no term"
+                                .to_string(),
                             position: self.pos,
                         },
                     }
@@ -2953,7 +2972,16 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     .copied()
                     .unwrap_or(crate::sppf::SPPF_ID_NONE);
                 self.commit_winner_at_eoi(winner_idx);
-                let term = self.builder.take_dyn_result();
+                // Phase F.0 (2026-05-17): replace self.builder.take_dyn_result
+                // with realize_root_to_terms. The fallback case (Accepted
+                // with empty terms but valid root) is preserved.
+                let term = if winner_sppf_root != crate::sppf::SPPF_ID_NONE {
+                    self.realize_root_to_terms(winner_sppf_root, Some(1))
+                        .into_iter()
+                        .next()
+                } else {
+                    None
+                };
                 match term {
                     Some(t) => WpdaResolveResult::Accepted {
                         weights: vec![winner_weight],
@@ -2968,7 +2996,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         }
                     }
                     None => WpdaResolveResult::ParseError {
-                        message: "winner committed but builder yielded no term and SPPF root absent"
+                        message: "winner committed but SPPF realize yielded no term and SPPF root absent"
                             .to_string(),
                         position: self.pos,
                     },
@@ -2992,12 +3020,20 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         .last()
                         .copied()
                         .unwrap_or(crate::sppf::SPPF_ID_NONE);
-                    let mut cursor_builder: SemanticBuilder =
-                        (*self.branch_cursors[idx].builder).clone();
-                    if let Some(t) = cursor_builder.take_dyn_result() {
-                        weights.push(cursor_weight);
-                        terms.push(t);
-                        roots.push(cursor_root);
+                    // Phase F.0 (2026-05-17): extract via SPPF realize
+                    // instead of cloning cursor.builder. cursor.builder
+                    // is structurally redundant with cursor.sppf_stack
+                    // for the realize-extract purpose.
+                    if cursor_root != crate::sppf::SPPF_ID_NONE {
+                        if let Some(t) = self
+                            .realize_root_to_terms(cursor_root, Some(1))
+                            .into_iter()
+                            .next()
+                        {
+                            weights.push(cursor_weight);
+                            terms.push(t);
+                            roots.push(cursor_root);
+                        }
                     }
                 }
                 // Commit the first accepting cursor as the live winner
