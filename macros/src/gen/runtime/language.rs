@@ -677,7 +677,45 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                 }
             }
 
+            /// Phase D.2 (2026-05-17): grammar-agnostic helper returning all
+            /// derivation alternatives at this term node.
+            ///
+            /// Semantics:
+            /// - For `Ambiguous(Vec<Self>)`: returns the inner vec's
+            ///   elements as `&Self` references (one per alt).
+            /// - For any other variant: returns a single-element vec
+            ///   `vec![self]`.
+            ///
+            /// Used by `run_ascent_typed` (Phase D.1) to seed ALL alts
+            /// into the evaluator's relation pool — fulfilling the
+            /// "preserve all derivations" mandate by ensuring downstream
+            /// evaluation considers every alternative the parser
+            /// preserved, not just `alts[0]`.
+            ///
+            /// `all_displays()` is the user-facing analog returning
+            /// `Vec<String>`; this method preserves typed references for
+            /// internal consumers that need to inspect the AST.
+            pub fn all_alts(&self) -> Vec<&Self> {
+                match self {
+                    #inner_enum_name::Ambiguous(alts) => alts.iter().collect(),
+                    _ => vec![self],
+                }
+            }
 
+            /// Phase D.5 (2026-05-17): user-facing API returning the
+            /// `Display` rendering of every alternative.
+            ///
+            /// For non-Ambiguous terms returns a single-element vec.
+            /// For `Ambiguous(Vec<_>)` returns one display per alt.
+            /// Diagnostic emission (the [LANG-D11] enrichment in D.8)
+            /// consumes this to surface the full alt list when no
+            /// evaluator combination accepted any alt.
+            pub fn all_displays(&self) -> Vec<std::string::String> {
+                self.all_alts()
+                    .into_iter()
+                    .map(|alt| format!("{}", alt))
+                    .collect()
+            }
         }
 
         impl std::fmt::Display for #inner_enum_name {
@@ -955,6 +993,18 @@ fn generate_language_struct(
     };
 
     // Sprint 5: Generate pre-stratum phase for run_ascent_typed
+    //
+    // Phase D.1 note (2026-05-17): the single-primary-type path here
+    // does NOT iterate `all_alts`. Single-primary-type languages don't
+    // wrap their `Cat` in an Inner enum with an Ambiguous variant
+    // (no inner enum is generated at all), so `term.0` IS the typed
+    // primary `Cat` directly. The parser's `parse(input)` returns
+    // `Result<Cat, _>`, never `Result<Vec<Cat>, _>`, for these
+    // grammars — there is structurally no multi-alt at this layer.
+    //
+    // The multi-cat / multi-primary path below (~:2586+) is where
+    // Phase D.1 wires `all_alts` over the inner-enum dispatch, since
+    // those grammars DO have the `Ambiguous` variant.
     let pre_stratum_phase = if pre_stratum_content.is_some() {
         quote! {
             // Phase 1: Pre-stratum — evaluate ground HOL step rules + deconstruction.
@@ -1993,9 +2043,19 @@ fn generate_language_struct_multi(
         quote! {}
     } else {
         quote! {
-            match term_ref {
-                #(#seed_arms)*
-                #inner_enum_name::Ambiguous(_) => unreachable!(),
+            // Phase D.1 (2026-05-17, M13.2): iterate ALL parse alternatives
+            // instead of seeding only the first (the pre-D.1 peel collapsed
+            // to alts[0], discarding the rest — a P1 violation).
+            // `all_alts()` returns a single-element vec for non-Ambiguous
+            // terms and N-element vec for `Ambiguous(Vec<_>)`. The flat
+            // shape (no nested Ambiguous) is enforced by from_alternatives.
+            for __alt in term.0.all_alts() {
+                match __alt {
+                    #(#seed_arms)*
+                    #inner_enum_name::Ambiguous(_) => unreachable!(
+                        "all_alts() returns flat alternatives, not nested Ambiguous"
+                    ),
+                }
             }
         }
     };
@@ -2180,15 +2240,18 @@ fn generate_language_struct_multi(
             })
             .collect();
 
-        // Note: this block assumes the enclosing scope defines `term_ref:
-        // &#inner_enum_name` pointing at the RESOLVED (non-Ambiguous) term.
-        // The run_ascent_typed emitter establishes this variable via an
-        // iterative Ambiguous-peel loop before splicing this block in.
+        // Phase D.1 (2026-05-17, M13.2): pre-stratum seed iterates ALL
+        // parse alternatives. Pre-D.1 the block used `match term_ref` on
+        // the post-peel single-alt term; that path discarded N-1 alts.
+        // The new path matches each alt independently so the pre-stratum
+        // ascent considers every alternative's grounds.
         let block = quote! {
             let mut pre = #pre_stratum_struct_name::default();
-            match term_ref {
-                #(#pre_seed_arms)*
-                #inner_enum_name::Ambiguous(_) => {},
+            for __alt in term.0.all_alts() {
+                match __alt {
+                    #(#pre_seed_arms)*
+                    #inner_enum_name::Ambiguous(_) => {},
+                }
             }
             pre.run();
         };
@@ -2439,9 +2502,17 @@ fn generate_language_struct_multi(
             quote! {}
         } else {
             quote! {
-                match term_ref {
-                    #(#core_seed_arms)*
-                    _ => unreachable!(),
+                // Phase D.1 (2026-05-17, M13.2): iterate ALL alternatives
+                // for the core-struct path (parallel of prog_seed_match).
+                for __alt in term.0.all_alts() {
+                    match __alt {
+                        #(#core_seed_arms)*
+                        _ => {
+                            // Non-core variant or Ambiguous — silently
+                            // skip (the alt belongs to a category routed
+                            // to the full struct via the outer dispatch).
+                        }
+                    }
                 }
             }
         };
