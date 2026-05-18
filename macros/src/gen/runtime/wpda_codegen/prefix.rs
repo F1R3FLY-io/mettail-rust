@@ -676,16 +676,48 @@ fn collect_first_set(
                 // Pratt prefix / collection / binder rules: their FIRST
                 // typically starts with a literal trigger from
                 // syntax_pattern[0]. Best-effort extract.
+                //
+                // H1 fix (2026-05-18 from
+                // `~/.claude/plans/replicated-conjuring-turtle.md`): if
+                // syntax_pattern[0] is a Param (non-terminal ref) and
+                // rule.items[0] is a Category-kind NonTerminal whose
+                // category differs from `cat_name`, recurse into that
+                // category's FIRST set. This covers multi-Param non-
+                // binder rules like POutput (`n:Name, q:Proc |- n "!"
+                // "(" q ")"`) whose first syntactic item is a non-
+                // terminal of a different cat. Pre-fix the NonAtomic
+                // branch silently emitted no FIRST contribution for
+                // these rules, so e.g. Proc's FIRST set was missing
+                // Ident (via Name's synthetic Var rule), which broke
+                // PNew-body Ident-dispatch tests like
+                // `new(x) in { x!(0) }`.
                 if let Some(sp) = rule.syntax_pattern.as_ref() {
-                    if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) =
-                        sp.first()
-                    {
-                        acc.push(FirstToken {
-                            pattern: quote! {
-                                Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
-                            },
-                            extra_guard: Some(quote! { __kw == #text }),
-                        });
+                    match sp.first() {
+                        Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) => {
+                            acc.push(FirstToken {
+                                pattern: quote! {
+                                    Some(mettail_prattail::automata::TokenKind::Fixed(__kw))
+                                },
+                                extra_guard: Some(quote! { __kw == #text }),
+                            });
+                        }
+                        Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
+                            // First syntactic item is a param ref.
+                            // Look up the corresponding NonTerminal in
+                            // rule.items[0] and recurse into its
+                            // category's FIRST if it's a different cat.
+                            if let Some(mettail_ast::grammar::GrammarItem::NonTerminal {
+                                ident: nt_ident,
+                                kind: mettail_ast::grammar::NonTerminalKind::Category,
+                            }) = rule.items.first()
+                            {
+                                let nt_cat = nt_ident.to_string();
+                                if nt_cat != cat_name {
+                                    collect_first_set(&nt_cat, language, acc, visited);
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
