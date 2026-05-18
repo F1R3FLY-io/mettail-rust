@@ -6995,11 +6995,19 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     ///   onto `sppf_stack`. Mirrors the builder's push of
     ///   `ActionArg::BinderScope` onto its active args stack.
     ///
-    /// Other effects (Collection ops, recovery deltas) require no SPPF
-    /// mirror at this site — the collection mirror is in
-    /// `emit_start_collection` / `emit_push_collection_id` /
-    /// `emit_splice_into_collection`, and recovery deltas mutate the
-    /// mutable token source, not the AST.
+    /// Family-A bugfix (2026-05-18, H4 from
+    /// `~/.claude/plans/replicated-conjuring-turtle.md`): the prior
+    /// comment claimed "Collection ops require no SPPF mirror at this
+    /// site — the collection mirror is in emit_*". That was wrong for
+    /// the EFFECT path: the binder Class-3 empty-list bootstrap at
+    /// `macros/.../binder.rs:1344-1369` uses `GuardedConsumeAndReplaceWithMultipleEffects`
+    /// to emit `StartCollection` + `PushCollectionId` + `StartBinderScope`
+    /// + `EndBinderScope` via `apply_effect_to_cursor`, not via the
+    /// `emit_*` helpers. The builder side correctly pushed
+    /// `ActionArg::CollectionId` but the SPPF mirror was absent — so
+    /// `emit_fire_action` saw `arity=3 have=2` and silently skipped via
+    /// the Bug P gate (line ~7388). Fix: mirror the collection ops here
+    /// matching the emit_* helpers' SPPF push semantics.
     fn apply_effect_to_cursor(&mut self, cursor: &mut BranchCursor<W>, effect: &BuilderDelta) {
         // Builder side first (matches pre-existing semantics).
         Self::apply_effect_to_builder(Arc::make_mut(&mut cursor.builder), effect);
@@ -7015,7 +7023,39 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     cursor.sppf_stack.push(sid);
                 }
             }
-            // Collection / recovery effects: no SPPF mirror here.
+            BuilderDelta::StartCollection => {
+                // H4 (2026-05-18): mirror emit_start_collection's per-cursor
+                // arena allocation. The builder-side `apply_effect_to_builder`
+                // above already called `builder.start_collection()` which
+                // returned the next slot id (== current arena length).
+                // Add the corresponding empty slot to the cursor's arena
+                // and depth counter.
+                let new_id = cursor
+                    .builder
+                    .collection_stack_len()
+                    .saturating_sub(1);
+                let arena = Arc::make_mut(&mut cursor.sppf_collection_arena);
+                while arena.len() <= new_id {
+                    arena.push(Vec::new());
+                }
+                arena[new_id].clear();
+                cursor.collection_stack_depth =
+                    cursor.collection_stack_depth.saturating_add(1);
+            }
+            BuilderDelta::PushCollectionId { id } => {
+                // H4 (2026-05-18): mirror emit_push_collection_id's
+                // sppf_stack push. The builder-side already pushed
+                // `ActionArg::CollectionId(id)` via push_collection_id;
+                // mirror by interning the CollectionId leaf on the SPPF
+                // side and pushing the SppfId onto sppf_stack so the
+                // subsequent emit_fire_action's arity check passes.
+                let sid = self.sppf.intern_collection_id(*id as u32);
+                cursor.sppf_stack.push(sid);
+            }
+            // SpliceIntoCollection / recovery effects: no SPPF mirror here.
+            // Splice's SPPF mirror is in emit_splice_into_collection (it's
+            // a pop-not-push so the asymmetry doesn't bite arity checks);
+            // recovery deltas mutate mutable_token_source, not AST.
             _ => {}
         }
     }
