@@ -367,6 +367,7 @@ fn generate_var_inference_arm(
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                                 CollectionType::HashMap => InferFieldKind::Vec,
+                                CollectionType::PathMap => InferFieldKind::Vec,
                             };
                             Some((field_name, element_type.clone(), kind))
                         } else {
@@ -573,6 +574,7 @@ fn generate_var_type_inference_arm(
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                                 CollectionType::HashMap => InferFieldKind::Vec,
+                                CollectionType::PathMap => InferFieldKind::Vec,
                             };
                             Some((field_name, element_type.clone(), kind))
                         } else {

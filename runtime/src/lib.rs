@@ -52,6 +52,17 @@ pub use hashbag::HashBag;
 mod hashmap_lit;
 pub use hashmap_lit::HashMapLit;
 
+mod pathmap_lit;
+pub use pathmap_lit::PathMapLit;
+mod pathmap_bridge;
+mod pathmap_codec;
+pub use pathmap::PathMap as RawPathMap;
+pub use pathmap_bridge::{
+    pathmap_lit_from_trie_and_keys, trie_and_key_index_from_lit, trie_from_lit, trie_meet_lit,
+    trie_merge_lit, trie_put_encoded, trie_restrict_lit, trie_subtract_lit, PathTrie,
+};
+pub use pathmap_codec::{flatten_segments, unflatten_segments, ESCAPE_BYTE, SEGMENT_DELIM};
+
 mod hashset_lit;
 pub use hashset_lit::HashSetLit;
 

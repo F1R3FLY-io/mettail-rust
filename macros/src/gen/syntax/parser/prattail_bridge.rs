@@ -117,6 +117,13 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                         CollectionKind::HashMap,
                         d.key_val_sep.clone(),
                     ),
+                    CollectionCategory::Pathmap(d) => (
+                        "PathmapLit".to_string(),
+                        d,
+                        d.sep.clone(),
+                        CollectionKind::PathMap,
+                        d.key_val_sep.clone(),
+                    ),
                     CollectionCategory::Set(d) => {
                         ("SetLit".to_string(), d, d.sep.clone(), CollectionKind::HashSet, None)
                     },
@@ -913,6 +920,7 @@ fn convert_grammar_items(
                     CollectionType::HashSet => CollectionKind::HashSet,
                     CollectionType::Vec => CollectionKind::Vec,
                     CollectionType::HashMap => CollectionKind::HashMap,
+                    CollectionType::PathMap => CollectionKind::PathMap,
                 };
                 // Add open delimiter if present
                 if let Some((ref open, _)) = delimiters {
@@ -969,6 +977,7 @@ fn find_collection_info(name: &str, context: &[TermParam]) -> (String, Collectio
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
                         CollectionType::HashMap => CollectionKind::HashMap,
+                        CollectionType::PathMap => CollectionKind::PathMap,
                     };
                     return (elem_cat, kind);
                 }

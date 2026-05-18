@@ -51,6 +51,7 @@ ascent = { version = "0.8" }
 ascent-byods-rels = { version = "0.8" }
 moniker = { version = "0.5", features = ["moniker-derive"] }
 indexmap = "2.0"
+pathmap = "0.2.2"
 
 # ascent_macro = { path = "ascent/ascent_macro" }
 # ascent_base = { path = "ascent/ascent_base" }
@@ -59,7 +60,7 @@ ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }
 
 [profile.dev]
-codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)
+codegen-backend = "llvm"      # Use LLVM in dev/test for pathmap/gxhash compatibility.
 debug = "line-tables-only"    # Saves debuginfo generation time
 
 [profile.release]

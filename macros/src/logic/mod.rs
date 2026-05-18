@@ -1041,6 +1041,9 @@ fn generate_fold_big_step_rules(
                 Some(crate::ast::language::CollectionCategory::List(_)) => format_ident!("ListLit"),
                 Some(crate::ast::language::CollectionCategory::Bag(_)) => format_ident!("BagLit"),
                 Some(crate::ast::language::CollectionCategory::Map(_)) => format_ident!("MapLit"),
+                Some(crate::ast::language::CollectionCategory::Pathmap(_)) => {
+                    format_ident!("PathmapLit")
+                },
                 Some(crate::ast::language::CollectionCategory::Set(_)) => format_ident!("SetLit"),
                 None => continue,
             };

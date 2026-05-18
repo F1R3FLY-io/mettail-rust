@@ -1,6 +1,6 @@
 use super::{
-    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Proc, Set,
-    Str, UInt32,
+    Bag, BigInt, BigRat, Bool, Fixed, Float, ForRow, InputBind, Int, List, Map, Name, Pathmap,
+    Proc, ReadZipper, Set, Str, UInt32, WriteZipper,
 };
 use mettail_runtime::{Binder, FreeVar, HashBag, OrdVar, Scope, Var};
 use std::cmp::Ordering;
@@ -236,6 +236,45 @@ fn collect_pattern_bindings(
                 pm.len() == vm.len()
                     && pm.iter().all(|(k, pv)| {
                         vm.get(k)
+                            .map(|vv| collect_pattern_bindings(pv, vv, env))
+                            .unwrap_or(false)
+                    })
+            },
+            _ => pattern.term_eq(value),
+        },
+        (Proc::CastPathmap(p), Proc::CastPathmap(v)) => match (p.as_ref(), v.as_ref()) {
+            (Pathmap::PathmapLit(pm), Pathmap::PathmapLit(vm)) => {
+                pm.len() == vm.len()
+                    && pm.iter().all(|(k, pv)| {
+                        vm.get(k)
+                            .map(|vv| collect_pattern_bindings(pv, vv, env))
+                            .unwrap_or(false)
+                    })
+            },
+            _ => pattern.term_eq(value),
+        },
+        (Proc::CastReadZipper(p), Proc::CastReadZipper(v)) => match (p.as_ref(), v.as_ref()) {
+            (ReadZipper::Lit(pz), ReadZipper::Lit(vz)) => {
+                let pl = pz.as_ref();
+                let vl = vz.as_ref();
+                pl.1 == vl.1
+                    && pl.0.len() == vl.0.len()
+                    && pl.0.iter().all(|(k, pv)| {
+                        vl.0.get(k)
+                            .map(|vv| collect_pattern_bindings(pv, vv, env))
+                            .unwrap_or(false)
+                    })
+            },
+            _ => pattern.term_eq(value),
+        },
+        (Proc::CastWriteZipper(p), Proc::CastWriteZipper(v)) => match (p.as_ref(), v.as_ref()) {
+            (WriteZipper::Lit(pz), WriteZipper::Lit(vz)) => {
+                let pl = pz.as_ref();
+                let vl = vz.as_ref();
+                pl.1 == vl.1
+                    && pl.0.len() == vl.0.len()
+                    && pl.0.iter().all(|(k, pv)| {
+                        vl.0.get(k)
                             .map(|vv| collect_pattern_bindings(pv, vv, env))
                             .unwrap_or(false)
                     })
@@ -901,4 +940,76 @@ fn try_comm_join(
     }
     work.insert(res);
     Some(Proc::PPar(work))
+}
+
+#[cfg(test)]
+mod zipper_pattern_tests {
+    use super::*;
+    use crate::rhocalc::zipper::{ReadZipperLit, WriteZipperLit};
+    use mettail_runtime::PathMapLit;
+
+    fn int(n: i64) -> Proc {
+        Proc::CastInt(Box::new(Int::NumLit(n)))
+    }
+
+    fn path_key(segments: &[i64]) -> Proc {
+        Proc::CastList(Box::new(List::ListLit(segments.iter().copied().map(int).collect())))
+    }
+
+    fn pathmap_with_value(key: Proc, val: Proc) -> PathMapLit<Proc, Proc> {
+        let mut lit = PathMapLit::new();
+        lit.insert(key, val);
+        lit
+    }
+
+    fn read_zipper_proc(lit: PathMapLit<Proc, Proc>, focus: Vec<u8>) -> Proc {
+        Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(ReadZipperLit(lit, focus)))))
+    }
+
+    fn write_zipper_proc(lit: PathMapLit<Proc, Proc>, focus: Vec<u8>) -> Proc {
+        Proc::CastWriteZipper(Box::new(WriteZipper::Lit(Box::new(WriteZipperLit(lit, focus)))))
+    }
+
+    #[test]
+    fn read_zipper_pattern_binds_matching_payload() {
+        mettail_runtime::clear_var_cache();
+        let key = path_key(&[1]);
+        let y_pat = Proc::parse("y").expect("pattern var");
+        let lit_pat = pathmap_with_value(key.clone(), y_pat);
+        let focus = crate::rhocalc::pathmap::encode_proc_path_entry(&key).expect("focus");
+        let pattern = read_zipper_proc(lit_pat, focus.clone());
+        let lit_val = pathmap_with_value(key, int(42));
+        let value = read_zipper_proc(lit_val, focus);
+        let body = Proc::parse("y").expect("body var");
+        let out = receive_apply(&pattern, &value, &body).expect("bindings");
+        assert_eq!(out, int(42));
+    }
+
+    #[test]
+    fn read_zipper_pattern_blocks_focus_mismatch() {
+        let key = path_key(&[1]);
+        let lit = pathmap_with_value(key.clone(), int(1));
+        let focus_a = crate::rhocalc::pathmap::encode_proc_path_entry(&key).expect("focus");
+        let focus_b =
+            crate::rhocalc::pathmap::encode_proc_path_entry(&path_key(&[2])).expect("focus");
+        let pattern = read_zipper_proc(lit.clone(), focus_a);
+        let value = read_zipper_proc(lit, focus_b);
+        let body = int(0);
+        assert!(receive_apply(&pattern, &value, &body).is_none());
+    }
+
+    #[test]
+    fn write_zipper_pattern_binds_matching_payload() {
+        mettail_runtime::clear_var_cache();
+        let key = path_key(&[1]);
+        let y_pat = Proc::parse("y").expect("pattern var");
+        let lit_pat = pathmap_with_value(key.clone(), y_pat);
+        let focus = crate::rhocalc::pathmap::encode_proc_path_entry(&key).expect("focus");
+        let pattern = write_zipper_proc(lit_pat, focus.clone());
+        let lit_val = pathmap_with_value(key, int(42));
+        let value = write_zipper_proc(lit_val, focus);
+        let body = Proc::parse("y").expect("body var");
+        let out = receive_apply(&pattern, &value, &body).expect("bindings");
+        assert_eq!(out, int(42));
+    }
 }

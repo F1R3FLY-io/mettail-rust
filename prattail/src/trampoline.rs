@@ -48,7 +48,7 @@ use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 /// excluded because they cannot be initialized with just the collection field.
 fn is_simple_collection(rule: &RDRuleInfo) -> bool {
     if !rule.is_collection
-        || rule.collection_type == Some(CollectionKind::HashMap)
+        || matches!(rule.collection_type, Some(CollectionKind::HashMap | CollectionKind::PathMap))
         || rule.has_binder
         || rule.has_multi_binder
         || has_zipmapsep(rule)
@@ -146,7 +146,7 @@ fn has_zipmapsep(rule: &RDRuleInfo) -> bool {
 fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
     has_zipmapsep(rule)
         || rule.has_multi_binder
-        || rule.collection_type == Some(CollectionKind::HashMap)
+        || matches!(rule.collection_type, Some(CollectionKind::HashMap | CollectionKind::PathMap))
         || rule.label == "PForUser"
 }
 
@@ -510,6 +510,12 @@ pub fn write_frame_enum(
                                     element_category, element_category
                                 )
                             },
+                            CollectionKind::PathMap => {
+                                format!(
+                                    "mettail_runtime::PathMapLit<{}, {}>",
+                                    element_category, element_category
+                                )
+                            },
                         };
                         fields.push(FrameField { name: name.clone(), type_str });
                     },
@@ -544,6 +550,9 @@ pub fn write_frame_enum(
             CollectionKind::Vec => format!("Vec<{}>", element_category),
             CollectionKind::HashMap => {
                 format!("mettail_runtime::HashMapLit<{}, {}>", element_category, element_category)
+            },
+            CollectionKind::PathMap => {
+                format!("mettail_runtime::PathMapLit<{}, {}>", element_category, element_category)
             },
         };
 
@@ -840,6 +849,9 @@ fn write_trampoline_body(
                 CollectionKind::HashMap => {
                     format!("{}::{}(mettail_runtime::HashMapLit::new())", config.category, r.label)
                 },
+                CollectionKind::PathMap => {
+                    format!("{}::{}(mettail_runtime::PathMapLit::new())", config.category, r.label)
+                },
             })
             .unwrap_or_else(|| "unsafe { std::mem::zeroed() }".to_string());
         write!(buf, "let mut lhs: {} = {};", config.category, dummy).unwrap();
@@ -880,6 +892,12 @@ fn write_trampoline_body(
                 CollectionKind::HashMap => {
                     format!(
                         "{}::{}(mettail_runtime::HashMapLit::new())",
+                        config.category, rd_rule.label
+                    )
+                },
+                CollectionKind::PathMap => {
+                    format!(
+                        "{}::{}(mettail_runtime::PathMapLit::new())",
                         config.category, rd_rule.label
                     )
                 },
@@ -1232,6 +1250,7 @@ fn write_prefix_match_arms(
                 CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                 CollectionKind::Vec => "Vec::new()",
                 CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
+                CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
             };
             let needs_elem_parse = elem_cat != *cat;
             let elem_parse_push = if needs_elem_parse {
@@ -2080,16 +2099,17 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                     CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                     CollectionKind::Vec => "Vec::new()",
                     CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
+                    CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
                 };
                 let method = match kind {
                     CollectionKind::HashBag | CollectionKind::HashSet => "insert",
                     CollectionKind::Vec => "push",
-                    CollectionKind::HashMap => "insert",
+                    CollectionKind::HashMap | CollectionKind::PathMap => "insert",
                 };
-                if *kind == CollectionKind::HashMap {
+                if matches!(*kind, CollectionKind::HashMap | CollectionKind::PathMap) {
                     let kv = key_val_separator
                         .as_ref()
-                        .expect("HashMap collections require key_val_separator");
+                        .expect("HashMap/PathMap collections require key_val_separator");
                     let kv_variant = terminal_to_variant_name(kv);
                     write!(
                         buf,
@@ -2145,11 +2165,12 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                     CollectionKind::HashSet => "mettail_runtime::HashSetLit::new()",
                     CollectionKind::Vec => "Vec::new()",
                     CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
+                    CollectionKind::PathMap => "mettail_runtime::PathMapLit::new()",
                 };
                 let method = match kind {
                     CollectionKind::HashBag | CollectionKind::HashSet => "insert",
                     CollectionKind::Vec => "push",
-                    CollectionKind::HashMap => "insert",
+                    CollectionKind::HashMap | CollectionKind::PathMap => "insert",
                 };
                 write!(
                     buf,
@@ -2967,7 +2988,7 @@ fn write_unwind_handlers(
         let insert_method = match collection_type {
             CollectionKind::HashBag | CollectionKind::HashSet => "insert",
             CollectionKind::Vec => "push",
-            CollectionKind::HashMap => "insert",
+            CollectionKind::HashMap | CollectionKind::PathMap => "insert",
         };
 
         // Find separator and closing terminals (after Collection)

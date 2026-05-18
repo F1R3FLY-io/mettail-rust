@@ -328,6 +328,7 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                             CollectionType::HashSet => "HashSet",
                             CollectionType::Vec => "Vec",
                             CollectionType::HashMap => "HashMap",
+                            CollectionType::PathMap => "PathMap",
                         },
                         element_type
                     );
@@ -373,6 +374,7 @@ fn type_expr_to_string(ty: &TypeExpr) -> String {
                 CollectionType::HashSet => "HashSet",
                 CollectionType::Vec => "Vec",
                 CollectionType::HashMap => "HashMap",
+                CollectionType::PathMap => "PathMap",
             };
             format!("{}({})", coll_name, type_expr_to_string(element))
         },

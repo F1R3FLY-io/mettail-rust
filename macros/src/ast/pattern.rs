@@ -1518,6 +1518,7 @@ impl Pattern {
             Some(CollectionType::HashSet) => quote! { std::collections::HashSet },
             // Map patterns are not supported yet; treat as bag-shaped for codegen.
             Some(CollectionType::HashMap) => quote! { mettail_runtime::HashBag },
+            Some(CollectionType::PathMap) => quote! { mettail_runtime::HashBag },
             Some(CollectionType::HashBag) | None => quote! { mettail_runtime::HashBag },
         };
 
@@ -1630,6 +1631,7 @@ fn generate_collection_rhs_with_constructor(
         Some(CollectionType::HashSet) => quote! { std::collections::HashSet },
         // Map patterns are not supported yet; treat as bag-shaped for codegen.
         Some(CollectionType::HashMap) => quote! { mettail_runtime::HashBag },
+        Some(CollectionType::PathMap) => quote! { mettail_runtime::HashBag },
         Some(CollectionType::HashBag) | None => quote! { mettail_runtime::HashBag },
     };
 

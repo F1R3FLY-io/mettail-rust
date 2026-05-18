@@ -591,9 +591,9 @@ fn generate_collection_congruence(
                 })
             }
         },
-        CollectionType::HashMap => {
-            // Phase 1 Map is a literal constructor (MapLit) rather than a GrammarItem::Collection,
-            // so we don't generate congruence for HashMap here.
+        CollectionType::HashMap | CollectionType::PathMap => {
+            // Phase 1 Map/Pathmap are literal constructors (MapLit/PathmapLit) rather than
+            // GrammarItem::Collection, so we don't generate congruence here.
             None
         },
     }

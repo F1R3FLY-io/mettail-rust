@@ -8,10 +8,12 @@ use mettail_macros::language;
 use num_traits::Zero;
 use std::ops::Neg;
 
+pub(crate) mod pathmap;
 pub(crate) mod receive;
 pub(crate) mod runtime;
 mod type_inference;
 pub(crate) mod wire;
+pub(crate) mod zipper;
 
 language! {
     name: RhoCalc,
@@ -47,6 +49,9 @@ language! {
             key_val_sep: ":",
         }
         ![mettail_runtime::HashSetLit<Proc>] as Set
+        ![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap
+        ![Box<crate::rhocalc::zipper::ReadZipperLit>] as ReadZipper
+        ![Box<crate::rhocalc::zipper::WriteZipperLit>] as WriteZipper
     },
 
     literals {
@@ -406,6 +411,9 @@ language! {
         CastBag . b:Bag |- b : Proc;
         CastMap . m:Map |- m : Proc;
         CastSet . s:Set |- s : Proc;
+        CastPathmap . m:Pathmap |- m : Proc;
+        CastReadZipper . z:ReadZipper |- z : Proc;
+        CastWriteZipper . z:WriteZipper |- z : Proc;
 
         // Numeric casts (see `docs/design/made/native-types/numeric-casting.md`): binary width required.
         IntBinProc . a:Proc, w:Int |- "int" "(" a "," w ")" : Proc ![{
@@ -1314,6 +1322,381 @@ language! {
             Proc::RemoveBag(Box::new(a.clone()), Box::new(e.clone()))
         }] fold;
 
+        // Pathmap operations.
+        PathGet . m:Proc, k:Proc |- "pathGet" "(" m "," k ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => {
+                        match crate::rhocalc::pathmap::pathmap_get(payload, &k) {
+                            Ok(Some(v)) => v,
+                            Ok(None) | Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathPut . m:Proc, k:Proc, v:Proc |- "pathPut" "(" m "," k "," v ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => {
+                        match crate::rhocalc::pathmap::pathmap_put(payload, &k, &v) {
+                            Ok(updated) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(updated))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathMerge . a:Proc, b:Proc |- "pathMerge" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap::pathmap_merge(pa, pb) {
+                            Ok(merged) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(merged))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathHas . m:Proc, k:Proc |- "pathHas" "(" m "," k ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => {
+                        match crate::rhocalc::pathmap::pathmap_has(payload, &k) {
+                            Ok(b) => Proc::CastBool(Box::new(Bool::BoolLit(b))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathRestrict . a:Proc, b:Proc |- "pathRestrict" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap::pathmap_restrict(pa, pb) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathSubtract . a:Proc, b:Proc |- "pathSubtract" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap::pathmap_subtract(pa, pb) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathMeet . a:Proc, b:Proc |- "pathMeet" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap::pathmap_meet(pa, pb) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        // PathMap read/write zippers (crate-backed `pathmap` zippers; Rhocalc uses prefix functions).
+        ReadZipperRoot . m:Proc |- "readZipper" "(" m ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::read_zipper_root(lit) {
+                        Ok(z) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(z)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ReadZipperAt . m:Proc, p:Proc |- "readZipperAt" "(" m "," p ")" : Proc ![
+            { match (&m, &p) {
+                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::read_zipper_at(lit, path) {
+                        Ok(z) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(z)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        WriteZipperRoot . m:Proc |- "writeZipper" "(" m ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::write_zipper_root(lit) {
+                        Ok(z) => Proc::CastWriteZipper(Box::new(WriteZipper::Lit(Box::new(z)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        WriteZipperAt . m:Proc, p:Proc |- "writeZipperAt" "(" m "," p ")" : Proc ![
+            { match (&m, &p) {
+                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::write_zipper_at(lit, path) {
+                        Ok(z) => Proc::CastWriteZipper(Box::new(WriteZipper::Lit(Box::new(z)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        PathGetSubtrie . m:Proc |- "pathGetSubtrie" "(" m ")" : Proc ![
+            { match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::path_get_subtrie(lit) {
+                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PathGetSubtrieAt . m:Proc, p:Proc |- "pathGetSubtrieAt" "(" m "," p ")" : Proc ![
+            { match (&m, &p) {
+                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::path_get_subtrie_at(lit, path) {
+                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        ZipperGetSubtrie . z:Proc |- "zipperGetSubtrie" "(" z ")" : Proc ![
+            { match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_get_subtrie(z.as_ref()) {
+                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperGetLeaf . z:Proc |- "zipperGetLeaf" "(" z ")" : Proc ![
+            { match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_get_leaf(z.as_ref()) {
+                        Ok(v) => v,
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperDescendTo . z:Proc, rel:Proc |- "zipperDescendTo" "(" z "," rel ")" : Proc ![
+            { match (&z, &rel) {
+                (Proc::CastReadZipper(inner), rel) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_descend_to(z.as_ref(), rel) {
+                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperChildCount . z:Proc |- "zipperChildCount" "(" z ")" : Proc ![
+            { match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_child_count(z.as_ref()) {
+                        Ok(n) => Proc::CastInt(Box::new(Int::NumLit(n))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperDescendFirst . z:Proc |- "zipperDescendFirst" "(" z ")" : Proc ![
+            { match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_descend_first(z.as_ref()) {
+                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperToNextSibling . z:Proc |- "zipperToNextSibling" "(" z ")" : Proc ![
+            { match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_to_next_sibling(z.as_ref()) {
+                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperToPrevSibling . z:Proc |- "zipperToPrevSibling" "(" z ")" : Proc ![
+            { match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_to_prev_sibling(z.as_ref()) {
+                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperDescendIndexedBranch . z:Proc, i:Proc |- "zipperDescendIndexedBranch" "(" z "," i ")" : Proc ![
+            { match (&z, &i) {
+                (Proc::CastReadZipper(inner), Proc::CastInt(ii)) => match (inner.as_ref(), &**ii) {
+                    (ReadZipper::Lit(z), Int::NumLit(n)) => match crate::rhocalc::zipper::zipper_descend_indexed_branch(z.as_ref(), *n) {
+                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperAscendOne . z:Proc |- "zipperAscendOne" "(" z ")" : Proc ![
+            { match &z {
+                Proc::CastReadZipper(inner) => match inner.as_ref() {
+                    ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_ascend_one(z.as_ref()) {
+                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ZipperAscend . z:Proc, n:Proc |- "zipperAscend" "(" z "," n ")" : Proc ![
+            { match (&z, &n) {
+                (Proc::CastReadZipper(inner), Proc::CastInt(ii)) => match (inner.as_ref(), &**ii) {
+                    (ReadZipper::Lit(z), Int::NumLit(steps)) => match crate::rhocalc::zipper::zipper_ascend(z.as_ref(), *steps) {
+                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        WriteZipperSetLeaf . w:Proc, full:Proc, v:Proc |- "writeZipperSetLeaf" "(" w "," full "," v ")" : Proc ![
+            { match (&w, &full, &v) {
+                (Proc::CastWriteZipper(inner), fp, val) => match inner.as_ref() {
+                    WriteZipper::Lit(z) => match crate::rhocalc::zipper::write_zipper_set_leaf(z.as_ref(), fp, val) {
+                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        WriteZipperSetSubtrie . w:Proc, rel:Proc |- "writeZipperSetSubtrie" "(" w "," rel ")" : Proc ![
+            { match (&w, &rel) {
+                (Proc::CastWriteZipper(inner), Proc::CastPathmap(pm)) => match (inner.as_ref(), pm.as_ref()) {
+                    (WriteZipper::Lit(z), Pathmap::PathmapLit(rel_lit)) => {
+                        match crate::rhocalc::zipper::write_zipper_set_subtrie(z.as_ref(), rel_lit) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        WriteZipperRemoveLeaf . w:Proc |- "writeZipperRemoveLeaf" "(" w ")" : Proc ![
+            { match &w {
+                Proc::CastWriteZipper(inner) => match inner.as_ref() {
+                    WriteZipper::Lit(z) => match crate::rhocalc::zipper::write_zipper_remove_leaf(z.as_ref()) {
+                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        WriteZipperRemoveBranches . w:Proc |- "writeZipperRemoveBranches" "(" w ")" : Proc ![
+            { match &w {
+                Proc::CastWriteZipper(inner) => match inner.as_ref() {
+                    WriteZipper::Lit(z) => match crate::rhocalc::zipper::write_zipper_remove_branches(z.as_ref()) {
+                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                        Err(()) => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        WriteZipperGraft . w:Proc, rz:Proc |- "writeZipperGraft" "(" w "," rz ")" : Proc ![
+            { match (&w, &rz) {
+                (Proc::CastWriteZipper(wi), Proc::CastReadZipper(ri)) => match (wi.as_ref(), ri.as_ref()) {
+                    (WriteZipper::Lit(z), ReadZipper::Lit(src)) => {
+                        match crate::rhocalc::zipper::write_zipper_graft(z.as_ref(), src.as_ref()) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        WriteZipperJoinInto . w:Proc, rz:Proc |- "writeZipperJoinInto" "(" w "," rz ")" : Proc ![
+            { match (&w, &rz) {
+                (Proc::CastWriteZipper(wi), Proc::CastReadZipper(ri)) => match (wi.as_ref(), ri.as_ref()) {
+                    (WriteZipper::Lit(z), ReadZipper::Lit(src)) => {
+                        match crate::rhocalc::zipper::write_zipper_join_into(z.as_ref(), src.as_ref()) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         // ── Rholang-style Set method-call sugar ──────────────────────────
         SAdd . set_proc:Proc, e:Proc
         |- set_proc "." "add" "(" e ")" : Proc ![{
@@ -1496,8 +1879,61 @@ language! {
         KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
         ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
 
+        PathGetCongL . | S ~> T |- (PathGet S X) ~> (PathGet T X);
+        PathGetCongR . | S ~> T |- (PathGet X S) ~> (PathGet X T);
+        PathPutCongL . | S ~> T |- (PathPut S K V) ~> (PathPut T K V);
+        PathPutCongKey . | S ~> T |- (PathPut M S V) ~> (PathPut M T V);
+        PathPutCongVal . | S ~> T |- (PathPut M K S) ~> (PathPut M K T);
+        PathMergeCongL . | S ~> T |- (PathMerge S X) ~> (PathMerge T X);
+        PathMergeCongR . | S ~> T |- (PathMerge X S) ~> (PathMerge X T);
+        PathHasCongL . | S ~> T |- (PathHas S X) ~> (PathHas T X);
+        PathHasCongR . | S ~> T |- (PathHas X S) ~> (PathHas X T);
+        PathRestrictCongL . | S ~> T |- (PathRestrict S X) ~> (PathRestrict T X);
+        PathRestrictCongR . | S ~> T |- (PathRestrict X S) ~> (PathRestrict X T);
+        PathSubtractCongL . | S ~> T |- (PathSubtract S X) ~> (PathSubtract T X);
+        PathSubtractCongR . | S ~> T |- (PathSubtract X S) ~> (PathSubtract X T);
+        PathMeetCongL . | S ~> T |- (PathMeet S X) ~> (PathMeet T X);
+        PathMeetCongR . | S ~> T |- (PathMeet X S) ~> (PathMeet X T);
+
+        ReadZipperRootCong . | S ~> T |- (ReadZipperRoot S) ~> (ReadZipperRoot T);
+        ReadZipperAtCongL . | S ~> T |- (ReadZipperAt S X) ~> (ReadZipperAt T X);
+        ReadZipperAtCongR . | S ~> T |- (ReadZipperAt X S) ~> (ReadZipperAt X T);
+        WriteZipperRootCong . | S ~> T |- (WriteZipperRoot S) ~> (WriteZipperRoot T);
+        WriteZipperAtCongL . | S ~> T |- (WriteZipperAt S X) ~> (WriteZipperAt T X);
+        WriteZipperAtCongR . | S ~> T |- (WriteZipperAt X S) ~> (WriteZipperAt X T);
+        PathGetSubtrieCong . | S ~> T |- (PathGetSubtrie S) ~> (PathGetSubtrie T);
+        PathGetSubtrieAtCongL . | S ~> T |- (PathGetSubtrieAt S X) ~> (PathGetSubtrieAt T X);
+        PathGetSubtrieAtCongR . | S ~> T |- (PathGetSubtrieAt X S) ~> (PathGetSubtrieAt X T);
+        ZipperGetSubtrieCong . | S ~> T |- (ZipperGetSubtrie S) ~> (ZipperGetSubtrie T);
+        ZipperGetLeafCong . | S ~> T |- (ZipperGetLeaf S) ~> (ZipperGetLeaf T);
+        ZipperDescendToCongL . | S ~> T |- (ZipperDescendTo S X) ~> (ZipperDescendTo T X);
+        ZipperDescendToCongR . | S ~> T |- (ZipperDescendTo X S) ~> (ZipperDescendTo X T);
+        ZipperChildCountCong . | S ~> T |- (ZipperChildCount S) ~> (ZipperChildCount T);
+        ZipperDescendFirstCong . | S ~> T |- (ZipperDescendFirst S) ~> (ZipperDescendFirst T);
+        ZipperToNextSiblingCong . | S ~> T |- (ZipperToNextSibling S) ~> (ZipperToNextSibling T);
+        ZipperToPrevSiblingCong . | S ~> T |- (ZipperToPrevSibling S) ~> (ZipperToPrevSibling T);
+        ZipperDescendIndexedBranchCongL . | S ~> T |- (ZipperDescendIndexedBranch S X) ~> (ZipperDescendIndexedBranch T X);
+        ZipperDescendIndexedBranchCongR . | S ~> T |- (ZipperDescendIndexedBranch X S) ~> (ZipperDescendIndexedBranch X T);
+        ZipperAscendOneCong . | S ~> T |- (ZipperAscendOne S) ~> (ZipperAscendOne T);
+        ZipperAscendCongL . | S ~> T |- (ZipperAscend S X) ~> (ZipperAscend T X);
+        ZipperAscendCongR . | S ~> T |- (ZipperAscend X S) ~> (ZipperAscend X T);
+        WriteZipperSetLeafCongL . | S ~> T |- (WriteZipperSetLeaf S X Y) ~> (WriteZipperSetLeaf T X Y);
+        WriteZipperSetLeafCongKey . | S ~> T |- (WriteZipperSetLeaf M S Y) ~> (WriteZipperSetLeaf M T Y);
+        WriteZipperSetLeafCongVal . | S ~> T |- (WriteZipperSetLeaf M K S) ~> (WriteZipperSetLeaf M K T);
+        WriteZipperSetSubtrieCongL . | S ~> T |- (WriteZipperSetSubtrie S X) ~> (WriteZipperSetSubtrie T X);
+        WriteZipperSetSubtrieCongR . | S ~> T |- (WriteZipperSetSubtrie X S) ~> (WriteZipperSetSubtrie X T);
+        WriteZipperRemoveLeafCong . | S ~> T |- (WriteZipperRemoveLeaf S) ~> (WriteZipperRemoveLeaf T);
+        WriteZipperRemoveBranchesCong . | S ~> T |- (WriteZipperRemoveBranches S) ~> (WriteZipperRemoveBranches T);
+        WriteZipperGraftCongL . | S ~> T |- (WriteZipperGraft S X) ~> (WriteZipperGraft T X);
+        WriteZipperGraftCongR . | S ~> T |- (WriteZipperGraft X S) ~> (WriteZipperGraft X T);
+        WriteZipperJoinIntoCongL . | S ~> T |- (WriteZipperJoinInto S X) ~> (WriteZipperJoinInto T X);
+        WriteZipperJoinIntoCongR . | S ~> T |- (WriteZipperJoinInto X S) ~> (WriteZipperJoinInto X T);
+
         CastMapCong . | S ~> T |- (CastMap S) ~> (CastMap T);
         CastSetCong . | S ~> T |- (CastSet S) ~> (CastSet T);
+        CastPathmapCong . | S ~> T |- (CastPathmap S) ~> (CastPathmap T);
+        CastReadZipperCong . | S ~> T |- (CastReadZipper S) ~> (CastReadZipper T);
+        CastWriteZipperCong . | S ~> T |- (CastWriteZipper S) ~> (CastWriteZipper T);
         AddSetCongL . | S ~> T |- (AddSet S X) ~> (AddSet T X);
         AddSetCongR . | S ~> T |- (AddSet X S) ~> (AddSet X T);
         DeleteSetCongL . | S ~> T |- (DeleteSet S X) ~> (DeleteSet T X);
@@ -1656,10 +2092,5 @@ language! {
             if let Proc::MLamProc(_) = c,
             let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]),
             let res = app.normalize();
-
-        // relation garbage(Name,Proc);
-        // garbage(n,p) <--
-        //     proc(p),name(n),
-        //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
 }
