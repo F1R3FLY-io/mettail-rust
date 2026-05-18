@@ -1152,6 +1152,21 @@ pub struct BranchCursor<W: SemiringRef> {
     /// pending weights can still merge by ConfigKey; the merge tiebreak
     /// preserves one cursor's pending via Vec-write semantics).
     pub pending_packing_weight: W,
+    /// Phase F.1 (2026-05-18): SPPF-side mirror of
+    /// `cursor.builder.collection_stack_len()`. Counts open collection
+    /// slots (allocated by `emit_start_collection`, drained by
+    /// `drain_collection` inside an action). Synchronized with
+    /// `cursor.builder.collection_stack` at every mutation site so
+    /// F.2 can replace external `cursor.builder.collection_stack_len()`
+    /// reads with this field and F.3 can delete `cursor.builder`
+    /// entirely.
+    ///
+    /// Parity invariant: `collection_stack_depth as usize ==
+    /// builder.collection_stack_len()` holds at every observation
+    /// point. Verified by debug_asserts at the existing read sites.
+    ///
+    /// Plan: `docs/design/plans/phase-f-cursor-builder-deletion.md`.
+    pub collection_stack_depth: u8,
     // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
     // alternative state violated WPDS stack purity (the multiset grew
     // monotonically with no pop counterpart, and was excluded from
@@ -1177,6 +1192,8 @@ where
             .field("builder_arc_refcount", &Arc::strong_count(&self.builder))
             // Phase C.2 (2026-05-17): unconsumed per-production weight.
             .field("pending_packing_weight", &self.pending_packing_weight)
+            // Phase F.1 (2026-05-18): builder.collection_stack_len mirror.
+            .field("collection_stack_depth", &self.collection_stack_depth)
             .finish()
     }
 }
@@ -1222,6 +1239,9 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // an in-progress cursor without semantic change" (e.g.
             // tiebreak snapshots, debug dumps).
             pending_packing_weight: self.pending_packing_weight.clone(),
+            // Phase F.1 (2026-05-18): u8 is Copy; clone preserves the
+            // mirror's depth alongside builder's Arc-shared stack.
+            collection_stack_depth: self.collection_stack_depth,
         }
     }
 }
@@ -1305,6 +1325,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Phase C.2 (2026-05-17): seed cursor has not entered any Fork-
             // arm yet, so no pending per-production weight has accumulated.
             pending_packing_weight: W::one_ref(),
+            // Phase F.1 (2026-05-18): seed cursor has no open collections.
+            collection_stack_depth: 0,
         }
     }
 
@@ -1367,6 +1389,10 @@ impl<W: SemiringRef> BranchCursor<W> {
             pending_packing_weight: parent
                 .pending_packing_weight
                 .times_ref(&branch_weight),
+            // Phase F.1 (2026-05-18): Fork-child inherits parent's
+            // open-collection depth; the shared Arc<SemanticBuilder>
+            // carries the actual stack content via copy-on-write.
+            collection_stack_depth: parent.collection_stack_depth,
         }
     }
 }
@@ -2516,6 +2542,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // pre-resolution pending (if any) was consumed by the
                     // emit_fire_actions that produced the resolved root.
                     pending_packing_weight: W::one_ref(),
+                    // Phase F.1 (2026-05-18): post-resolution singleton
+                    // matches the fresh empty builder Arc above —
+                    // collection_stack_len == 0.
+                    collection_stack_depth: 0,
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -4078,6 +4108,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // pending weight chain — the dropped cursor's unused
                     // per-production weight is discarded with the cursor.
                     pending_packing_weight: W::one_ref(),
+                    // Phase F.1 (2026-05-18): post-Drop reset matches the
+                    // fresh empty builder Arc above — collection_stack_len == 0.
+                    collection_stack_depth: 0,
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -4596,6 +4629,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -4658,6 +4694,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -4731,6 +4770,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4780,6 +4822,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -4822,6 +4867,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -4897,6 +4945,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -4951,6 +5002,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5006,6 +5060,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -5096,6 +5153,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -5177,6 +5237,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
@@ -5269,6 +5332,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 pending_packing_weight: cursor
                                     .pending_packing_weight
                                     .times_ref(&branch.weight),
+                                // Phase F.1 (2026-05-18): Fork-arm child
+                                // inherits parent's collection depth.
+                                collection_stack_depth: cursor.collection_stack_depth,
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -6215,7 +6281,18 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // (e.g. one mid-binder-internal-collection, the other
                 // post-pop) bucket separately and never trip the
                 // merge invariant.
-                collection_depth: cursor.builder.collection_stack_len(),
+                //
+                // Phase F.1 (2026-05-18) parity check: the new
+                // SPPF-side mirror `collection_stack_depth` must equal
+                // `builder.collection_stack_len()`. F.2 swaps this read.
+                collection_depth: {
+                    debug_assert_eq!(
+                        cursor.collection_stack_depth as usize,
+                        cursor.builder.collection_stack_len(),
+                        "Phase F.1: collection_stack_depth desync"
+                    );
+                    cursor.builder.collection_stack_len()
+                },
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -6653,6 +6730,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // chain so subsequent reduces continue accumulating from where
             // the winner left off. Identical rationale to sppf_stack.
             pending_packing_weight: winner.pending_packing_weight,
+            // Phase F.1 (2026-05-18): preserve the winner's open-collection
+            // depth so subsequent emit_start_collection / drain_collection
+            // calls continue tracking from the committed state.
+            collection_stack_depth: winner.collection_stack_depth,
         }];
     }
 
@@ -7027,6 +7108,69 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         Arc::make_mut(&mut cursor.builder).extend_binder_scope(name);
     }
 
+    /// Phase F.1 (2026-05-18): SPPF-derived equivalent of
+    /// `cursor.builder.is_accepting_terminal()`.
+    ///
+    /// A cursor is accepting iff (a) it has no open optional scope marks,
+    /// AND (b) its `sppf_stack` is either empty or contains exactly one
+    /// `SppfNode::Symbol` (the parsed root). Phase C's
+    /// `emit_fire_action::intern_packing` always interns a Symbol id
+    /// post-reduce, so "single Symbol" replaces the pre-C "single Term"
+    /// invariant.
+    ///
+    /// Read-equivalent of: `cursor.builder.is_accepting_terminal()`.
+    /// Replaces line 3686. Plan: §Read → SPPF Mapping.
+    #[inline]
+    pub fn is_cursor_accepting_terminal(&self, cursor: &BranchCursor<W>) -> bool {
+        if !cursor.optional_scope_marks.is_empty() {
+            return false;
+        }
+        match cursor.sppf_stack.as_slice() {
+            [] => true,
+            [sid] => matches!(
+                self.sppf.node(*sid),
+                Some(crate::sppf::SppfNode::Symbol { .. })
+            ),
+            _ => false,
+        }
+    }
+
+    /// Phase F.1 (2026-05-18): SPPF-derived equivalent of
+    /// `cursor.builder.top_term_type_name()` returning the
+    /// `non_terminal_tag` of the top `Symbol` node. None if the stack
+    /// is empty or its top is not a Symbol.
+    ///
+    /// Strictly simpler & faster than the cursor.builder version which
+    /// goes through a `cat_of_type_name` string round-trip. Replaces
+    /// reads at 7665 / 7707. Plan: §Read → SPPF Mapping.
+    #[inline]
+    pub fn cursor_top_non_terminal_tag(&self, cursor: &BranchCursor<W>) -> Option<u32> {
+        cursor.sppf_stack.last().and_then(|&sid| match self.sppf.node(sid) {
+            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                Some(*non_terminal_tag)
+            }
+            _ => None,
+        })
+    }
+
+    /// Phase F.1 (2026-05-18): SPPF-derived equivalent of
+    /// `cursor.builder.collection_slot_len(acc_id)`. The
+    /// `sppf_collection_arena[acc_id]` grows in lockstep with
+    /// `builder.collection_stack[acc_id]` via
+    /// `emit_splice_into_collection`. Replaces reads at 7446-53.
+    /// Plan: §Read → SPPF Mapping.
+    #[inline]
+    pub fn cursor_collection_slot_len(
+        &self,
+        _cursor: &BranchCursor<W>,
+        acc_id: usize,
+    ) -> usize {
+        self.sppf_collection_arena
+            .get(acc_id)
+            .map(|slot| slot.len())
+            .unwrap_or(0)
+    }
+
     #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
         // Phase 5.6-tail-B (2026-05-12): always-eager fire on cursor.builder.
@@ -7076,6 +7220,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             self.state = err;
             return;
         }
+        // Phase F.1 (2026-05-18): re-sync collection_stack_depth with
+        // builder after the action runs. If the action invoked
+        // `drain_collection`, builder.collection_stack.pop_back() reduced
+        // the length; the mirror must follow. For Class-5 rules the
+        // action drains; for Class-2/3 binder-internal rules FireAction
+        // is suppressed upstream so this site is never reached for them
+        // until the outer RuleAt pop's action drains.
+        cursor.collection_stack_depth = cursor.builder.collection_stack_len() as u8;
 
         // SPPF mirror: pop arity children from sppf_stack, intern Packing,
         // intern Symbol(cat_src_idx, lo, hi), link, push Symbol id.
@@ -7150,6 +7302,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // push deleted — cursor.builder.collection_stack carries the
         // authoritative slot state.
         let id = Arc::make_mut(&mut cursor.builder).start_collection();
+        // Phase F.1 (2026-05-18): mirror the builder's collection_stack
+        // push. Parity invariant: cursor.collection_stack_depth as usize ==
+        // cursor.builder.collection_stack_len(). saturating_add guards
+        // against overflow at 255 (impossible for any realistic grammar
+        // but cheap defense-in-depth).
+        cursor.collection_stack_depth =
+            cursor.collection_stack_depth.saturating_add(1);
         // C3 dual-mode: ensure the SPPF-side collection arena has a slot at
         // this id. The builder's allocator monotonically returns ids 0, 1, 2,
         // ... — we mirror by extending when the id exceeds current length.
