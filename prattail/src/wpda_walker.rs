@@ -509,16 +509,16 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §1, §2.
     #[allow(dead_code)] // C3 wires the first emit-helper writer; C6 wires the first reader.
     sppf: crate::sppf::Sppf<W>,
-    /// Option C / C3: SPPF-side collection slots. One inner Vec per
-    /// `emit_start_collection` call; `emit_splice_into_collection(id)`
-    /// pops the top of the current cursor's `sppf_stack` and appends to
-    /// `sppf_collection_arena[id]`. Realization resolves a
-    /// `SppfNode::CollectionId { id }` leaf by reading from this arena.
-    ///
-    /// Append-only — slots never freed mid-parse. `restore_to_checkpoint`
-    /// truncates via the matching `WpdaConfiguration` field added in C13.
-    #[allow(dead_code)]
-    sppf_collection_arena: Vec<Vec<crate::sppf::SppfId>>,
+    // Phase F.4 (2026-05-18): walker-global `sppf_collection_arena:
+    // Vec<Vec<SppfId>>` DELETED. Splice events from N concurrent
+    // cursors pre-merge polluted the shared slot — for rhocalc
+    // `{(c?x).{*(x)} | c!(p)}`, slot 0 grew to `[100, 105, 133, 146,
+    // 189]` (5 entries) instead of `[X_id, Y_id]`. Splice state is now
+    // per-cursor at `BranchCursor::sppf_collection_arena: Arc<Vec<Vec<
+    // SppfId>>>`, mirroring the `cursor.builder: Arc<SemanticBuilder>`
+    // Arc-CoW pattern from Phase 5.2. Realize-time readers consult the
+    // winner cursor's arena via `winner_collection_arena()`. See
+    // `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md`.
     /// Option C / C3: SPPF-side predicate payload arena.
     /// `emit_push_predicate` interns the `Arc<dyn Any + Send + Sync>` here
     /// and pushes a `SppfNode::Predicate { handle }` leaf. Realization
@@ -1167,6 +1167,41 @@ pub struct BranchCursor<W: SemiringRef> {
     ///
     /// Plan: `docs/design/plans/phase-f-cursor-builder-deletion.md`.
     pub collection_stack_depth: u8,
+    /// Phase F.4 (2026-05-18): per-cursor SPPF collection accumulator
+    /// slots. Each inner `Vec<SppfId>` is the running list of children
+    /// spliced into one open collection (by
+    /// `emit_splice_into_collection`); the outer index is the
+    /// accumulator id (matches `cursor.builder.collection_stack`
+    /// indexing, plus the `collection_stack_depth` mirror).
+    ///
+    /// Pre-F.4 this was `WpdaWalker::sppf_collection_arena:
+    /// Vec<Vec<SppfId>>` — walker-global. That made it impossible to
+    /// attribute a splice to the originating cursor during the per-step
+    /// pre-merge fanout window, so N cursors at the same `ConfigKey`
+    /// would each splice into the same shared slot, accumulating N
+    /// entries before `merge_equivalent_cursors` could collapse them.
+    /// Empirical bug: rhocalc `{(c?x).{*(x)} | c!(p)}` arena slot 0
+    /// held `[100, 105, 133, 146, 189]` (5 entries) for what should be
+    /// a 2-element bag `[X_id, Y_id]`; the resulting 5-entry
+    /// `Proc::PPar` bag triggered exponential Ascent fixpoint blowup.
+    /// Diagnosis ledger:
+    /// `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md`.
+    ///
+    /// `Arc<Vec<Vec<SppfId>>>` chosen for the same reason
+    /// `builder: Arc<SemanticBuilder>` was introduced in Phase 5.2:
+    /// Fork-arm cursor clone is O(1) (Arc bump). First splice in a
+    /// fork-child triggers `Arc::make_mut` deep clone — O(arena_size).
+    /// For rhocalc's peak ~25 cursors × ~5 slots × 0-9 SppfIds each,
+    /// this is trivial. Per `feedback_never_disambiguate_early.md` no
+    /// weight-based pruning; per `feedback_no_pragmatic_scopedown.md`
+    /// no scope-down — this is the architecturally correct fix.
+    ///
+    /// NOT part of `ConfigKey` — operational per-cursor state.
+    /// `collection_depth` (already in the key since Phase F.1/F.2)
+    /// discriminates *shape*; the arena content does not need separate
+    /// ConfigKey discrimination because any two cursors with identical
+    /// splice sequence reach identical arena content by construction.
+    pub sppf_collection_arena: Arc<Vec<Vec<crate::sppf::SppfId>>>,
     // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
     // alternative state violated WPDS stack purity (the multiset grew
     // monotonically with no pop counterpart, and was excluded from
@@ -1194,6 +1229,12 @@ where
             .field("pending_packing_weight", &self.pending_packing_weight)
             // Phase F.1 (2026-05-18): builder.collection_stack_len mirror.
             .field("collection_stack_depth", &self.collection_stack_depth)
+            // Phase F.4 (2026-05-18): per-cursor SPPF arena diagnostic.
+            .field("sppf_collection_arena_slots", &self.sppf_collection_arena.len())
+            .field(
+                "sppf_collection_arena_arc_refcount",
+                &Arc::strong_count(&self.sppf_collection_arena),
+            )
             .finish()
     }
 }
@@ -1242,6 +1283,9 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // Phase F.1 (2026-05-18): u8 is Copy; clone preserves the
             // mirror's depth alongside builder's Arc-shared stack.
             collection_stack_depth: self.collection_stack_depth,
+            // Phase F.4 (2026-05-18): Arc bump — clone is O(1); first
+            // splice in the cloned cursor triggers Arc::make_mut CoW.
+            sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
         }
     }
 }
@@ -1327,6 +1371,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             pending_packing_weight: W::one_ref(),
             // Phase F.1 (2026-05-18): seed cursor has no open collections.
             collection_stack_depth: 0,
+            // Phase F.4 (2026-05-18): fresh empty Arc — seed cursor has
+            // no collection accumulator state.
+            sppf_collection_arena: Arc::new(Vec::new()),
         }
     }
 
@@ -1393,6 +1440,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             // open-collection depth; the shared Arc<SemanticBuilder>
             // carries the actual stack content via copy-on-write.
             collection_stack_depth: parent.collection_stack_depth,
+            // Phase F.4 (2026-05-18): Arc bump (O(1)); CoW on first
+            // splice in the child cursor.
+            sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
         }
     }
 }
@@ -2006,7 +2056,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             recovery_config: RecoveryConfig::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
-            sppf_collection_arena: Vec::new(),
             sppf_predicate_arena: Vec::new(),
         }
     }
@@ -2061,7 +2110,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             recovery_config: RecoveryConfig::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
-            sppf_collection_arena: Vec::new(),
             sppf_predicate_arena: Vec::new(),
         }
     }
@@ -2111,7 +2159,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             recovery_config: RecoveryConfig::default(),
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
-            sppf_collection_arena: Vec::new(),
             sppf_predicate_arena: Vec::new(),
         }
     }
@@ -2547,6 +2594,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // matches the fresh empty builder Arc above —
                     // collection_stack_len == 0.
                     collection_stack_depth: 0,
+                    // Phase F.4 (2026-05-18): fresh empty Arc.
+                    sppf_collection_arena: Arc::new(Vec::new()),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -3243,8 +3292,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
                                 // Recursively realize each collected SppfId so
                                 // the Collection arg's contents are materialized.
+                                // Phase F.4 (2026-05-18): consult winner cursor's
+                                // arena (post-commit) instead of walker-global.
                                 if let Some(items) =
-                                    self.sppf_collection_arena.get(*cid as usize)
+                                    self.winner_collection_arena().get(*cid as usize)
                                 {
                                     for &item in items {
                                         if colors.get(&item) != Some(&RealizeColor::Black) {
@@ -3735,7 +3786,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         // the slot the CollectionId references, then
                         // push the CollectionId arg. action_fn will
                         // pop_args and drain the collection.
-                        if let Some(items) = self.sppf_collection_arena.get(*id as usize) {
+                        // Phase F.4 (2026-05-18): consult winner
+                        // cursor's arena (post-commit).
+                        if let Some(items) = self.winner_collection_arena().get(*id as usize) {
                             // Each item is realized as an ActionArg::Term
                             // in `memo`; push them onto sb so
                             // push_to_collection drains correctly.
@@ -4124,6 +4177,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // Phase F.1 (2026-05-18): post-Drop reset matches the
                     // fresh empty builder Arc above — collection_stack_len == 0.
                     collection_stack_depth: 0,
+                    // Phase F.4 (2026-05-18): fresh empty Arc.
+                    sppf_collection_arena: Arc::new(Vec::new()),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -4645,6 +4700,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -4710,6 +4767,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -4786,6 +4845,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -4838,6 +4899,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -4883,6 +4946,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -4961,6 +5026,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5018,6 +5085,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5076,6 +5145,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -5169,6 +5240,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -5253,6 +5326,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
@@ -5348,6 +5423,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.1 (2026-05-18): Fork-arm child
                                 // inherits parent's collection depth.
                                 collection_stack_depth: cursor.collection_stack_depth,
+                                // Phase F.4 (2026-05-18): Arc bump.
+                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -6752,6 +6829,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // depth so subsequent emit_start_collection / drain_collection
             // calls continue tracking from the committed state.
             collection_stack_depth: winner.collection_stack_depth,
+            // Phase F.4 (2026-05-18): preserve winner's per-cursor SPPF
+            // collection arena. Sibling cursors' Arcs drop when
+            // `branch_cursors` is cleared above, reclaiming any
+            // per-lineage splice content orphaned by the merge
+            // tiebreak. Post-commit, this Arc is the SOLE source of
+            // truth for realize_*'s CollectionId resolution. See
+            // `WpdaWalker::winner_collection_arena()`.
+            sppf_collection_arena: winner.sppf_collection_arena,
         }];
     }
 
@@ -7188,13 +7273,41 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     #[inline]
     pub fn cursor_collection_slot_len(
         &self,
-        _cursor: &BranchCursor<W>,
+        cursor: &BranchCursor<W>,
         acc_id: usize,
     ) -> usize {
-        self.sppf_collection_arena
+        // Phase F.4 (2026-05-18): per-cursor arena read. Pre-F.4 this
+        // read `self.sppf_collection_arena`, which captured
+        // cross-cursor splices — a parity bug masked by the kv_phase
+        // path being mostly hit in deterministic-mode single-cursor
+        // flows. The previously-suppressed `_cursor` parameter is now
+        // load-bearing.
+        cursor
+            .sppf_collection_arena
             .get(acc_id)
             .map(|slot| slot.len())
             .unwrap_or(0)
+    }
+
+    /// Phase F.4 (2026-05-18): post-commit accessor for the winner
+    /// cursor's SPPF collection arena.
+    ///
+    /// In multi-cursor pre-commit state, this returns the FIRST
+    /// branch_cursor's arena (any one of the live fanout cursors) —
+    /// which reflects ONLY that one cursor's splice history. Other
+    /// live cursors' content is invisible to this accessor. Pre-fix,
+    /// the walker-global arena held content from ALL live cursors
+    /// smashed together, which was the bug; the post-fix conservative
+    /// view (only one cursor's splices) is correct for the production
+    /// realize_* paths, all of which are called POST-COMMIT after
+    /// `commit_winner_at_eoi` has installed the surviving cursor at
+    /// `branch_cursors[0]`.
+    #[inline]
+    fn winner_collection_arena(&self) -> &[Vec<crate::sppf::SppfId>] {
+        self.branch_cursors
+            .first()
+            .map(|c| c.sppf_collection_arena.as_ref().as_slice())
+            .unwrap_or(&[])
     }
 
     #[inline(always)]
@@ -7338,16 +7451,23 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // but cheap defense-in-depth).
         cursor.collection_stack_depth =
             cursor.collection_stack_depth.saturating_add(1);
-        // C3 dual-mode: ensure the SPPF-side collection arena has a slot at
-        // this id. The builder's allocator monotonically returns ids 0, 1, 2,
-        // ... — we mirror by extending when the id exceeds current length.
-        while self.sppf_collection_arena.len() <= id as usize {
-            self.sppf_collection_arena.push(Vec::new());
+        // C3 dual-mode: ensure the SPPF-side collection arena has a slot
+        // at this id. The builder's allocator monotonically returns ids
+        // 0, 1, 2, ... — we mirror by extending when the id exceeds
+        // current length.
+        //
+        // Phase F.4 (2026-05-18): per-cursor arena. `Arc::make_mut`
+        // performs CoW the first time this cursor's arena is written
+        // after a Fork clone (line 7445 splice site shares the CoW).
+        let arena = Arc::make_mut(&mut cursor.sppf_collection_arena);
+        while arena.len() <= id as usize {
+            arena.push(Vec::new());
         }
-        // If the slot was previously used (e.g. earlier reduce in same parse),
-        // reset it — the builder reuses ids by start_collection re-allocation
-        // semantics; the SPPF mirror must match.
-        self.sppf_collection_arena[id as usize].clear();
+        // If the slot was previously used (e.g. earlier reduce in same
+        // parse), reset it — the builder reuses ids by
+        // start_collection re-allocation semantics; the SPPF mirror
+        // must match.
+        arena[id as usize].clear();
         id
     }
 
@@ -7364,9 +7484,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     fn emit_splice_into_collection(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
         // C3 dual-mode: pop top of sppf_stack, append to the SPPF-side
         // collection slot. Mirrors builder.push_to_collection.
-        if (id as usize) < self.sppf_collection_arena.len() {
+        //
+        // Phase F.4 (2026-05-18): per-cursor arena. Cheap immutable
+        // length check first to avoid spurious CoW when sppf_stack is
+        // empty.
+        if (id as usize) < cursor.sppf_collection_arena.len() {
             if let Some(top) = cursor.sppf_stack.pop() {
-                self.sppf_collection_arena[id as usize].push(top);
+                Arc::make_mut(&mut cursor.sppf_collection_arena)[id as usize].push(top);
             }
         }
         // push_to_collection silently no-ops on out-of-bounds id.
