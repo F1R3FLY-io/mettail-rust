@@ -25,13 +25,13 @@ identically at the source level.
 - **Phase 2:** `List` (`[…]` literals; `.length()`, `.nth(i)`, `.concat(l)`
   method-call sugar) and `Bag` (kept as `#{…}#` — no Rholang counterpart —
   with `.size()`, `.count(e)`, `.diff(b)`, `.remove(e)`, `.union(b)` method
-  sugar). `Set` is deferred.
+  sugar). `Set`, `Pathmap`, and Zipper method surfaces follow the same pattern.
 
 The change is purely surface-level: AST, semantics, equations, congruence, and
-rewrite rules are unchanged. The new surface forms are syntactic sugar that
-`fold` to the existing prefix builtins (`GetMap`, `PutMap`, `HasMap`,
-`KeysMap`, `ValuesMap`, `DeleteMap`, `MergeMap`, `Len`, `ElemList`,
-`ConcatList`, `UnionBag`, `DiffBag`, `RemoveBag`, `CountBag`).
+rewrite rules are unchanged. User-facing collection operations are
+receiver-first methods only; they `fold` to the same AST constructors
+(`GetMap`, `PathPut`, `PathGet`, `ZipperDescendTo`, …) via internal `__*`
+parse spellings where the macro requires a concrete `|-` pattern.
 
 ---
 

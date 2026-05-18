@@ -141,7 +141,7 @@ MapEmpty . |- "Map" "(" ")" : Proc ![{
 }] fold;
 ```
 
-Method-call sugar (`fold` into the existing prefix-form builtins):
+Method-call sugar (canonical user surface; `fold` lowers to internal `__*` builtins):
 
 | Method form | Lowering | Receiver |
 |-------------|----------|----------|
@@ -152,33 +152,40 @@ Method-call sugar (`fold` into the existing prefix-form builtins):
 | `m.keys()` | `KeysMap(m)` → `Set` | Map |
 | `m.values()` | `ValuesMap(m)` | Map |
 | `s.add(e)` | `AddSet(s, e)` | Set |
-| `s.delete(e)` | `DeleteSet(s, e)` | Set |
+| `s.delete(e)` | `DeleteSet(s, e)` via `MDelete` | Set |
 | `s.contains(e)` | `HasSet(s, e)` | Set |
-| `s.diff(t)` | `DiffSet(s, t)` | Set |
+| `s.diff(t)` | `DiffSet(s, t)` via `BDiff` | Set |
 | `l.length()` | `Len(l)` | List |
 | `l.nth(i)` | `ElemList(l, i)` | List |
 | `l.concat(r)` | `ConcatList(l, r)` | List |
+| `l.delete(i)` | `DeleteList(l, i)` via `MDelete` | List |
 | `b.count(e)` | `CastInt(Int::CountBag(b, e))` | Bag |
-| `b.diff(c)` | `DiffBag(b, c)` | Bag |
+| `b.diff(c)` | `DiffBag(b, c)` via `BDiff` | Bag |
 | `b.remove(e)` | `RemoveBag(b, e)` | Bag |
-| `x.size()` | `CastInt(NumLit(entries.len()))` for Map/Set; `Len(x)` for Bag | Map / Set / Bag |
-| `x.union(y)` | `MergeMap` / `UnionSet` / `UnionBag` by receiver | Map / Set / Bag |
-| `x.contains(e)` | `HasMap` / `HasSet` by receiver | Map / Set |
+| `m.restrict(b)` / `m.subtract(b)` / `m.meet(b)` | `PathRestrict` / `PathSubtract` / `PathMeet` | Pathmap |
+| `m.getSubtrie()` / `m.getSubtrieAt(p)` | `PathGetSubtrie` / `PathGetSubtrieAt` (or `ZipperGetSubtrie` on read zippers) | Pathmap / ReadZipper |
+| `m.readZipper()` / `m.readZipperAt(p)` / `m.writeZipper()` / `m.writeZipperAt(p)` | `ReadZipperRoot` / `ReadZipperAt` / `WriteZipperRoot` / `WriteZipperAt` | Pathmap |
+| `z.getLeaf()` / `z.descendTo(p)` / … | `ZipperGetLeaf` / `ZipperDescendTo` / … | ReadZipper |
+| `w.setLeaf(p,v)` / `w.graft(rz)` / … | `WriteZipperSetLeaf` / `WriteZipperGraft` / … | WriteZipper |
+| `x.size()` | `CastInt(NumLit(entries.len()))` for Map/Set; `Len(x)` for Bag/List | Map / Set / Bag / List |
+| `x.union(y)` | `MergeMap` / `UnionSet` / `UnionBag` / `PathMerge` by receiver | Map / Set / Bag / Pathmap |
+| `x.contains(e)` | `HasMap` / `HasSet` / `PathHas` by receiver | Map / Set / Pathmap |
 
 The unary forms (`m.size()`, `m.keys()`, `m.values()`, `l.length()`,
-`b.size()`) use prattail's zero-operand-after-trigger mixfix shape (1 NT
-with 3+ terminals), dispatched inline without a frame push. The prefix
-forms (`len(x)`, `keys(m)`, `values(m)`, `at(l, i)`, `concat(a, b)`,
-`union(a, b)`, `count(b, e)`, `diff(a, b)`, `remove(b, e)`) remain
-available and produce identical AST nodes.
+`b.size()`, Pathmap/Zipper zero-arg methods) use prattail's
+zero-operand-after-trigger mixfix shape (1 NT with 3+ terminals), dispatched
+inline without a frame push. Prefix functional forms such as `get(m, k)`,
+`pathGet(m, k)`, and `concat(a, b)` are no longer user-facing; evaluation
+still uses the same AST constructors via internal `__*` spellings.
 
-The shared-name methods `.union` and `.size` use a single grammar rule each
-(`MUnion`, `MSize`) whose `fold` action inspects the (already-folded)
-receiver and lowers to the appropriate prefix builtin — `MergeMap` /
-`UnionBag` for `.union(n)`, and the constant-folded entry count /
-`Len` for `.size()`. The `Len` builtin is extended with a `CastBag` arm
-that uses `HashBag::len()` (sum of all element multiplicities, after
-`normalize_bag_elements`).
+The shared-name methods `.union`, `.size`, `.contains`, `.delete`, and
+`.diff` use a single grammar rule each (`MUnion`, `MSize`, `MContains`,
+`MDelete`, `BDiff`) whose `fold` action inspects the (already-folded)
+receiver and lowers to the appropriate constructor — e.g. `MergeMap` /
+`UnionBag` / `UnionSet` / `PathMerge` for `.union(n)`, and constant-folded
+entry count / `Len` for `.size()`. The `Len` builtin is extended with a
+`CastBag` arm that uses `HashBag::len()` (sum of all element multiplicities,
+after `normalize_bag_elements`).
 
 ### 3.4 Binder Terms (Lambda / Multi-Lambda)
 

@@ -200,16 +200,16 @@ exec bool("true")
 exec bool("0")
 
 // =============================================================================
-// Scalar peel via at([ … ], i)
+// Scalar peel via [ … ].nth(i)
 // =============================================================================
-exec int(at(["42"], 0), 32)
-exec uint(at(["200"], 0), 8)
-exec float(at(["1.5"], 0), 64)
-exec fixed(at(["3.14"], 0), 2)
-exec bigint(at([99n], 0))
-exec bigrat(at([1r/2r], 0))
-exec str(at([1u32], 0))
-exec bool(at([0u32,1n,1r/2r], 2))
+exec int(["42"].nth(0), 32)
+exec uint(["200"].nth(0), 8)
+exec float(["1.5"].nth(0), 64)
+exec fixed(["3.14"].nth(0), 2)
+exec bigint([99n].nth(0))
+exec bigrat([1r/2r].nth(0))
+exec str([1u32].nth(0))
+exec bool([0u32,1n,1r/2r].nth(2))
 
 // =============================================================================
 // Invalid width / domain
@@ -242,4 +242,4 @@ exec uint(bitnot 0, 8)
 // Calculator (no block wrapper): same expressions without `{ … }` — use `lang calculator`
 // =============================================================================
 // exec int("123", 32)
-// exec int(at(list("42"), 0), 32)
+// exec int(["42"].nth(0), 32)
