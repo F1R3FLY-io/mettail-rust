@@ -608,8 +608,37 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                                    `42` as direct `Int(NumLit)` vs
                                    `Proc(ProcInt(Int(NumLit)))`). Callers that want
                                    a single value can inspect `alts[0]` or rely on
-                                   `run_ascent` to collapse to a normal form. */
-                                Self::Ambiguous(flat)
+                                   `run_ascent` to collapse to a normal form.
+
+                                   Display-based dedup (2026-05-18,
+                                   replicated-conjuring-turtle.md follow-up): the
+                                   WPDS parser can produce structurally-distinct
+                                   alternatives whose Display output is identical
+                                   (e.g., rhocalc `{true and true}` produced 9
+                                   alts from lex-ambiguity of `true`/`and`
+                                   between Ident and keyword paths). Feeding the
+                                   duplicates into Ascent caused exponential
+                                   fixpoint blowup. Per Tomita 1986 §6.3 SPPF
+                                   Symbol-dedup, display-equivalent alts are
+                                   observationally indistinguishable to the
+                                   evaluator (normal_forms compares by display
+                                   string); collapse by first occurrence. NOT a
+                                   weight-based pruning — equivalent terms
+                                   collapse by observational equivalence per
+                                   feedback_never_disambiguate_early.md. */
+                                let mut seen: std::collections::HashSet<std::string::String> =
+                                    std::collections::HashSet::with_capacity(flat.len());
+                                let mut deduped: Vec<Self> = Vec::with_capacity(flat.len());
+                                for a in flat.into_iter() {
+                                    let display = format!("{}", a);
+                                    if seen.insert(display) {
+                                        deduped.push(a);
+                                    }
+                                }
+                                match deduped.len() {
+                                    1 => deduped.into_iter().next().expect("dedup retained 1"),
+                                    _ => Self::Ambiguous(deduped),
+                                }
                             }
                         }
                     }
@@ -2905,6 +2934,42 @@ fn generate_language_struct_multi(
                         successes = filtered;
                         success_weights = filtered_weights;
                     }
+                }
+                // Display-based dedup (2026-05-18, replicated-conjuring-turtle.md
+                // follow-up): the WPDS parser can produce structurally-distinct
+                // alternatives whose Display output is identical (e.g.,
+                // rhocalc `{true and true}` produces 9 alts from lex-ambiguity
+                // of `true`/`and` between Ident and keyword). Feeding the
+                // duplicates into Ascent caused exponential fixpoint blowup —
+                // diagnosed empirically at `docs/design/notes/2026-05-18-
+                // cursor-explosion-rhocalc.md`. Dedup by Display string;
+                // first occurrence wins (and its WFST weight is kept).
+                //
+                // Rationale: structurally-distinct-but-display-identical alts
+                // represent the SAME semantic parse with different lex paths
+                // through ambiguous keyword/identifier dispatches. The Ascent
+                // evaluator is display-driven (normal_forms compared by
+                // display string), so display-identical alts are
+                // semantically indistinguishable to it. Per
+                // `feedback_never_disambiguate_early.md` this is NOT
+                // weight-based pruning — equivalent terms collapse by
+                // observational equivalence, which is the principled
+                // ambiguity-resolution mechanism (Tomita 1986 §6.3 SPPF
+                // Symbol-dedup, lifted from SPPF nodes to user-AST terms).
+                if successes.len() > 1 {
+                    let mut seen: std::collections::HashSet<String> =
+                        std::collections::HashSet::with_capacity(successes.len());
+                    let mut deduped: Vec<_> = Vec::with_capacity(successes.len());
+                    let mut deduped_weights: Vec<f64> = Vec::with_capacity(success_weights.len());
+                    for (s, w) in successes.into_iter().zip(success_weights.into_iter()) {
+                        let display = format!("{}", s);
+                        if seen.insert(display) {
+                            deduped.push(s);
+                            deduped_weights.push(w);
+                        }
+                    }
+                    successes = deduped;
+                    success_weights = deduped_weights;
                 }
                 match successes.len() {
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),

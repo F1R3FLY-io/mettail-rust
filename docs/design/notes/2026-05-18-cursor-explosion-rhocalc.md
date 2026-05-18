@@ -147,6 +147,71 @@ ruling out by EVIDENCE is correct. Re-entering an identical dispatch
 config is the GLL descriptor-uniqueness termination argument
 (Scott-Johnstone 2010 §3) — not a weight-based pruning.
 
+## Continued investigation (2026-05-18, post-walker-fix)
+
+The walker fix above resolved one cycle pathology but the
+`rhocalc native_ops::boolean::*` tests STILL hang past 120 s after the
+walker fix. Deeper investigation in `macros/src/gen/runtime/language.rs`
+and `macros/src/gen/runtime/wpda_codegen/facade.rs` revealed a SECOND
+pathology: the parser produces 9 structurally-distinct derivations of
+the input `{true and true}` (via lex-ambiguity between keyword and
+identifier interpretations of `true`/`and`), and the rhocalc `PPar`
+rule's HashBag accumulates each as a hash-distinct entry rather than
+collapsing them to a single `(entry, count=9)` pair as the multiset
+semantics intend.
+
+Empirical evidence: an `eprintln!("[ASCENT-IN] alt_count={} term={}")`
+diagnostic at the entry of `run_ascent_typed` showed:
+
+```
+alt_count=1
+term={true and true | true and true | true and true | ...9 times}
+```
+
+The outer Inner enum has 1 cat-variant (Proc), but `term.0` displays
+as `Proc::PPar(HashBag with 9 hash-distinct "true and true" entries)`.
+The 9 entries display IDENTICALLY but hash differently — Ascent
+fixpoint then processes each as a separate entry, causing the
+~quadratic blowup in evaluation time.
+
+### Two-part fix attempted
+
+1. **Display-based dedup at `parse_preserving_vars`**
+   (macros/src/gen/runtime/language.rs:2938-2954). For multi-success
+   cross-cat alternatives that produce display-equivalent Inner enum
+   variants, collapse to the first one. The diagnostic showed
+   `successes.len=1` here for `{true and true}` so this fix wasn't
+   exercised by the specific test.
+
+2. **Display-based dedup at `Inner::from_alternatives`**
+   (macros/src/gen/runtime/language.rs:611-642). For the multi-
+   accepting Ambiguous-construction path, dedup the flattened
+   alternatives by Display. Not exercised by the specific test
+   either — the 9 alts are inside a single Inner::Proc variant, not
+   at the Inner-enum level.
+
+### Residual scope
+
+The remaining hang is at the `HashBag<Proc>` insert level: 9
+structurally-distinct Procs with the SAME display fall into 9
+distinct HashMap keys because their derived Hash impl distinguishes
+them at the AST level (likely via internal scope-id or
+auto-injection markers). Fixing this requires either:
+
+- A Hash impl on Proc that's display-equivalent (semantic hash,
+  not structural hash). Risky — could mis-merge legitimately
+  distinct procs.
+- A pre-bag dedup pass at the action level (`PPar` rule's HashBag
+  construction) that filters by display equivalence. Needs codegen
+  changes in `macros/src/gen/term_ops/...`.
+- Walker-level realize dedup so `realize_root_to_terms` returns
+  fewer derivations when they would collapse under semantic equality
+  (this is essentially the M7c reasoning extended to user-AST
+  terms). Substantial walker refactor.
+
+Per the user's "principled fix only" mandate, none of these are
+quick band-aids — each is a meaningful redesign.
+
 ## Outcome (2026-05-18, post-fix)
 
 Two principled changes applied in `prattail/src/wpda_walker.rs`:
