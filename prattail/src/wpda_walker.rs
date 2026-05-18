@@ -2713,9 +2713,20 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // Stage 3.12 Fix 3a (2026-05-02): include weight + recovery_deltas
                 // length in the fingerprint. Pre-3.12 a stable cursor whose
                 // weight or delta-log size was still changing wouldn't trigger
-                // progress_made, but the parse continued for max_steps. Now
-                // both axes are tracked.
-                let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdaState, W, usize)> =
+                // progress_made, but the parse continued for max_steps.
+                //
+                // H1' fix (2026-05-18, `docs/design/notes/2026-05-18-cursor-
+                // explosion-rhocalc.md`): the weight field was DROPPED from
+                // the fingerprint. Empirical diagnostic showed a recovery
+                // cursor live-locking with only `weight.src_idx` cycling
+                // through cat-ids while inner_state/node/pos/ops_len stayed
+                // constant. Any productive parse step changes at least one
+                // of the STRUCTURAL fields; weight-only refinements that
+                // don't move the cursor structurally are tiebreaker noise.
+                // `sppf_stack.len()` added to the fingerprint to keep
+                // SPPF-interning progress detectable when state/node/pos
+                // stay the same but reduces fire.
+                let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdaState, usize, usize)> =
                     self
                         .branch_cursors
                         .iter()
@@ -2724,8 +2735,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 c.node,
                                 c.pos,
                                 c.inner_state.clone(),
-                                c.weight.clone(),
                                 c.recovery_deltas.len(),
+                                c.sppf_stack.len(),
                             )
                         })
                         .collect();
@@ -2735,12 +2746,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         .branch_cursors
                         .iter()
                         .zip(prev_fingerprint.iter())
-                        .any(|(c, (n, p, s, w, ops_len))| {
+                        .any(|(c, (n, p, s, ops_len, sppf_len))| {
                             c.node != *n
                                 || c.pos != *p
                                 || c.inner_state != *s
-                                || c.weight != *w
                                 || c.recovery_deltas.len() != *ops_len
+                                || c.sppf_stack.len() != *sppf_len
                         });
                 if !progress_made {
                     // True fixed point — every cursor's engine.step
@@ -5861,19 +5872,30 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         }
                     }
                 }
-                // B14 C5 (2026-05-08): per-child conditional insertion of
-                // the dispatch config. Only children whose originating
-                // branch was CrossCatDelegate get the key inserted into
-                // their visited_dispatch — productive non-projection
-                // siblings (atomic Var, cross-cat-LHS) keep their clean
-                // visited_dispatch sets and can compete via lex-min on
-                // subsequent dispatches without false-positive cycle drops.
+                // B14 C5 (2026-05-08): per-child insertion of the dispatch
+                // config so the cycle gate at apply_action_to_cursor :: Push
+                // (line 4213-4231) and the per-branch gate at
+                // (line 4546-4558) can detect re-entry.
                 //
-                // Replaces B12's blanket `if is_projection` insertion,
-                // which fired only on pure-projection Forks. The C5 gate
-                // fires per-branch in mixed Forks; the matching post-loop
-                // insertion ensures the gate has a key to detect on the
-                // next iteration.
+                // H1' EXTENSION (2026-05-18, replicated-conjuring-turtle.md):
+                // previously this insertion fired ONLY for children whose
+                // originating branch was CrossCatDelegate. Empirical
+                // diagnostic (`docs/design/notes/2026-05-18-cursor-
+                // explosion-rhocalc.md`) traced the rhocalc OOM cycle to a
+                // PrefixDispatch-branch Fork that re-entered the same
+                // `(pos, cat_src, cur_bp)` indefinitely with only the
+                // cursor's `weight.src` cat-idx cycling — visited_dispatch
+                // never grew because all branches were non-CrossCatDelegate.
+                //
+                // Per the GLL descriptor-uniqueness argument (Scott &
+                // Johnstone 2010 §3), any re-entry to the same dispatch
+                // configuration is non-productive regardless of branch
+                // type. The insertion is now unconditional for non-recovery
+                // Forks; the per-branch gate at line 4546-4558 (extended
+                // below in a sibling commit) catches re-entry uniformly.
+                //
+                // `child_came_from_cross_cat` is retained as a structural
+                // tracker for the (now-equivalent) per-branch gate.
                 if let Some(key) = parent_dispatch_config {
                     if !is_recovery {
                         debug_assert_eq!(
@@ -5881,10 +5903,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             child_came_from_cross_cat.len(),
                             "B14 C5: parallel tracker out of sync with children",
                         );
-                        for (idx, child) in children.iter_mut().enumerate() {
-                            if child_came_from_cross_cat[idx] {
-                                child.visited_dispatch.insert(key);
-                            }
+                        for child in children.iter_mut() {
+                            child.visited_dispatch.insert(key);
                         }
                     }
                 }
