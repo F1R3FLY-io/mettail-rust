@@ -141,51 +141,42 @@ MapEmpty . |- "Map" "(" ")" : Proc ![{
 }] fold;
 ```
 
-Method-call sugar (canonical user surface; `fold` lowers to internal `__*` builtins):
+Method-call surface (canonical AST; each method rule is its own constructor):
 
-| Method form | Lowering | Receiver |
+| Method form | AST node | Receiver |
 |-------------|----------|----------|
-| `m.get(k)` | `GetMap(m, k)` | Map |
-| `m.set(k, v)` | `PutMap(m, k, v)` | Map |
-| `m.contains(k)` | `HasMap(m, k)` | Map |
-| `m.delete(k)` | `DeleteMap(m, k)` | Map |
-| `m.keys()` | `KeysMap(m)` → `Set` | Map |
-| `m.values()` | `ValuesMap(m)` | Map |
-| `s.add(e)` | `AddSet(s, e)` | Set |
-| `s.delete(e)` | `DeleteSet(s, e)` via `MDelete` | Set |
-| `s.contains(e)` | `HasSet(s, e)` | Set |
-| `s.diff(t)` | `DiffSet(s, t)` via `BDiff` | Set |
-| `l.length()` | `Len(l)` | List |
-| `l.nth(i)` | `ElemList(l, i)` | List |
-| `l.concat(r)` | `ConcatList(l, r)` | List |
-| `l.delete(i)` | `DeleteList(l, i)` via `MDelete` | List |
-| `b.count(e)` | `CastInt(Int::CountBag(b, e))` | Bag |
-| `b.diff(c)` | `DiffBag(b, c)` via `BDiff` | Bag |
-| `b.remove(e)` | `RemoveBag(b, e)` | Bag |
-| `m.restrict(b)` / `m.subtract(b)` / `m.meet(b)` | `PathRestrict` / `PathSubtract` / `PathMeet` | Pathmap |
-| `m.getSubtrie()` / `m.getSubtrieAt(p)` | `PathGetSubtrie` / `PathGetSubtrieAt` (or `ZipperGetSubtrie` on read zippers) | Pathmap / ReadZipper |
-| `m.readZipper()` / `m.readZipperAt(p)` / `m.writeZipper()` / `m.writeZipperAt(p)` | `ReadZipperRoot` / `ReadZipperAt` / `WriteZipperRoot` / `WriteZipperAt` | Pathmap |
-| `z.getLeaf()` / `z.descendTo(p)` / … | `ZipperGetLeaf` / `ZipperDescendTo` / … | ReadZipper |
-| `w.setLeaf(p,v)` / `w.graft(rz)` / … | `WriteZipperSetLeaf` / `WriteZipperGraft` / … | WriteZipper |
-| `x.size()` | `CastInt(NumLit(entries.len()))` for Map/Set; `Len(x)` for Bag/List | Map / Set / Bag / List |
-| `x.union(y)` | `MergeMap` / `UnionSet` / `UnionBag` / `PathMerge` by receiver | Map / Set / Bag / Pathmap |
-| `x.contains(e)` | `HasMap` / `HasSet` / `PathHas` by receiver | Map / Set / Pathmap |
+| `m.get(k)` | `MGet(m, k)` | Map / Pathmap |
+| `m.set(k, v)` | `MSet(m, k, v)` | Map / Pathmap |
+| `m.contains(k)` | `MContains(m, k)` | Map / Set / Pathmap |
+| `m.delete(k)` | `MDelete(m, k)` | Map / Set / List |
+| `m.keys()` | `MKeys(m)` | Map |
+| `m.values()` | `MValues(m)` | Map |
+| `s.add(e)` | `SAdd(s, e)` | Set |
+| `l.length()` | `LLength(l)` | List |
+| `l.nth(i)` | `LNth(l, i)` | List |
+| `l.concat(r)` | `LConcat(l, r)` | List / Str |
+| `b.count(e)` | `BCount(b, e)` | Bag |
+| `b.diff(c)` | `BDiff(b, c)` | Bag / Set |
+| `b.remove(e)` | `BRemove(b, e)` | Bag |
+| `m.restrict(b)` / `m.subtract(b)` / `m.meet(b)` | `PRestrict` / `PSubtract` / `PMeet` | Pathmap |
+| `m.getSubtrie()` / `m.getSubtrieAt(p)` | `PGetSubtrie` / `PGetSubtrieAt` | Pathmap / ReadZipper |
+| `m.readZipper()` / … | `PReadZipper` / `PReadZipperAt` / … | Pathmap |
+| `z.getLeaf()` / … | `RZGetLeaf` / `RZDescendTo` / … | ReadZipper |
+| `w.setLeaf(p,v)` / … | `WZSetLeaf` / `WZGraft` / … | WriteZipper |
+| `x.size()` | `MSize(x)` | Map / Set / Bag |
+| `x.union(y)` | `MUnion(x, y)` | Map / Set / Bag / Pathmap |
 
 The unary forms (`m.size()`, `m.keys()`, `m.values()`, `l.length()`,
 `b.size()`, Pathmap/Zipper zero-arg methods) use prattail's
 zero-operand-after-trigger mixfix shape (1 NT with 3+ terminals), dispatched
-inline without a frame push. Prefix functional forms such as `get(m, k)`,
-`pathGet(m, k)`, and `concat(a, b)` are no longer user-facing; evaluation
-still uses the same AST constructors via internal `__*` spellings.
+inline without a frame push. Prefix functional forms such as `get(m, k)` are
+not user-facing.
 
 The shared-name methods `.union`, `.size`, `.contains`, `.delete`, and
 `.diff` use a single grammar rule each (`MUnion`, `MSize`, `MContains`,
 `MDelete`, `BDiff`) whose `fold` action inspects the (already-folded)
-receiver and lowers to the appropriate constructor — e.g. `MergeMap` /
-`UnionBag` / `UnionSet` / `PathMerge` for `.union(n)`, and constant-folded
-entry count / `Len` for `.size()`. The `Len` builtin is extended with a
-`CastBag` arm that uses `HashBag::len()` (sum of all element multiplicities,
-after `normalize_bag_elements`).
+receiver and applies the appropriate semantics inline for `.union(n)`,
+`.size()`, and related operations.
 
 ### 3.4 Binder Terms (Lambda / Multi-Lambda)
 

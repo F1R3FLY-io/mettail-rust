@@ -951,258 +951,13 @@ language! {
             }}
         ] fold;
 
-        // List / string concat builtins (internal surface; user code uses `.concat`).
-        ConcatStr . a:Proc, b:Proc |- "__concatStr" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastStr(sa), Proc::CastStr(sb)) => match (sa.as_ref(), sb.as_ref()) {
-                    (Str::StringLit(x), Str::StringLit(y)) => {
-                        Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y))))
-                    }
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        ConcatList . a:Proc, b:Proc |- "__concatList" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) {
-                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); crate::rhocalc::runtime::mk_proc_list(o) },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        ElemList . a:Proc, i:Proc |- "__elemList" "(" a "," i ")" : Proc ![
-            { match (&a, &i) {
-                (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(*n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        DeleteList . a:Proc, i:Proc |- "__deleteList" "(" a "," i ")" : Proc ![
-            { match (&a, &i) {
-                (Proc::CastList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) {
-                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); crate::rhocalc::runtime::mk_proc_list(vec) },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        // Bag builtins (internal surface; user code uses method-call sugar).
-        UnionBag . a:Proc, b:Proc |- "__unionBag" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
-                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::CastBag(Box::new(Bag::BagLit(ha.union(hb)))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        RemoveBag . a:Proc, e:Proc |- "__removeBag" "(" a "," e ")" : Proc ![
-            { match &a {
-                Proc::CastBag(b) => match b.as_ref() {
-                    Bag::BagLit(h) => {
-                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
-                        let elem = match &e {
-                            Proc::PDrop(n) => match n.as_ref() {
-                                Name::NQuote(p) => p.as_ref().clone(),
-                                Name::NParen(inner) => match inner.as_ref() {
-                                    Name::NQuote(p) => p.as_ref().clone(),
-                                    _ => e.clone(),
-                                },
-                                _ => e.clone(),
-                            },
-                            _ => e.clone(),
-                        };
-                        Proc::CastBag(Box::new(Bag::BagLit(normalized.remove_one(&elem))))
-                    }
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        DiffBag . a:Proc, b:Proc |- "__diffBag" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
-                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::CastBag(Box::new(Bag::BagLit(ha.diff(hb)))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        CountBag . b:Proc, e:Proc |- "__countBag" "(" b "," e ")" : Int ![
-            { match &b {
-                Proc::CastBag(bag) => match bag.as_ref() {
-                    Bag::BagLit(h) => {
-                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
-                        let elem = match &e {
-                            Proc::PDrop(n) => match n.as_ref() {
-                                Name::NQuote(p) => p.as_ref().clone(),
-                                Name::NParen(inner) => match inner.as_ref() {
-                                    Name::NQuote(p) => p.as_ref().clone(),
-                                    _ => e.clone(),
-                                },
-                                _ => e.clone(),
-                            },
-                            _ => e.clone(),
-                        };
-                        mettail_runtime::HashBag::count(&normalized, &elem) as i64
-                    }
-                    _ => panic!("count: expected bag literal"),
-                },
-                _ => panic!("count: expected CastBag")
-            }}
-        ] fold;
-
-        // Map builtins (internal surface; user code uses method-call sugar).
-        GetMap . m:Proc, k:Proc |- "__getMap" "(" m "," k ")" : Proc ![
-            { match &m {
-                Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => payload.get(&k).cloned().unwrap_or(Proc::Err),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        PutMap . m:Proc, k:Proc, v:Proc |- "__putMap" "(" m "," k "," v ")" : Proc ![
-            { match &m {
-                Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => {
-                        let mut new_map = payload.clone();
-                        new_map.insert(k.clone(), v.clone());
-                        Proc::CastMap(Box::new(Map::MapLit(new_map)))
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        DeleteMap . m:Proc, k:Proc |- "__deleteMap" "(" m "," k ")" : Proc ![
-            { match &m {
-                Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => {
-                        let mut new_map = payload.clone();
-                        new_map.remove(&k);
-                        Proc::CastMap(Box::new(Map::MapLit(new_map)))
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        MergeMap . a:Proc, b:Proc |- "__mergeMap" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastMap(ma), Proc::CastMap(mb)) => match (ma.as_ref(), mb.as_ref()) {
-                    (Map::MapLit(pa), Map::MapLit(pb)) => {
-                        let mut m = pa.clone();
-                        for (k, v) in pb.iter() { m.insert(k.clone(), v.clone()); }
-                        Proc::CastMap(Box::new(Map::MapLit(m)))
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        HasMap . m:Proc, k:Proc |- "__hasMap" "(" m "," k ")" : Proc ![
-            { match &m {
-                Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(payload.get(&k).is_some()))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        KeysMap . m:Proc |- "__keysMap" "(" m ")" : Proc ![
-            { match &m {
-                Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_set(
-                        payload.iter().map(|(k, _)| k.clone()),
-                    ),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        ValuesMap . m:Proc |- "__valuesMap" "(" m ")" : Proc ![
-            { match &m {
-                Proc::CastMap(inner) => match inner.as_ref() {
-                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_list(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        // Set builtins (internal surface; user code uses method-call sugar).
-        AddSet . a:Proc, e:Proc |- "__addSet" "(" a "," e ")" : Proc ![
-            { match &a {
-                Proc::CastSet(inner) => match inner.as_ref() {
-                    Set::SetLit(ref payload) => {
-                        let mut new_set = payload.clone();
-                        new_set.insert(crate::rhocalc::runtime::normalize_collection_element(&e));
-                        Proc::CastSet(Box::new(Set::SetLit(new_set)))
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        DeleteSet . a:Proc, e:Proc |- "__deleteSet" "(" a "," e ")" : Proc ![
-            { match &a {
-                Proc::CastSet(inner) => match inner.as_ref() {
-                    Set::SetLit(ref payload) => {
-                        let mut new_set = payload.clone();
-                        new_set.remove(&crate::rhocalc::runtime::normalize_collection_element(&e));
-                        Proc::CastSet(Box::new(Set::SetLit(new_set)))
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        HasSet . a:Proc, e:Proc |- "__hasSet" "(" a "," e ")" : Proc ![
-            { match &a {
-                Proc::CastSet(inner) => match inner.as_ref() {
-                    Set::SetLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(
-                        payload.contains(&crate::rhocalc::runtime::normalize_collection_element(&e)),
-                    ))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        UnionSet . a:Proc, b:Proc |- "__unionSet" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastSet(sa), Proc::CastSet(sb)) => match (sa.as_ref(), sb.as_ref()) {
-                    (Set::SetLit(ha), Set::SetLit(hb)) => {
-                        Proc::CastSet(Box::new(Set::SetLit(ha.union(hb))))
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        DiffSet . a:Proc, b:Proc |- "__diffSet" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastSet(sa), Proc::CastSet(sb)) => match (sa.as_ref(), sb.as_ref()) {
-                    (Set::SetLit(ha), Set::SetLit(hb)) => {
-                        Proc::CastSet(Box::new(Set::SetLit(ha.difference(hb))))
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        // Rholang-style Map sugar.
+        // Rholang-style collection methods (canonical AST; receiver-first surface).
         //
         // `Map()` is an alias for the empty brace literal `{}`.
-        // Method-call forms (`m.get(k)`, `m.size()`, …) fold to the
-        // corresponding builtins (`GetMap`, `PathGet`, …) and therefore do not
-        // change semantics. They are implemented as zero / one /
-        // two-operand-after-trigger mixfix rules; the parser's mixfix
-        // dispatcher disambiguates by peeking the method-name keyword after
-        // the `.` trigger.
+        // Method-call forms (`m.get(k)`, `m.size()`, …) are the sole grammar
+        // constructors for collection operations. Fold semantics are inlined on
+        // each method rule; when operands are not ready the rule returns `Err`
+        // and the term stays in method-call form for display.
         MapEmpty .
         |- "Map" "(" ")" : Proc ![{
             Proc::CastMap(Box::new(Map::MapLit(
@@ -1213,8 +968,19 @@ language! {
         MGet . m:Proc, k:Proc
         |- m "." "get" "(" k ")" : Proc ![{
             match &m {
-                Proc::CastMap(_) => Proc::GetMap(Box::new(m.clone()), Box::new(k.clone())),
-                Proc::CastPathmap(_) => Proc::PathGet(Box::new(m.clone()), Box::new(k.clone())),
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => payload.get(&k).cloned().unwrap_or(Proc::Err),
+                    _ => Proc::Err,
+                },
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => {
+                        match crate::rhocalc::pathmap::pathmap_get(payload, &k) {
+                            Ok(Some(v)) => v,
+                            Ok(None) | Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
@@ -1222,10 +988,23 @@ language! {
         MSet . m:Proc, k:Proc, v:Proc
         |- m "." "set" "(" k "," v ")" : Proc ![{
             match &m {
-                Proc::CastMap(_) => Proc::PutMap(Box::new(m.clone()), Box::new(k.clone()), Box::new(v.clone())),
-                Proc::CastPathmap(_) => {
-                    Proc::PathPut(Box::new(m.clone()), Box::new(k.clone()), Box::new(v.clone()))
-                }
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => {
+                        let mut new_map = payload.clone();
+                        new_map.insert(k.clone(), v.clone());
+                        Proc::CastMap(Box::new(Map::MapLit(new_map)))
+                    },
+                    _ => Proc::Err,
+                },
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => {
+                        match crate::rhocalc::pathmap::pathmap_put(payload, &k, &v) {
+                            Ok(updated) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(updated))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
@@ -1233,9 +1012,27 @@ language! {
         MContains . m:Proc, k:Proc
         |- m "." "contains" "(" k ")" : Proc ![{
             match &m {
-                Proc::CastMap(_) => Proc::HasMap(Box::new(m.clone()), Box::new(k.clone())),
-                Proc::CastSet(_) => Proc::HasSet(Box::new(m.clone()), Box::new(k.clone())),
-                Proc::CastPathmap(_) => Proc::PathHas(Box::new(m.clone()), Box::new(k.clone())),
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => {
+                        Proc::CastBool(Box::new(Bool::BoolLit(payload.get(&k).is_some())))
+                    },
+                    _ => Proc::Err,
+                },
+                Proc::CastSet(inner) => match inner.as_ref() {
+                    Set::SetLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(
+                        payload.contains(&crate::rhocalc::runtime::normalize_collection_element(&k)),
+                    ))),
+                    _ => Proc::Err,
+                },
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref payload) => {
+                        match crate::rhocalc::pathmap::pathmap_has(payload, &k) {
+                            Ok(b) => Proc::CastBool(Box::new(Bool::BoolLit(b))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
@@ -1243,9 +1040,37 @@ language! {
         MDelete . m:Proc, k:Proc
         |- m "." "delete" "(" k ")" : Proc ![{
             match &m {
-                Proc::CastMap(_) => Proc::DeleteMap(Box::new(m.clone()), Box::new(k.clone())),
-                Proc::CastSet(_) => Proc::DeleteSet(Box::new(m.clone()), Box::new(k.clone())),
-                Proc::CastList(_) => Proc::DeleteList(Box::new(m.clone()), Box::new(k.clone())),
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => {
+                        let mut new_map = payload.clone();
+                        new_map.remove(&k);
+                        Proc::CastMap(Box::new(Map::MapLit(new_map)))
+                    },
+                    _ => Proc::Err,
+                },
+                Proc::CastSet(inner) => match inner.as_ref() {
+                    Set::SetLit(ref payload) => {
+                        let mut new_set = payload.clone();
+                        new_set.remove(&crate::rhocalc::runtime::normalize_collection_element(&k));
+                        Proc::CastSet(Box::new(Set::SetLit(new_set)))
+                    },
+                    _ => Proc::Err,
+                },
+                Proc::CastList(l) => match (l.as_ref(), &k) {
+                    (List::ListLit(v), Proc::CastInt(ii)) => match &**ii {
+                        Int::NumLit(n) => {
+                            let idx = *n as usize;
+                            let mut vec = v.clone();
+                            if idx >= vec.len() {
+                                panic!("delete: index out of bounds");
+                            }
+                            vec.remove(idx);
+                            crate::rhocalc::runtime::mk_proc_list(vec)
+                        },
+                        _ => Proc::Err,
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
@@ -1253,11 +1078,38 @@ language! {
         // `.union` is shared between `Map`, `Bag`, `Set`, and `Pathmap`.
         MUnion . a:Proc, b:Proc
         |- a "." "union" "(" b ")" : Proc ![{
-            match &a {
-                Proc::CastMap(_) => Proc::MergeMap(Box::new(a.clone()), Box::new(b.clone())),
-                Proc::CastBag(_) => Proc::UnionBag(Box::new(a.clone()), Box::new(b.clone())),
-                Proc::CastSet(_) => Proc::UnionSet(Box::new(a.clone()), Box::new(b.clone())),
-                Proc::CastPathmap(_) => Proc::PathMerge(Box::new(a.clone()), Box::new(b.clone())),
+            match (&a, &b) {
+                (Proc::CastMap(ma), Proc::CastMap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Map::MapLit(pa), Map::MapLit(pb)) => {
+                        let mut m = pa.clone();
+                        for (k, v) in pb.iter() {
+                            m.insert(k.clone(), v.clone());
+                        }
+                        Proc::CastMap(Box::new(Map::MapLit(m)))
+                    },
+                    _ => Proc::Err,
+                },
+                (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => {
+                        Proc::CastBag(Box::new(Bag::BagLit(ha.union(hb))))
+                    },
+                    _ => Proc::Err,
+                },
+                (Proc::CastSet(sa), Proc::CastSet(sb)) => match (sa.as_ref(), sb.as_ref()) {
+                    (Set::SetLit(ha), Set::SetLit(hb)) => {
+                        Proc::CastSet(Box::new(Set::SetLit(ha.union(hb))))
+                    },
+                    _ => Proc::Err,
+                },
+                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
+                        match crate::rhocalc::pathmap::pathmap_merge(pa, pb) {
+                            Ok(merged) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(merged))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
@@ -1295,20 +1147,31 @@ language! {
 
         MKeys . m:Proc
         |- m "." "keys" "(" ")" : Proc ![{
-            Proc::KeysMap(Box::new(m.clone()))
+            match &m {
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_set(
+                        payload.iter().map(|(k, _)| k.clone()),
+                    ),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
         }] fold;
 
         MValues . m:Proc
         |- m "." "values" "(" ")" : Proc ![{
-            Proc::ValuesMap(Box::new(m.clone()))
+            match &m {
+                Proc::CastMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => crate::rhocalc::runtime::mk_proc_list(
+                        payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>(),
+                    ),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
         }] fold;
 
-        // ── Rholang-style List method-call sugar ─────────────────────────
-        //
-        // `[a, b, c].length()`, `[a, b, c].nth(i)`, `l1.concat(l2)` lower to
-        // `LLength` / `ElemList` / `ConcatList`. Length is computed in
-        // `rhocalc::runtime::fold_proc_length` once the receiver is folded to a
-        // literal-backed `Cast*` shape (no separate `len` / `__len` surface).
+        // ── Rholang-style List methods ───────────────────────────────────
         LLength . l:Proc
         |- l "." "length" "(" ")" : Proc ![{
             crate::rhocalc::runtime::fold_proc_length(&l)
@@ -1316,103 +1179,114 @@ language! {
 
         LNth . l:Proc, i:Proc
         |- l "." "nth" "(" i ")" : Proc ![{
-            Proc::ElemList(Box::new(l.clone()), Box::new(i.clone()))
-        }] fold;
-
-        LConcat . l:Proc, r:Proc
-        |- l "." "concat" "(" r ")" : Proc ![{
-            match &l {
-                Proc::CastList(_) => Proc::ConcatList(Box::new(l.clone()), Box::new(r.clone())),
-                Proc::CastStr(_) => Proc::ConcatStr(Box::new(l.clone()), Box::new(r.clone())),
+            match (&l, &i) {
+                (Proc::CastList(lit), Proc::CastInt(ii)) => match (lit.as_ref(), &**ii) {
+                    (List::ListLit(v), Int::NumLit(n)) => {
+                        v.get(*n as usize).cloned().expect("at: index out of bounds")
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
 
-        // ── rhocalc Bag method-call sugar ────────────────────────────────
-        //
-        // Bag has no Rholang counterpart (Rholang has Set instead); the
-        // literal stays `#{ a | b | … }#` per §3.3 of the Rholang-style
-        // syntax design.  Method sugars mirror Map/List to give a uniform
-        // method-call surface.  `.union(other)` is handled by the polymorphic
-        // `MUnion` rule above; `.size()` re-uses `MSize` (also polymorphic).
+        LConcat . l:Proc, r:Proc
+        |- l "." "concat" "(" r ")" : Proc ![{
+            match (&l, &r) {
+                (Proc::CastList(la), Proc::CastList(lb)) => match (la.as_ref(), lb.as_ref()) {
+                    (List::ListLit(va), List::ListLit(vb)) => {
+                        let mut o = va.clone();
+                        o.extend(vb.iter().cloned());
+                        crate::rhocalc::runtime::mk_proc_list(o)
+                    },
+                    _ => Proc::Err,
+                },
+                (Proc::CastStr(sa), Proc::CastStr(sb)) => match (sa.as_ref(), sb.as_ref()) {
+                    (Str::StringLit(x), Str::StringLit(y)) => {
+                        Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y))))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        // ── rhocalc Bag methods ──────────────────────────────────────────
         BCount . b:Proc, e:Proc
         |- b "." "count" "(" e ")" : Proc ![{
-            Proc::CastInt(Box::new(Int::CountBag(Box::new(b.clone()), Box::new(e.clone()))))
+            match &b {
+                Proc::CastBag(bag) => match bag.as_ref() {
+                    Bag::BagLit(h) => {
+                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
+                        let elem = match &e {
+                            Proc::PDrop(n) => match n.as_ref() {
+                                Name::NQuote(p) => p.as_ref().clone(),
+                                Name::NParen(inner) => match inner.as_ref() {
+                                    Name::NQuote(p) => p.as_ref().clone(),
+                                    _ => e.clone(),
+                                },
+                                _ => e.clone(),
+                            },
+                            _ => e.clone(),
+                        };
+                        Proc::CastInt(Box::new(Int::NumLit(
+                            mettail_runtime::HashBag::count(&normalized, &elem) as i64,
+                        )))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
         }] fold;
 
         BDiff . a:Proc, b:Proc
         |- a "." "diff" "(" b ")" : Proc ![{
-            match &a {
-                Proc::CastBag(_) => Proc::DiffBag(Box::new(a.clone()), Box::new(b.clone())),
-                Proc::CastSet(_) => Proc::DiffSet(Box::new(a.clone()), Box::new(b.clone())),
+            match (&a, &b) {
+                (Proc::CastBag(ba), Proc::CastBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => {
+                        Proc::CastBag(Box::new(Bag::BagLit(ha.diff(hb))))
+                    },
+                    _ => Proc::Err,
+                },
+                (Proc::CastSet(sa), Proc::CastSet(sb)) => match (sa.as_ref(), sb.as_ref()) {
+                    (Set::SetLit(ha), Set::SetLit(hb)) => {
+                        Proc::CastSet(Box::new(Set::SetLit(ha.difference(hb))))
+                    },
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }
         }] fold;
 
         BRemove . a:Proc, e:Proc
         |- a "." "remove" "(" e ")" : Proc ![{
-            Proc::RemoveBag(Box::new(a.clone()), Box::new(e.clone()))
+            match &a {
+                Proc::CastBag(b) => match b.as_ref() {
+                    Bag::BagLit(h) => {
+                        let normalized = crate::rhocalc::runtime::normalize_bag_elements(h);
+                        let elem = match &e {
+                            Proc::PDrop(n) => match n.as_ref() {
+                                Name::NQuote(p) => p.as_ref().clone(),
+                                Name::NParen(inner) => match inner.as_ref() {
+                                    Name::NQuote(p) => p.as_ref().clone(),
+                                    _ => e.clone(),
+                                },
+                                _ => e.clone(),
+                            },
+                            _ => e.clone(),
+                        };
+                        Proc::CastBag(Box::new(Bag::BagLit(normalized.remove_one(&elem))))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
         }] fold;
 
-        // Pathmap builtins (internal surface; user code uses method-call sugar).
-        PathGet . m:Proc, k:Proc |- "__pathGet" "(" m "," k ")" : Proc ![
-            { match &m {
-                Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref payload) => {
-                        match crate::rhocalc::pathmap::pathmap_get(payload, &k) {
-                            Ok(Some(v)) => v,
-                            Ok(None) | Err(()) => Proc::Err,
-                        }
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        PathPut . m:Proc, k:Proc, v:Proc |- "__pathPut" "(" m "," k "," v ")" : Proc ![
-            { match &m {
-                Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref payload) => {
-                        match crate::rhocalc::pathmap::pathmap_put(payload, &k, &v) {
-                            Ok(updated) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(updated))),
-                            Err(()) => Proc::Err,
-                        }
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        PathMerge . a:Proc, b:Proc |- "__pathMerge" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
-                    (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
-                        match crate::rhocalc::pathmap::pathmap_merge(pa, pb) {
-                            Ok(merged) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(merged))),
-                            Err(()) => Proc::Err,
-                        }
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        PathHas . m:Proc, k:Proc |- "__pathHas" "(" m "," k ")" : Proc ![
-            { match &m {
-                Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref payload) => {
-                        match crate::rhocalc::pathmap::pathmap_has(payload, &k) {
-                            Ok(b) => Proc::CastBool(Box::new(Bool::BoolLit(b))),
-                            Err(()) => Proc::Err,
-                        }
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        PathRestrict . a:Proc, b:Proc |- "__pathRestrict" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
+        // ── Pathmap methods ──────────────────────────────────────────────
+        PRestrict . a:Proc, b:Proc
+        |- a "." "restrict" "(" b ")" : Proc ![{
+            match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
                         match crate::rhocalc::pathmap::pathmap_restrict(pa, pb) {
@@ -1423,10 +1297,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        PathSubtract . a:Proc, b:Proc |- "__pathSubtract" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
+            }
+        }] fold;
+
+        PSubtract . a:Proc, b:Proc
+        |- a "." "subtract" "(" b ")" : Proc ![{
+            match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
                         match crate::rhocalc::pathmap::pathmap_subtract(pa, pb) {
@@ -1437,10 +1313,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        PathMeet . a:Proc, b:Proc |- "__pathMeet" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
+            }
+        }] fold;
+
+        PMeet . a:Proc, b:Proc
+        |- a "." "meet" "(" b ")" : Proc ![{
+            match (&a, &b) {
                 (Proc::CastPathmap(ma), Proc::CastPathmap(mb)) => match (ma.as_ref(), mb.as_ref()) {
                     (Pathmap::PathmapLit(pa), Pathmap::PathmapLit(pb)) => {
                         match crate::rhocalc::pathmap::pathmap_meet(pa, pb) {
@@ -1451,86 +1329,21 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
+            }
+        }] fold;
 
-        // PathMap zipper builtins (internal surface).
-        ReadZipperRoot . m:Proc |- "__readZipperRoot" "(" m ")" : Proc ![
-            { match &m {
+        PGetSubtrie . m:Proc
+        |- m "." "getSubtrie" "(" ")" : Proc ![{
+            match &m {
                 Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::read_zipper_root(lit) {
-                        Ok(z) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(z)))),
-                        Err(()) => Proc::Err,
+                    Pathmap::PathmapLit(ref lit) => {
+                        match crate::rhocalc::zipper::path_get_subtrie(lit) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
                     },
                     _ => Proc::Err,
                 },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        ReadZipperAt . m:Proc, p:Proc |- "__readZipperAt" "(" m "," p ")" : Proc ![
-            { match (&m, &p) {
-                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::read_zipper_at(lit, path) {
-                        Ok(z) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(z)))),
-                        Err(()) => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        WriteZipperRoot . m:Proc |- "__writeZipperRoot" "(" m ")" : Proc ![
-            { match &m {
-                Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::write_zipper_root(lit) {
-                        Ok(z) => Proc::CastWriteZipper(Box::new(WriteZipper::Lit(Box::new(z)))),
-                        Err(()) => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        WriteZipperAt . m:Proc, p:Proc |- "__writeZipperAt" "(" m "," p ")" : Proc ![
-            { match (&m, &p) {
-                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::write_zipper_at(lit, path) {
-                        Ok(z) => Proc::CastWriteZipper(Box::new(WriteZipper::Lit(Box::new(z)))),
-                        Err(()) => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        PathGetSubtrie . m:Proc |- "__pathGetSubtrie" "(" m ")" : Proc ![
-            { match &m {
-                Proc::CastPathmap(inner) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::path_get_subtrie(lit) {
-                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
-                        Err(()) => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-        PathGetSubtrieAt . m:Proc, p:Proc |- "__pathGetSubtrieAt" "(" m "," p ")" : Proc ![
-            { match (&m, &p) {
-                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
-                    Pathmap::PathmapLit(ref lit) => match crate::rhocalc::zipper::path_get_subtrie_at(lit, path) {
-                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
-                        Err(()) => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
-        ZipperGetSubtrie . z:Proc |- "__zipperGetSubtrie" "(" z ")" : Proc ![
-            { match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_get_subtrie(z.as_ref()) {
                         Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
@@ -1539,10 +1352,93 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperGetLeaf . z:Proc |- "__zipperGetLeaf" "(" z ")" : Proc ![
-            { match &z {
+            }
+        }] fold;
+
+        PGetSubtrieAt . m:Proc, p:Proc
+        |- m "." "getSubtrieAt" "(" p ")" : Proc ![{
+            match (&m, &p) {
+                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => {
+                        match crate::rhocalc::zipper::path_get_subtrie_at(lit, path) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        PReadZipper . m:Proc
+        |- m "." "readZipper" "(" ")" : Proc ![{
+            match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => {
+                        match crate::rhocalc::zipper::read_zipper_root(lit) {
+                            Ok(z) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(z)))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        PReadZipperAt . m:Proc, p:Proc
+        |- m "." "readZipperAt" "(" p ")" : Proc ![{
+            match (&m, &p) {
+                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => {
+                        match crate::rhocalc::zipper::read_zipper_at(lit, path) {
+                            Ok(z) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(z)))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        PWriteZipper . m:Proc
+        |- m "." "writeZipper" "(" ")" : Proc ![{
+            match &m {
+                Proc::CastPathmap(inner) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => {
+                        match crate::rhocalc::zipper::write_zipper_root(lit) {
+                            Ok(z) => Proc::CastWriteZipper(Box::new(WriteZipper::Lit(Box::new(z)))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        PWriteZipperAt . m:Proc, p:Proc
+        |- m "." "writeZipperAt" "(" p ")" : Proc ![{
+            match (&m, &p) {
+                (Proc::CastPathmap(inner), path) => match inner.as_ref() {
+                    Pathmap::PathmapLit(ref lit) => {
+                        match crate::rhocalc::zipper::write_zipper_at(lit, path) {
+                            Ok(z) => Proc::CastWriteZipper(Box::new(WriteZipper::Lit(Box::new(z)))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        // ── ReadZipper methods ───────────────────────────────────────────
+        RZGetLeaf . z:Proc
+        |- z "." "getLeaf" "(" ")" : Proc ![{
+            match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_get_leaf(z.as_ref()) {
                         Ok(v) => v,
@@ -1551,10 +1447,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperDescendTo . z:Proc, rel:Proc |- "__zipperDescendTo" "(" z "," rel ")" : Proc ![
-            { match (&z, &rel) {
+            }
+        }] fold;
+
+        RZDescendTo . z:Proc, rel:Proc
+        |- z "." "descendTo" "(" rel ")" : Proc ![{
+            match (&z, &rel) {
                 (Proc::CastReadZipper(inner), rel) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_descend_to(z.as_ref(), rel) {
                         Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
@@ -1563,10 +1461,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperChildCount . z:Proc |- "__zipperChildCount" "(" z ")" : Proc ![
-            { match &z {
+            }
+        }] fold;
+
+        RZChildCount . z:Proc
+        |- z "." "childCount" "(" ")" : Proc ![{
+            match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_child_count(z.as_ref()) {
                         Ok(n) => Proc::CastInt(Box::new(Int::NumLit(n))),
@@ -1575,10 +1475,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperDescendFirst . z:Proc |- "__zipperDescendFirst" "(" z ")" : Proc ![
-            { match &z {
+            }
+        }] fold;
+
+        RZDescendFirst . z:Proc
+        |- z "." "descendFirst" "(" ")" : Proc ![{
+            match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_descend_first(z.as_ref()) {
                         Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
@@ -1587,10 +1489,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperToNextSibling . z:Proc |- "__zipperToNextSibling" "(" z ")" : Proc ![
-            { match &z {
+            }
+        }] fold;
+
+        RZToNextSibling . z:Proc
+        |- z "." "toNextSibling" "(" ")" : Proc ![{
+            match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_to_next_sibling(z.as_ref()) {
                         Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
@@ -1599,10 +1503,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperToPrevSibling . z:Proc |- "__zipperToPrevSibling" "(" z ")" : Proc ![
-            { match &z {
+            }
+        }] fold;
+
+        RZToPrevSibling . z:Proc
+        |- z "." "toPrevSibling" "(" ")" : Proc ![{
+            match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_to_prev_sibling(z.as_ref()) {
                         Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
@@ -1611,22 +1517,28 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperDescendIndexedBranch . z:Proc, i:Proc |- "__zipperDescendIndexedBranch" "(" z "," i ")" : Proc ![
-            { match (&z, &i) {
+            }
+        }] fold;
+
+        RZDescendIndexedBranch . z:Proc, i:Proc
+        |- z "." "descendIndexedBranch" "(" i ")" : Proc ![{
+            match (&z, &i) {
                 (Proc::CastReadZipper(inner), Proc::CastInt(ii)) => match (inner.as_ref(), &**ii) {
-                    (ReadZipper::Lit(z), Int::NumLit(n)) => match crate::rhocalc::zipper::zipper_descend_indexed_branch(z.as_ref(), *n) {
-                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
-                        Err(()) => Proc::Err,
+                    (ReadZipper::Lit(z), Int::NumLit(n)) => {
+                        match crate::rhocalc::zipper::zipper_descend_indexed_branch(z.as_ref(), *n) {
+                            Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                            Err(()) => Proc::Err,
+                        }
                     },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperAscendOne . z:Proc |- "__zipperAscendOne" "(" z ")" : Proc ![
-            { match &z {
+            }
+        }] fold;
+
+        RZAscendOne . z:Proc
+        |- z "." "ascendOne" "(" ")" : Proc ![{
+            match &z {
                 Proc::CastReadZipper(inner) => match inner.as_ref() {
                     ReadZipper::Lit(z) => match crate::rhocalc::zipper::zipper_ascend_one(z.as_ref()) {
                         Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
@@ -1635,35 +1547,45 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        ZipperAscend . z:Proc, n:Proc |- "__zipperAscend" "(" z "," n ")" : Proc ![
-            { match (&z, &n) {
-                (Proc::CastReadZipper(inner), Proc::CastInt(ii)) => match (inner.as_ref(), &**ii) {
-                    (ReadZipper::Lit(z), Int::NumLit(steps)) => match crate::rhocalc::zipper::zipper_ascend(z.as_ref(), *steps) {
-                        Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
-                        Err(()) => Proc::Err,
-                    },
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
+            }
+        }] fold;
 
-        WriteZipperSetLeaf . w:Proc, full:Proc, v:Proc |- "__writeZipperSetLeaf" "(" w "," full "," v ")" : Proc ![
-            { match (&w, &full, &v) {
-                (Proc::CastWriteZipper(inner), fp, val) => match inner.as_ref() {
-                    WriteZipper::Lit(z) => match crate::rhocalc::zipper::write_zipper_set_leaf(z.as_ref(), fp, val) {
-                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
-                        Err(()) => Proc::Err,
+        RZAscend . z:Proc, n:Proc
+        |- z "." "ascend" "(" n ")" : Proc ![{
+            match (&z, &n) {
+                (Proc::CastReadZipper(inner), Proc::CastInt(ii)) => match (inner.as_ref(), &**ii) {
+                    (ReadZipper::Lit(z), Int::NumLit(steps)) => {
+                        match crate::rhocalc::zipper::zipper_ascend(z.as_ref(), *steps) {
+                            Ok(out) => Proc::CastReadZipper(Box::new(ReadZipper::Lit(Box::new(out)))),
+                            Err(()) => Proc::Err,
+                        }
                     },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        WriteZipperSetSubtrie . w:Proc, rel:Proc |- "__writeZipperSetSubtrie" "(" w "," rel ")" : Proc ![
-            { match (&w, &rel) {
+            }
+        }] fold;
+
+        // ── WriteZipper methods ──────────────────────────────────────────
+        WZSetLeaf . w:Proc, full:Proc, v:Proc
+        |- w "." "setLeaf" "(" full "," v ")" : Proc ![{
+            match (&w, &full, &v) {
+                (Proc::CastWriteZipper(inner), fp, val) => match inner.as_ref() {
+                    WriteZipper::Lit(z) => {
+                        match crate::rhocalc::zipper::write_zipper_set_leaf(z.as_ref(), fp, val) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
+        }] fold;
+
+        WZSetSubtrie . w:Proc, rel:Proc
+        |- w "." "setSubtrie" "(" rel ")" : Proc ![{
+            match (&w, &rel) {
                 (Proc::CastWriteZipper(inner), Proc::CastPathmap(pm)) => match (inner.as_ref(), pm.as_ref()) {
                     (WriteZipper::Lit(z), Pathmap::PathmapLit(rel_lit)) => {
                         match crate::rhocalc::zipper::write_zipper_set_subtrie(z.as_ref(), rel_lit) {
@@ -1674,10 +1596,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        WriteZipperRemoveLeaf . w:Proc |- "__writeZipperRemoveLeaf" "(" w ")" : Proc ![
-            { match &w {
+            }
+        }] fold;
+
+        WZRemoveLeaf . w:Proc
+        |- w "." "removeLeaf" "(" ")" : Proc ![{
+            match &w {
                 Proc::CastWriteZipper(inner) => match inner.as_ref() {
                     WriteZipper::Lit(z) => match crate::rhocalc::zipper::write_zipper_remove_leaf(z.as_ref()) {
                         Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
@@ -1686,22 +1610,28 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        WriteZipperRemoveBranches . w:Proc |- "__writeZipperRemoveBranches" "(" w ")" : Proc ![
-            { match &w {
+            }
+        }] fold;
+
+        WZRemoveBranches . w:Proc
+        |- w "." "removeBranches" "(" ")" : Proc ![{
+            match &w {
                 Proc::CastWriteZipper(inner) => match inner.as_ref() {
-                    WriteZipper::Lit(z) => match crate::rhocalc::zipper::write_zipper_remove_branches(z.as_ref()) {
-                        Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
-                        Err(()) => Proc::Err,
+                    WriteZipper::Lit(z) => {
+                        match crate::rhocalc::zipper::write_zipper_remove_branches(z.as_ref()) {
+                            Ok(out) => Proc::CastPathmap(Box::new(Pathmap::PathmapLit(out))),
+                            Err(()) => Proc::Err,
+                        }
                     },
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        WriteZipperGraft . w:Proc, rz:Proc |- "__writeZipperGraft" "(" w "," rz ")" : Proc ![
-            { match (&w, &rz) {
+            }
+        }] fold;
+
+        WZGraft . w:Proc, rz:Proc
+        |- w "." "graft" "(" rz ")" : Proc ![{
+            match (&w, &rz) {
                 (Proc::CastWriteZipper(wi), Proc::CastReadZipper(ri)) => match (wi.as_ref(), ri.as_ref()) {
                     (WriteZipper::Lit(z), ReadZipper::Lit(src)) => {
                         match crate::rhocalc::zipper::write_zipper_graft(z.as_ref(), src.as_ref()) {
@@ -1712,10 +1642,12 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-        WriteZipperJoinInto . w:Proc, rz:Proc |- "__writeZipperJoinInto" "(" w "," rz ")" : Proc ![
-            { match (&w, &rz) {
+            }
+        }] fold;
+
+        WZJoinInto . w:Proc, rz:Proc
+        |- w "." "joinInto" "(" rz ")" : Proc ![{
+            match (&w, &rz) {
                 (Proc::CastWriteZipper(wi), Proc::CastReadZipper(ri)) => match (wi.as_ref(), ri.as_ref()) {
                     (WriteZipper::Lit(z), ReadZipper::Lit(src)) => {
                         match crate::rhocalc::zipper::write_zipper_join_into(z.as_ref(), src.as_ref()) {
@@ -1726,140 +1658,23 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
-            }}
-        ] fold;
-
-        // ── Pathmap method-call sugar ────────────────────────────────────
-        PRestrict . a:Proc, b:Proc
-        |- a "." "restrict" "(" b ")" : Proc ![{
-            Proc::PathRestrict(Box::new(a.clone()), Box::new(b.clone()))
-        }] fold;
-
-        PSubtract . a:Proc, b:Proc
-        |- a "." "subtract" "(" b ")" : Proc ![{
-            Proc::PathSubtract(Box::new(a.clone()), Box::new(b.clone()))
-        }] fold;
-
-        PMeet . a:Proc, b:Proc
-        |- a "." "meet" "(" b ")" : Proc ![{
-            Proc::PathMeet(Box::new(a.clone()), Box::new(b.clone()))
-        }] fold;
-
-        PGetSubtrie . m:Proc
-        |- m "." "getSubtrie" "(" ")" : Proc ![{
-            match &m {
-                Proc::CastPathmap(_) => Proc::PathGetSubtrie(Box::new(m.clone())),
-                Proc::CastReadZipper(_) => Proc::ZipperGetSubtrie(Box::new(m.clone())),
-                _ => Proc::Err,
             }
         }] fold;
 
-        PGetSubtrieAt . m:Proc, p:Proc
-        |- m "." "getSubtrieAt" "(" p ")" : Proc ![{
-            Proc::PathGetSubtrieAt(Box::new(m.clone()), Box::new(p.clone()))
-        }] fold;
-
-        PReadZipper . m:Proc
-        |- m "." "readZipper" "(" ")" : Proc ![{
-            Proc::ReadZipperRoot(Box::new(m.clone()))
-        }] fold;
-
-        PReadZipperAt . m:Proc, p:Proc
-        |- m "." "readZipperAt" "(" p ")" : Proc ![{
-            Proc::ReadZipperAt(Box::new(m.clone()), Box::new(p.clone()))
-        }] fold;
-
-        PWriteZipper . m:Proc
-        |- m "." "writeZipper" "(" ")" : Proc ![{
-            Proc::WriteZipperRoot(Box::new(m.clone()))
-        }] fold;
-
-        PWriteZipperAt . m:Proc, p:Proc
-        |- m "." "writeZipperAt" "(" p ")" : Proc ![{
-            Proc::WriteZipperAt(Box::new(m.clone()), Box::new(p.clone()))
-        }] fold;
-
-        // ── ReadZipper method-call sugar ─────────────────────────────────
-        RZGetLeaf . z:Proc
-        |- z "." "getLeaf" "(" ")" : Proc ![{
-            Proc::ZipperGetLeaf(Box::new(z.clone()))
-        }] fold;
-
-        RZDescendTo . z:Proc, rel:Proc
-        |- z "." "descendTo" "(" rel ")" : Proc ![{
-            Proc::ZipperDescendTo(Box::new(z.clone()), Box::new(rel.clone()))
-        }] fold;
-
-        RZChildCount . z:Proc
-        |- z "." "childCount" "(" ")" : Proc ![{
-            Proc::ZipperChildCount(Box::new(z.clone()))
-        }] fold;
-
-        RZDescendFirst . z:Proc
-        |- z "." "descendFirst" "(" ")" : Proc ![{
-            Proc::ZipperDescendFirst(Box::new(z.clone()))
-        }] fold;
-
-        RZToNextSibling . z:Proc
-        |- z "." "toNextSibling" "(" ")" : Proc ![{
-            Proc::ZipperToNextSibling(Box::new(z.clone()))
-        }] fold;
-
-        RZToPrevSibling . z:Proc
-        |- z "." "toPrevSibling" "(" ")" : Proc ![{
-            Proc::ZipperToPrevSibling(Box::new(z.clone()))
-        }] fold;
-
-        RZDescendIndexedBranch . z:Proc, i:Proc
-        |- z "." "descendIndexedBranch" "(" i ")" : Proc ![{
-            Proc::ZipperDescendIndexedBranch(Box::new(z.clone()), Box::new(i.clone()))
-        }] fold;
-
-        RZAscendOne . z:Proc
-        |- z "." "ascendOne" "(" ")" : Proc ![{
-            Proc::ZipperAscendOne(Box::new(z.clone()))
-        }] fold;
-
-        RZAscend . z:Proc, n:Proc
-        |- z "." "ascend" "(" n ")" : Proc ![{
-            Proc::ZipperAscend(Box::new(z.clone()), Box::new(n.clone()))
-        }] fold;
-
-        // ── WriteZipper method-call sugar ────────────────────────────────
-        WZSetLeaf . w:Proc, full:Proc, v:Proc
-        |- w "." "setLeaf" "(" full "," v ")" : Proc ![{
-            Proc::WriteZipperSetLeaf(Box::new(w.clone()), Box::new(full.clone()), Box::new(v.clone()))
-        }] fold;
-
-        WZSetSubtrie . w:Proc, rel:Proc
-        |- w "." "setSubtrie" "(" rel ")" : Proc ![{
-            Proc::WriteZipperSetSubtrie(Box::new(w.clone()), Box::new(rel.clone()))
-        }] fold;
-
-        WZRemoveLeaf . w:Proc
-        |- w "." "removeLeaf" "(" ")" : Proc ![{
-            Proc::WriteZipperRemoveLeaf(Box::new(w.clone()))
-        }] fold;
-
-        WZRemoveBranches . w:Proc
-        |- w "." "removeBranches" "(" ")" : Proc ![{
-            Proc::WriteZipperRemoveBranches(Box::new(w.clone()))
-        }] fold;
-
-        WZGraft . w:Proc, rz:Proc
-        |- w "." "graft" "(" rz ")" : Proc ![{
-            Proc::WriteZipperGraft(Box::new(w.clone()), Box::new(rz.clone()))
-        }] fold;
-
-        WZJoinInto . w:Proc, rz:Proc
-        |- w "." "joinInto" "(" rz ")" : Proc ![{
-            Proc::WriteZipperJoinInto(Box::new(w.clone()), Box::new(rz.clone()))
-        }] fold;
-
-        // ── Rholang-style Set method-call sugar ──────────────────────────
+        // ── Set methods ────────────────────────────────────────────────────
         SAdd . set_proc:Proc, e:Proc
         |- set_proc "." "add" "(" e ")" : Proc ![{
-            Proc::AddSet(Box::new(set_proc.clone()), Box::new(e.clone()))
+            match &set_proc {
+                Proc::CastSet(inner) => match inner.as_ref() {
+                    Set::SetLit(ref payload) => {
+                        let mut new_set = payload.clone();
+                        new_set.insert(crate::rhocalc::runtime::normalize_collection_element(&e));
+                        Proc::CastSet(Box::new(Set::SetLit(new_set)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }
         }] fold;
 
         Not . a:Proc |- "not" a : Proc ![
@@ -1999,102 +1814,82 @@ language! {
 
         LLengthCong . | S ~> T |- (LLength S) ~> (LLength T);
 
-        ConcatStrCongL . | S ~> T |- (ConcatStr S X) ~> (ConcatStr T X);
-        ConcatStrCongR . | S ~> T |- (ConcatStr X S) ~> (ConcatStr X T);
-        ConcatListCongL . | S ~> T |- (ConcatList S X) ~> (ConcatList T X);
-        ConcatListCongR . | S ~> T |- (ConcatList X S) ~> (ConcatList X T);
-        ElemListCongL . | S ~> T |- (ElemList S X) ~> (ElemList T X);
-        ElemListCongR . | S ~> T |- (ElemList X S) ~> (ElemList X T);
-        DeleteListCongL . | S ~> T |- (DeleteList S X) ~> (DeleteList T X);
-        DeleteListCongR . | S ~> T |- (DeleteList X S) ~> (DeleteList X T);
-        UnionBagCongL . | S ~> T |- (UnionBag S X) ~> (UnionBag T X);
-        UnionBagCongR . | S ~> T |- (UnionBag X S) ~> (UnionBag X T);
-        RemoveBagCongL . | S ~> T |- (RemoveBag S X) ~> (RemoveBag T X);
-        RemoveBagCongR . | S ~> T |- (RemoveBag X S) ~> (RemoveBag X T);
-        DiffBagCongL . | S ~> T |- (DiffBag S X) ~> (DiffBag T X);
-        DiffBagCongR . | S ~> T |- (DiffBag X S) ~> (DiffBag X T);
-        CountBagCongL . | S ~> T |- (CountBag S X) ~> (CountBag T X);
-        CountBagCongR . | S ~> T |- (CountBag X S) ~> (CountBag X T);
+        MGetCongL . | S ~> T |- (MGet S X) ~> (MGet T X);
+        MGetCongR . | S ~> T |- (MGet X S) ~> (MGet X T);
+        MSetCongL . | S ~> T |- (MSet S K V) ~> (MSet T K V);
+        MSetCongKey . | S ~> T |- (MSet M S V) ~> (MSet M T V);
+        MSetCongVal . | S ~> T |- (MSet M K S) ~> (MSet M K T);
+        MContainsCongL . | S ~> T |- (MContains S X) ~> (MContains T X);
+        MContainsCongR . | S ~> T |- (MContains X S) ~> (MContains X T);
+        MDeleteCongL . | S ~> T |- (MDelete S X) ~> (MDelete T X);
+        MDeleteCongR . | S ~> T |- (MDelete X S) ~> (MDelete X T);
+        MUnionCongL . | S ~> T |- (MUnion S X) ~> (MUnion T X);
+        MUnionCongR . | S ~> T |- (MUnion X S) ~> (MUnion X T);
+        MSizeCong . | S ~> T |- (MSize S) ~> (MSize T);
+        MToByteArrayCong . | S ~> T |- (MToByteArray S) ~> (MToByteArray T);
+        MKeysCong . | S ~> T |- (MKeys S) ~> (MKeys T);
+        MValuesCong . | S ~> T |- (MValues S) ~> (MValues T);
 
-        GetMapCongL . | S ~> T |- (GetMap S X) ~> (GetMap T X);
-        GetMapCongR . | S ~> T |- (GetMap X S) ~> (GetMap X T);
-        PutMapCongL . | S ~> T |- (PutMap S K V) ~> (PutMap T K V);
-        PutMapCongKey . | S ~> T |- (PutMap M S V) ~> (PutMap M T V);
-        PutMapCongVal . | S ~> T |- (PutMap M K S) ~> (PutMap M K T);
-        DeleteMapCongL . | S ~> T |- (DeleteMap S X) ~> (DeleteMap T X);
-        DeleteMapCongR . | S ~> T |- (DeleteMap X S) ~> (DeleteMap X T);
-        MergeMapCongL . | S ~> T |- (MergeMap S X) ~> (MergeMap T X);
-        MergeMapCongR . | S ~> T |- (MergeMap X S) ~> (MergeMap X T);
-        HasMapCongL . | S ~> T |- (HasMap S X) ~> (HasMap T X);
-        HasMapCongR . | S ~> T |- (HasMap X S) ~> (HasMap X T);
-        KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
-        ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
+        LNthCongL . | S ~> T |- (LNth S X) ~> (LNth T X);
+        LNthCongR . | S ~> T |- (LNth X S) ~> (LNth X T);
+        LConcatCongL . | S ~> T |- (LConcat S X) ~> (LConcat T X);
+        LConcatCongR . | S ~> T |- (LConcat X S) ~> (LConcat X T);
 
-        PathGetCongL . | S ~> T |- (PathGet S X) ~> (PathGet T X);
-        PathGetCongR . | S ~> T |- (PathGet X S) ~> (PathGet X T);
-        PathPutCongL . | S ~> T |- (PathPut S K V) ~> (PathPut T K V);
-        PathPutCongKey . | S ~> T |- (PathPut M S V) ~> (PathPut M T V);
-        PathPutCongVal . | S ~> T |- (PathPut M K S) ~> (PathPut M K T);
-        PathMergeCongL . | S ~> T |- (PathMerge S X) ~> (PathMerge T X);
-        PathMergeCongR . | S ~> T |- (PathMerge X S) ~> (PathMerge X T);
-        PathHasCongL . | S ~> T |- (PathHas S X) ~> (PathHas T X);
-        PathHasCongR . | S ~> T |- (PathHas X S) ~> (PathHas X T);
-        PathRestrictCongL . | S ~> T |- (PathRestrict S X) ~> (PathRestrict T X);
-        PathRestrictCongR . | S ~> T |- (PathRestrict X S) ~> (PathRestrict X T);
-        PathSubtractCongL . | S ~> T |- (PathSubtract S X) ~> (PathSubtract T X);
-        PathSubtractCongR . | S ~> T |- (PathSubtract X S) ~> (PathSubtract X T);
-        PathMeetCongL . | S ~> T |- (PathMeet S X) ~> (PathMeet T X);
-        PathMeetCongR . | S ~> T |- (PathMeet X S) ~> (PathMeet X T);
+        BCountCongL . | S ~> T |- (BCount S X) ~> (BCount T X);
+        BCountCongR . | S ~> T |- (BCount X S) ~> (BCount X T);
+        BDiffCongL . | S ~> T |- (BDiff S X) ~> (BDiff T X);
+        BDiffCongR . | S ~> T |- (BDiff X S) ~> (BDiff X T);
+        BRemoveCongL . | S ~> T |- (BRemove S X) ~> (BRemove T X);
+        BRemoveCongR . | S ~> T |- (BRemove X S) ~> (BRemove X T);
 
-        ReadZipperRootCong . | S ~> T |- (ReadZipperRoot S) ~> (ReadZipperRoot T);
-        ReadZipperAtCongL . | S ~> T |- (ReadZipperAt S X) ~> (ReadZipperAt T X);
-        ReadZipperAtCongR . | S ~> T |- (ReadZipperAt X S) ~> (ReadZipperAt X T);
-        WriteZipperRootCong . | S ~> T |- (WriteZipperRoot S) ~> (WriteZipperRoot T);
-        WriteZipperAtCongL . | S ~> T |- (WriteZipperAt S X) ~> (WriteZipperAt T X);
-        WriteZipperAtCongR . | S ~> T |- (WriteZipperAt X S) ~> (WriteZipperAt X T);
-        PathGetSubtrieCong . | S ~> T |- (PathGetSubtrie S) ~> (PathGetSubtrie T);
-        PathGetSubtrieAtCongL . | S ~> T |- (PathGetSubtrieAt S X) ~> (PathGetSubtrieAt T X);
-        PathGetSubtrieAtCongR . | S ~> T |- (PathGetSubtrieAt X S) ~> (PathGetSubtrieAt X T);
-        ZipperGetSubtrieCong . | S ~> T |- (ZipperGetSubtrie S) ~> (ZipperGetSubtrie T);
-        ZipperGetLeafCong . | S ~> T |- (ZipperGetLeaf S) ~> (ZipperGetLeaf T);
-        ZipperDescendToCongL . | S ~> T |- (ZipperDescendTo S X) ~> (ZipperDescendTo T X);
-        ZipperDescendToCongR . | S ~> T |- (ZipperDescendTo X S) ~> (ZipperDescendTo X T);
-        ZipperChildCountCong . | S ~> T |- (ZipperChildCount S) ~> (ZipperChildCount T);
-        ZipperDescendFirstCong . | S ~> T |- (ZipperDescendFirst S) ~> (ZipperDescendFirst T);
-        ZipperToNextSiblingCong . | S ~> T |- (ZipperToNextSibling S) ~> (ZipperToNextSibling T);
-        ZipperToPrevSiblingCong . | S ~> T |- (ZipperToPrevSibling S) ~> (ZipperToPrevSibling T);
-        ZipperDescendIndexedBranchCongL . | S ~> T |- (ZipperDescendIndexedBranch S X) ~> (ZipperDescendIndexedBranch T X);
-        ZipperDescendIndexedBranchCongR . | S ~> T |- (ZipperDescendIndexedBranch X S) ~> (ZipperDescendIndexedBranch X T);
-        ZipperAscendOneCong . | S ~> T |- (ZipperAscendOne S) ~> (ZipperAscendOne T);
-        ZipperAscendCongL . | S ~> T |- (ZipperAscend S X) ~> (ZipperAscend T X);
-        ZipperAscendCongR . | S ~> T |- (ZipperAscend X S) ~> (ZipperAscend X T);
-        WriteZipperSetLeafCongL . | S ~> T |- (WriteZipperSetLeaf S X Y) ~> (WriteZipperSetLeaf T X Y);
-        WriteZipperSetLeafCongKey . | S ~> T |- (WriteZipperSetLeaf M S Y) ~> (WriteZipperSetLeaf M T Y);
-        WriteZipperSetLeafCongVal . | S ~> T |- (WriteZipperSetLeaf M K S) ~> (WriteZipperSetLeaf M K T);
-        WriteZipperSetSubtrieCongL . | S ~> T |- (WriteZipperSetSubtrie S X) ~> (WriteZipperSetSubtrie T X);
-        WriteZipperSetSubtrieCongR . | S ~> T |- (WriteZipperSetSubtrie X S) ~> (WriteZipperSetSubtrie X T);
-        WriteZipperRemoveLeafCong . | S ~> T |- (WriteZipperRemoveLeaf S) ~> (WriteZipperRemoveLeaf T);
-        WriteZipperRemoveBranchesCong . | S ~> T |- (WriteZipperRemoveBranches S) ~> (WriteZipperRemoveBranches T);
-        WriteZipperGraftCongL . | S ~> T |- (WriteZipperGraft S X) ~> (WriteZipperGraft T X);
-        WriteZipperGraftCongR . | S ~> T |- (WriteZipperGraft X S) ~> (WriteZipperGraft X T);
-        WriteZipperJoinIntoCongL . | S ~> T |- (WriteZipperJoinInto S X) ~> (WriteZipperJoinInto T X);
-        WriteZipperJoinIntoCongR . | S ~> T |- (WriteZipperJoinInto X S) ~> (WriteZipperJoinInto X T);
+        PRestrictCongL . | S ~> T |- (PRestrict S X) ~> (PRestrict T X);
+        PRestrictCongR . | S ~> T |- (PRestrict X S) ~> (PRestrict X T);
+        PSubtractCongL . | S ~> T |- (PSubtract S X) ~> (PSubtract T X);
+        PSubtractCongR . | S ~> T |- (PSubtract X S) ~> (PSubtract X T);
+        PMeetCongL . | S ~> T |- (PMeet S X) ~> (PMeet T X);
+        PMeetCongR . | S ~> T |- (PMeet X S) ~> (PMeet X T);
+        PGetSubtrieCong . | S ~> T |- (PGetSubtrie S) ~> (PGetSubtrie T);
+        PGetSubtrieAtCongL . | S ~> T |- (PGetSubtrieAt S X) ~> (PGetSubtrieAt T X);
+        PGetSubtrieAtCongR . | S ~> T |- (PGetSubtrieAt X S) ~> (PGetSubtrieAt X T);
+        PReadZipperCong . | S ~> T |- (PReadZipper S) ~> (PReadZipper T);
+        PReadZipperAtCongL . | S ~> T |- (PReadZipperAt S X) ~> (PReadZipperAt T X);
+        PReadZipperAtCongR . | S ~> T |- (PReadZipperAt X S) ~> (PReadZipperAt X T);
+        PWriteZipperCong . | S ~> T |- (PWriteZipper S) ~> (PWriteZipper T);
+        PWriteZipperAtCongL . | S ~> T |- (PWriteZipperAt S X) ~> (PWriteZipperAt T X);
+        PWriteZipperAtCongR . | S ~> T |- (PWriteZipperAt X S) ~> (PWriteZipperAt X T);
+
+        RZGetLeafCong . | S ~> T |- (RZGetLeaf S) ~> (RZGetLeaf T);
+        RZDescendToCongL . | S ~> T |- (RZDescendTo S X) ~> (RZDescendTo T X);
+        RZDescendToCongR . | S ~> T |- (RZDescendTo X S) ~> (RZDescendTo X T);
+        RZChildCountCong . | S ~> T |- (RZChildCount S) ~> (RZChildCount T);
+        RZDescendFirstCong . | S ~> T |- (RZDescendFirst S) ~> (RZDescendFirst T);
+        RZToNextSiblingCong . | S ~> T |- (RZToNextSibling S) ~> (RZToNextSibling T);
+        RZToPrevSiblingCong . | S ~> T |- (RZToPrevSibling S) ~> (RZToPrevSibling T);
+        RZDescendIndexedBranchCongL . | S ~> T |- (RZDescendIndexedBranch S X) ~> (RZDescendIndexedBranch T X);
+        RZDescendIndexedBranchCongR . | S ~> T |- (RZDescendIndexedBranch X S) ~> (RZDescendIndexedBranch X T);
+        RZAscendOneCong . | S ~> T |- (RZAscendOne S) ~> (RZAscendOne T);
+        RZAscendCongL . | S ~> T |- (RZAscend S X) ~> (RZAscend T X);
+        RZAscendCongR . | S ~> T |- (RZAscend X S) ~> (RZAscend X T);
+
+        WZSetLeafCongL . | S ~> T |- (WZSetLeaf S X Y) ~> (WZSetLeaf T X Y);
+        WZSetLeafCongKey . | S ~> T |- (WZSetLeaf M S Y) ~> (WZSetLeaf M T Y);
+        WZSetLeafCongVal . | S ~> T |- (WZSetLeaf M K S) ~> (WZSetLeaf M K T);
+        WZSetSubtrieCongL . | S ~> T |- (WZSetSubtrie S X) ~> (WZSetSubtrie T X);
+        WZSetSubtrieCongR . | S ~> T |- (WZSetSubtrie X S) ~> (WZSetSubtrie X T);
+        WZRemoveLeafCong . | S ~> T |- (WZRemoveLeaf S) ~> (WZRemoveLeaf T);
+        WZRemoveBranchesCong . | S ~> T |- (WZRemoveBranches S) ~> (WZRemoveBranches T);
+        WZGraftCongL . | S ~> T |- (WZGraft S X) ~> (WZGraft T X);
+        WZGraftCongR . | S ~> T |- (WZGraft X S) ~> (WZGraft X T);
+        WZJoinIntoCongL . | S ~> T |- (WZJoinInto S X) ~> (WZJoinInto T X);
+        WZJoinIntoCongR . | S ~> T |- (WZJoinInto X S) ~> (WZJoinInto X T);
 
         CastMapCong . | S ~> T |- (CastMap S) ~> (CastMap T);
         CastSetCong . | S ~> T |- (CastSet S) ~> (CastSet T);
         CastPathmapCong . | S ~> T |- (CastPathmap S) ~> (CastPathmap T);
         CastReadZipperCong . | S ~> T |- (CastReadZipper S) ~> (CastReadZipper T);
         CastWriteZipperCong . | S ~> T |- (CastWriteZipper S) ~> (CastWriteZipper T);
-        AddSetCongL . | S ~> T |- (AddSet S X) ~> (AddSet T X);
-        AddSetCongR . | S ~> T |- (AddSet X S) ~> (AddSet X T);
-        DeleteSetCongL . | S ~> T |- (DeleteSet S X) ~> (DeleteSet T X);
-        DeleteSetCongR . | S ~> T |- (DeleteSet X S) ~> (DeleteSet X T);
-        HasSetCongL . | S ~> T |- (HasSet S X) ~> (HasSet T X);
-        HasSetCongR . | S ~> T |- (HasSet X S) ~> (HasSet X T);
-        UnionSetCongL . | S ~> T |- (UnionSet S X) ~> (UnionSet T X);
-        UnionSetCongR . | S ~> T |- (UnionSet X S) ~> (UnionSet X T);
-        DiffSetCongL . | S ~> T |- (DiffSet S X) ~> (DiffSet T X);
-        DiffSetCongR . | S ~> T |- (DiffSet X S) ~> (DiffSet X T);
+        SAddCongL . | S ~> T |- (SAdd S X) ~> (SAdd T X);
+        SAddCongR . | S ~> T |- (SAdd X S) ~> (SAdd X T);
         CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
         CastUInt32Cong . | S ~> T |- (CastUInt32 S) ~> (CastUInt32 T);
         CastBigIntCong . | S ~> T |- (CastBigInt S) ~> (CastBigInt T);

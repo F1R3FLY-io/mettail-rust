@@ -1880,10 +1880,7 @@ mod native_ops {
             #[test]
             fn tut_zipper_root_get_leaf_stays_stuck() {
                 let db = task_db();
-                normal_forms_contain(
-                    &format!("{{{}.readZipper().getLeaf()}}", db),
-                    "__zipperGetLeaf",
-                );
+                normal_forms_contain(&format!("{{{}.readZipper().getLeaf()}}", db), ".getLeaf(");
             }
 
             // getSubtrie at root and getSubtrieAt on prefix path
@@ -2063,7 +2060,7 @@ mod native_ops {
                 let db = users_age_db();
                 normal_forms_contain(
                     &format!("{{{}.readZipperAt([1,1,1,1]).toNextSibling()}}", db),
-                    "__zipperToNextSibling",
+                    ".toNextSibling(",
                 );
             }
 
@@ -2193,7 +2190,7 @@ mod native_ops {
                     run_with_initial("{pathmap([1]:10).readZipperAt([1]).descendFirst()}").1,
                 );
                 assert!(
-                    nfs.iter().any(|nf| nf.contains("__zipperDescendFirst")),
+                    nfs.iter().any(|nf| nf.contains(".descendFirst(")),
                     "failed navigation should not rewrite to error: {nfs:?}"
                 );
             }
@@ -2205,7 +2202,7 @@ mod native_ops {
                     run_with_initial("{pathmap().set([], 1)}").1,
                 );
                 assert!(
-                    nfs.iter().any(|nf| nf.contains("__pathPut")),
+                    nfs.iter().any(|nf| nf.contains(".set(")),
                     "invalid path encoding should not silently produce a pathmap: {nfs:?}"
                 );
             }
@@ -2402,7 +2399,7 @@ mod native_ops {
         fn bag_to_byte_array_expands_multiset() {
             assert_reduces_to(
                 "#{1 | 2 | 2}#.toByteArray()",
-                r#""2a15a201120a042a0210040a042a0210040a042a021002""#,
+                r#""2a15a201120a042a0210020a042a0210040a042a021004""#,
             );
         }
 
