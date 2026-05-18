@@ -286,6 +286,36 @@ mod comm {
     }
 
     #[test]
+    fn list_concat_join_comm() {
+        assert_reduces_to(
+            "a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ (*(x)).concat(*(y)) }",
+            "[1, 2, 3, 4]",
+        );
+    }
+
+    #[test]
+    fn list_concat_join_comm_braced() {
+        assert_reduces_to(
+            "{ a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | for(x <- a & y <- b){ (*(x)).concat(*(y)) } }",
+            "[1, 2, 3, 4]",
+        );
+    }
+
+    #[test]
+    fn list_payload_single_bind_comm() {
+        assert_reduces_to("for(x <- c){*(x)} | c!([0, 1])", "[0, 1]");
+    }
+
+    #[test]
+    fn bag_union_join_comm() {
+        // Multiset union keeps multiplicity: #{1|2}# ∪ #{2|3}# = #{1|2|2|3}#
+        assert_reduces_to(
+            "a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ (*(x)).union(*(y)) }",
+            "#{1 | 2 | 2 | 3}#",
+        );
+    }
+
+    #[test]
     fn comm_with_persistent_send_keeps_send() {
         let (results, initial_id) = run_with_initial("for(x <- c){*x} | c!!(p)");
         let nfs = reachable_normal_form_displays(&results, initial_id);

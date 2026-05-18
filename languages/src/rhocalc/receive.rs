@@ -16,9 +16,36 @@ pub(crate) fn canonicalize_arity_payload(payload: &Proc) -> Proc {
 
 pub(crate) fn canonicalize_arity_pattern(pattern: &Proc) -> Proc {
     match pattern {
-        Proc::CastList(_) => pattern.clone(),
+        Proc::CastList(_) | Proc::PVar(_) => pattern.clone(),
         _ => crate::rhocalc::runtime::mk_proc_list(vec![pattern.clone()]),
     }
+}
+
+/// For `x <- c` with a simple variable, bind `x` to the whole message. Scalar
+/// sends are arity-normalized to a one-element list before COMM; unwrap that so
+/// `c!(p)` and `c!([1, 2])` bind `p` and `[1, 2]` respectively.
+fn payload_for_simple_var_bind(q: &Proc) -> Proc {
+    match q {
+        Proc::CastList(list) => {
+            if let List::ListLit(items) = list.as_ref() {
+                if items.len() == 1 {
+                    return items[0].clone();
+                }
+            }
+            q.clone()
+        },
+        _ => q.clone(),
+    }
+}
+
+fn is_simple_var_bind(bind: &InputBind) -> bool {
+    matches!(
+        bind,
+        InputBind::InputBind(lhs, _)
+            | InputBind::InputBindPersistent(lhs, _)
+            | InputBind::InputBindQuery(lhs, _, _)
+        if matches!(lhs.as_ref(), Name::NVar(_))
+    )
 }
 
 fn bind_to_arity_pattern(bind: &InputBind) -> Option<Proc> {
@@ -26,7 +53,13 @@ fn bind_to_arity_pattern(bind: &InputBind) -> Option<Proc> {
         InputBind::InputBind(lhs, _)
         | InputBind::InputBindPersistent(lhs, _)
         | InputBind::InputBindQuery(lhs, _, _) => {
-            Some(crate::rhocalc::runtime::mk_proc_list(vec![name_pattern_to_proc(lhs.as_ref())]))
+            if matches!(lhs.as_ref(), Name::NVar(_)) {
+                Some(name_pattern_to_proc(lhs.as_ref()))
+            } else {
+                Some(crate::rhocalc::runtime::mk_proc_list(vec![name_pattern_to_proc(
+                    lhs.as_ref(),
+                )]))
+            }
         },
         InputBind::InputBindPolyadic(lhs, lhss, _)
         | InputBind::InputBindPersistentPolyadic(lhs, lhss, _) => {
@@ -366,9 +399,14 @@ fn match_bag_pattern(
 
 pub(crate) fn receive_apply(pattern: &Proc, value: &Proc, body: &Proc) -> Option<Proc> {
     let mut env: HashMap<FreeVar<String>, Proc> = HashMap::new();
-    let norm_pattern = canonicalize_arity_pattern(pattern);
-    let norm_value = canonicalize_arity_payload(value);
-    if !collect_pattern_bindings(&norm_pattern, &norm_value, &mut env) {
+    let matched = if matches!(pattern, Proc::PVar(OrdVar(Var::Free(_)))) {
+        collect_pattern_bindings(pattern, &payload_for_simple_var_bind(value), &mut env)
+    } else {
+        let norm_pattern = canonicalize_arity_pattern(pattern);
+        let norm_value = canonicalize_arity_payload(value);
+        collect_pattern_bindings(&norm_pattern, &norm_value, &mut env)
+    };
+    if !matched {
         return None;
     }
     Some(apply_pattern_env(body, &env))
@@ -632,8 +670,12 @@ fn collect_input_bindings(
         Some(p) => p,
         None => return false,
     };
-    let q_norm = canonicalize_arity_payload(q);
-    collect_pattern_bindings(&pat, &q_norm, env)
+    if is_simple_var_bind(ib) {
+        collect_pattern_bindings(&pat, &payload_for_simple_var_bind(q), env)
+    } else {
+        let q_norm = canonicalize_arity_payload(q);
+        collect_pattern_bindings(&pat, &q_norm, env)
+    }
 }
 
 /// Continuation process inside the outer `for` row: either the parsed body or
@@ -940,6 +982,41 @@ fn try_comm_join(
     }
     work.insert(res);
     Some(Proc::PPar(work))
+}
+
+#[cfg(test)]
+mod comm_tests {
+    use super::*;
+    use crate::rhocalc::runtime::merge_pp_parallel;
+
+    fn to_ppar(parsed: Proc) -> Proc {
+        match parsed {
+            Proc::PParInfix(a, b) => merge_pp_parallel(*a, *b),
+            other => other,
+        }
+    }
+
+    #[test]
+    fn join_comm_list_concat_body() {
+        mettail_runtime::clear_var_cache();
+        let input = "a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ (*(x)).concat(*(y)) }";
+        let parsed = Proc::parse(input).expect("parse");
+        let ppar = to_ppar(to_ppar(parsed));
+        let reduced = try_comm_rw_proc(&ppar).expect("comm should fire on canonical PPar");
+        assert!(
+            reduced.to_string().contains("concat"),
+            "expected substituted concat body, got {reduced}"
+        );
+    }
+
+    #[test]
+    fn join_comm_multi_input_body() {
+        mettail_runtime::clear_var_cache();
+        let input = "for(x <- c1 & y <- c2){*(x)} | c1!(p) | c2!(q)";
+        let parsed = Proc::parse(input).expect("parse");
+        let ppar = to_ppar(to_ppar(parsed));
+        try_comm_rw_proc(&ppar).expect("comm should fire on canonical PPar");
+    }
 }
 
 #[cfg(test)]
