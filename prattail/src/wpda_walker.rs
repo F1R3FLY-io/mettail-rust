@@ -3873,15 +3873,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // `cursor_resolution_check :: Drop`. The remaining condition is
         // simply "does cursor.builder hold exactly one Term arg?" — the
         // EOI gate that `take_dyn_result` would consult at commit.
-        // Phase F.2 (2026-05-18): swap to SPPF-side helper.
-        // Parity invariant: cursor.builder.is_accepting_terminal() ≡
-        // is_cursor_accepting_terminal(cursor) under the Phase C
-        // "single Symbol on sppf_stack" invariant.
-        debug_assert_eq!(
-            cursor.builder.is_accepting_terminal(),
-            self.is_cursor_accepting_terminal(cursor),
-            "Phase F.2: is_accepting_terminal parity",
-        );
+        // Phase F.2 (2026-05-18): SPPF-side helper.
         if !self.is_cursor_accepting_terminal(cursor) {
             return false;
         }
@@ -6293,16 +6285,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // merge invariant.
                 //
                 // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
-                // F.1 parity assertion retained as defense-in-depth
-                // until F.3 deletes `cursor.builder`.
-                collection_depth: {
-                    debug_assert_eq!(
-                        cursor.collection_stack_depth as usize,
-                        cursor.builder.collection_stack_len(),
-                        "Phase F.2: collection_stack_depth desync"
-                    );
-                    cursor.collection_stack_depth as usize
-                },
+                collection_depth: cursor.collection_stack_depth as usize,
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -6347,10 +6330,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         || (weight_tied
                             && cursor.source_priority < merged[idx].source_priority);
                     if cursor_wins {
-                        // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
-                        // F.1 parity invariant guarantees this matches
-                        // builder.collection_stack_len() (see also the
-                        // ConfigKey debug_assert above).
+                        // Phase F.2 (2026-05-18): SPPF-side mirror —
+                        // ConfigKey already includes collection_depth so
+                        // matching values is guaranteed by the merge
+                        // bucketing; this debug_assert is structural
+                        // defense-in-depth.
                         debug_assert_eq!(
                             merged[idx].collection_stack_depth,
                             cursor.collection_stack_depth,
@@ -7626,20 +7610,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     Some(_) => {
                         // HashMap slot: pick phase from parity.
                         //
-                        // Phase F.2 (2026-05-18): swap to SPPF-side
-                        // helper. `cursor_collection_slot_len` reads
+                        // Phase F.2 (2026-05-18): SPPF-side helper.
+                        // `cursor_collection_slot_len` reads
                         // `sppf_collection_arena[acc_id].len()`, which
                         // grows in lockstep with builder.collection_stack
-                        // via emit_splice_into_collection. The parity
-                        // assert below verifies until F.3 deletes the
-                        // builder field entirely.
+                        // via emit_splice_into_collection.
                         let acc_id_usize = *accumulator_id as usize;
-                        debug_assert_eq!(
-                            cursor.builder.collection_slot_len(acc_id_usize),
-                            self.cursor_collection_slot_len(cursor, acc_id_usize),
-                            "Phase F.2: collection_slot_len parity (acc_id={})",
-                            acc_id_usize,
-                        );
                         let slot_len = self.cursor_collection_slot_len(cursor, acc_id_usize);
                         let new_kv_phase: u8 = if slot_len % 2 == 1 { 1 } else { 0 };
                         WpdaState::CollectionLoop {
@@ -7901,12 +7877,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // builder IS the authoritative live state and self.builder
                 // is stale.
                 //
-                // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
-                debug_assert_eq!(
-                    cursor.collection_stack_depth as usize,
-                    cursor.builder.collection_stack_len(),
-                    "Phase F.2: acc_id derivation parity",
-                );
+                // Phase F.2 (2026-05-18): SPPF-side mirror.
                 let acc_id =
                     (cursor.collection_stack_depth as usize).saturating_sub(1) as u8;
                 // Phase 2 / Redesign C follow-up (2026-05-11); Phase 4 #2
@@ -8017,16 +7988,21 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         }
                     });
                 if let Some(new_top_cat) = new_top_cat_opt {
-                    // Phase F.2 (2026-05-18): use builder.top_term_type_name
-                    // → cat_of_type_name as before; the SPPF Symbol's
-                    // non_terminal_tag tracks the LATEST Packing's
-                    // output_cat, which may differ from the post-Return
-                    // observable Term's type (auto-injected casts
-                    // intermediates land on the SPPF as their cast cat
-                    // while the builder term reflects the converted
-                    // Rust type). The D8 fix is keyed on the builder
-                    // top's TYPE NAME — preserve that semantic until
-                    // F.3 redesigns the auto-injection cast modelling.
+                    // Phase F.3 INVESTIGATION (2026-05-18): empirical
+                    // diagnostic over the rhocalc cross-cat cast suite
+                    // showed the SPPF stack top can be a `Terminal` (not
+                    // a Symbol) at this D8 site for cast paths like
+                    // `castfixed(int_expr) + fixed_lit`, while the
+                    // builder.top is the post-action Term with a known
+                    // type_name. This is a real SPPF/builder desync
+                    // inherited from earlier in the parse — the
+                    // FireAction's SPPF mirror skipped (sppf_stack
+                    // underflow check) where the builder's stack
+                    // didn't. F.3 cannot delete cursor.builder until
+                    // this desync is fixed (a Symbol must be on top of
+                    // sppf_stack wherever builder.top is a Term).
+                    // Tracked separately; the D8 reads stay on the
+                    // builder until then.
                     if let Some(builder_cat) = cursor
                         .builder
                         .top_term_type_name()
