@@ -49,7 +49,11 @@ language! {
             key_val_sep: ":",
         }
         ![mettail_runtime::HashSetLit<Proc>] as Set
-        ![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap
+        ![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap {
+            open_parts: ["{|"],
+            close_parts: ["|}"],
+            sep: ",",
+        }
         ![Box<crate::rhocalc::zipper::ReadZipperLit>] as ReadZipper
         ![Box<crate::rhocalc::zipper::WriteZipperLit>] as WriteZipper
     },
@@ -962,6 +966,13 @@ language! {
         |- "Map" "(" ")" : Proc ![{
             Proc::CastMap(Box::new(Map::MapLit(
                 mettail_runtime::HashMapLit::<Proc, Proc>::new(),
+            )))
+        }] fold;
+
+        PathmapEmpty .
+        |- "Pathmap" "(" ")" : Proc ![{
+            Proc::CastPathmap(Box::new(Pathmap::PathmapLit(
+                mettail_runtime::PathMapLit::<Proc, Proc>::new(),
             )))
         }] fold;
 

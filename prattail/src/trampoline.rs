@@ -2106,10 +2106,10 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                     CollectionKind::Vec => "push",
                     CollectionKind::HashMap | CollectionKind::PathMap => "insert",
                 };
-                if matches!(*kind, CollectionKind::HashMap | CollectionKind::PathMap) {
+                if matches!(*kind, CollectionKind::HashMap) {
                     let kv = key_val_separator
                         .as_ref()
-                        .expect("HashMap/PathMap collections require key_val_separator");
+                        .expect("HashMap collections require key_val_separator");
                     let kv_variant = terminal_to_variant_name(kv);
                     write!(
                         buf,
@@ -2132,6 +2132,49 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                         kv,
                     )
                     .unwrap();
+                } else if matches!(*kind, CollectionKind::PathMap) {
+                    if let Some(kv) = key_val_separator.as_ref() {
+                        let kv_variant = terminal_to_variant_name(kv);
+                        write!(
+                            buf,
+                            "let mut {param_name} = {init}; \
+                            loop {{ \
+                                match parse_{element_category}(tokens, pos, 0) {{ \
+                                    Ok(key) => {{ \
+                                        expect_token(tokens, pos, |t| matches!(t, Token::{kv_variant}), \"{kv}\")?; \
+                                        let value = parse_{element_category}(tokens, pos, 0)?; \
+                                        {param_name}.{method}(key, value); \
+                                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                            *pos += 1; \
+                                        }} else {{ \
+                                            break; \
+                                        }} \
+                                    }} \
+                                    Err(_) => break, \
+                                }} \
+                            }}",
+                        )
+                        .unwrap();
+                    } else {
+                        write!(
+                            buf,
+                            "let mut {param_name} = {init}; \
+                            loop {{ \
+                                match parse_{element_category}(tokens, pos, 0) {{ \
+                                    Ok(elem) => {{ \
+                                        {param_name}.{method}(elem.clone(), elem); \
+                                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                            *pos += 1; \
+                                        }} else {{ \
+                                            break; \
+                                        }} \
+                                    }} \
+                                    Err(_) => break, \
+                                }} \
+                            }}",
+                        )
+                        .unwrap();
+                    }
                 } else {
                     write!(
                         buf,

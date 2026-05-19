@@ -1615,104 +1615,99 @@ mod native_ops {
 
         #[test]
         fn pathmap_get() {
-            assert_reduces_to("{pathmap(1:10).get(1)}", "10");
+            assert_reduces_to("{| 1 |}.get(1)", "1");
         }
 
         #[test]
         fn pathmap_put() {
-            assert_reduces_to("{pathmap().set(1, 10).get(1)}", "10");
+            assert_reduces_to("{| |}.set(1, 10).get(1)", "10");
         }
 
         #[test]
         fn pathmap_put_list_path() {
-            assert_reduces_to("{pathmap().set([1,2], 10).get([1,2])}", "10");
+            assert_reduces_to("{| |}.set([1,2], 10).get([1,2])", "10");
         }
 
         #[test]
         fn pathmap_merge() {
-            assert_reduces_to("{pathmap(1:10).union(pathmap(2:20)).get(2)}", "20");
+            assert_reduces_to("{| 1 |}.union({| 2 |}).get(2)", "2");
         }
 
         #[test]
         fn pathmap_merge_list_path() {
-            assert_reduces_to("{pathmap([1,2]:10).union(pathmap([3,4]:20)).get([3,4])}", "20");
+            assert_reduces_to("{| [1,2] |}.union({| [3,4] |}).get([3,4])", "[3,4]");
         }
 
         #[test]
         fn pathmap_has() {
-            assert_reduces_to("{pathmap(1:2).contains(1)}", "true");
-            assert_reduces_to("{pathmap(1:2).contains(3)}", "false");
+            assert_reduces_to("{| 1 |}.contains(1)", "true");
+            assert_reduces_to("{| 1 |}.contains(3)", "false");
         }
 
         #[test]
         fn pathmap_list_path_get() {
-            assert_reduces_to("{pathmap([1,2]:10).get([1,2])}", "10");
+            assert_reduces_to("{| [1,2] |}.get([1,2])", "[1,2]");
         }
 
         #[test]
         fn pathmap_list_path_has() {
-            assert_reduces_to("{pathmap([1,2]:10).contains([1,2])}", "true");
-            assert_reduces_to("{pathmap([1,2]:10).contains([1,3])}", "false");
+            assert_reduces_to("{| [1,2] |}.contains([1,2])", "true");
+            assert_reduces_to("{| [1,2] |}.contains([1,3])", "false");
         }
 
         /// Trie distinguishes full path from strict prefix (no value at prefix alone).
         #[test]
         fn pathmap_prefix_path_not_confused_with_longer_path() {
-            assert_reduces_to("{pathmap([1,2]:99).contains([1])}", "false");
-            assert_reduces_to("{pathmap([1,2]:99).contains([1,2])}", "true");
-            assert_reduces_to("{pathmap([1,2]:99).get([1,2])}", "99");
+            assert_reduces_to("{| [1,2] |}.contains([1])", "false");
+            assert_reduces_to("{| [1,2] |}.contains([1,2])", "true");
+            assert_reduces_to("{| [1,2] |}.get([1,2])", "[1,2]");
         }
 
         #[test]
         fn pathmap_restrict() {
-            assert_reduces_to(
-                "{pathmap([1,2]:99, [3,4]:5).restrict(pathmap([3,4]:0)).contains([3,4])}",
-                "true",
-            );
-            assert_reduces_to(
-                "{pathmap([1,2]:99, [3,4]:5).restrict(pathmap([3,4]:0)).contains([1,2])}",
-                "false",
-            );
+            assert_reduces_to("{| [1,2], [3,4] |}.restrict({| [3,4] |}).contains([3,4])", "true");
+            assert_reduces_to("{| [1,2], [3,4] |}.restrict({| [3,4] |}).contains([1,2])", "false");
         }
 
         #[test]
         fn pathmap_subtract() {
-            assert_reduces_to(
-                "{pathmap([1,2]:99, [3,4]:5).subtract(pathmap([3,4]:0)).contains([3,4])}",
-                "false",
-            );
-            assert_reduces_to(
-                "{pathmap([1,2]:99, [3,4]:5).subtract(pathmap([3,4]:0)).contains([1,2])}",
-                "true",
-            );
+            assert_reduces_to("{| [1,2], [3,4] |}.subtract({| [3,4] |}).contains([3,4])", "false");
+            assert_reduces_to("{| [1,2], [3,4] |}.subtract({| [3,4] |}).contains([1,2])", "true");
         }
 
         #[test]
         fn pathmap_meet_uses_right_value_on_overlap() {
             assert_reduces_to(
-                "{pathmap([1,2]:10, [3,4]:20).meet(pathmap([3,4]:200, [5,6]:1)).get([3,4])}",
+                "{| |}.set([1,2], 10).set([3,4], 20).meet({| |}.set([3,4], 200).set([5,6], 1)).get([3,4])",
                 "200",
             );
             assert_reduces_to(
-                "{pathmap([1,2]:10, [3,4]:20).meet(pathmap([3,4]:200, [5,6]:1)).contains([1,2])}",
+                "{| |}.set([1,2], 10).set([3,4], 20).meet({| |}.set([3,4], 200).set([5,6], 1)).contains([1,2])",
                 "false",
             );
         }
 
         #[test]
         fn pattern_comm_pathmap_literal_matches() {
-            assert_reduces_to(
-                r#"{for(@pathmap(["k"]: y) <- c){*(y)} | c!(pathmap(["k"]: 42))}"#,
-                "42",
-            );
+            assert_reduces_to(r#"{for(@{| ["k"] |} <- c){1} | c!({| ["k"] |})}"#, "1");
         }
 
         #[test]
         fn pattern_comm_pathmap_literal_blocks_key_mismatch() {
-            assert_never_reaches(
-                r#"{for(@pathmap(["k"]: y) <- c){999} | c!(pathmap(["j"]: 42))}"#,
-                "999",
+            assert_never_reaches(r#"{for(@{| ["k"] |} <- c){999} | c!({| ["j"] |})}"#, "999");
+        }
+
+        /// SPEC §E: empty, atom, single-element list, prefix overlap.
+        #[test]
+        fn pathmap_spec_edge_literals() {
+            assert_reduces_to("{| |}.contains(1)", "false");
+            assert_reduces_to("{| 42 |}.get(42)", "42");
+            assert_reduces_to(
+                r#"{| ["some string"] |}.get(["some string"])"#,
+                r#"["some string"]"#,
             );
+            assert_reduces_to("{| [1,2], [1,2,3] |}.contains([1,2])", "true");
+            assert_reduces_to("{| [1,2], [1,2,3] |}.contains([1,2,3])", "true");
         }
 
         mod pathmap_algebra {
@@ -1722,15 +1717,15 @@ mod native_ops {
             #[test]
             fn pathmap_meet_keeps_overlap_with_right_values() {
                 assert_reduces_to(
-                    "{pathmap([1,2]:10, [3,4]:20).meet(pathmap([1,2]:200, [5,6]:1)).get([1,2])}",
+                    "{| |}.set([1,2], 10).set([3,4], 20).meet({| |}.set([1,2], 200).set([5,6], 1)).get([1,2])",
                     "200",
                 );
                 assert_reduces_to(
-                    "{pathmap([1,2]:10, [3,4]:20).meet(pathmap([1,2]:200, [5,6]:1)).contains([3,4])}",
+                    "{| |}.set([1,2], 10).set([3,4], 20).meet({| |}.set([1,2], 200).set([5,6], 1)).contains([3,4])",
                     "false",
                 );
                 assert_reduces_to(
-                    "{pathmap([1,2]:10, [3,4]:20).meet(pathmap([1,2]:200, [5,6]:1)).contains([5,6])}",
+                    "{| |}.set([1,2], 10).set([3,4], 20).meet({| |}.set([1,2], 200).set([5,6], 1)).contains([5,6])",
                     "false",
                 );
             }
@@ -1739,11 +1734,11 @@ mod native_ops {
             #[test]
             fn pathmap_subtract_removes_masked_branch() {
                 assert_reduces_to(
-                    "{pathmap([1,2]:1, [1,3]:2, [4,5]:3).subtract(pathmap([1,2]:0)).contains([1,2])}",
+                    "{| [1,2], [1,3], [4,5] |}.subtract({| [1,2] |}).contains([1,2])",
                     "false",
                 );
                 assert_reduces_to(
-                    "{pathmap([1,2]:1, [1,3]:2, [4,5]:3).subtract(pathmap([1,2]:0)).contains([1,3])}",
+                    "{| [1,2], [1,3], [4,5] |}.subtract({| [1,2] |}).contains([1,3])",
                     "true",
                 );
             }
@@ -1752,19 +1747,11 @@ mod native_ops {
             #[test]
             fn pathmap_restrict_keeps_only_masked_paths() {
                 assert_reduces_to(
-                    concat!(
-                        "{",
-                        "pathmap([1,2]:10, [1,3]:11, [4,5]:12).restrict(",
-                        "pathmap([1,2]:0, [1,3]:0)).contains([1,2])}",
-                    ),
+                    "{| [1,2], [1,3], [4,5] |}.restrict({| [1,2], [1,3] |}).contains([1,2])",
                     "true",
                 );
                 assert_reduces_to(
-                    concat!(
-                        "{",
-                        "pathmap([1,2]:10, [1,3]:11, [4,5]:12).restrict(",
-                        "pathmap([1,2]:0, [1,3]:0)).contains([4,5])}",
-                    ),
+                    "{| [1,2], [1,3], [4,5] |}.restrict({| [1,2], [1,3] |}).contains([4,5])",
                     "false",
                 );
             }
@@ -1774,25 +1761,24 @@ mod native_ops {
             use super::*;
 
             fn task_db() -> &'static str {
-                concat!("pathmap(", "[1,2,3]:10, ", "[1,2,4]:11, ", "[2,1]:20", ")")
+                "{| [1,2,3], [1,2,4], [2,1] |}"
             }
 
             fn users_age_db() -> &'static str {
-                concat!("pathmap(", "[1,1,1,1]:30, ", "[1,2,1,1]:25, ", "[1,3,1,1]:35", ")")
+                "{| [1,1,1,1], [1,2,1,1], [1,3,1,1] |}"
             }
 
             fn books_fiction_db() -> &'static str {
                 concat!(
-                    "pathmap(",
-                    r#"["books","fiction","gatsby"]:1, "#,
-                    r#"["books","fiction","moby"]:2, "#,
-                    r#"["books","nonfiction","history"]:3"#,
-                    ")"
+                    "{| ",
+                    r#"["books","fiction","gatsby"], "#,
+                    r#"["books","fiction","moby"], "#,
+                    r#"["books","nonfiction","history"] |}"#
                 )
             }
 
             fn nested_root_db() -> &'static str {
-                concat!("pathmap(", "[1,1,1]:10, ", "[1,1,2]:11, ", "[1,2,1]:12", ")")
+                "{| [1,1,1], [1,1,2], [1,2,1] |}"
             }
 
             fn normal_forms_contain(input: &str, fragment: &str) {
@@ -1808,10 +1794,10 @@ mod native_ops {
             #[test]
             fn pathmap_demo_queries_backend_subtrie() {
                 let db = task_db();
-                assert_reduces_to(&format!("{{{}.getSubtrieAt([1]).get([2,3])}}", db), "10");
+                assert_reduces_to(&format!("{{{}.getSubtrieAt([1]).get([2,3])}}", db), "[1,2,3]");
                 assert_reduces_to(
                     &format!("{{{}.readZipperAt([1]).getSubtrie().get([2,4])}}", db),
-                    "11",
+                    "[1,2,4]",
                 );
             }
 
@@ -1831,14 +1817,14 @@ mod native_ops {
                 let db = task_db();
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1]).setSubtrie(pathmap([9]:77, [8]:88)).contains([1,9])}}",
+                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9], [8] |}}).contains([1,9])}}",
                         db
                     ),
                     "true",
                 );
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1]).setSubtrie(pathmap([9]:77, [8]:88)).contains([1,2,3])}}",
+                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9], [8] |}}).contains([1,2,3])}}",
                         db
                     ),
                     "false",
@@ -1847,24 +1833,14 @@ mod native_ops {
                 let db = books_fiction_db();
                 assert_reduces_to(
                     &format!(
-                        concat!(
-                            "{{",
-                            "{}.writeZipperAt([\"books\",\"fiction\"]).setSubtrie(",
-                            "pathmap([\"hemingway\"]:77, [\"lovecraft\"]:88)).contains(",
-                            "[\"books\",\"fiction\",\"hemingway\"])}}"
-                        ),
+                        "{{{}.writeZipperAt([\"books\",\"fiction\"]).setSubtrie({{| [\"hemingway\"], [\"lovecraft\"] |}}).contains([\"books\",\"fiction\",\"hemingway\"])}}",
                         db
                     ),
                     "true",
                 );
                 assert_reduces_to(
                     &format!(
-                        concat!(
-                            "{{",
-                            "{}.writeZipperAt([\"books\",\"fiction\"]).setSubtrie(",
-                            "pathmap([\"hemingway\"]:77, [\"lovecraft\"]:88)).contains(",
-                            "[\"books\",\"fiction\",\"gatsby\"])}}"
-                        ),
+                        "{{{}.writeZipperAt([\"books\",\"fiction\"]).setSubtrie({{| [\"hemingway\"], [\"lovecraft\"] |}}).contains([\"books\",\"fiction\",\"gatsby\"])}}",
                         db
                     ),
                     "false",
@@ -1877,10 +1853,10 @@ mod native_ops {
                 assert_reduces_to(
                     concat!(
                         "{",
-                        "pathmap([1]:1).writeZipper().graft(",
-                        "pathmap([2,3]:42, [4]:43).readZipper()).get([4])}",
+                        "{| [1] |}.writeZipper().graft(",
+                        "{| [2,3], [4] |}.readZipper()).get([4])}",
                     ),
-                    "43",
+                    "[4]",
                 );
             }
 
@@ -1902,7 +1878,7 @@ mod native_ops {
                         "{{{}.readZipper().descendTo([\"books\",\"fiction\",\"gatsby\"]).getLeaf()}}",
                         db
                     ),
-                    "1",
+                    r#"["books","fiction","gatsby"]"#,
                 );
             }
 
@@ -1936,18 +1912,18 @@ mod native_ops {
             // writeZipper on empty map
             #[test]
             fn tut_write_zipper_set_leaf_on_empty_map() {
-                assert_reduces_to("{pathmap().writeZipper().setLeaf([1,2], 42).get([1,2])}", "42");
+                assert_reduces_to("{| |}.writeZipper().setLeaf([1,2], 42).get([1,2])", "42");
             }
 
             // setSubtrie at root replaces entire map
             #[test]
             fn tut_write_zipper_set_subtrie_at_root() {
                 assert_reduces_to(
-                    "{pathmap([1]:1, [2]:2).writeZipper().setSubtrie(pathmap([9]:99, [8]:88)).get([9])}",
-                    "99",
+                    "{| [1], [2] |}.writeZipper().setSubtrie({| [9], [8] |}).get([9])",
+                    "[9]",
                 );
                 assert_reduces_to(
-                    "{pathmap([1]:1, [2]:2).writeZipper().setSubtrie(pathmap([9]:99, [8]:88)).contains([1])}",
+                    "{| [1], [2] |}.writeZipper().setSubtrie({| [9], [8] |}).contains([1])",
                     "false",
                 );
             }
@@ -1958,14 +1934,14 @@ mod native_ops {
                 let db = nested_root_db();
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1,1]).setSubtrie(pathmap()).contains([1,1,1])}}",
+                        "{{{}.writeZipperAt([1,1]).setSubtrie({{| |}}).contains([1,1,1])}}",
                         db
                     ),
                     "false",
                 );
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1,1]).setSubtrie(pathmap()).contains([1,2,1])}}",
+                        "{{{}.writeZipperAt([1,1]).setSubtrie({{| |}}).contains([1,2,1])}}",
                         db
                     ),
                     "true",
@@ -1978,10 +1954,10 @@ mod native_ops {
                 assert_reduces_to(
                     concat!(
                         "{",
-                        "pathmap([1]:1).writeZipperAt([1]).graft(",
-                        "pathmap([2]:42, [3]:43).readZipper()).get([1,3])}",
+                        "{| [1] |}.writeZipperAt([1]).graft(",
+                        "{| [2], [3] |}.readZipper()).get([1,3])}",
                     ),
-                    "43",
+                    "[3]",
                 );
             }
 
@@ -1991,23 +1967,23 @@ mod native_ops {
                 let original = nested_root_db();
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1,1]).setSubtrie(pathmap([9]:77)).get([1,1,9])}}",
+                        "{{{}.writeZipperAt([1,1]).setSubtrie({{| [9] |}}).get([1,1,9])}}",
                         original
                     ),
-                    "77",
+                    "[9]",
                 );
-                assert_reduces_to(&format!("{{{}.get([1,1,1])}}", original), "10");
+                assert_reduces_to(&format!("{{{}.get([1,1,1])}}", original), "[1,1,1]");
             }
 
             // removeLeaf leaves original unchanged
             #[test]
             fn immutability_remove_leaf_preserves_original() {
-                let original = concat!("pathmap(", "[1,1]:10, ", "[1,2]:11, ", "[2]:12", ")");
+                let original = "{| [1,1], [1,2], [2] |}";
                 assert_reduces_to(
                     &format!("{{{}.writeZipperAt([1,1]).removeLeaf().contains([1,1])}}", original),
                     "false",
                 );
-                assert_reduces_to(&format!("{{{}.get([1,1])}}", original), "10");
+                assert_reduces_to(&format!("{{{}.get([1,1])}}", original), "[1,1]");
             }
 
             // removeBranches leaves original unchanged
@@ -2021,37 +1997,37 @@ mod native_ops {
                     ),
                     "false",
                 );
-                assert_reduces_to(&format!("{{{}.get([1,1,1])}}", original), "10");
+                assert_reduces_to(&format!("{{{}.get([1,1,1])}}", original), "[1,1,1]");
             }
 
             // graft leaves original unchanged
             #[test]
             fn immutability_graft_preserves_original() {
-                let original = "pathmap([1]:1)";
-                let source = "pathmap([2,1]:42)";
+                let original = "{| [1] |}";
+                let source = "{| [2,1] |}";
                 assert_reduces_to(
                     &format!(
                         "{{{}.writeZipper().graft({}.readZipper()).get([2,1])}}",
                         original, source
                     ),
-                    "42",
+                    "[2,1]",
                 );
-                assert_reduces_to(&format!("{{{}.get([1])}}", original), "1");
-                assert_reduces_to(&format!("{{{}.get([2,1])}}", source), "42");
+                assert_reduces_to(&format!("{{{}.get([1])}}", original), "[1]");
+                assert_reduces_to(&format!("{{{}.get([2,1])}}", source), "[2,1]");
             }
 
             // joinInto leaves original unchanged
             #[test]
             fn immutability_join_into_preserves_original() {
-                let original = "pathmap([1,2]:10)";
+                let original = "{| [1,2] |}";
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipper().joinInto(pathmap([1,2]:20, [3]:30).readZipper()).get([3])}}",
+                        "{{{}.writeZipper().joinInto({{| [1,2], [3] |}}.readZipper()).get([3])}}",
                         original
                     ),
-                    "30",
+                    "[3]",
                 );
-                assert_reduces_to(&format!("{{{}.get([1,2])}}", original), "10");
+                assert_reduces_to(&format!("{{{}.get([1,2])}}", original), "[1,2]");
             }
 
             // descendFirst from users prefix
@@ -2114,7 +2090,7 @@ mod native_ops {
             fn read_zipper_get_subtrie_at_prefix() {
                 assert_reduces_to(
                     &format!("{{{}.readZipperAt([1]).getSubtrie().get([2,3])}}", task_db()),
-                    "10",
+                    "[1,2,3]",
                 );
             }
 
@@ -2133,10 +2109,10 @@ mod native_ops {
             fn write_zipper_set_subtrie_at_focus() {
                 assert_reduces_to(
                     &format!(
-                        "{{{}.writeZipperAt([1]).setSubtrie(pathmap([9]:77, [8]:88)).get([1,9])}}",
+                        "{{{}.writeZipperAt([1]).setSubtrie({{| [9], [8] |}}).get([1,9])}}",
                         task_db()
                     ),
-                    "77",
+                    "[9]",
                 );
             }
 
@@ -2145,18 +2121,18 @@ mod native_ops {
                 assert_reduces_to(
                     concat!(
                         "{",
-                        "pathmap([1,2]:10).writeZipper().joinInto(",
-                        "pathmap([1,2]:20, [3]:30).readZipper()).get([1,2])}",
+                        "{| [1,2] |}.writeZipper().joinInto(",
+                        "{| [1,2], [3] |}.readZipper()).get([1,2])}",
                     ),
-                    "20",
+                    "[1,2]",
                 );
                 assert_reduces_to(
                     concat!(
                         "{",
-                        "pathmap([1,2]:10).writeZipper().joinInto(",
-                        "pathmap([1,2]:20, [3]:30).readZipper()).get([3])}",
+                        "{| [1,2] |}.writeZipper().joinInto(",
+                        "{| [1,2], [3] |}.readZipper()).get([3])}",
                     ),
-                    "30",
+                    "[3]",
                 );
             }
 
@@ -2183,10 +2159,10 @@ mod native_ops {
                 assert_reduces_to(
                     concat!(
                         "{",
-                        "pathmap([1]:1).writeZipper().graft(",
-                        "pathmap([2,3]:42).readZipper()).get([2,3])}",
+                        "{| [1] |}.writeZipper().graft(",
+                        "{| [2,3] |}.readZipper()).get([2,3])}",
                     ),
-                    "42",
+                    "[2,3]",
                 );
             }
 
@@ -2200,24 +2176,24 @@ mod native_ops {
                     ),
                     "99",
                 );
-                assert_reduces_to(&format!("{{{}.get([1,2,3])}}", original), "10");
+                assert_reduces_to(&format!("{{{}.get([1,2,3])}}", original), "[1,2,3]");
             }
 
             #[test]
             fn zipper_navigation_child_count_and_moves() {
-                let db = concat!("pathmap(", "[1,1,1]:30, ", "[1,1,2]:25, ", "[1,2,1]:35", ")");
+                let db = users_age_db();
                 assert_reduces_to(&format!("{{{}.readZipperAt([1]).childCount()}}", db), "2");
                 assert_reduces_to(
                     &format!("{{{}.readZipperAt([1]).descendTo([1,1]).getLeaf()}}", db),
-                    "30",
+                    "[1,1,1,1]",
                 );
             }
 
             #[test]
             fn zipper_navigation_stays_stuck_on_failed_moves() {
                 let nfs = reachable_normal_form_displays(
-                    &run_with_initial("{pathmap([1]:10).readZipperAt([1]).descendFirst()}").0,
-                    run_with_initial("{pathmap([1]:10).readZipperAt([1]).descendFirst()}").1,
+                    &run_with_initial("{| |}.set([1], 10).readZipperAt([1]).descendFirst()").0,
+                    run_with_initial("{| |}.set([1], 10).readZipperAt([1]).descendFirst()").1,
                 );
                 assert!(
                     nfs.iter().any(|nf| nf.contains(".descendFirst(")),
@@ -2228,8 +2204,8 @@ mod native_ops {
             #[test]
             fn pathmap_encoding_rejects_empty_list_path_in_native_ops() {
                 let nfs = reachable_normal_form_displays(
-                    &run_with_initial("{pathmap().set([], 1)}").0,
-                    run_with_initial("{pathmap().set([], 1)}").1,
+                    &run_with_initial("{ {| |}.set([], 1) }").0,
+                    run_with_initial("{ {| |}.set([], 1) }").1,
                 );
                 assert!(
                     nfs.iter().any(|nf| nf.contains(".set(")),
@@ -2239,11 +2215,11 @@ mod native_ops {
 
             #[test]
             fn map_and_pathmap_literals_stay_distinct() {
-                // Map literals use Rholang-style `{ k: v }`; Pathmap uses prefix `pathmap(...)`.
+                // Map: `{ k: v }`; Pathmap: `{| elem, ... |}`.
                 assert_reduces_to("{{1:10}.get(1)}", "10");
-                assert_reduces_to("{pathmap(1:10).get(1)}", "10");
+                assert_reduces_to("{| 1 |}.get(1)", "1");
                 assert_reduces_to("{{1:2}.contains(1)}", "true");
-                assert_reduces_to("{pathmap(1:2).contains(1)}", "true");
+                assert_reduces_to("{| 1 |}.contains(1)", "true");
             }
         }
     }
@@ -3029,6 +3005,23 @@ mod parsing {
             matches!(par, Proc::PPar(_)),
             "expected PPar for braced parallel, got: {:?}",
             par
+        );
+    }
+
+    #[test]
+    fn pathmap_literal_disambiguated_from_map_and_parallel() {
+        fresh();
+        let empty_pm = parse("{||}");
+        assert!(
+            matches!(empty_pm, Proc::CastPathmap(_)),
+            "expected CastPathmap for empty pathmap, got: {:?}",
+            empty_pm
+        );
+        let pm = parse("{| 1, [2,3] |}");
+        assert!(
+            matches!(pm, Proc::CastPathmap(_)),
+            "expected CastPathmap for pathmap literal, got: {:?}",
+            pm
         );
     }
 

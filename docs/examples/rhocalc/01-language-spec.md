@@ -141,6 +141,24 @@ MapEmpty . |- "Map" "(" ")" : Proc ![{
 }] fold;
 ```
 
+### 3.3.2 Pathmap Literals (Rholang `{| … |}`)
+
+`Pathmap` uses Rholang-style pathmap braces. Each element is one `Proc`; the
+literal conflates path and stored value (`insert(e, e)`):
+
+```rust
+![mettail_runtime::PathMapLit<Proc, Proc>] as Pathmap {
+    open_parts: ["{|"],
+    close_parts: ["|}"],
+    sep: ",",
+}
+```
+
+producing `{||}`, `{| e |}`, `{| e₁, e₂, … |}` (lexer tokens `{|` / `|}`). List elements contribute **all**
+segments to the trie key (e.g. `{| ["a","b","c"] |}`). Use `.set(k, v)` or
+zipper `setLeaf` when the payload must differ from the path term. `Pathmap()`
+is an alias for the empty literal.
+
 Method-call surface (canonical AST; each method rule is its own constructor):
 
 | Method form | AST node | Receiver |
