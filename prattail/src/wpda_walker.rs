@@ -7142,10 +7142,38 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 let sid = self.sppf.intern_collection_id(*id as u32);
                 cursor.sppf_stack.push(sid);
             }
-            // SpliceIntoCollection / recovery effects: no SPPF mirror here.
-            // Splice's SPPF mirror is in emit_splice_into_collection (it's
-            // a pop-not-push so the asymmetry doesn't bite arity checks);
-            // recovery deltas mutate mutable_token_source, not AST.
+            BuilderDelta::SpliceIntoCollection { id } => {
+                // Phase F.9 (2026-05-19): mirror `emit_splice_into_collection`'s
+                // SPPF-side splice. The prior comment claimed Splice's
+                // pop-not-push asymmetry "doesn't bite arity checks" — true
+                // for arity checks at `emit_fire_action`, but the downstream
+                // `realize_root_to_terms` path reads
+                // `cursor.sppf_collection_arena[id]` to reconstruct the
+                // spliced collection's elements. Without this mirror,
+                // binder-internal splices (PInputs Names accumulator,
+                // BinderListLoop sub_pos > 0) leave the SPPF arena slot
+                // EMPTY while the symbol is stranded on `sppf_stack` — the
+                // action's reconstructed Term then has zero binders, and no
+                // accepting cursor reaches EOI (manifested as
+                // `comm_under_new`'s "no accepting branch" error).
+                //
+                // The builder-side `apply_effect_to_builder` already called
+                // `builder.push_to_collection(*id)` to move the ActionArg
+                // from `builder.args_stack` into `builder.collections`.
+                // Mirror by popping the corresponding symbol from
+                // `cursor.sppf_stack` and appending to the per-cursor SPPF
+                // arena slot. Bounds-check on `id` matches the helper's
+                // defensive guard at `emit_splice_into_collection`.
+                if (*id as usize) < cursor.sppf_collection_arena.len() {
+                    if let Some(top) = cursor.sppf_stack.pop() {
+                        Arc::make_mut(&mut cursor.sppf_collection_arena)
+                            [*id as usize]
+                            .push(top);
+                    }
+                }
+            }
+            // Recovery effects: no SPPF mirror here; recovery deltas mutate
+            // mutable_token_source / recovery_events, not AST.
             _ => {}
         }
     }
