@@ -5419,6 +5419,41 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
                             };
+                            // Phase F.10 (2026-05-19): mirror the standard
+                            // `WpdaStepAction::ConsumeAndPush` arm's
+                            // `TriggerMode::ConsumeAsTriggerOnly` branch
+                            // (lines 4400-4452). Phase F.8 added TriggerTerminal
+                            // push to the standard arm to distinguish a unary-
+                            // prefix rule's interned Symbol from its operand's
+                            // Symbol via lo_pos, but the lex-Fork variant
+                            // (this arm) was overlooked. Without this push, the
+                            // unary-prefix rule's Symbol gets `lo_pos =
+                            // operand_lo` (NOT trigger_pos), losing the SPPF
+                            // Symbol-dedup collapse with the competing
+                            // primary-lex-alt parse — `emit_fire_action`'s
+                            // walk-back at line ~7610 finds no Trigger frame
+                            // to claim, and `merge_equivalent_cursors`
+                            // discards this cursor's sppf_top in favor of
+                            // the primary-lex-alt's, dropping this packing.
+                            // For `-3!`: Path A (Neg via lex-Fork `-`) loses
+                            // to Path B (Fact via primary `-3` literal),
+                            // never surfacing the `Neg(Fact(NumLit(3))) →
+                            // -6` derivation.
+                            if let Some(kind) = tokens.peek_kind(child.pos) {
+                                let text = tokens
+                                    .peek_text(child.pos)
+                                    .unwrap_or("")
+                                    .to_string();
+                                let trigger_pos = child.pos;
+                                self.emit_push_trigger_terminal(
+                                    &mut child,
+                                    kind,
+                                    text,
+                                    trigger_pos,
+                                    sym.category_src_idx,
+                                    sym.rule_index_in_category,
+                                );
+                            }
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_push(
