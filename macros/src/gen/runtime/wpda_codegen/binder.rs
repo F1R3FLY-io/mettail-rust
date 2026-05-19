@@ -1043,6 +1043,14 @@ pub(crate) fn emit_binder_prefix_arms(
     struct RuleEntry {
         rule_i: usize,
         shape: BinderShape,
+        /// Phase F.8 (2026-05-18): true iff this rule matches the unary-prefix
+        /// shape (same-cat single operand: `"trigger" operand` where operand
+        /// is the same category as the rule). When set, the ConsumeAndPush
+        /// emitted for this rule carries `is_prefix_trigger: true` so the
+        /// walker mirrors the consumed trigger token as a TriggerTerminal on
+        /// the SPPF stack — distinguishing the parent rule's Symbol from the
+        /// operand's Symbol via differing `lo_pos`.
+        is_unary_prefix: bool,
     }
 
     // Group entries by (trigger, result_src_idx). BTreeMap gives
@@ -1071,10 +1079,13 @@ pub(crate) fn emit_binder_prefix_arms(
             if trigger == "(" {
                 continue;
             }
+            let is_unary_prefix =
+                super::builtin_metadata::classify_unary_prefix_shape(rule).is_some();
             let key = (trigger, cat_i as u16);
             groups.entry(key).or_default().push(RuleEntry {
                 rule_i,
                 shape,
+                is_unary_prefix,
             });
         }
     }
@@ -1089,6 +1100,17 @@ pub(crate) fn emit_binder_prefix_arms(
             let body_src_idx = match &entry.shape.body_cat {
                 Some(name) => lookup_src_idx(name, categories).unwrap_or(result_src_idx),
                 None => result_src_idx,
+            };
+            // Phase F.8 (2026-05-18): unary-prefix rules get
+            // ConsumeAsTriggerOnly so the consumed trigger is mirrored to
+            // sppf_stack as a TriggerTerminal — distinguishing the parent
+            // rule's Symbol from its operand's. Multi-step binder rules
+            // (PNew, PInputs, etc.) get Discard so their `new`/`for`
+            // trigger doesn't pollute the SPPF.
+            let trigger_mode = if entry.is_unary_prefix {
+                quote!(mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly)
+            } else {
+                quote!(mettail_prattail::wpda_walker::TriggerMode::Discard)
             };
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__trigger))
@@ -1106,7 +1128,7 @@ pub(crate) fn emit_binder_prefix_arms(
                             body_src_idx: #body_src_idx,
                             outer_bp: _outer_bp,
                         },
-                        capture_token: false,
+                        trigger_mode: #trigger_mode,
                     };
                 }
             });

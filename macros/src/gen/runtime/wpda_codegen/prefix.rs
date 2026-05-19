@@ -767,7 +767,8 @@ pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
                         pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                         cur_bp: 0,
                     },
-                    capture_token: false,
+                    // Phase F.8: `(` grouping discards the trigger token.
+                    trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
                 };
             }
         });
@@ -827,7 +828,8 @@ pub fn emit_paren_dispatch_arms(
                             pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
                             cur_bp: 0,
                         },
-                        capture_token: false,
+                        // Phase F.8: `(` grouping discards the trigger token.
+                        trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
                     };
                 }
             });
@@ -1259,7 +1261,10 @@ fn emit_cross_cat_prefix_unary_arm(
                     source_src_idx: #source_src_idx,
                     inner_cur_bp: 0,
                 },
-                capture_token: false,
+                // Phase F.8: cross-cat prefix-unary IS a unary-prefix
+                // trigger — emit TriggerTerminal so the wrapping rule's
+                // Symbol is distinct from the operand's Symbol.
+                trigger_mode: mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly,
             };
         }
     }
@@ -1642,7 +1647,10 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
                 ).with_kind_return(),
                 weight: lex_w(0.0, #category_src_idx, #rule_idx),
                 new_state: WpdaState::Unwinding,
-                capture_token: true,
+                // Phase F.8: atomic literal arm — the consumed token IS
+                // the action arg (CaptureForBuilder). Not a unary-prefix
+                // trigger (no operand sub-parse).
+                trigger_mode: mettail_prattail::wpda_walker::TriggerMode::CaptureForBuilder,
             };
         }
     }
@@ -1763,9 +1771,10 @@ fn emit_atomic_arms(
                         ).with_kind_return(),
                         weight: lex_w(0.0, #category_src_idx, #rule_idx),
                         new_state: WpdaState::Unwinding,
-                        // Atomic literal: token is pushed to the builder so the
-                        // Pop(Return) action can consume it as ActionArg::Token.
-                        capture_token: true,
+                        // Phase F.8: atomic literal patterned arm — token
+                        // is the action arg (CaptureForBuilder), so the
+                        // Pop(Return) action consumes it as ActionArg::Token.
+                        trigger_mode: mettail_prattail::wpda_walker::TriggerMode::CaptureForBuilder,
                     };
                 }
             }

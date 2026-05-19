@@ -27,6 +27,22 @@ Focused guides on specific features:
 
 ---
 
+## Language Specification Composition
+
+Comprehensive treatment of every form of language composition (five
+mechanisms, theory/correctness, future operators, morphisms):
+
+- **`composition/README.md`** - Entry point + four reading paths
+- **`composition/00_overview.md`** - Taxonomy + decision flowchart + pipeline
+- **`composition/glossary.md`** - Master glossary of terms & symbols
+- **`composition/bibliography.md`** - Numbered references with DOIs
+
+Browse the subdirectories for in-depth coverage of foundations, mechanisms,
+formal semantics, correctness, system interactions, morphisms, deferred
+operators, diagnostics, examples, implementation, and comparison.
+
+---
+
 ## Design Documents
 
 Detailed technical designs:

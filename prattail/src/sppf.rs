@@ -260,6 +260,53 @@ pub enum SppfNode<W: SemiringRef> {
         /// `BinderHandle.depth`.
         depth: u16,
     },
+
+    /// Phase F.8 (2026-05-18): unary-prefix trigger token. A consumed prefix
+    /// literal (e.g., `"not"` in `Not . a:Bool |- "not" a : Bool`) is
+    /// mirrored to `sppf_stack` as a TriggerTerminal so the enclosing rule's
+    /// packing carries a span-bearing leaf at the trigger's input position.
+    /// Without this, the unary-prefix rule's Symbol shares `(nt, lo, hi)`
+    /// with its sole operand → SPPF Symbol-dedup collapses both packings,
+    /// `realize_root_to_terms_with_weights` (called with `limit: Some(1)`)
+    /// picks the inner packing in insertion order, and the wrapping rule is
+    /// silently dropped.
+    ///
+    /// **Filtering semantics**: TriggerTerminal contributes NO `ActionArg` to
+    /// the realize-time cartesian product. `realize_packing_call` filters
+    /// TriggerTerminal children before constructing the action_fn args list,
+    /// so the rule's declared arity is preserved (a unary-prefix rule has
+    /// arity=1; the trigger is auxiliary).
+    ///
+    /// **Span semantics**: `span_lo` and `span_hi` return `pos` and `pos+1`
+    /// respectively (identical to `Terminal`). This shifts the parent rule's
+    /// interned Symbol's `lo_pos` from "first operand's lo" to "trigger's
+    /// pos" → distinct Symbol id from the operand's Symbol.
+    ///
+    /// **Ownership tagging**: `owner_cat` + `owner_rule_idx` identify the
+    /// rule whose `ConsumeAndPush` produced this trigger. At reduce time
+    /// (`emit_fire_action`) the walk-back drain claims a TriggerTerminal
+    /// ONLY when these match the firing rule's `(cat_src_idx,
+    /// rule_index_in_category)`. Without this gate, an inner rule firing
+    /// inside the operand sub-parse (e.g., `BoolLit` for `true` inside
+    /// `Not true`) would greedily claim the outer rule's TriggerTerminal,
+    /// leaving the outer rule with no trigger and reintroducing the
+    /// Symbol-dedup collision.
+    TriggerTerminal {
+        /// Lexer's classification of the consumed trigger token (e.g.,
+        /// `TokenKind::Fixed("not".to_string())`).
+        token_kind: TokenKind,
+        /// Pooled text handle (may be `TEXT_HANDLE_NONE` for `Fixed` triggers
+        /// where the kind already encodes the lexeme).
+        text_handle: TextHandle,
+        /// Input position of the trigger token. Always `Real(_)` in practice;
+        /// `Synthesized` is reserved for the (`Terminal`) recovery path.
+        pos: PosOrSynth,
+        /// Category source index of the owning rule (the rule whose
+        /// `ConsumeAndPush` pushed this trigger).
+        owner_cat: u16,
+        /// Rule index within `owner_cat` of the owning rule.
+        owner_rule_idx: u16,
+    },
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -321,6 +368,19 @@ pub struct Sppf<W: SemiringRef> {
     /// Two cursors emitting the same scope contents at the same depth
     /// collapse to the same SppfId.
     dedup_binder_scope: FxHashMap<(u16, u64), SppfId>,
+    /// Phase F.8 (2026-05-18): dedup TriggerTerminal by `(kind, pos,
+    /// owner_cat, owner_rule_idx)`. Two cursors emitting the same prefix
+    /// trigger at the same input position FOR THE SAME owning rule
+    /// collapse to the same SppfId. `owner_cat` / `owner_rule_idx` are
+    /// part of the key because two different unary-prefix rules in
+    /// different categories could share the SAME trigger token at the
+    /// SAME input position (e.g., `"!"` used as postfix in one cat and
+    /// prefix in another); they must remain distinct so the walk-back
+    /// gate in `emit_fire_action` can claim only the matching one.
+    /// Distinct namespace from `dedup_terminal` because Terminals carry
+    /// an extra `pushed_via_push_ident: bool` discriminator that
+    /// TriggerTerminals don't need (they never produce `ActionArg`s).
+    dedup_trigger_terminal: FxHashMap<(TokenKind, PosOrSynth, u16, u16), SppfId>,
 
     // Derived indices — strictly rebuildable from `symbol_packings`. Rebuilt
     // on checkpoint restore.
@@ -346,6 +406,7 @@ impl<W: SemiringRef> Default for Sppf<W> {
             dedup_opt_absent: FxHashMap::default(),
             dedup_predicate: FxHashMap::default(),
             dedup_binder_scope: FxHashMap::default(),
+            dedup_trigger_terminal: FxHashMap::default(),
             link_dedup: FxHashSet::default(),
             packings_by_symbol: FxHashMap::default(),
         }
@@ -395,6 +456,44 @@ impl<W: SemiringRef> Sppf<W> {
             pushed_via_push_ident,
         });
         self.dedup_terminal.insert(key, id);
+        id
+    }
+
+    /// Phase F.8 (2026-05-18): intern a `TriggerTerminal` for a consumed
+    /// unary-prefix trigger token. Mirrors `intern_terminal` but writes to
+    /// `dedup_trigger_terminal`. The trigger never participates in
+    /// `ActionArg` construction; it exists to give the parent rule's
+    /// interned Symbol a distinct `lo_pos` from its operand's Symbol.
+    ///
+    /// `owner_cat` + `owner_rule_idx` identify the rule whose
+    /// `ConsumeAndPush` produced this trigger; the walk-back drain in
+    /// `emit_fire_action` claims a TriggerTerminal ONLY when these match
+    /// the firing rule.
+    pub fn intern_trigger_terminal(
+        &mut self,
+        token_kind: TokenKind,
+        pos: PosOrSynth,
+        text: Option<&str>,
+        owner_cat: u16,
+        owner_rule_idx: u16,
+    ) -> SppfId {
+        let key = (token_kind.clone(), pos, owner_cat, owner_rule_idx);
+        if let Some(&id) = self.dedup_trigger_terminal.get(&key) {
+            return id;
+        }
+        let text_handle = match text {
+            Some(s) => self.intern_text(s),
+            None => TEXT_HANDLE_NONE,
+        };
+        let id = self.nodes.len() as SppfId;
+        self.nodes.push(SppfNode::TriggerTerminal {
+            token_kind,
+            text_handle,
+            pos,
+            owner_cat,
+            owner_rule_idx,
+        });
+        self.dedup_trigger_terminal.insert(key, id);
         id
     }
 
@@ -625,6 +724,14 @@ impl<W: SemiringRef> Sppf<W> {
                         PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
                     });
                 }
+                // Phase F.8: TriggerTerminal carries a real input position;
+                // span_lo returns that position so the parent rule's
+                // interned Symbol receives `lo = trigger_pos`.
+                SppfNode::TriggerTerminal { pos, .. } => {
+                    return Some(match pos {
+                        PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
+                    });
+                }
                 SppfNode::Symbol { lo_pos, .. } => return Some(*lo_pos),
                 SppfNode::Epsilon { pos } => return Some(*pos),
                 SppfNode::OptAbsent { pos } => return Some(*pos),
@@ -647,6 +754,14 @@ impl<W: SemiringRef> Sppf<W> {
             match self.node(cur)? {
                 SppfNode::Terminal { pos, .. } => {
                     // Terminals span exactly one token: hi = pos + 1.
+                    let p = match pos {
+                        PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
+                    };
+                    return Some(p + 1);
+                }
+                // Phase F.8: TriggerTerminal spans exactly one token (the
+                // consumed trigger literal): hi = pos + 1.
+                SppfNode::TriggerTerminal { pos, .. } => {
                     let p = match pos {
                         PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
                     };
@@ -727,6 +842,7 @@ impl<W: SemiringRef> Sppf<W> {
         self.dedup_opt_absent.retain(|_, &mut id| id < n);
         self.dedup_predicate.retain(|_, &mut id| id < n);
         self.dedup_binder_scope.retain(|_, &mut id| id < n);
+        self.dedup_trigger_terminal.retain(|_, &mut id| id < n);
 
         // 3. Rebuild derived indices from the (now-truncated) symbol_packings.
         self.link_dedup.clear();
@@ -888,6 +1004,7 @@ impl<W: SemiringRef> Sppf<W> {
                 }
                 Some(SppfNode::CollectionId { .. })
                 | Some(SppfNode::Terminal { .. })
+                | Some(SppfNode::TriggerTerminal { .. })
                 | Some(SppfNode::Epsilon { .. })
                 | Some(SppfNode::OptAbsent { .. })
                 | Some(SppfNode::Predicate { .. })

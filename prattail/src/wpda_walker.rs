@@ -219,6 +219,48 @@ pub trait WpdaEngine<W: SemiringRef> {
     }
 }
 
+/// Phase F.8 (2026-05-18): three-state classification of a token that
+/// [`WpdaStepAction::ConsumeAndPush`] consumes from the input stream.
+/// Replaces the prior boolean pair `(capture_token, is_prefix_trigger)`
+/// — the four bool-combinations included a nonsensical fourth state
+/// (`capture_token=true && is_prefix_trigger=true`) that no codegen path
+/// produces; this enum makes that state unrepresentable.
+///
+/// **`Discard`** — the token is consumed (advance `cursor.pos`) but is
+/// neither pushed to the builder's arg stack NOR mirrored onto
+/// `cursor.sppf_stack`. Used by syntactic delimiters whose role is purely
+/// to advance the parse: `(` grouping open (closed by a matching `)` via
+/// `GroupingMarker` pop), collection-open delimiters (`[`, `{`, `bag(`,
+/// etc.), and infix-tier ConsumeAndPush of the operator within
+/// `engine_impl`'s singleton fast-path. The Pop that eventually fires the
+/// rule's action observes the delimiter's absence on the builder.
+///
+/// **`CaptureForBuilder`** — the token IS the action arg. Pushed to
+/// the builder as `ActionArg::Token`; the SPPF receives a regular
+/// `SppfNode::Terminal` (via the existing `emit_push_token` path inside
+/// the apply-arm). Used by atomic-literal rules like `IntLit . n:i64 |- ⟨Integer⟩ : Int`
+/// where the consumed Integer token IS the rule's only arg.
+///
+/// **`ConsumeAsTriggerOnly`** — the token is a unary-prefix structural
+/// trigger (e.g., `"not"` in `Not . a:Bool |- "not" a : Bool`). It is
+/// consumed but NOT pushed to the builder; instead it is mirrored to
+/// `cursor.sppf_stack` as a `SppfNode::TriggerTerminal` (via
+/// `emit_push_trigger_terminal`). The TriggerTerminal carries the
+/// token's input position so the enclosing rule's interned SPPF Symbol
+/// receives `lo_pos = trigger_pos` — DISTINCT from its operand's
+/// Symbol `lo`, preventing the SPPF Symbol-dedup collision that
+/// otherwise silently drops the wrapping rule's derivation at realize
+/// time. Set by codegen ONLY for rules classified by
+/// `classify_unary_prefix_shape` (same-cat unary prefix) and the
+/// cross-cat-prefix-unary atomic shape; all other consumed-but-not-
+/// captured tokens map to `Discard`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TriggerMode {
+    Discard,
+    CaptureForBuilder,
+    ConsumeAsTriggerOnly,
+}
+
 /// One step of action returned by a [`WpdaEngine`].
 ///
 /// Operations are exhaustive: walker selects exactly one per `Step`.
@@ -278,23 +320,19 @@ pub enum WpdaStepAction<W: SemiringRef> {
         branches: Vec<ForkBranch<W>>,
         consume_trigger: bool,
     },
-    /// Phase A.2 atomic-rule shortcut: optionally capture the current
-    /// token into the builder as `ActionArg::Token`, advance `pos` by 1,
-    /// push `symbol` onto the stack (typically `kind=Return`), and
-    /// transition to `new_state`. Walker handles all four effects
-    /// atomically.
+    /// Phase A.2 atomic-rule shortcut: classify the current input token
+    /// per [`TriggerMode`], advance `pos` by 1, push `symbol` onto the
+    /// stack (typically `kind=Return`), and transition to `new_state`.
+    /// Walker handles all four effects atomically.
     ///
-    /// `capture_token` controls whether the consumed token is pushed to
-    /// the builder. Atomic-literal prefix arms set this `true` so the
-    /// follow-up `Pop(Return)` action sees the token as `ActionArg::Token`.
-    /// Infix-operator arms (Phase 3) set this `false` because the
-    /// operator token shouldn't appear on the builder stack — only the
-    /// LHS/RHS terms (which were already pushed by their own actions).
+    /// The `trigger_mode` field encodes the three semantically valid
+    /// dispositions for the consumed token (Discard / CaptureForBuilder /
+    /// ConsumeAsTriggerOnly); see [`TriggerMode`] for the doc on each.
     ConsumeAndPush {
         symbol: StackSymbolV2,
         weight: W,
         new_state: WpdaState,
-        capture_token: bool,
+        trigger_mode: TriggerMode,
     },
     /// Phase 4: consume the current token (advance `pos` by 1), pop the
     /// stack top (firing the action attached to it if it's a `Return` or
@@ -3516,6 +3554,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     limit,
                 )
             }
+            // Phase F.8 (2026-05-18): TriggerTerminal contributes no
+            // ActionArg. `realize_packing_call` filters TriggerTerminal
+            // children out of the cartesian product, so this arm is
+            // defensive — it would only execute if a TriggerTerminal SppfId
+            // reached realize_node_leave via the BFS traversal. Returning
+            // Vec::new() ensures the Bug I "missing memo for child SppfId"
+            // panic at line 3697-3705 sees `Some(empty_vec)` not `None`.
+            Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => Vec::new(),
             None => Vec::new(),
         }
     }
@@ -3661,11 +3707,25 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 .map(|(args, w)| (ActionArg::Optional(Some(args)), w))
                 .collect();
         }
+        // Phase F.8 (2026-05-18): TriggerTerminal children carry only span
+        // metadata (used by `span_lo` in emit_fire_action to give the
+        // parent Symbol a distinct lo_pos) — they contribute NO ActionArg
+        // to the action_fn. Filter them out BEFORE the arity-check and
+        // BEFORE the cartesian product. Non-prefix rules have no
+        // TriggerTerminal children so this filter is a no-op for them.
+        let action_children: Vec<crate::sppf::SppfId> = children
+            .iter()
+            .copied()
+            .filter(|&c| !matches!(
+                self.sppf.node(c),
+                Some(crate::sppf::SppfNode::TriggerTerminal { .. })
+            ))
+            .collect();
         // Bug A fix (Phase 3.1.2, 2026-05-15): the Packing.rule_idx is a
         // GLOBAL rule id encoded as `(cat_src_idx << 16) | rule_idx_within_cat`
         // by emit_fire_action. Decode directly — no linear scan, no
         // collision risk when two cats share a local rule_idx.
-        let arity = children.len();
+        let arity = action_children.len();
         let cat = (rule_idx >> 16) as u16;
         let local_rule_idx = (rule_idx & 0xFFFF) as u16;
         let action_entry = self.engine.action_for(cat, local_rule_idx);
@@ -3687,7 +3747,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // child weights along the way.
         let mut combos: Vec<(Vec<ActionArg>, W)> =
             vec![(Vec::with_capacity(arity), W::one_ref())];
-        for &c in children {
+        for &c in &action_children {
             // Bug I fix (Phase 3.1.4): panic loudly on missing memo. The
             // realize_root_to_terms BFS guarantees Phase::Leave executes
             // ONLY after every child's Phase::Leave; a missing memo
@@ -4341,16 +4401,46 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 mut symbol,
                 weight,
                 new_state,
-                capture_token,
+                trigger_mode,
             } => {
-                // Order matches live apply_action: capture_token FIRST,
-                // then collection-marker id allocation.
-                if capture_token {
-                    if let Some(kind) = tokens.peek_kind(cursor.pos) {
-                        let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
-                        let pos = cursor.pos;
-                        self.emit_push_token(cursor, kind, text, pos);
+                // Phase F.8 (2026-05-18): three-way dispatch on TriggerMode.
+                // - CaptureForBuilder: mirror token via emit_push_token
+                //   (Builder receives ActionArg::Token + SPPF receives a
+                //   regular Terminal).
+                // - ConsumeAsTriggerOnly: mirror token via
+                //   emit_push_trigger_terminal (SPPF receives TriggerTerminal
+                //   for span-only; Builder is NOT touched). The trigger
+                //   lands BENEATH the rule's eventual RuleAt-frame operand
+                //   sub-parse so the parent rule's interned Symbol gets
+                //   lo_pos = trigger_pos (distinct from the operand's lo).
+                // - Discard: no mirror; the token is purely consumed.
+                match trigger_mode {
+                    TriggerMode::CaptureForBuilder => {
+                        if let Some(kind) = tokens.peek_kind(cursor.pos) {
+                            let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
+                            let pos = cursor.pos;
+                            self.emit_push_token(cursor, kind, text, pos);
+                        }
                     }
+                    TriggerMode::ConsumeAsTriggerOnly => {
+                        if let Some(kind) = tokens.peek_kind(cursor.pos) {
+                            let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
+                            let pos = cursor.pos;
+                            // Tag the trigger with its owning rule
+                            // (cat_src_idx, rule_index_in_category) so
+                            // emit_fire_action's walk-back can claim it
+                            // ONLY at the matching rule's reduce.
+                            self.emit_push_trigger_terminal(
+                                cursor,
+                                kind,
+                                text,
+                                pos,
+                                symbol.category_src_idx,
+                                symbol.rule_index_in_category,
+                            );
+                        }
+                    }
+                    TriggerMode::Discard => {}
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time
                 // side effects (CollectionMarker + OptionalGroupAt(1)).
@@ -7198,6 +7288,39 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         Arc::make_mut(&mut cursor.builder).push_token(kind, text, pos);
     }
 
+    /// Phase F.8 (2026-05-18): mirror a consumed-but-not-captured unary-prefix
+    /// trigger token onto `sppf_stack` ONLY (no builder push — the trigger is
+    /// `capture_token=false` so the builder has no record of it). The
+    /// TriggerTerminal lands BENEATH the rule's eventual operand sub-parse
+    /// in the cursor's `sppf_stack`. When `emit_fire_action` reduces the
+    /// rule, the walk-back drain (see lines 7428-7437) includes the
+    /// TriggerTerminal in `children`, the leftmost child's `span_lo` returns
+    /// the trigger's input position, and the parent rule's interned Symbol
+    /// receives `lo = trigger_pos` — DISTINCT from the operand's Symbol
+    /// `lo`. This breaks the pre-fix Symbol-dedup collision that silently
+    /// dropped unary-prefix wrappings (e.g., `not true` realizing as
+    /// `BoolLit(true)` instead of `Not(BoolLit(true))`).
+    #[inline(always)]
+    fn emit_push_trigger_terminal(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        kind: TokenKind,
+        text: String,
+        pos: usize,
+        owner_cat: u16,
+        owner_rule_idx: u16,
+    ) {
+        let text_opt = if text.is_empty() { None } else { Some(text.as_str()) };
+        let sid = self.sppf.intern_trigger_terminal(
+            kind,
+            crate::sppf::PosOrSynth::Real(pos as u32),
+            text_opt,
+            owner_cat,
+            owner_rule_idx,
+        );
+        cursor.sppf_stack.push(sid);
+    }
+
     #[inline(always)]
     fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
         // C3 dual-mode: SPPF terminal with TokenKind::Ident + the name text.
@@ -7426,11 +7549,59 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             cursor.sppf_stack.len(),
         );
         if cursor.sppf_stack.len() >= arity {
-            let split_at = cursor.sppf_stack.len() - arity;
+            // Phase F.8 (2026-05-18): walk back from the arity-slice top
+            // to include consecutive TriggerTerminal frames that belong to
+            // THIS reduce. Unary-prefix rules push a TriggerTerminal for
+            // the consumed trigger token BEFORE the operand parses, so
+            // the frame layout at reduce time is `[..., TriggerTerminal,
+            // operand_Symbol]`. Drain MUST extend down to include the
+            // TriggerTerminal so it lands in `children` for `span_lo` and
+            // the parent rule's interned Symbol receives
+            // `lo = trigger_pos` (DISTINCT from the operand's lo).
+            //
+            // **Ownership gate**: walk-back consumes a TriggerTerminal
+            // ONLY if its `(owner_cat, owner_rule_idx)` matches the
+            // firing rule's `(cat_src_idx, local_rule_idx)`. Every
+            // ConsumeAndPush stamps its TriggerTerminal with the rule
+            // identity of the symbol it's pushing (see apply arm:
+            // `symbol.category_src_idx`, `symbol.rule_index_in_category`),
+            // so the firing rule's identity matches its own trigger and
+            // no other. Without the gate, an INNER rule's fire (e.g.,
+            // BoolLit firing inside Not's operand sub-parse) would
+            // greedily consume the OUTER rule's TriggerTerminal, leaving
+            // Not with no trigger and reintroducing the Symbol-dedup
+            // collision. The pos-based gate (an earlier attempt) failed
+            // because multi-step binder rules ReplaceAndPush their
+            // RuleAt's GSS pos to the post-trigger cursor.pos — the
+            // GSS frame's pos no longer matches the trigger's pos at
+            // fire time. Rule identity is invariant across ReplaceTop
+            // chains because the symbol's (cat, rule_idx) stays the
+            // same.
+            // Non-prefix rules push NO TriggerTerminal, so the walk-back
+            // exits immediately and behavior is byte-identical to pre-fix.
+            let mut split_at = cursor.sppf_stack.len() - arity;
+            while split_at > 0 {
+                let prev = cursor.sppf_stack[split_at - 1];
+                let claim = match self.sppf.node(prev) {
+                    Some(crate::sppf::SppfNode::TriggerTerminal {
+                        owner_cat,
+                        owner_rule_idx,
+                        ..
+                    }) => *owner_cat == cat_src_idx && *owner_rule_idx == local_rule_idx,
+                    _ => false,
+                };
+                if claim {
+                    split_at -= 1;
+                } else {
+                    break;
+                }
+            }
             let children: Vec<crate::sppf::SppfId> =
                 cursor.sppf_stack.drain(split_at..).collect();
             // lo_pos: leftmost child's span_lo, or fall back to hi_pos if
-            // arity == 0 (epsilon-like reduce).
+            // arity == 0 (epsilon-like reduce). With Phase F.8 the
+            // leftmost child for a unary-prefix rule is the TriggerTerminal
+            // whose span_lo = trigger_pos.
             let lo_pos = children
                 .first()
                 .and_then(|&c| self.sppf.span_lo(c))
@@ -9809,7 +9980,7 @@ mod tests {
                                 .with_kind_return(),
                             weight: LexicographicWeight::from_cost(0.0, 0, 0),
                             new_state: WpdaState::Unwinding,
-                            capture_token: true,
+                            trigger_mode: TriggerMode::CaptureForBuilder,
                         }
                     } else {
                         let _ = cur_bp;
@@ -10269,19 +10440,19 @@ mod tests {
                 weight: lex(1.0, 0, 0),
                 new_state: WpdaState::InfixLoop { cur_bp: 0 },
             },
-            // ConsumeAndPush for cursor B (capture_token: true → logs PushToken).
+            // ConsumeAndPush for cursor B (CaptureForBuilder → logs PushToken).
             WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(0, 1, 0, None).with_kind_return(),
                 weight: lex(1.0, 0, 1),
                 new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
-                capture_token: true,
+                trigger_mode: TriggerMode::CaptureForBuilder,
             },
             // ConsumeAndPush for cursor A (winner).
             WpdaStepAction::ConsumeAndPush {
                 symbol: StackSymbolV2::rule_at(0, 0, 0, None).with_kind_return(),
                 weight: lex(1.0, 0, 0),
                 new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
-                capture_token: true,
+                trigger_mode: TriggerMode::CaptureForBuilder,
             },
             WpdaStepAction::Fork {
                 branches: vec![

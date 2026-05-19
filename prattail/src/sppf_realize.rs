@@ -169,6 +169,7 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                 // Push children dependencies onto the stack.
                 match sppf.node(id) {
                     Some(SppfNode::Terminal { .. })
+                    | Some(SppfNode::TriggerTerminal { .. })
                     | Some(SppfNode::Epsilon { .. })
                     | Some(SppfNode::CollectionId { .. })
                     | Some(SppfNode::OptAbsent { .. })
@@ -207,6 +208,11 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                         let text = sppf.text(*text_handle);
                         vec![resolver.resolve_terminal(token_kind, text, *pos)]
                     }
+                    // Phase F.8 (2026-05-18): TriggerTerminal contributes no
+                    // R::Out value; Packing-arm filters TriggerTerminal
+                    // children out of the cartesian product. Empty Vec keeps
+                    // the memo entry populated for any defensive lookup.
+                    Some(SppfNode::TriggerTerminal { .. }) => Vec::new(),
                     Some(SppfNode::Epsilon { pos }) => {
                         vec![resolver.resolve_epsilon(*pos)]
                     }
@@ -250,10 +256,23 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                         acc
                     }
                     Some(SppfNode::Packing { rule_idx, children, .. }) => {
+                        // Phase F.8 (2026-05-18): TriggerTerminal children
+                        // contribute no `R::Out` value — filter them out of
+                        // the cartesian product so a unary-prefix Packing
+                        // (children = [TriggerTerminal, operand]) iterates
+                        // only over the operand's realizations.
+                        let action_children: Vec<SppfId> = children
+                            .iter()
+                            .copied()
+                            .filter(|&c| !matches!(
+                                sppf.node(c),
+                                Some(SppfNode::TriggerTerminal { .. })
+                            ))
+                            .collect();
                         // Cartesian product of children's realizations, then
                         // resolve_packing for each.
-                        let mut combos: Vec<Vec<R::Out>> = vec![Vec::with_capacity(children.len())];
-                        for &child_id in children {
+                        let mut combos: Vec<Vec<R::Out>> = vec![Vec::with_capacity(action_children.len())];
+                        for &child_id in &action_children {
                             let child_results = memo
                                 .get(&child_id)
                                 .expect("child visited before its parent packing");

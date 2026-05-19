@@ -227,7 +227,9 @@ pub(crate) fn emit_collection_prefix_arms(
                             0.0, #result_src_idx, #rule_idx,
                         ),
                         new_state: #new_state,
-                        capture_token: false,
+                        // Phase F.8: collection open delimiter discards
+                        // the trigger token.
+                        trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
                     };
                 }
             });

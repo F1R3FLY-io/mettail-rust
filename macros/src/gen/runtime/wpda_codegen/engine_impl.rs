@@ -1097,7 +1097,11 @@ pub(crate) fn emit_engine_impl_full(
                                     symbol: b.symbol,
                                     weight: b.weight,
                                     new_state: b.new_state,
-                                    capture_token: false,
+                                    // Phase F.8: infix-tier singleton
+                                    // discards the operator token at the
+                                    // SPPF layer (the operator's LHS/RHS
+                                    // terms are already on the SPPF stack).
+                                    trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
                                 }
                             }
                             _ => {
