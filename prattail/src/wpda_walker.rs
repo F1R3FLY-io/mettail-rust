@@ -7885,7 +7885,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// Case analysis matches `realize_packing_call`'s child-reconstruction
     /// pattern at wpda_walker.rs:~3880-3935 but operates on a SINGLE
     /// SppfId (not a cartesian-product combo).
-    #[allow(dead_code)] // F.3c.3 will activate this; F.3c.2 keeps the parity gate cfg-gated
     fn reconstruct_action_arg(
         &self,
         cursor: &BranchCursor<W>,
@@ -7995,13 +7994,25 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// existing `Arc::make_mut(&mut cursor.builder)` path inside
     /// emit_fire_action) for parity verification. F.3c.3 will swap the
     /// persistent path out and make this the sole fire mechanism.
-    #[allow(dead_code)] // F.3c.3 activates this; F.3c.2 wires it via parity gate
+    /// Phase F.3c.3 (2026-05-20): returns
+    /// `Some((result_arc, output_cat, drains_count))` on success, `None`
+    /// on elide / arity mismatch / no action registered.
+    ///
+    /// - `result_arc`: the action_fn's pushed Term (the post-action
+    ///   transient builder's top).
+    /// - `output_cat`: cat_idx derived from the transient builder's
+    ///   `top_term_type_name() → engine.cat_of_type_name(tn)`. Used
+    ///   to update `cursor.last_action_output_cat` (the F.3a/b mirror).
+    /// - `drains_count`: number of `drain_collection` calls the
+    ///   action_fn made (= `pre_collection_len - post_collection_len`
+    ///   on the transient SB). Used to update
+    ///   `cursor.collection_stack_depth` post-fire.
     fn fire_action_via_transient(
         &self,
         cursor: &BranchCursor<W>,
         symbol: StackSymbolV2,
         children: &[crate::sppf::SppfId],
-    ) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+    ) -> Option<(Arc<dyn std::any::Any + Send + Sync>, Option<u16>, usize)> {
         let cat_src_idx = symbol.category_src_idx;
         let local_rule_idx = symbol.rule_index_in_category;
         let entry = self.engine.action_for(cat_src_idx, local_rule_idx)?;
@@ -8100,6 +8111,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         if pre_len < arity {
             return None;
         }
+        let pre_collection_len = sb.collection_stack_len();
         let pre_action_len = sb.len();
         let popped = sb.pop_args(arity);
         action_fn(&mut sb, popped);
@@ -8108,30 +8120,48 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // Action elided (cross-cat-incompatible arg). Return None.
             return None;
         }
-
+        let post_collection_len = sb.collection_stack_len();
+        let drains_count = pre_collection_len.saturating_sub(post_collection_len);
+        // Capture output_cat BEFORE take_dyn_result drains the top Term.
+        let output_cat = sb
+            .top_term_type_name()
+            .and_then(|tn| self.engine.cat_of_type_name(tn));
         // Take the result Arc. take_dyn_result returns the top of the
         // builder.stack as an Arc<dyn Any>. Mirror semantic with
         // realize_packing_call line 3955+.
-        sb.take_dyn_result()
+        let result_arc = sb.take_dyn_result()?;
+        Some((result_arc, output_cat, drains_count))
     }
 
     #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
-        // Phase 5.6-tail-B (2026-05-12): always-eager fire on cursor.builder.
-        // Pre-tail this matched cursor_mode (Lazy fired on self.builder via
-        // `fire_action_for`; Strict fired on cursor.builder via Arc::make_mut).
-        // Both paths produced the same observable state through commit_winner;
-        // the unified path drops the mode split.
+        // Phase F.3c.3 (2026-05-20): action fires on a TRANSIENT
+        // SemanticBuilder constructed per-call from sppf_stack-reconstructed
+        // args (`fire_action_via_transient`). The persistent
+        // `Arc::make_mut(&mut cursor.builder)` + `fire_action_for_on_builder`
+        // path is GONE — cursor.builder is no longer mutated by this
+        // helper. The transient SB's result Arc is stored in
+        // `cursor.sppf_symbol_terms` keyed by the just-interned Symbol
+        // id so subsequent fires consuming this Symbol as a child via
+        // `reconstruct_action_arg` find the realized Term directly.
         //
-        // Required-for-correctness invariant: subsequent SpliceIntoCollection
-        // emits move cursor.builder.stack tops into collection slots, so the
-        // slot must receive the action's CONVERTED term (e.g. Proc::CastInt(0)),
-        // NOT the raw arg (e.g. the Int "0" literal token). Eager firing here
-        // satisfies that invariant.
+        // Phase F.3c.2's parity gate verified this path is byte-equivalent
+        // to the prior persistent path across the narrow gauntlet (6139/0
+        // with zero parity violations).
         //
-        // On arity underflow during the eager fire, set BOTH cursor.inner_state
-        // AND walker state to Error so the cursor aborts cleanly via
-        // cursor_resolution_check :: Drop on the next step.
+        // Required-for-correctness invariant (preserved): the action's
+        // CONVERTED term flows into downstream SpliceIntoCollection
+        // emits via the cursor's sppf_collection_arena (now populated
+        // by emit_splice_into_collection's SPPF-side mirror) instead
+        // of cursor.builder.stack. Class-5 collection-finalize actions
+        // call `b.drain_collection(id)` on the transient SB; the drain
+        // count is returned and decrements cursor.collection_stack_depth
+        // below.
+        //
+        // On elide / arity-mismatch (transient returns None), set BOTH
+        // cursor.inner_state AND walker state to Error so the cursor
+        // aborts cleanly via cursor_resolution_check :: Drop on the
+        // next step.
 
         // C3 dual-mode: capture symbol identity for SPPF, look up arity
         // BEFORE firing (the entry table is invariant; arity is the same
@@ -8155,49 +8185,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             .map(|e| e.arity as usize)
             .unwrap_or(0);
 
-        let builder_mut = Arc::make_mut(&mut cursor.builder);
-        if let Some(message) =
-            Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
-        {
-            // Phase F.3a (2026-05-20): refresh the D8 mirror on the
-            // elide / arity-mismatch error path. fire_action_for_on_builder
-            // always calls `pop_args(arity)` BEFORE invoking action_fn
-            // (wpda_walker.rs:7495). When the action elides (e.g.,
-            // cross-cat-incompatible arg returns from `arg.into_term::<T>()`),
-            // the pop already happened but no push followed — the builder
-            // stack top changed (often to empty or to a non-Term sentinel)
-            // without going through any emit_* helper. Without this
-            // refresh, the mirror retains the PRIOR successful fire's
-            // output_cat, diverging from builder.top_term_type_name().
-            // Empirically verified via:
-            //   F.3a PROBE: emit_fire_action ELIDE at (cat=0, rule=2, arity=1):
-            //     pre_mirror=Some(5) pre_top=Some("Float") pre_len=1 ->
-            //     post_top=None post_len=0
-            // The cursor is about to enter Error state and be dropped by
-            // cursor_resolution_check on the next step, but the mirror
-            // must stay coherent for the F.3b/F.3c D8-read swap.
-            self.refresh_action_output_mirror(cursor);
-            let err = WpdaState::Error { message };
-            cursor.inner_state = err.clone();
-            self.state = err;
-            return;
-        }
-        // Phase F.1 (2026-05-18): re-sync collection_stack_depth with
-        // builder after the action runs. If the action invoked
-        // `drain_collection`, builder.collection_stack.pop_back() reduced
-        // the length; the mirror must follow. For Class-5 rules the
-        // action drains; for Class-2/3 binder-internal rules FireAction
-        // is suppressed upstream so this site is never reached for them
-        // until the outer RuleAt pop's action drains.
-        cursor.collection_stack_depth = cursor.builder.collection_stack_len() as u8;
-        // Phase F.3a (2026-05-20): refresh the D8 mirror from the builder's
-        // actual stack top AFTER the action fires. Reading post-fire
-        // (instead of predicting from ActionEntry.output_cat) handles
-        // test mock engines whose action_fn may not push a Term, AND
-        // keeps the mirror byte-equivalent with the D8 reads at 8555
-        // and 8605. F.3b swaps those reads to consume the mirror.
-        self.refresh_action_output_mirror(cursor);
-
         // SPPF mirror: pop arity children from sppf_stack, intern Packing,
         // intern Symbol(cat_src_idx, lo, hi), link, push Symbol id.
         // Pre-condition: cursor.sppf_stack.len() >= arity. Phase 3.1.1 (Bug P):
@@ -8207,14 +8194,37 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // was structurally redundant with `cursor.sppf_stack.len()` (the
         // preceding format arg) — both grew/shrank in lockstep. Dropped
         // the builder-side report; F.3 will delete the field entirely.
-        debug_assert!(
-            cursor.sppf_stack.len() >= arity,
-            "Bug P: sppf_stack underflow in emit_fire_action: cat={} rule={} arity={} have={}",
-            cat_src_idx,
-            local_rule_idx,
-            arity,
-            cursor.sppf_stack.len(),
-        );
+        // Phase F.3c.3 (2026-05-20): arity-underflow Error handling.
+        // Pre-F.3c.3, fire_action_for_on_builder's outer arity check
+        // (wpda_walker.rs:~7473) detected `builder.len() < arity` and
+        // returned `Some(error)`; emit_fire_action propagated it as
+        // Error state. Post-F.3c.3 the persistent path is gone, so we
+        // detect underflow here against `cursor.sppf_stack.len()` (the
+        // structural mirror of arg count). Bug P era's debug_assert!
+        // is dropped — arity underflow on a legitimate engine emission
+        // is a runtime error (test
+        // `commit_winner_state_overwrite_on_action_arity_underflow`),
+        // NOT an internal SPPF-mirror corruption.
+        if cursor.sppf_stack.len() < arity
+            && self
+                .engine
+                .action_for(cat_src_idx, local_rule_idx)
+                .is_some()
+        {
+            let message = format!(
+                "semantic-action arity mismatch at rule (src={}, rule={}): \
+                 expected {} args but cursor.sppf_stack held {}",
+                cat_src_idx,
+                local_rule_idx,
+                arity,
+                cursor.sppf_stack.len(),
+            );
+            let err = WpdaState::Error { message };
+            cursor.inner_state = err.clone();
+            self.state = err;
+            cursor.last_action_output_cat = None;
+            return;
+        }
         if cursor.sppf_stack.len() >= arity {
             // Phase F.8 (2026-05-18): walk back from the arity-slice top
             // to include consecutive TriggerTerminal frames that belong to
@@ -8273,76 +8283,93 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 .first()
                 .and_then(|&c| self.sppf.span_lo(c))
                 .unwrap_or(hi_pos);
-            // Bug A fix: store global_rule_idx (cat<<16|local) so
-            // realization can decode parent cat without scanning.
-            //
-            // Phase C.3 (2026-05-17): consume `cursor.pending_packing_weight`
-            // and pass it as this production's weight. Reset the field to
-            // `W::one_ref()` so subsequent productions start fresh per
-            // Q1.A+ in `~/.claude/plans/phase-c-sppf-w-resolved.md` §2.3.
+
+            // Phase F.3c.3 (2026-05-20): fire on transient SB BEFORE
+            // SPPF intern so elide / arity-mismatch can early-return
+            // without interning a spurious Packing/Symbol. The transient
+            // is the SOLE fire path post-F.3c.3.
+            let has_action = self
+                .engine
+                .action_for(cat_src_idx, local_rule_idx)
+                .is_some();
+            let transient_result =
+                self.fire_action_via_transient(cursor, symbol, &children);
+            match (has_action, transient_result) {
+                (true, None) => {
+                    // Elide / arity mismatch — action_fn returned without
+                    // pushing the expected single Term. Mirror the prior
+                    // persistent path's error semantics: set Error state,
+                    // clear mirror, return. cursor_resolution_check will
+                    // Drop on next step.
+                    let message = format!(
+                        "semantic-action elide / arity mismatch at rule \
+                         (src={}, rule={}): action_fn returned without \
+                         pushing the expected single Term — typically \
+                         cross-cat-incompatible arg (`arg.into_term::<T>()` \
+                         returned None) or arity underflow",
+                        cat_src_idx, local_rule_idx,
+                    );
+                    let err = WpdaState::Error { message };
+                    cursor.inner_state = err.clone();
+                    self.state = err;
+                    cursor.last_action_output_cat = None;
+                    return;
+                }
+                (false, None) => {
+                    // No action registered for this rule — no-op fire.
+                    // Persistent path (pre-F.3c.3) also treated this as
+                    // a no-op (fire_action_for_on_builder's outer
+                    // `if let Some(entry) = engine.action_for(...) {}
+                    // else { None }` returned None silently). No mirror
+                    // update, no memo entry. Intern the empty-result
+                    // Packing+Symbol below so the SPPF still records
+                    // the production.
+                    cursor.last_action_output_cat = None;
+                }
+                (_, Some((result_arc, output_cat, drains_count))) => {
+                    // Successful fire. Update mirror + collection depth
+                    // from transient's post-fire state.
+                    cursor.last_action_output_cat = output_cat;
+                    cursor.collection_stack_depth = cursor
+                        .collection_stack_depth
+                        .saturating_sub(drains_count as u8);
+                    // SPPF intern the Packing+Symbol first to get symbol_id
+                    // for the memo key.
+                    let packing_weight = std::mem::replace(
+                        &mut cursor.pending_packing_weight,
+                        W::one_ref(),
+                    );
+                    let packing_id = self.sppf.intern_packing(
+                        global_rule_idx,
+                        children,
+                        packing_weight,
+                    );
+                    let symbol_id =
+                        self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
+                    self.sppf.link_packing_to_symbol(symbol_id, packing_id);
+                    cursor.sppf_stack.push(symbol_id);
+                    // Memoize the realized result Arc keyed by symbol_id
+                    // so subsequent fires that consume this Symbol as a
+                    // child (via reconstruct_action_arg) find it.
+                    let memo = Arc::make_mut(&mut cursor.sppf_symbol_terms);
+                    memo.push((symbol_id, result_arc));
+                    return;
+                }
+            }
+            // Reachable only when (has_action == false, transient_result == None):
+            // no-action no-op. Intern the empty Packing+Symbol so the
+            // SPPF still records the production shape (consistent with
+            // the prior persistent path's behavior).
             let packing_weight = std::mem::replace(
                 &mut cursor.pending_packing_weight,
                 W::one_ref(),
             );
-            // Phase F.3c.2 (2026-05-20): clone children (cheap Vec<u32>)
-            // for the post-intern parity gate + memo update. The clone is
-            // ONLY needed during F.3c.2 (the parity gate). F.3c.3 will
-            // use the original children Vec inline as the SOLE fire path.
-            let children_for_transient = children.clone();
             let packing_id = self
                 .sppf
                 .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
             cursor.sppf_stack.push(symbol_id);
-
-            // Phase F.3c.2 (2026-05-20): PARITY GATE + memo update.
-            //
-            // Run the transient-SB fire path alongside the persistent one
-            // (which already executed at line ~7920). The transient is
-            // authoritative-by-parity: if it produces a result Arc, store
-            // in cursor.sppf_symbol_terms keyed by the just-interned
-            // symbol_id so subsequent fires consuming this Symbol via
-            // reconstruct_action_arg find the realized Term.
-            //
-            // Gate the parity assert on `action_for(cat, rule).is_some()`
-            // — test-mock engines (ScriptedEngine, AtomicIntEngine) have
-            // rules without registered action_fns; persistent fire treats
-            // those as no-ops; transient fire returns None at the same
-            // point; no comparison is meaningful.
-            //
-            // F.3c.3 will swap: delete the persistent fire path,
-            // promote the transient fire to authoritative.
-            let transient_result =
-                self.fire_action_via_transient(cursor, symbol, &children_for_transient);
-            if let Some(result_arc) = transient_result {
-                // Memo update — always runs (even in release) so F.3c.3's
-                // swap finds the realized Arc already cached for this
-                // Symbol.
-                let memo = Arc::make_mut(&mut cursor.sppf_symbol_terms);
-                memo.push((symbol_id, result_arc));
-            } else if self
-                .engine
-                .action_for(cat_src_idx, local_rule_idx)
-                .is_some()
-            {
-                // Action exists per the engine, but the transient path
-                // returned None. The persistent path SUCCEEDED (we
-                // wouldn't be here otherwise). This is a divergence.
-                debug_assert!(
-                    false,
-                    "F.3c.2 PARITY VIOLATION: persistent fire succeeded at \
-                     (cat={}, rule={}) but transient fire returned None \
-                     (elide / arity mismatch). children.len()={}",
-                    cat_src_idx,
-                    local_rule_idx,
-                    children_for_transient.len(),
-                );
-            }
-            // else: no action registered — persistent path was a no-op
-            // (fire_action_for_on_builder returned None via the outer
-            // `if let Some(entry) = engine.action_for(...) {} else { None }`).
-            // No memo entry possible; no parity to assert.
         }
     }
 
