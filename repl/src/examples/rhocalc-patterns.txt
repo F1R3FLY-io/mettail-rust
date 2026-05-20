@@ -15,8 +15,9 @@
 // - `Nil` is the zero process; `{}` is the empty `Map` literal.
 // - Map literals use brace+colon: `{1:2, 3:4}` (or `Map()` for empty).
 // - Set literals use `Set(1, 2, 3)` / `Set()`; `m.keys()` returns a `Set`.
-// - Map methods: `m.get(k)`, `m.set(k,v)`, `m.contains(k)`, `m.delete(k)`, `m.union(n)`.
-//   `values` remains prefix-form for now; collection sizes use `.size()` / `.length()`.
+// - Map methods: `m.get(k)`, `m.set(k,v)`, `m.contains(k)`, `m.delete(k)`, `m.union(n)`,
+//   `m.keys()`, `m.values()`, `m.size()`.
+// - List/Bag/Set/Pathmap collection ops use method-call sugar only (no prefix builtins).
 
 // =============================================================================
 // Basic communication
@@ -88,8 +89,8 @@ exec a!(2) | b!(3) | for(x <- a & y <- b){ *(x) + *(y) }
 exec a!(0) | for(x <- a){*(x)}
 exec a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){*(x) | *(y) | *(z)}
 exec a!(0) | new (x) in { for(z <- a){*(z)} }
-exec a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ concat(*(x), *(y)) }
-exec a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ union(*(x), *(y)) }
+exec a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ (*(x)).concat(*(y)) }
+exec a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ (*(x)).union(*(y)) }
 
 // =============================================================================
 // REPL env compatibility samples (braced legacy examples)
@@ -97,7 +98,7 @@ exec a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ union(*(x), *(y))
 exec { a!(0) | for(x <- a){*(x)}}
 exec {a!(p) | b!(q) | c!(r) | for(x <- a & y <- b & z <- c){{*(x) | *(y) | *(z)}}}
 exec {a!(0) | new (x) in { for(z <- a){*(z)}} }
-exec { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | for(x <- a & y <- b){ concat(*(x), *(y)) } }
+exec { a!( [ 1, 2 ] ) | b!( [ 3, 4 ] ) | for(x <- a & y <- b){ (*(x)).concat(*(y)) } }
 
 // =============================================================================
 // Map literal + method-call sugar
@@ -108,4 +109,4 @@ exec {1: 10}.contains(1)
 exec {1: 10, 2: 20}.delete(1)
 exec {1: 10}.union({2: 20})
 exec Map().size()
-exec keys({1: 10, 2: 20})
+exec {1: 10, 2: 20}.keys()

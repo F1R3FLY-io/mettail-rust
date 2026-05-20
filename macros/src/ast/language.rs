@@ -705,11 +705,11 @@ fn parse_collection_delimiters_dict(
         syn::Error::new(dict.span(), "collection delimiter block requires sep: \"...\"")
     })?;
 
-    if type_name == "Map" || type_name == "Pathmap" {
+    if type_name == "Map" {
         let kvs = key_val_sep.ok_or_else(|| {
             syn::Error::new(
                 dict.span(),
-                "Map and Pathmap collection delimiter blocks require key_val_sep: \"...\"",
+                "Map collection delimiter blocks require key_val_sep: \"...\"",
             )
         })?;
         Ok(CollectionDelimiters {
@@ -717,6 +717,13 @@ fn parse_collection_delimiters_dict(
             close_parts,
             sep,
             key_val_sep: Some(kvs),
+        })
+    } else if type_name == "Pathmap" {
+        Ok(CollectionDelimiters {
+            open_parts,
+            close_parts,
+            sep,
+            key_val_sep,
         })
     } else if key_val_sep.is_some() {
         Err(syn::Error::new(

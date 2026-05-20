@@ -25,13 +25,12 @@ identically at the source level.
 - **Phase 2:** `List` (`[…]` literals; `.length()`, `.nth(i)`, `.concat(l)`
   method-call sugar) and `Bag` (kept as `#{…}#` — no Rholang counterpart —
   with `.size()`, `.count(e)`, `.diff(b)`, `.remove(e)`, `.union(b)` method
-  sugar). `Set` is deferred.
+  sugar). `Set`, `Pathmap`, and Zipper method surfaces follow the same pattern.
 
-The change is purely surface-level: AST, semantics, equations, congruence, and
-rewrite rules are unchanged. The new surface forms are syntactic sugar that
-`fold` to the existing prefix builtins (`GetMap`, `PutMap`, `HasMap`,
-`KeysMap`, `ValuesMap`, `DeleteMap`, `MergeMap`, `Len`, `ElemList`,
-`ConcatList`, `UnionBag`, `DiffBag`, `RemoveBag`, `CountBag`).
+Semantics, equations, congruence, and rewrite rules are unchanged.
+User-facing collection operations are receiver-first methods only; each
+method-call rule (`MGet`, `LNth`, `RZGetLeaf`, …) is the canonical AST
+constructor and carries its own `fold` semantics inline.
 
 ---
 
@@ -123,21 +122,21 @@ MapEmpty . |- "Map" "(" ")" : Proc ![{
 }] fold;
 ```
 
-### 3.4 Method-call sugar
+### 3.4 Method-call surface
 
-Eight method-call rules `fold` into existing builtins. Each preserves the
-exact semantics of its prefix counterpart:
+Eight method-call rules are the canonical AST nodes for Map operations.
+Each preserves the exact semantics of the former prefix builtins:
 
-| Method form | Lowering |
+| Method form | AST node |
 |-------------|----------|
-| `m.get(k)` | `GetMap(m, k)` |
-| `m.set(k, v)` | `PutMap(m, k, v)` |
-| `m.contains(k)` | `HasMap(m, k)` |
-| `m.delete(k)` | `DeleteMap(m, k)` |
-| `m.union(n)` | `MergeMap(m, n)` |
-| `m.size()` | `CastInt(NumLit(entries.len()))` (constant fold) |
-| `m.keys()` | `KeysMap(m)` |
-| `m.values()` | `ValuesMap(m)` |
+| `m.get(k)` | `MGet(m, k)` |
+| `m.set(k, v)` | `MSet(m, k, v)` |
+| `m.contains(k)` | `MContains(m, k)` |
+| `m.delete(k)` | `MDelete(m, k)` |
+| `m.union(n)` | `MUnion(m, n)` |
+| `m.size()` | `MSize(m)` → `CastInt(NumLit(...))` when folded |
+| `m.keys()` | `MKeys(m)` |
+| `m.values()` | `MValues(m)` |
 
 These rules use the `[mixfix-trigger leading-terminal]` pattern introduced
 into `prattail` to permit chained method calls of the form
@@ -163,16 +162,16 @@ literal change is needed in Phase 2. `Bag` keeps its rhocalc-only `#{a|b|…}#`
 spelling — Rholang has no bag type — but gains a method-call surface for
 consistency with `Map`/`List`.
 
-| Method form | Lowering | Receiver |
+| Method form | AST node | Receiver |
 |-------------|----------|----------|
-| `l.length()` | `Len(l)` | List |
-| `l.nth(i)` | `ElemList(l, i)` | List |
-| `l.concat(r)` | `ConcatList(l, r)` | List |
-| `b.size()` | `Len(b)` (extended below) | Bag (& Map via `MSize`) |
-| `b.count(e)` | `CastInt(Int::CountBag(b, e))` | Bag |
-| `b.diff(c)` | `DiffBag(b, c)` | Bag |
-| `b.remove(e)` | `RemoveBag(b, e)` | Bag |
-| `b.union(c)` | `UnionBag(b, c)` *or* `MergeMap(a, b)` | Bag *or* Map (see below) |
+| `l.length()` | `LLength(l)` | List |
+| `l.nth(i)` | `LNth(l, i)` | List |
+| `l.concat(r)` | `LConcat(l, r)` | List |
+| `b.size()` | `MSize(b)` (polymorphic) | Bag (& Map) |
+| `b.count(e)` | `BCount(b, e)` | Bag |
+| `b.diff(c)` | `BDiff(b, c)` | Bag / Set |
+| `b.remove(e)` | `BRemove(b, e)` | Bag |
+| `b.union(c)` | `MUnion(b, c)` | Bag / Map / Set / Pathmap |
 
 Each rule is a zero/one/two-operand-after-trigger mixfix that reuses the same
 prattail `leading_terminals` dispatch as the Map method sugars (§3.4). Unary

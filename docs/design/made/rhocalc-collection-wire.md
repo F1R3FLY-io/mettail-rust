@@ -37,7 +37,7 @@ Results are injected as `CastBytes` with a `Bytes::StringLit` **lowercase hex** 
 3. `Par::encode_to_vec()` (prost) produces wire bytes.
 4. Hex-encode bytes into `Bytes::StringLit` and wrap with `CastBytes`.
 
-Set/map entries are sorted by encoded `Par` bytes before serialization. Bag multiplicity is preserved by repeating element `Par` values in an `EList`.
+Set/map/bag entries are sorted by encoded `Par` bytes before serialization (bags repeat each sorted element `Par` according to multiplicity in an `EList`).
 
 ---
 

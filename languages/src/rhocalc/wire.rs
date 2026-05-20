@@ -105,11 +105,15 @@ fn proc_to_par(proc: &Proc) -> Result<Par, WireError> {
         Proc::CastBag(bag) => match bag.as_ref() {
             Bag::BagLit(elements) => {
                 let normalized = normalize_bag_elements(elements);
+                let mut entries: Vec<(Par, usize)> = normalized
+                    .iter()
+                    .map(|(elem, count)| Ok((proc_to_par(elem)?, count)))
+                    .collect::<Result<Vec<_>, WireError>>()?;
+                entries.sort_by_key(|(par, _)| par.encode_to_vec());
                 let mut ps = Vec::new();
-                for (elem, count) in normalized.iter() {
-                    let encoded = proc_to_par(elem)?;
+                for (par, count) in entries {
                     for _ in 0..count {
-                        ps.push(encoded.clone());
+                        ps.push(par.clone());
                     }
                 }
                 Ok(Par {
@@ -205,6 +209,6 @@ mod tests {
         bag.insert(Proc::CastInt(Box::new(Int::NumLit(2))));
         let proc = Proc::CastBag(Box::new(Bag::BagLit(bag)));
         let bytes = collection_to_bytes(&proc).expect("encode bag");
-        assert_eq!(hex::encode(bytes), "2a15a201120a042a0210040a042a0210040a042a021002");
+        assert_eq!(hex::encode(bytes), "2a15a201120a042a0210020a042a0210040a042a021004");
     }
 }

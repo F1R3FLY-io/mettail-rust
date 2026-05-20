@@ -22,12 +22,12 @@ read = ^loc.{^ret.{for(x <- loc){loc!(*(x)) | ret!(*(x))}}}
 write = ^loc.{^val.{for(x <- loc){loc!(val)}}}
 
 // List, Bag, and Map (communication then operation, like add)
-list_concat_comm = a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ concat(*(x), *(y)) }
+list_concat_comm = a!([ 1, 2 ]) | b!([ 3, 4 ]) | for(x <- a & y <- b){ (*(x)).concat(*(y)) }
 list_len_comm = a!([ 1, 2, 3 ]) | for(x <- a){ (*(x)).length() }
-list_at_comm = a!([ 1, 2, 3 ]) | b!( 1 ) | for(lst <- a & i <- b){ at(*(lst), *(i)) }
-bag_union_comm = a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ union(*(x), *(y)) }
-bag_count_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ count(*(b), *(e)) }
-bag_remove_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ remove(*(b), *(e)) }
+list_at_comm = a!([ 1, 2, 3 ]) | b!( 1 ) | for(lst <- a & i <- b){ (*(lst)).nth(*(i)) }
+bag_union_comm = a!(#{ 1 | 2 }#) | b!(#{ 2 | 3 }#) | for(x <- a & y <- b){ (*(x)).union(*(y)) }
+bag_count_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ (*(b)).count(*(e)) }
+bag_remove_comm = a!(#{ 1 | 2 | 2 }#) | c!( 2 ) | for(b <- a & e <- c){ (*(b)).remove(*(e)) }
 
 // List literal + method-call sugar (Rholang style)
 list_length  = [1, 2, 3].length()
