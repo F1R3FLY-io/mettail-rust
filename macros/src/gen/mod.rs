@@ -1387,6 +1387,134 @@ pub fn spec_required_coll_type<'a>(
     })
 }
 
+/// Spec-derived (Phase F.12 fix, 2026-05-20): detect whether a unary-prefix
+/// constructor's `Display(Cat::Label(NumericLeaf(0)))` is observationally
+/// equivalent to a different parse alternative produced by atomic-lex.
+///
+/// Background: the parser's `lex_dag` Forks on inputs like `"-0"` into
+/// (a) atomic-lex arm: NumericLit(-0) which integer-normalizes to
+/// NumericLit(0), and (b) Pratt-Neg arm: Neg(NumericLit(0)). Both arms
+/// land in `parse_via_wpda_all`'s alt set. `parse_structured` elects
+/// one (atomic wins per F.10 mandate, commit `19d927a`). Post-F.12
+/// (`f436eb8`) the W3 lossy display was dropped, so the two arms now
+/// render differently: Display(Neg(NumericLit(0))) = "-0" but
+/// Display(NumericLit(0)) = "0". Strict roundtrip
+/// `assert_eq!(Display(Neg(NumericLit(0))), Display(parse("-0")))`
+/// therefore fails when atomic arm wins.
+///
+/// This predicate identifies constructors where the issue manifests so
+/// the test generator can emit a multi-alt-set assertion instead of the
+/// strict elected-parse assertion. The multi-alt assertion checks that
+/// the constructed-AST display IS among the parser's alts — the
+/// principled contract that the parser preserves all interpretations
+/// (per `feedback_never_disambiguate_early.md`).
+///
+/// Returns `true` iff ALL of the following hold:
+///   1. The rule's syntax begins with a Terminal `"-"` token.
+///   2. The Terminal is followed by exactly one NonTerminal field (the leaf).
+///   3. The leaf's category has a `literals { ... }` block entry (i.e., a
+///      lex pattern) AND that pattern admits a leading `-` byte from its
+///      start state (signed numeric literal).
+///
+/// For Calculator's `Neg . a:Int |- "-" a : Int`, the Int pattern is
+/// `-?(0b...|...)i32?` → admits leading dash → returns `true`. Same for
+/// `NegBigInt`, `NegBigRat`, `NegFixed`, `NegFloat`, and Rhocalc's
+/// `NegInt`.
+///
+/// Returns `false` for rules that don't match this shape — e.g., `BitNotInt`
+/// (prefix is `"bitnot"`, not `"-"`), `Not` over Bool (Bool pattern doesn't
+/// admit leading dash), `Fact` (postfix, no leading terminal), `AddInt`
+/// (two-arg, not unary).
+pub fn constructor_admits_atomic_lex_collision(
+    rule: &GrammarRule,
+    language: &LanguageDef,
+) -> bool {
+    // Step 1: Extract (prefix_terminal, leaf_category) shape.
+    let (prefix_str, leaf_cat) = match extract_unary_prefix_shape(rule) {
+        Some(p) => p,
+        None => return false,
+    };
+    // Only `"-"` prefixes can collide with atomic-lex signed numeric
+    // tokens. Other prefixes (`"bitnot"`, `"not"`, `"sin"`, etc.) are
+    // alphabetic and cannot start a numeric atomic-lex token.
+    if prefix_str != "-" {
+        return false;
+    }
+    // Step 2: Find the leaf category's lex pattern via `token_defs`.
+    // Literal-block entries store the user-supplied regex on the TokenDef
+    // whose `category` matches the leaf.
+    let pattern = language
+        .token_defs
+        .iter()
+        .find(|td| td.category.as_ref() == Some(&leaf_cat))
+        .map(|td| td.pattern.clone());
+    let pattern = match pattern {
+        Some(p) => p,
+        None => return false,
+    };
+    // Step 3: Does the pattern admit a leading `-` byte from its start
+    // state? `extract_constraints(pattern).signed` walks the minimized
+    // DFA's start-state byte-class for `0x2D` and returns whether it
+    // transitions to a non-dead state.
+    let constraints = crate::gen::test_gen::automaton_walk::classify::extract_constraints(&pattern);
+    constraints.signed
+}
+
+/// Helper for `constructor_admits_atomic_lex_collision`: extract a
+/// rule's `(prefix_terminal_string, leaf_category)` if the rule has the
+/// shape `Label . a:LeafCat |- "PREFIX" a : ResultCat` (term-context
+/// syntax) OR `Label . "PREFIX" LeafCat ;` (old BNFC syntax).
+///
+/// Returns `None` for any other shape (more than one field, no leading
+/// terminal, binders, collections, optionals, etc.).
+fn extract_unary_prefix_shape(rule: &GrammarRule) -> Option<(String, Ident)> {
+    // Term-context style (`Neg . a:Int |- "-" a : Int`).
+    if let Some(ctx) = &rule.term_context {
+        // Must have exactly one Simple parameter.
+        if ctx.len() != 1 {
+            return None;
+        }
+        let leaf_cat = match &ctx[0] {
+            mettail_ast::grammar::TermParam::Simple { ty, .. } => {
+                // Extract the base category ident from the TypeExpr.
+                if let mettail_ast::types::TypeExpr::Base(ident) = ty {
+                    ident.clone()
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+        // Syntax pattern must start with a Literal followed by a single Param.
+        let pattern = rule.syntax_pattern.as_ref()?;
+        if pattern.len() != 2 {
+            return None;
+        }
+        let prefix = match &pattern[0] {
+            mettail_ast::grammar::SyntaxExpr::Literal(s) => s.clone(),
+            _ => return None,
+        };
+        match &pattern[1] {
+            mettail_ast::grammar::SyntaxExpr::Param(_) => {}
+            _ => return None,
+        }
+        return Some((prefix, leaf_cat));
+    }
+    // Old BNFC style (`Neg . "-" Int : Int`).
+    if rule.items.len() != 2 {
+        return None;
+    }
+    let prefix = match &rule.items[0] {
+        GrammarItem::Terminal(s) => s.clone(),
+        _ => return None,
+    };
+    let leaf_cat = match &rule.items[1] {
+        GrammarItem::NonTerminal { ident, .. } => ident.clone(),
+        _ => return None,
+    };
+    Some((prefix, leaf_cat))
+}
+
 /// Returns the nonterminal kind when the rule is a literal rule (Integer, Boolean, StringLiteral, FloatLiteral).
 /// Used for payload-type selection (clone vs copy) and for signed-numeric logic (unary minus).
 pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<NonTerminalKind> {

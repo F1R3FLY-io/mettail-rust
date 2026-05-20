@@ -132,22 +132,57 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                         .into_iter()
                         .map(|f| f.expect("checked above"))
                         .collect();
+                    // Phase F.12 fix (2026-05-20): for unary-prefix
+                    // constructors whose `Display(Label(NumericLeaf(0)))`
+                    // is observationally equivalent to an atomic-lex
+                    // alternative (e.g., `Neg(NumLit(0))` displays "-0",
+                    // which atomic-lex parses as `NumLit(-0) == NumLit(0)`),
+                    // the strict `assert_eq!(displayed, re_displayed)`
+                    // contract is ill-posed: the elected single-result
+                    // parse legitimately picks the atomic arm (per F.10
+                    // user mandate at commit `19d927a`), losing the
+                    // structural Neg wrapping in re-display.
+                    //
+                    // Use a multi-alt-set assertion via `parse_via_wpda_all`
+                    // for these constructors — assert the constructed
+                    // AST's display IS in the parser's alt set. This is
+                    // the principled contract: the parser preserves all
+                    // interpretations (per `feedback_never_disambiguate_early.md`).
+                    let assertion = if crate::gen::constructor_admits_atomic_lex_collision(rule, language) {
+                        format!(
+                            "    if let Ok(alts) = {}::parse_via_wpda_all(&displayed) {{\n\
+                             \x20       let alt_displays: Vec<String> = alts.iter().map(|a| format!(\"{{}}\", a)).collect();\n\
+                             \x20       assert!(\n\
+                             \x20           alt_displays.iter().any(|d| d == &displayed),\n\
+                             \x20           \"Multi-alt roundtrip failed for {}: constructed display {{:?}} not among parse alts {{:?}}\",\n\
+                             \x20           displayed, alt_displays,\n\
+                             \x20       );\n\
+                             \x20   }}\n",
+                            cat,
+                            lbl_str,
+                        )
+                    } else {
+                        format!(
+                            "    if let Ok(parsed) = {}::parse(&displayed) {{\n\
+                             \x20       let re_displayed = format!(\"{{}}\", parsed);\n\
+                             \x20       assert_eq!(displayed, re_displayed,\n\
+                             \x20           \"Roundtrip failed for {}: {{}} != {{}}\", displayed, re_displayed);\n\
+                             \x20   }}\n",
+                            cat,
+                            lbl_str,
+                        )
+                    };
                     Some(format!(
                         "    mettail_runtime::clear_var_cache();\n\
                          \x20   let term = {}::{}({});\n\
                          \x20   let displayed = format!(\"{{}}\", term);\n\
                          \x20   assert!(!displayed.is_empty(), \"Display should produce non-empty output for {}\");\n\
-                         \x20   if let Ok(parsed) = {}::parse(&displayed) {{\n\
-                         \x20       let re_displayed = format!(\"{{}}\", parsed);\n\
-                         \x20       assert_eq!(displayed, re_displayed,\n\
-                         \x20           \"Roundtrip failed for {}: {{}} != {{}}\", displayed, re_displayed);\n\
-                         \x20   }}\n",
+                         {}",
                         cat,
                         lbl_str,
                         field_exprs.join(", "),
                         lbl_str,
-                        cat,
-                        lbl_str,
+                        assertion,
                     ))
                 } else {
                     None // Too complex to construct statically
