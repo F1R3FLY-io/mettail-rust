@@ -571,6 +571,24 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// Append-only.
     #[allow(dead_code)]
     sppf_predicate_arena: Vec<Arc<dyn Any + Send + Sync>>,
+    /// Phase F.13 H1 (2026-05-20): walker-global memo of realized AST
+    /// payloads keyed by SPPF Symbol id. Promoted from per-cursor
+    /// `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global HashMap to
+    /// eliminate the per-cursor Arc<Vec> CoW that profile data identified
+    /// as a 7.3% CPU hotspot at the F.13 baseline (perf shows
+    /// `Arc<Vec<(u32, Arc<dyn Any>)>>::clone_from_ref_in` at 3.75% +
+    /// `::drop_slow` at 3.54% — together ~7.3% of total CPU).
+    ///
+    /// SPPF SymbolIds are GLOBAL across cursors — Symbol-dedup at
+    /// `(nt, lo, hi)` makes any two cursors that compute the same Symbol
+    /// produce identical realized terms. Per-cursor memo was therefore
+    /// over-cautious: a walker-global memo is semantically equivalent
+    /// while eliminating O(cursors × memo_size) Arc<Vec> clones.
+    ///
+    /// Written by `emit_fire_action` on successful action fires;
+    /// consumed by `reconstruct_action_arg` for `SppfNode::Symbol` lookups.
+    /// Reset by `reset()`.
+    sppf_symbol_terms: std::collections::HashMap<crate::sppf::SppfId, Arc<dyn Any + Send + Sync>>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -1251,24 +1269,12 @@ pub struct BranchCursor<W: SemiringRef> {
     /// ConfigKey discrimination because any two cursors with identical
     /// splice sequence reach identical arena content by construction.
     pub sppf_collection_arena: Arc<Vec<Vec<crate::sppf::SppfId>>>,
-    /// Phase F.3c.2 (2026-05-20): per-cursor memo of realized AST payloads
-    /// keyed by SPPF Symbol id. Populated by `emit_fire_action` immediately
-    /// after each successful action_fn fire, consumed by subsequent fires
-    /// that traverse the same Symbol as a child during arg reconstruction.
-    ///
-    /// Replaces `cursor.builder.stack` as the carrier of "what AST nodes
-    /// have been constructed in this parse path." The `Arc<Vec>` wrapper
-    /// matches `sppf_collection_arena`'s CoW semantics: Fork-arm children
-    /// inherit via `Arc::clone(&parent.sppf_symbol_terms)` (O(1) refcount
-    /// bump); first write in a child triggers `Arc::make_mut` deep clone.
-    ///
-    /// Stored as `Vec<(SppfId, Arc<dyn Any + Send + Sync>)>` instead of
-    /// `HashMap` because lookup populations are small (≤ depth of parse,
-    /// ~100 for trampoline depth=100). F.3c.8 promotes to HashMap if
-    /// benchmarks warrant.
-    ///
-    /// Not part of `ConfigKey` — operational per-cursor state.
-    pub sppf_symbol_terms: Arc<Vec<(crate::sppf::SppfId, Arc<dyn std::any::Any + Send + Sync>)>>,
+    // Phase F.13 H1 (2026-05-20): `sppf_symbol_terms` PROMOTED from
+    // per-cursor `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global
+    // `HashMap<SppfId, Arc<dyn Any>>` at `WpdaWalker::sppf_symbol_terms`.
+    // Per-cursor field DELETED. SPPF SymbolIds are global (Symbol-dedup
+    // at `(nt, lo, hi)`); per-cursor memos were redundantly cloning
+    // immutable shared data via the Arc<Vec> CoW.
 
     /// Phase F.3a/b (2026-05-20): walker-maintained mirror of
     /// `cursor.builder.top_term_type_name().and_then(|tn| cat_of_type_name(tn))`.
@@ -1374,8 +1380,8 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
             // Phase F.3a (2026-05-20): Option<u16> is Copy.
             last_action_output_cat: self.last_action_output_cat,
-            // Phase F.3c.2 (2026-05-20): Arc bump — CoW on first write.
-            sppf_symbol_terms: Arc::clone(&self.sppf_symbol_terms),
+            // Phase F.13 H1 (2026-05-20): sppf_symbol_terms field DELETED;
+            // memo is walker-global now.
         }
     }
 }
@@ -1469,7 +1475,6 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Phase F.3a (2026-05-20): fresh cursor has no action yet.
             last_action_output_cat: None,
             // Phase F.3c.2 (2026-05-20): fresh empty memo.
-            sppf_symbol_terms: Arc::new(Vec::new()),
         }
     }
 
@@ -1542,7 +1547,6 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Phase F.3a (2026-05-20): inherit parent's mirror.
             last_action_output_cat: parent.last_action_output_cat,
             // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
-            sppf_symbol_terms: Arc::clone(&parent.sppf_symbol_terms),
         }
     }
 }
@@ -2156,6 +2160,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
+            // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
+            sppf_symbol_terms: std::collections::HashMap::new(),
         }
     }
 
@@ -2209,6 +2215,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
+            // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
+            sppf_symbol_terms: std::collections::HashMap::new(),
         }
     }
 
@@ -2257,6 +2265,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // Option C / C2: fresh empty SPPF arena.
             sppf: crate::sppf::Sppf::new(),
             sppf_predicate_arena: Vec::new(),
+            // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
+            sppf_symbol_terms: std::collections::HashMap::new(),
         }
     }
 
@@ -2290,6 +2300,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // token source slot defensively — the source from the prior
         // parse may be dropped by the time reset() is called.
         self.mutable_token_source = None;
+        // Phase F.13 H1 (2026-05-20): clear walker-global memo. SPPF
+        // SymbolIds are per-parse (the Sppf arena is reset implicitly by
+        // the engine's input change); stale memo entries would leak Arc
+        // payloads across parses.
+        self.sppf_symbol_terms.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -2695,8 +2710,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // Phase F.3a (2026-05-20): fresh cursor.
                     last_action_output_cat: None,
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
-                    sppf_symbol_terms: Arc::new(Vec::new()),
-                }];
+                        }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
                     pos: self.pos,
@@ -4302,8 +4316,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // mirror — the dropped cursor's action history is gone.
                     last_action_output_cat: None,
                     // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
-                    sppf_symbol_terms: Arc::new(Vec::new()),
-                });
+                        });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
                 // Phase 5.6-tail-B (2026-05-12): install the cursor's
@@ -4929,7 +4942,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -5010,7 +5022,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -5102,7 +5113,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -5170,7 +5180,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -5231,7 +5240,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -5325,7 +5333,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5398,7 +5405,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5472,7 +5478,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -5581,7 +5586,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -5681,7 +5685,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Phase F.10 (2026-05-19): mirror the standard
                             // `WpdaStepAction::ConsumeAndPush` arm's
@@ -5827,7 +5830,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
-                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -7257,7 +7259,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
-            sppf_symbol_terms: winner.sppf_symbol_terms,
         }];
     }
 
@@ -7814,19 +7815,16 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 }
             }
             SppfNode::Symbol { .. } => {
-                // Look up the realized Term in the cursor's memo. Each
-                // successful emit_fire_action stores its result Arc here
-                // keyed by the freshly-interned Symbol id. If the cursor
-                // didn't run a prior fire on this Symbol (cross-Fork-arm
-                // dedup hit), return None — F.3c.3 may need a realize
-                // fallback then, but during F.3c.2's parity gate the
-                // memo is populated for every fire this cursor's lineage
-                // ran, so a miss is itself a divergence signal.
-                cursor
-                    .sppf_symbol_terms
-                    .iter()
-                    .find(|(s, _)| *s == sid)
-                    .map(|(_, arc)| ActionArg::Term {
+                // Phase F.13 H1 (2026-05-20): look up in walker-global
+                // memo. SPPF SymbolIds are global (Symbol-dedup at
+                // `(nt, lo, hi)`), so any cursor that previously fired
+                // an action on this Symbol stored the result. Single
+                // HashMap lookup replaces the per-cursor Vec scan; the
+                // `cursor` parameter is unused for this arm.
+                let _ = cursor;
+                self.sppf_symbol_terms
+                    .get(&sid)
+                    .map(|arc| ActionArg::Term {
                         value: Arc::clone(arc),
                         type_name: "F3c2Reconstructed",
                     })
@@ -8245,11 +8243,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
                     self.sppf.link_packing_to_symbol(symbol_id, packing_id);
                     Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
-                    // Memoize the realized result Arc keyed by symbol_id
-                    // so subsequent fires that consume this Symbol as a
-                    // child (via reconstruct_action_arg) find it.
-                    let memo = Arc::make_mut(&mut cursor.sppf_symbol_terms);
-                    memo.push((symbol_id, result_arc));
+                    // Phase F.13 H1 (2026-05-20): write to walker-global
+                    // memo. Insert is idempotent — same SymbolId from a
+                    // different cursor yields an equivalent result_arc.
+                    // Using insert (not entry().or_insert) because the
+                    // fresh result is fully realized whereas a stale
+                    // entry from a prior parse (cleared by reset) would
+                    // not exist within a single parse session.
+                    self.sppf_symbol_terms.insert(symbol_id, result_arc);
                     return;
                 }
             }
