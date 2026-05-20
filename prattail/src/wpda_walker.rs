@@ -475,10 +475,15 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// or `AmbiguityBudget(n)` (structured-error overflow,
     /// mandate-compliant). See `CursorBoundingMode` docs for details.
     bounding_mode: crate::wpda_runtime::CursorBoundingMode,
-    /// Phase A.1: walker-owned accumulator for captured parse artifacts
-    /// (tokens, identifiers, sub-terms). Semantic actions consume from
-    /// and push back to this builder.
-    builder: SemanticBuilder,
+    // Phase F.3c.5 (2026-05-20): `builder: SemanticBuilder` DELETED.
+    // Pre-Phase-F.3c the walker maintained a live builder for legacy
+    // accessors (walker.builder() / walker.builder_mut() /
+    // take_dyn_result()). Phase F.3c.4 deleted cursor.builder, removing
+    // all install sites (resolve_at_end_of_input, apply_action,
+    // commit_winner) that wrote to self.builder. F.3c.5 deletes the
+    // field + public accessors entirely. Downstream extraction uses
+    // `walker.resolve_at_end_of_input(&tokens)` → `realize_root_to_terms`
+    // over the SPPF root captured from `cursor.sppf_stack.last()`.
     /// "No Fork has happened yet" flag — `true` at construction; set
     /// `false` at the first `WpdaStepAction::Fork`; never reset within
     /// a parse (only `reset()` flips it back to `true`).
@@ -2118,7 +2123,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             engine,
             top_node: None,
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
-            builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
@@ -2172,7 +2176,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             engine,
             top_node: Some(top_id),
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
-            builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
@@ -2221,7 +2224,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             engine,
             top_node,
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
-            builder: SemanticBuilder::new(),
             deterministic: true,
             branch_cursors: vec![initial_cursor],
             step_counter: 0,
@@ -2246,7 +2248,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         self.pos = 0;
         self.weight = W::one_ref();
         self.top_node = None;
-        self.builder = SemanticBuilder::new();
+        // Phase F.3c.5 (2026-05-20): `self.builder = SemanticBuilder::new();`
+        // DELETED. Walker no longer owns a live builder — per-cursor
+        // SPPF state alone carries the parse derivation.
         self.deterministic = true;
         // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
         self.branch_cursors = vec![BranchCursor::seed_from_live(
@@ -2497,18 +2501,15 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         &self.gss
     }
 
-    /// Read-only access to the walker's semantic builder (captured args,
-    /// binder scopes, in-progress AST construction).
-    pub fn builder(&self) -> &SemanticBuilder {
-        &self.builder
-    }
-
-    /// Mutable access to the semantic builder. External consumers (or the
-    /// codegen-emitted wrapper) use this to seed pre-parse values or to
-    /// extract the final parse result via `take_result`.
-    pub fn builder_mut(&mut self) -> &mut SemanticBuilder {
-        &mut self.builder
-    }
+    // Phase F.3c.5 (2026-05-20): `pub fn builder()` / `pub fn builder_mut()`
+    // accessors DELETED. The walker no longer owns a `builder:
+    // SemanticBuilder` field, so the accessors have no field to return.
+    // External consumers that previously called `walker.builder()` /
+    // `walker.builder_mut()` were already refactored in Phase F.3c.1
+    // (commit `49fd9a3`) to call `walker.resolve_at_end_of_input(&tokens)`
+    // and extract terms from the returned `WpdaResolveResult::Accepted`
+    // vector, or to read SPPF state through `walker.sppf()` /
+    // `walker.winner_top_node()`.
 
     /// Optional beam pruning bound (None = unlimited).
     ///
