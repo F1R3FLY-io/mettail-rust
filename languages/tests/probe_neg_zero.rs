@@ -277,3 +277,123 @@ fn probe_i32_min_atomic_lex() {
         Err(e) => eprintln!("parse('-2147483648') ERR = {:?}", e),
     }
 }
+
+#[test]
+fn probe_parse_dash_zero_point_zero_float() {
+    use mettail_languages::calculator::Float;
+    use std::panic::AssertUnwindSafe;
+    mettail_runtime::clear_var_cache();
+    // Direct Float::parse_structured of "-0.0" to see if it fails here too
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        Float::parse_structured("-0.0")
+    }));
+    match result {
+        Ok(Ok(t)) => eprintln!("Float::parse_structured('-0.0') = {:?}", t),
+        Ok(Err(e)) => eprintln!("Float::parse_structured('-0.0') ERR = {:?}", e),
+        Err(p) => eprintln!("Float::parse_structured('-0.0') PANIC = {:?}", p),
+    }
+}
+
+#[test]
+fn probe_parse_dash_zero_point_zero_proc() {
+    use mettail_runtime::Language;
+    use std::panic::AssertUnwindSafe;
+    mettail_runtime::clear_var_cache();
+    let lang = CalculatorLanguage;
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        lang.parse_term("-0.0")
+    }));
+    match result {
+        Ok(Ok(t)) => eprintln!("CalculatorLanguage::parse_term('-0.0') = {:?}", format!("{}", t)),
+        Ok(Err(e)) => eprintln!("CalculatorLanguage::parse_term('-0.0') ERR = {:?}", e),
+        Err(p) => {
+            if let Some(s) = p.downcast_ref::<String>() {
+                eprintln!("PANIC: {}", s);
+            } else if let Some(s) = p.downcast_ref::<&'static str>() {
+                eprintln!("PANIC: {}", s);
+            } else {
+                eprintln!("PANIC: unknown payload");
+            }
+        }
+    }
+}
+
+#[test]
+fn probe_parse_via_wpda_all_dash_zero_point_zero_float() {
+    use mettail_languages::calculator::Float;
+    use std::panic::AssertUnwindSafe;
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        Float::parse_via_wpda_all("-0.0")
+    }));
+    match result {
+        Ok(Ok(ts)) => {
+            eprintln!("Float::parse_via_wpda_all('-0.0') = {} alts", ts.len());
+            for (i, t) in ts.iter().enumerate() {
+                eprintln!("    [{}] debug={:?} display={:?}", i, t, format!("{}", t));
+            }
+        }
+        Ok(Err(e)) => eprintln!("Float::parse_via_wpda_all('-0.0') ERR = {:?}", e),
+        Err(p) => {
+            if let Some(s) = p.downcast_ref::<String>() {
+                eprintln!("PANIC: {}", s);
+            } else if let Some(s) = p.downcast_ref::<&'static str>() {
+                eprintln!("PANIC: {}", s);
+            } else {
+                eprintln!("PANIC: unknown payload");
+            }
+        }
+    }
+}
+
+#[test]
+fn probe_minimal_atomic_int_lit() {
+    // Simplest possible atomic int parse.
+    use std::panic::AssertUnwindSafe;
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        Int::parse_structured("42")
+    }));
+    match result {
+        Ok(Ok(t)) => eprintln!("Int::parse_structured('42') = {:?}", t),
+        Ok(Err(e)) => eprintln!("Int::parse_structured('42') ERR = {:?}", e),
+        Err(p) => {
+            if let Some(s) = p.downcast_ref::<String>() {
+                eprintln!("PANIC: {}", s);
+            } else if let Some(s) = p.downcast_ref::<&'static str>() {
+                eprintln!("PANIC: {}", s);
+            } else {
+                eprintln!("PANIC: unknown payload");
+            }
+        }
+    }
+}
+
+#[test]
+fn probe_minimal_atomic_int_lit_negative() {
+    use std::panic::AssertUnwindSafe;
+    mettail_runtime::clear_var_cache();
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        Int::parse_structured("-5")
+    }));
+    match result {
+        Ok(Ok(t)) => eprintln!("Int::parse_structured('-5') = {:?}", t),
+        Ok(Err(e)) => eprintln!("Int::parse_structured('-5') ERR = {:?}", e),
+        Err(p) => {
+            if let Some(s) = p.downcast_ref::<String>() {
+                eprintln!("PANIC: {}", s);
+            } else if let Some(s) = p.downcast_ref::<&'static str>() {
+                eprintln!("PANIC: {}", s);
+            } else {
+                eprintln!("PANIC: unknown payload");
+            }
+        }
+    }
+}
+
+#[test]
+fn probe_atomic_int_lit_negative_in_release() {
+    // Try with debug_assertions disabled? Actually we can't easily change cfg
+    // from a test; this is just informational.
+    eprintln!("debug_assertions = {}", cfg!(debug_assertions));
+}

@@ -1240,6 +1240,25 @@ pub struct BranchCursor<W: SemiringRef> {
     /// ConfigKey discrimination because any two cursors with identical
     /// splice sequence reach identical arena content by construction.
     pub sppf_collection_arena: Arc<Vec<Vec<crate::sppf::SppfId>>>,
+    /// Phase F.3a (2026-05-20): walker-maintained mirror of
+    /// `cursor.builder.top_term_type_name().and_then(|tn| cat_of_type_name(tn))`.
+    ///
+    /// Populated by `emit_fire_action` from `ActionEntry.output_cat`.
+    /// Cleared to `None` by every non-action `emit_push_*` helper
+    /// (push_token, push_ident, push_collection_id, push_optional_absent)
+    /// and by `emit_splice_into_collection`'s pop arm — anything that
+    /// mutates the builder's stack top to a non-Term invalidates the
+    /// "latest action output category" semantics.
+    ///
+    /// Used by the D8 cross-cat resolution reads at lines ~8555 and
+    /// ~8605 (F.3b swaps them to consume this field). During F.3a the
+    /// field coexists with `cursor.builder.top_term_type_name()` and
+    /// debug_assert checks parity at each D8 read site. Once parity
+    /// is verified across the full gauntlet, F.3c deletes
+    /// `cursor.builder` entirely (~−480 LoC).
+    ///
+    /// Operational per-cursor state (not part of ConfigKey).
+    pub last_action_output_cat: Option<u16>,
     // M4 (2026-05-13): `pending_lex_alts` field DELETED. Per-cursor lex-
     // alternative state violated WPDS stack purity (the multiset grew
     // monotonically with no pop counterpart, and was excluded from
@@ -1324,6 +1343,8 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // Phase F.4 (2026-05-18): Arc bump — clone is O(1); first
             // splice in the cloned cursor triggers Arc::make_mut CoW.
             sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
+            // Phase F.3a (2026-05-20): Option<u16> is Copy.
+            last_action_output_cat: self.last_action_output_cat,
         }
     }
 }
@@ -1412,6 +1433,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Phase F.4 (2026-05-18): fresh empty Arc — seed cursor has
             // no collection accumulator state.
             sppf_collection_arena: Arc::new(Vec::new()),
+            // Phase F.3a (2026-05-20): fresh cursor has no action yet.
+            last_action_output_cat: None,
         }
     }
 
@@ -1481,6 +1504,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Phase F.4 (2026-05-18): Arc bump (O(1)); CoW on first
             // splice in the child cursor.
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
+            // Phase F.3a (2026-05-20): inherit parent's mirror.
+            last_action_output_cat: parent.last_action_output_cat,
         }
     }
 }
@@ -2634,6 +2659,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     collection_stack_depth: 0,
                     // Phase F.4 (2026-05-18): fresh empty Arc.
                     sppf_collection_arena: Arc::new(Vec::new()),
+                    // Phase F.3a (2026-05-20): fresh cursor.
+                    last_action_output_cat: None,
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -4239,6 +4266,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     collection_stack_depth: 0,
                     // Phase F.4 (2026-05-18): fresh empty Arc.
                     sppf_collection_arena: Arc::new(Vec::new()),
+                    // Phase F.3a (2026-05-20): post-Drop reset clears the
+                    // mirror — the dropped cursor's action history is gone.
+                    last_action_output_cat: None,
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -4855,6 +4885,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -4927,6 +4963,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -5010,6 +5052,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -5069,6 +5117,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -5121,6 +5175,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -5206,6 +5266,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5270,6 +5336,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5335,6 +5407,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -5435,6 +5513,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -5526,6 +5610,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             // Phase F.10 (2026-05-19): mirror the standard
                             // `WpdaStepAction::ConsumeAndPush` arm's
@@ -5663,6 +5753,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 collection_stack_depth: cursor.collection_stack_depth,
                                 // Phase F.4 (2026-05-18): Arc bump.
                                 sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
+                                // Phase F.3a (2026-05-20): inherit parent's
+                                // last_action_output_cat. Fork-arm children
+                                // share the parent's "most recent action
+                                // output cat" until a per-branch action
+                                // fires or a per-branch push clears it.
+                                last_action_output_cat: cursor.last_action_output_cat,
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -7093,6 +7189,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // truth for realize_*'s CollectionId resolution. See
             // `WpdaWalker::winner_collection_arena()`.
             sppf_collection_arena: winner.sppf_collection_arena,
+            // Phase F.3a (2026-05-20): preserve winner's mirror.
+            last_action_output_cat: winner.last_action_output_cat,
         }];
     }
 
@@ -7267,6 +7365,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     fn apply_effect_to_cursor(&mut self, cursor: &mut BranchCursor<W>, effect: &BuilderDelta) {
         // Builder side first (matches pre-existing semantics).
         Self::apply_effect_to_builder(Arc::make_mut(&mut cursor.builder), effect);
+        // Phase F.3a (2026-05-20): apply_effect_to_builder may push/pop
+        // the main arg stack (e.g., EndBinderScope pushes BinderScope,
+        // PushCollectionId pushes CollectionId, SpliceIntoCollection
+        // pops top). Refresh the D8 mirror from the resulting builder
+        // state.
+        self.refresh_action_output_mirror(cursor);
         // SPPF + cursor-state mirror.
         match effect {
             BuilderDelta::StartBinderScope { names } => {
@@ -7459,6 +7563,25 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     // `install_singleton_cursor_builder` at resolve time (and at any
     // post-step boundary where downstream consumers read self.builder).
 
+    /// Phase F.3a (2026-05-20): refresh `cursor.last_action_output_cat`
+    /// from the post-mutation builder state. Called at the end of every
+    /// emit_* helper and `apply_effect_to_cursor` arm that touches
+    /// `cursor.builder` so the D8 mirror tracks the actual stack top.
+    ///
+    /// Semantics: returns the cat_idx of the current
+    /// `builder.top_term_type_name()` (None if top is non-Term or stack
+    /// is empty). Byte-equivalent to the D8 reads at lines 8555 and 8605
+    /// — those reads consume the same expression. F.3b replaces those
+    /// reads with `cursor.last_action_output_cat` once parity is
+    /// verified across the gauntlet.
+    #[inline(always)]
+    fn refresh_action_output_mirror(&self, cursor: &mut BranchCursor<W>) {
+        cursor.last_action_output_cat = cursor
+            .builder
+            .top_term_type_name()
+            .and_then(|tn| self.engine.cat_of_type_name(tn));
+    }
+
     #[inline(always)]
     fn emit_push_token(
         &mut self,
@@ -7480,6 +7603,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         );
         cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_token(kind, text, pos);
+        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
+        self.refresh_action_output_mirror(cursor);
     }
 
     /// Phase F.8 (2026-05-18): mirror a consumed-but-not-captured unary-prefix
@@ -7528,6 +7653,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         );
         cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_ident(name, pos);
+        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
+        self.refresh_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7543,6 +7670,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         let sid = self.sppf.intern_predicate(handle);
         cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_predicate_arc(pred);
+        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
+        self.refresh_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7555,6 +7684,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         let depth = cursor.binder_scope_marks.len() as u16;
         cursor.binder_scope_marks.push((depth, names.clone()));
         Arc::make_mut(&mut cursor.builder).start_binder_scope(names);
+        // Phase F.3a (2026-05-20): start_binder_scope routes subsequent
+        // pushes to the inner scope's active arg accumulator, not the
+        // main stack. The main stack top doesn't change, but reading
+        // from the helper keeps semantics consistent.
+        self.refresh_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7566,6 +7700,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             top.1.push(name.clone());
         }
         Arc::make_mut(&mut cursor.builder).extend_binder_scope(name);
+        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
+        self.refresh_action_output_mirror(cursor);
     }
 
     /// Phase F.1 (2026-05-18): SPPF-derived equivalent of
@@ -7711,6 +7847,24 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         if let Some(message) =
             Self::fire_action_for_on_builder(&self.engine, builder_mut, symbol)
         {
+            // Phase F.3a (2026-05-20): refresh the D8 mirror on the
+            // elide / arity-mismatch error path. fire_action_for_on_builder
+            // always calls `pop_args(arity)` BEFORE invoking action_fn
+            // (wpda_walker.rs:7495). When the action elides (e.g.,
+            // cross-cat-incompatible arg returns from `arg.into_term::<T>()`),
+            // the pop already happened but no push followed — the builder
+            // stack top changed (often to empty or to a non-Term sentinel)
+            // without going through any emit_* helper. Without this
+            // refresh, the mirror retains the PRIOR successful fire's
+            // output_cat, diverging from builder.top_term_type_name().
+            // Empirically verified via:
+            //   F.3a PROBE: emit_fire_action ELIDE at (cat=0, rule=2, arity=1):
+            //     pre_mirror=Some(5) pre_top=Some("Float") pre_len=1 ->
+            //     post_top=None post_len=0
+            // The cursor is about to enter Error state and be dropped by
+            // cursor_resolution_check on the next step, but the mirror
+            // must stay coherent for the F.3b/F.3c D8-read swap.
+            self.refresh_action_output_mirror(cursor);
             let err = WpdaState::Error { message };
             cursor.inner_state = err.clone();
             self.state = err;
@@ -7724,6 +7878,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // is suppressed upstream so this site is never reached for them
         // until the outer RuleAt pop's action drains.
         cursor.collection_stack_depth = cursor.builder.collection_stack_len() as u8;
+        // Phase F.3a (2026-05-20): refresh the D8 mirror from the builder's
+        // actual stack top AFTER the action fires. Reading post-fire
+        // (instead of predicting from ActionEntry.output_cat) handles
+        // test mock engines whose action_fn may not push a Term, AND
+        // keeps the mirror byte-equivalent with the D8 reads at 8555
+        // and 8605. F.3b swaps those reads to consume the mirror.
+        self.refresh_action_output_mirror(cursor);
 
         // SPPF mirror: pop arity children from sppf_stack, intern Packing,
         // intern Symbol(cat_src_idx, lo, hi), link, push Symbol id.
@@ -7849,6 +8010,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // push deleted — cursor.builder.collection_stack carries the
         // authoritative slot state.
         let id = Arc::make_mut(&mut cursor.builder).start_collection();
+        // Phase F.3a (2026-05-20): start_collection doesn't touch the main
+        // arg stack, but refresh for consistency / future-proofing.
+        self.refresh_action_output_mirror(cursor);
         // Phase F.1 (2026-05-18): mirror the builder's collection_stack
         // push. Parity invariant: cursor.collection_stack_depth as usize ==
         // cursor.builder.collection_stack_len(). saturating_add guards
@@ -7883,6 +8047,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         let sid = self.sppf.intern_collection_id(id as u32);
         cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_collection_id(id);
+        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
+        self.refresh_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7900,6 +8066,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         }
         // push_to_collection silently no-ops on out-of-bounds id.
         Arc::make_mut(&mut cursor.builder).push_to_collection(id);
+        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
+        // The splice popped the top; the new top could be a CollectionId,
+        // another Term, or empty — refresh reads the actual state.
+        self.refresh_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7909,6 +8079,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // pushed since this point.
         cursor.optional_scope_marks.push(cursor.sppf_stack.len());
         Arc::make_mut(&mut cursor.builder).start_optional_scope();
+        // Phase F.3a (2026-05-20): refresh mirror.
+        self.refresh_action_output_mirror(cursor);
     }
 
     /// Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time symbol-
@@ -8036,6 +8208,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             }
         }
         Arc::make_mut(&mut cursor.builder).finalize_optional_scope_present();
+        // Phase F.3a (2026-05-20): finalize pushes an OptionalPresent
+        // wrapped value back to the main stack. Refresh mirror.
+        self.refresh_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -8044,6 +8219,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         let sid = self.sppf.intern_opt_absent(cursor.pos as u32);
         cursor.sppf_stack.push(sid);
         Arc::make_mut(&mut cursor.builder).push_optional_absent();
+        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
+        self.refresh_action_output_mirror(cursor);
     }
 
     // ─── 4 mode-agnostic helpers (mirror to live walker fields when deterministic) ──
@@ -8552,10 +8729,24 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // sppf_stack wherever builder.top is a Term).
                     // Tracked separately; the D8 reads stay on the
                     // builder until then.
-                    if let Some(builder_cat) = cursor
+                    // Phase F.3a (2026-05-20): debug_assert parity between
+                    // builder-read and walker-maintained mirror at this D8
+                    // site. F.3b will swap this read to the mirror once
+                    // parity holds across the full gauntlet.
+                    let builder_cat_opt = cursor
                         .builder
                         .top_term_type_name()
-                        .and_then(|tn| self.engine.cat_of_type_name(tn))
+                        .and_then(|tn| self.engine.cat_of_type_name(tn));
+                    debug_assert_eq!(
+                        builder_cat_opt,
+                        cursor.last_action_output_cat,
+                        "F.3a D8 mirror parity violation at GroupingClose: \
+                         builder.top_term_type_name=>cat = {:?}, \
+                         cursor.last_action_output_cat = {:?}",
+                        builder_cat_opt,
+                        cursor.last_action_output_cat,
+                    );
+                    if let Some(builder_cat) = builder_cat_opt
                     {
                         if builder_cat != new_top_cat {
                             let new_sym =
@@ -8602,10 +8793,23 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // observable Rust type — the D8 fix is keyed on the
                 // latter and we preserve that semantic until F.3
                 // redesigns the auto-injection cast modelling.
-                let resolved = cursor
+                // Phase F.3a (2026-05-20): debug_assert parity between
+                // builder-read and walker-maintained mirror at this D8
+                // site. F.3b swaps the read to the mirror after gauntlet.
+                let builder_cat_opt = cursor
                     .builder
                     .top_term_type_name()
-                    .and_then(|tn| self.engine.cat_of_type_name(tn))
+                    .and_then(|tn| self.engine.cat_of_type_name(tn));
+                debug_assert_eq!(
+                    builder_cat_opt,
+                    cursor.last_action_output_cat,
+                    "F.3a D8 mirror parity violation at GroupingClosePreservingInner: \
+                     builder.top_term_type_name=>cat = {:?}, \
+                     cursor.last_action_output_cat = {:?}",
+                    builder_cat_opt,
+                    cursor.last_action_output_cat,
+                );
+                let resolved = builder_cat_opt
                     .unwrap_or_else(|| {
                         popped_symbol
                             .map(|s| s.category_src_idx)
