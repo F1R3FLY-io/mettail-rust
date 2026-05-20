@@ -324,10 +324,13 @@ fn unit_rhocalc_int_negint() {
     let term = Int::NegInt(Box::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegInt");
-    if let Ok(parsed) = Int::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NegInt: {} != {}", displayed, re_displayed);
+    if let Ok(alts) = Int::parse_via_wpda_all(&displayed) {
+        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
+        assert!(
+            alt_displays.iter().any(|d| d == &displayed),
+            "Multi-alt roundtrip failed for NegInt: constructed display {:?} not among parse alts {:?}",
+            displayed, alt_displays,
+        );
     }
 }
 

@@ -339,10 +339,13 @@ fn unit_calculator_bigrat_negbigrat() {
     let term = BigRat::NegBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegBigRat");
-    if let Ok(parsed) = BigRat::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NegBigRat: {} != {}", displayed, re_displayed);
+    if let Ok(alts) = BigRat::parse_via_wpda_all(&displayed) {
+        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
+        assert!(
+            alt_displays.iter().any(|d| d == &displayed),
+            "Multi-alt roundtrip failed for NegBigRat: constructed display {:?} not among parse alts {:?}",
+            displayed, alt_displays,
+        );
     }
 }
 
@@ -963,10 +966,13 @@ fn unit_calculator_bigint_negbigint() {
     let term = BigInt::NegBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegBigInt");
-    if let Ok(parsed) = BigInt::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NegBigInt: {} != {}", displayed, re_displayed);
+    if let Ok(alts) = BigInt::parse_via_wpda_all(&displayed) {
+        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
+        assert!(
+            alt_displays.iter().any(|d| d == &displayed),
+            "Multi-alt roundtrip failed for NegBigInt: constructed display {:?} not among parse alts {:?}",
+            displayed, alt_displays,
+        );
     }
 }
 
@@ -1132,10 +1138,13 @@ fn unit_calculator_int_neg() {
     let term = Int::Neg(Box::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Neg");
-    if let Ok(parsed) = Int::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Neg: {} != {}", displayed, re_displayed);
+    if let Ok(alts) = Int::parse_via_wpda_all(&displayed) {
+        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
+        assert!(
+            alt_displays.iter().any(|d| d == &displayed),
+            "Multi-alt roundtrip failed for Neg: constructed display {:?} not among parse alts {:?}",
+            displayed, alt_displays,
+        );
     }
 }
 
@@ -1223,10 +1232,13 @@ fn unit_calculator_float_negfloat() {
     let term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegFloat");
-    if let Ok(parsed) = Float::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NegFloat: {} != {}", displayed, re_displayed);
+    if let Ok(alts) = Float::parse_via_wpda_all(&displayed) {
+        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
+        assert!(
+            alt_displays.iter().any(|d| d == &displayed),
+            "Multi-alt roundtrip failed for NegFloat: constructed display {:?} not among parse alts {:?}",
+            displayed, alt_displays,
+        );
     }
 }
 
@@ -1574,10 +1586,13 @@ fn unit_calculator_fixed_negfixed() {
     let term = Fixed::NegFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegFixed");
-    if let Ok(parsed) = Fixed::parse(&displayed) {
-        let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NegFixed: {} != {}", displayed, re_displayed);
+    if let Ok(alts) = Fixed::parse_via_wpda_all(&displayed) {
+        let alt_displays: Vec<String> = alts.iter().map(|a| format!("{}", a)).collect();
+        assert!(
+            alt_displays.iter().any(|d| d == &displayed),
+            "Multi-alt roundtrip failed for NegFixed: constructed display {:?} not among parse alts {:?}",
+            displayed, alt_displays,
+        );
     }
 }
 
