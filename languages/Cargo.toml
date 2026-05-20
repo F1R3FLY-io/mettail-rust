@@ -14,6 +14,12 @@ ascent-parallel = ["mettail-prattail/ascent-parallel"]
 ## External crates can depend on `mettail-languages/strategies` and use
 ## `arb_{cat}(max_depth)` to generate terms for property-based testing.
 strategies = ["proptest"]
+## Phase F.13 H7 (2026-05-20): opt-in mimalloc global allocator for the
+## `trampoline_tests` binary. Off by default per user direction
+## (2026-05-20: "feature-gate mimalloc, don't enable it by default").
+## Enable with `cargo test --features mimalloc ...` to apply mimalloc
+## to the trampoline_tests binary; otherwise the system allocator is used.
+mimalloc = ["dep:mimalloc"]
 
 [dependencies]
 mettail-macros = { path = "../macros" }
@@ -38,6 +44,11 @@ rustc-hash = "2.0"
 # Optional: exposed via the `strategies` feature for public proptest strategies.
 proptest = { version = "1", optional = true }
 
+# Phase F.13 H7 (2026-05-20): optional mimalloc allocator gated by
+# `mimalloc-alloc` feature. Off by default. Trampoline_tests opts in
+# when run with `--features mimalloc-alloc`.
+mimalloc = { version = "0.1", default-features = false, optional = true }
+
 # Required by generated simulation CLI binaries.
 clap = { version = "4.5", features = ["derive"] }
 
@@ -45,10 +56,6 @@ clap = { version = "4.5", features = ["derive"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 mettail-testkit = { path = "../testkit" }
-# Phase F.13 H7 (2026-05-20): mimalloc for test-binary allocator override.
-# Used by `tests/trampoline_tests.rs` via `#[global_allocator]` to reduce
-# the ~21% libc malloc/free CPU cost observed at the F.13 baseline.
-mimalloc = { version = "0.1", default-features = false }
 
 # W7 Stage 8 (parity testing): postcard golden inspector.
 # No `required-features` — usable on default builds.

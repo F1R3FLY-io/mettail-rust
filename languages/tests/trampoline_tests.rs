@@ -5,13 +5,15 @@
 //! The trampoline converts all same-category recursion into iteration,
 //! bounded only by available heap memory.
 //!
-//! Phase F.13 H7 (2026-05-20): override the global allocator for this
-//! test binary to mimalloc, addressing the ~21% libc allocator CPU cost
-//! and 22x heap fragmentation ratio observed at the F.13 baseline. The
-//! `#[global_allocator]` attribute attaches to this test binary's
-//! implicit `main`; other test binaries retain glibc until they too
-//! adopt the override (deferred to per-binary follow-up).
+//! Phase F.13 H7 (2026-05-20): opt-in mimalloc global allocator override
+//! gated by the `mimalloc` cargo feature (off by default per user
+//! direction "feature-gate mimalloc, don't enable it by default"). When
+//! enabled via `cargo test --features mimalloc ...`, attaches mimalloc
+//! to this test binary's implicit `main` and reduces the ~21% libc
+//! allocator CPU cost observed at the F.13 baseline. When disabled,
+//! the system allocator is used (default behavior).
 
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
