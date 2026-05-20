@@ -348,57 +348,86 @@ impl<'a> SimulationRunner<'a> {
 
         // Step 3: Walk the rewrite graph iteratively (trampoline-style BFS)
         // to build the trace from initial term to normal form.
-        // Record rewrites along the path.
-        let initial_id = term.term_id();
+        //
+        // Phase F.12.A (2026-05-20): MULTI-SOURCE BFS. When the parser
+        // returns an `Ambiguous` wrapper, its `term_id()` hashes the
+        // wrapper variant — that hash is structurally absent from
+        // `results.all_terms` because `run_ascent_typed` enumerates the
+        // wrapper's `all_alts()` and only pushes single-category alts
+        // into `TermInfo`. A single-source BFS from the wrapper's id
+        // would find no rewrites_from(wrapper_id), drain the queue,
+        // and fall through to a non-deterministic `nfs.first()`.
+        //
+        // Fix: seed the BFS from EACH alt's term_id via the
+        // `Term::rewrite_seed_ids()` trait method. For unambiguous
+        // inputs the default trait impl returns `[(self.term_id(), display)]`,
+        // preserving the prior single-source behavior. For Ambiguous
+        // wrappers, each alt contributes its own search frontier; we
+        // pick the canonically-shortest NF across all reachable NFs.
+        //
+        // Canonical NF picker (lex order, lowest wins):
+        //   1. `display.len()` — shorter wins ("0" beats "-0").
+        //   2. `display` itself — lex-smallest as tie-break.
+        //   3. seed index — declaration-order tie-break (deterministic).
+        let seeds = term.rewrite_seed_ids();
 
-        // Build rewrite trace by following the path from initial term to normal form.
-        // Use iterative BFS to avoid stack overflow on deep rewrite chains.
-        let mut visited = std::collections::HashSet::new();
-        let mut queue = std::collections::VecDeque::new();
-        // Track the path: (term_id, path_to_here)
-        queue.push_back((initial_id, Vec::<u64>::new()));
-        visited.insert(initial_id);
-
-        let mut path_to_normal_form: Option<Vec<u64>> = None;
-        let mut normal_form_id: Option<u64> = None;
-
-        // BFS to find shortest path to a normal form.
-        while let Some((current_id, path)) = queue.pop_front() {
-            if let Some(info) = results.all_terms.iter().find(|t| t.term_id == current_id) {
-                if info.is_normal_form {
-                    let mut full_path = path;
-                    full_path.push(current_id);
-                    path_to_normal_form = Some(full_path);
-                    normal_form_id = Some(current_id);
-                    break;
+        // Per-seed BFS, collecting (seed_idx, nf_term_id, path).
+        let mut candidates: Vec<(usize, u64, Vec<u64>)> = Vec::new();
+        for (seed_idx, (seed_id, _seed_disp)) in seeds.iter().enumerate() {
+            let mut visited = std::collections::HashSet::new();
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back((*seed_id, Vec::<u64>::new()));
+            visited.insert(*seed_id);
+            while let Some((current_id, path)) = queue.pop_front() {
+                if let Some(info) = results.all_terms.iter().find(|t| t.term_id == current_id) {
+                    if info.is_normal_form {
+                        let mut full_path = path;
+                        full_path.push(current_id);
+                        candidates.push((seed_idx, current_id, full_path));
+                        break;
+                    }
                 }
-            }
-
-            // Bound the search.
-            if path.len() >= self.config.max_steps {
-                continue;
-            }
-
-            for rw in results.rewrites_from(current_id) {
-                if visited.insert(rw.to_id) {
-                    let mut new_path = path.clone();
-                    new_path.push(current_id);
-                    queue.push_back((rw.to_id, new_path));
-
-                    // Record rule coverage.
-                    if let Some(ref name) = rw.rule_name {
-                        coverage.record_rule(name);
+                if path.len() >= self.config.max_steps {
+                    continue;
+                }
+                for rw in results.rewrites_from(current_id) {
+                    if visited.insert(rw.to_id) {
+                        let mut new_path = path.clone();
+                        new_path.push(current_id);
+                        queue.push_back((rw.to_id, new_path));
                     }
                 }
             }
         }
 
-        // Record all rewrites for coverage, even those not on the optimal path.
+        // Record all rewrites for coverage (unchanged: every rewrite
+        // counts, regardless of which seed's path it lies on).
         for rw in &results.rewrites {
             if let Some(ref name) = rw.rule_name {
                 coverage.record_rule(name);
             }
         }
+
+        // Canonical NF picker across all seed candidates.
+        let chosen = candidates.iter().min_by(|a, b| {
+            let info_a = results.all_terms.iter().find(|t| t.term_id == a.1);
+            let info_b = results.all_terms.iter().find(|t| t.term_id == b.1);
+            match (info_a, info_b) {
+                (Some(ia), Some(ib)) => {
+                    let ka = (ia.display.len(), ia.display.as_str(), a.0);
+                    let kb = (ib.display.len(), ib.display.as_str(), b.0);
+                    ka.cmp(&kb)
+                }
+                _ => a.0.cmp(&b.0),
+            }
+        });
+
+        let (path_to_normal_form, normal_form_id): (Option<Vec<u64>>, Option<u64>) =
+            if let Some(&(_seed_idx, nf_id, ref path)) = chosen {
+                (Some(path.clone()), Some(nf_id))
+            } else {
+                (None, None)
+            };
 
         // Build trace entries for the path.
         if let Some(ref path) = path_to_normal_form {

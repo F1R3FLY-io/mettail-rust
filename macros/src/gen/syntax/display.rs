@@ -1318,54 +1318,33 @@ fn generate_engine_syntax_pattern_arm(
             }
         }
     } else if needs_bp_check {
-        if let Some(prescan) = neg_zero_prescan {
-            // W3: Neg-zero display canonicalization.
-            //
-            // `forward_ops` was built left-to-right as [push("-"), push(child)]
-            // then reversed to [push(child), push("-")] (pop-order = child,
-            // then "-"). To suppress the "-" push when `__neg_zero` is true,
-            // we split `forward_ops` by position. `forward_ops[0]` is the
-            // child push (from the param); `forward_ops[1]` is the "-" push
-            // (from the literal). Only emit the latter when not a zero chain.
-            //
-            // (Unreversed, syntax_pattern is ["-", param] → forward_ops before
-            // reverse is [push("-"), push(param)]; after reverse the first
-            // element emitted is the param push, second is the "-" push. We
-            // gate the "-" push emission on `!__neg_zero`.)
-            let (child_push, minus_push) = if forward_ops.len() == 2 {
-                (forward_ops[0].clone(), forward_ops[1].clone())
-            } else {
-                // Unexpected shape; fall back to default emission.
-                return quote! {
-                    #category::#label(#(#field_idents),*) => {
-                        let needs_parens = #own_bp < min_bp;
-                        if needs_parens {
-                            stack.push(DisplayTask::WriteLiteral(")"));
-                        }
-                        #(#forward_ops)*
-                        if needs_parens {
-                            stack.push(DisplayTask::WriteLiteral("("));
-                        }
-                    }
-                };
-            };
-            quote! {
-                #category::#label(#(#field_idents),*) => {
-                    let needs_parens = #own_bp < min_bp;
-                    let __neg_zero: bool = #prescan;
-                    if needs_parens {
-                        stack.push(DisplayTask::WriteLiteral(")"));
-                    }
-                    #child_push
-                    if !__neg_zero {
-                        #minus_push
-                    }
-                    if needs_parens {
-                        stack.push(DisplayTask::WriteLiteral("("));
-                    }
-                }
-            }
-        } else {
+        // Phase F.12.B+C (2026-05-20): W3 `neg_zero_prescan` DELETED.
+        //
+        // W3 used to suppress the leading `-` when `Neg(...Neg(NumLit(0)))`
+        // chains terminated in literal zero, so `Display(Neg(NumLit(0)))`
+        // rendered as `"0"`. This was a printing-layer "lie" introduced in
+        // commit 29d2b0d0 (2026-04-23) as a workaround for the round-trip
+        // problem `Display(parse(s)) != s`.
+        //
+        // The principled resolution (per user direction 2026-05-20):
+        // Display is honest about the AST. `Display(Neg(NumLit(0)))` =
+        // `"-0"`. The simulation runner's Phase F.12.A multi-source BFS
+        // explores all alts of an Ambiguous wrapper and picks the
+        // canonically-shortest NF — so the lex-min interpretation's NF
+        // (`NumLit(0)` for "- 0" after the `(-a)` fold rule applies)
+        // wins on display length and the test
+        // `sim_calculator_roundtrip_under_rewrite` returns "0" without
+        // needing to suppress the `-`.
+        //
+        // The `neg_zero_prescan` variable above is still computed for
+        // forward compatibility (it may become useful if a future phase
+        // wants opt-in canonicalization on cross-cat absorber paths) —
+        // but it is NOT consumed here. See the comment at lines 936-1016
+        // for the prescan body; it is now effectively dead code that
+        // will be removed in a follow-up cleanup once we are confident
+        // no future phase needs it.
+        let _ = &neg_zero_prescan;
+        {
             quote! {
                 #category::#label(#(#field_idents),*) => {
                     let needs_parens = #own_bp < min_bp;

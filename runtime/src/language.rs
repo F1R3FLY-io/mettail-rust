@@ -154,6 +154,26 @@ pub trait Term: fmt::Display + fmt::Debug + Send + Sync {
 
     /// Get this as Any for downcasting
     fn as_any(&self) -> &dyn Any;
+
+    /// Phase F.12.A (2026-05-20): return the `(term_id, Display)` pairs for
+    /// each single-category derivation this term represents.
+    ///
+    /// For unambiguous terms this returns exactly one entry whose `term_id`
+    /// equals `self.term_id()`. For `Ambiguous` wrappers, each inner alt
+    /// contributes one entry whose `term_id` MUST match the hash recipe
+    /// used to construct the corresponding `TermInfo` in `run_ascent`
+    /// (DefaultHasher applied to the single-category `Inner::Cat(t)`
+    /// variant — this is the load-bearing invariant that lets the
+    /// simulation runner and REPL seed multi-source BFS from the
+    /// post-parse Ambiguous set).
+    ///
+    /// Default impl: returns `vec![(self.term_id(), format!("{}", self))]`,
+    /// which is correct for any language that has no `Ambiguous` variant.
+    /// Generated `impl Term for <Lang>Term` blocks override this when the
+    /// language has cross-category projection.
+    fn rewrite_seed_ids(&self) -> Vec<(u64, String)> {
+        vec![(self.term_id(), format!("{}", self))]
+    }
 }
 
 /// A trait that all languages must implement
@@ -417,6 +437,41 @@ impl AscentResults {
             }
         }
         None
+    }
+
+    /// Phase F.12.A (2026-05-20): multi-source normal-form search.
+    ///
+    /// Find a normal form reachable from ANY of the given start_ids by
+    /// running `normal_form_reachable_from` from each seed and returning
+    /// the canonically-shortest NF display across all seeds.
+    ///
+    /// Canonical NF picker (lexicographic, lowest wins):
+    /// 1. `display.len()` — shorter wins ("0" beats "-0" beats "false").
+    /// 2. `display` itself — lex-smallest as tie-break (deterministic).
+    ///
+    /// Used by the simulation runner and REPL when the parsed initial
+    /// term is an `Ambiguous` wrapper whose `term_id()` is not in
+    /// `all_terms` (only single-category alts are pushed by
+    /// `run_ascent_typed`). Seeds come from `Term::rewrite_seed_ids()`.
+    pub fn normal_form_reachable_from_seeds(&self, seed_ids: &[u64]) -> Option<&TermInfo> {
+        let mut best: Option<&TermInfo> = None;
+        for &id in seed_ids {
+            if let Some(nf) = self.normal_form_reachable_from(id) {
+                best = Some(match best {
+                    None => nf,
+                    Some(prev) => {
+                        let key_new = (nf.display.len(), nf.display.as_str());
+                        let key_prev = (prev.display.len(), prev.display.as_str());
+                        if key_new < key_prev {
+                            nf
+                        } else {
+                            prev
+                        }
+                    }
+                });
+            }
+        }
+        best
     }
 
     /// Get the equivalence class containing a term

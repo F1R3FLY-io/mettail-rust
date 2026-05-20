@@ -1190,8 +1190,22 @@ impl Repl {
                 println!("  No rewrites from this term (already a normal form).");
             }
         } else {
-            // Exec: show a normal form reachable from the initial term
-            if let Some(nf) = results.normal_form_reachable_from(initial_id) {
+            // Exec: show a normal form reachable from the initial term.
+            //
+            // Phase F.12.A (2026-05-20): when the parsed term is an
+            // `Ambiguous` wrapper, `initial_id` (the wrapper hash) is
+            // structurally absent from `results.all_terms`. Use the
+            // multi-source helper which seeds from each `rewrite_seed_ids()`
+            // alt and picks the canonically-shortest NF across all
+            // reachable NFs. For unambiguous inputs the default trait
+            // impl returns `[(initial_id, display)]` and behavior is
+            // identical to the prior single-source call.
+            let seed_ids: Vec<u64> = term
+                .rewrite_seed_ids()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            if let Some(nf) = results.normal_form_reachable_from_seeds(&seed_ids) {
                 let result_term: Box<dyn mettail_runtime::Term> =
                     match language.parse_term(&nf.display) {
                         Ok(t) => t,

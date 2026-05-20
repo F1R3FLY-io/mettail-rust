@@ -812,6 +812,32 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             fn as_any(&self) -> &dyn std::any::Any {
                 self
             }
+
+            /// Phase F.12.A (2026-05-20): expose every single-category
+            /// alternative the parser preserved so that downstream
+            /// graph-traversal callers (simulation runner, REPL exec) can
+            /// seed multi-source BFS from each alt's `term_id` instead of
+            /// from the `Ambiguous` wrapper's hash (which is structurally
+            /// absent from `AscentResults.all_terms` — only single-category
+            /// variants are pushed there by `run_ascent_typed`).
+            ///
+            /// Hash recipe MUST match `language_struct.rs` TermInfo
+            /// construction: DefaultHasher applied to the inner enum
+            /// variant `Inner::Cat(t)` (which is exactly what
+            /// `all_alts()` returns by reference — no rewrapping needed).
+            fn rewrite_seed_ids(&self) -> Vec<(u64, std::string::String)> {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                self.0
+                    .all_alts()
+                    .into_iter()
+                    .map(|alt| {
+                        let mut h = DefaultHasher::new();
+                        alt.hash(&mut h);
+                        (h.finish(), format!("{}", alt))
+                    })
+                    .collect()
+            }
         }
 
         impl std::fmt::Display for #term_name {
