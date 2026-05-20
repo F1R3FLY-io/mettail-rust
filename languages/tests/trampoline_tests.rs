@@ -4,6 +4,16 @@
 //! stack overflow, thanks to the heap-allocated continuation stack.
 //! The trampoline converts all same-category recursion into iteration,
 //! bounded only by available heap memory.
+//!
+//! Phase F.13 H7 (2026-05-20): override the global allocator for this
+//! test binary to mimalloc, addressing the ~21% libc allocator CPU cost
+//! and 22x heap fragmentation ratio observed at the F.13 baseline. The
+//! `#[global_allocator]` attribute attaches to this test binary's
+//! implicit `main`; other test binaries retain glibc until they too
+//! adopt the override (deferred to per-binary follow-up).
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use mettail_languages::calculator::{Bool, Int};
 

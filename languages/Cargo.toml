@@ -45,6 +45,10 @@ clap = { version = "4.5", features = ["derive"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 mettail-testkit = { path = "../testkit" }
+# Phase F.13 H7 (2026-05-20): mimalloc for test-binary allocator override.
+# Used by `tests/trampoline_tests.rs` via `#[global_allocator]` to reduce
+# the ~21% libc malloc/free CPU cost observed at the F.13 baseline.
+mimalloc = { version = "0.1", default-features = false }
 
 # W7 Stage 8 (parity testing): postcard golden inspector.
 # No `required-features` — usable on default builds.
