@@ -10388,9 +10388,24 @@ mod tests {
             WpdaWalker::new(AtomicIntEngine, 0);
         let final_state = walker.run_to_saturation(50, &token_src);
         assert_eq!(final_state, WpdaState::Accepted, "walker reaches Accepted");
-        // The semantic action should have left i64(42) on the builder.
-        let result: Option<i64> = walker.builder_mut().take_result();
-        assert_eq!(result, Some(42));
+        // Phase F.3c.1 (2026-05-20): use the production extraction path
+        // (`resolve_at_end_of_input` → realize_root_to_terms) instead of
+        // the legacy `walker.builder_mut().take_result()`. The pre-F.3c
+        // pattern read from `walker.builder`, which is deleted in F.3c.5.
+        // The realize path returns the same Arc<dyn Any> the action_fn
+        // pushed; downcast unchanged.
+        let resolved = walker.resolve_at_end_of_input(&token_src);
+        let term_arc = match resolved {
+            WpdaResolveResult::Accepted { mut terms, .. } => {
+                assert_eq!(terms.len(), 1, "expected single unambiguous parse");
+                terms.pop().expect("Accepted with non-empty terms")
+            }
+            other => panic!("expected Accepted, got {:?}", other),
+        };
+        let result_i64 = term_arc
+            .downcast::<i64>()
+            .expect("AtomicIntEngine pushes i64");
+        assert_eq!(*result_i64, 42);
         // Position should have advanced past the literal.
         assert_eq!(walker.position(), 1);
     }
@@ -11166,11 +11181,16 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         assert!(w.deterministic());
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
-        // Still deterministic (no Fork). Live builder must have an open
+        // Still deterministic (no Fork). The cursor must have an open
         // optional scope so subsequent inner pushes land in the inner Vec.
         assert!(w.deterministic());
+        // Phase F.3c.1 (2026-05-20): inspect the SPPF-side mirror
+        // `cursor.optional_scope_marks` instead of `walker.builder()`
+        // (deleted in F.3c.5).
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
         assert_eq!(
-            w.builder().optional_stack_depth(),
+            cursors[0].optional_scope_marks.len(),
             1,
             "Push of OptionalGroupAt(1) must open optional scope in deterministic mode",
         );
@@ -11207,14 +11227,17 @@ mod tests {
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork → nondeterministic
         assert!(!w.deterministic());
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push (under fanout)
-        // The cursor's builder must show an open optional scope.
+        // The cursor must show an open optional scope.
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
+        // Phase F.3c.1 (2026-05-20): inspect the SPPF-side mirror
+        // `cursor.optional_scope_marks` instead of `cursor.builder`
+        // (deleted in F.3c.4).
         assert_eq!(
-            cursors[0].builder.optional_stack_depth(),
+            cursors[0].optional_scope_marks.len(),
             1,
             "Push of OptionalGroupAt(1) in nondeterministic mode must open an optional scope \
-             on cursor.builder via emit_start_optional_scope's eager Arc::make_mut",
+             on the cursor's optional_scope_marks (mirrored by emit_start_optional_scope)",
         );
     }
 
@@ -11232,8 +11255,12 @@ mod tests {
         }]);
         let mut w = WpdaWalker::new(engine, 0);
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        // Phase F.3c.1 (2026-05-20): inspect SPPF-side mirror instead of
+        // walker.builder() (deleted in F.3c.5).
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
         assert_eq!(
-            w.builder().optional_stack_depth(),
+            cursors[0].optional_scope_marks.len(),
             0,
             "OptionalGroupAt(2) must NOT open a new scope (only sub_pos=1 does)",
         );
@@ -11455,20 +11482,18 @@ mod tests {
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
-        // ConsumeAndReplaceWithEffect's effect applied to cursor.builder
-        // via apply_effect_to_builder. StartBinderScope with empty names
-        // opens a binder scope at depth=0.
+        // Phase F.3c.1 (2026-05-20): inspect SPPF-side mirror
+        // `cursor.binder_scope_marks` (Vec<(u16, Vec<String>)>) instead
+        // of `cursor.builder.current_binder_scope()` (deleted F.3c.4).
+        // StartBinderScope pushes a new (depth, names) tuple via the
+        // emit_start_binder_scope helper / apply_effect_to_cursor.
+        let scope = cursors[0]
+            .binder_scope_marks
+            .last()
+            .expect("ConsumeAndReplaceWithEffect with StartBinderScope effect must \
+                     push onto binder_scope_marks");
         assert!(
-            cursors[0].builder.current_binder_scope().is_some(),
-            "ConsumeAndReplaceWithEffect with StartBinderScope effect must \
-             open a binder scope on cursor.builder",
-        );
-        assert!(
-            cursors[0]
-                .builder
-                .current_binder_scope()
-                .map(|h| h.names.is_empty())
-                .unwrap_or(false),
+            scope.1.is_empty(),
             "Opened scope must have the empty names from the StartBinderScope effect",
         );
     }
