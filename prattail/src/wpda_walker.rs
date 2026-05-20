@@ -1106,28 +1106,15 @@ pub struct BranchCursor<W: SemiringRef> {
     // unreachable under always-eager Arc::make_mut (broken cursors
     // surface as `WpdaState::Error` and are dropped by
     // `cursor_resolution_check`).
-    /// Phase 5.2 (2026-05-12): per-cursor `Arc`-shared `SemanticBuilder`.
-    /// Future anchor for the persistent-builder redesign — the runtime
-    /// still routes walker-driven mutations through `recovery_deltas`
-    /// (journal model). Phase 5.3 migrates emitter helpers to mutate
-    /// `cursor.builder` directly via `Arc::make_mut`; Phase 5.4 drops the
-    /// Hack #7 Fork prologue (`pre_fork_slots` donation) in favor of an
-    /// O(1) `Arc::clone` per child; Phase 5.6 deletes
-    /// `recovery_deltas` entirely.
-    ///
-    /// Today (Phase 5.2): the field is structurally present but NOT read
-    /// or written by the engine. `BranchCursor::clone` bumps the Arc
-    /// (O(1)); `BranchCursor::fork_child` and `seed_from_live` initialize
-    /// it from the parent's Arc or a fresh empty `SemanticBuilder`,
-    /// respectively. Including the field NOW lets Phase 5.3+ route
-    /// mutations without touching every construction site again.
-    ///
-    /// NOT part of `ConfigKey` — this is operational per-cursor state,
-    /// not a merge-equivalence key. Merge tiebreak preserves the
-    /// surviving cursor's builder by Vec-write semantics in
-    /// `merge_equivalent_cursors`, identical to how `recovery_deltas`
-    /// + `collection_stack` are kept today.
-    pub builder: Arc<SemanticBuilder>,
+    // Phase F.3c.4 (2026-05-20): `pub builder: Arc<SemanticBuilder>`
+    // DELETED. Phase 5.2 introduced the per-cursor Arc-shared builder;
+    // Phase 5.3-5.6 made all emitter mutations eager via Arc::make_mut.
+    // F.3c.3 swapped emit_fire_action to a transient-SB fire path
+    // (the SOLE caller of action_fn). F.3c.4 deletes the field entirely:
+    // the SPPF-side mirrors (sppf_stack, sppf_collection_arena,
+    // sppf_symbol_terms, binder_scope_marks, optional_scope_marks,
+    // collection_stack_depth, last_action_output_cat) are the
+    // authoritative per-cursor state for all parsing operations.
     /// Option C / C2 (2026-05-15): per-cursor SPPF working-stack. Replaces
     /// the SemanticBuilder argument-stack as the structural record of which
     /// SPPF subtrees have been constructed so far in this cursor. Cursors
@@ -1293,10 +1280,10 @@ where
             .field("weight", &self.weight)
             .field("inner_state", &self.inner_state)
             .field("recovery_deltas_len", &self.recovery_deltas.len())
-            // Phase 5.2 (2026-05-12): Arc strong count is the most useful
-            // diagnostic — shows how many cursors share this builder
-            // before the next mutation triggers copy-on-write.
-            .field("builder_arc_refcount", &Arc::strong_count(&self.builder))
+            // Phase F.3c.4 (2026-05-20): builder field deleted; the
+            // `Arc::strong_count(&self.builder)` diagnostic is gone.
+            // Per-cursor state is now visible via the SPPF-side mirrors
+            // (sppf_stack length, sppf_collection_arena slots, etc.).
             // Phase C.2 (2026-05-17): unconsumed per-production weight.
             .field("pending_packing_weight", &self.pending_packing_weight)
             // Phase F.1 (2026-05-18): builder.collection_stack_len mirror.
@@ -1339,7 +1326,8 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             recovery_depth: self.recovery_depth,
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
-            builder: Arc::clone(&self.builder),
+            // Phase F.3c.4 (2026-05-20): builder field deleted; the
+            // Arc::clone is no longer needed.
             sppf_stack: self.sppf_stack.clone(),
             optional_scope_marks: self.optional_scope_marks.clone(),
             binder_scope_marks: self.binder_scope_marks.clone(),
@@ -1437,7 +1425,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // initialize their `self.builder: SemanticBuilder` to
             // `SemanticBuilder::new()` in lockstep, so the two stay
             // structurally identical at construction time.
-            builder: Arc::new(SemanticBuilder::new()),
+            // Phase F.3c.4 (2026-05-20): builder field deleted.
             // Option C / C2: seed cursor's SPPF stack is empty (no reduces yet).
             sppf_stack: Vec::new(),
             optional_scope_marks: Vec::new(),
@@ -1500,7 +1488,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // forces copy-on-write via `Arc::make_mut`. This is the
             // single-most-important reason the field exists: Fork
             // fanout cost becomes constant per child.
-            builder: Arc::clone(&parent.builder),
+            // Phase F.3c.4 (2026-05-20): builder field deleted; Arc::clone gone.
             // Option C / C2: Fork-children inherit the parent's SPPF
             // construction history. Clone is O(depth-of-current-rule),
             // which is bounded by a small constant; cheaper than the
@@ -2661,7 +2649,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // walker.builder (live mutation surface in 5.2)
                     // already captured the winning branch's effects
                     // via commit_winner journal replay.
-                    builder: Arc::new(SemanticBuilder::new()),
                     // Option C / C2: post-resolution singleton starts with
                     // empty SPPF stack. Realization at EOI reads the root
                     // SppfId from `self.committed_sppf_root` (added in C6),
@@ -2985,15 +2972,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             //
             // Phase F.0 (2026-05-17, per
             // `~/.claude/plans/phase-f-cursor-builder-deletion.md`): the
-            // install is left in place because `self.builder` has public
-            // accessors used by codegen facades. The take_dyn_result()
-            // call below is replaced with `realize_root_to_terms` —
-            // the SPPF root is already captured at det_sppf_root, and
-            // realize gives a structurally-equivalent extraction
-            // independent of cursor.builder.
-            if let Some(cursor) = self.branch_cursors.first() {
-                self.builder = (*cursor.builder).clone();
-            }
+            // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
+            // The install site that read `(*cursor.builder).clone()`
+            // and assigned to `self.builder` is gone. self.builder
+            // remains as a stub for now (F.3c.5 deletes it); the
+            // extract path below uses realize_root_to_terms over the
+            // SPPF root captured from cursor.sppf_stack.last().
             // C6: extract the singleton cursor's SPPF root.
             let det_sppf_root = self
                 .branch_cursors
@@ -4273,7 +4257,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // builder to inherit. Live mutations continue to
                     // flow through `self.builder` (deterministic mode); the
                     // cursor's Arc is a future anchor (5.3+).
-                    builder: Arc::new(SemanticBuilder::new()),
                     // Option C / C2: post-Drop reset starts with empty SPPF
                     // stack. The drop discards the failed cursor's tree
                     // construction; the deterministic-mode singleton resets.
@@ -4308,9 +4291,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // deterministic mode (self.deterministic == true): in nondeterministic mode
                 // (post-first-Fork) all cursors go through step_fanout,
                 // not apply_action, and commit_winner handles install.
-                if self.deterministic {
-                    self.builder = (*cursor.builder).clone();
-                }
+                // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
+                // The deterministic-mode install site
+                // `self.builder = (*cursor.builder).clone()` is gone.
+                // self.builder is a stub (F.3c.5 deletes); downstream
+                // consumers use walker.resolve() / realize_root_to_terms.
                 self.branch_cursors.push(cursor);
             }
             CursorOutcome::ForkInto(children) => {
@@ -4894,7 +4879,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -4976,7 +4960,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5069,7 +5052,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5138,7 +5120,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5200,7 +5181,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5295,7 +5275,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5369,7 +5348,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5444,7 +5422,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5554,7 +5531,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5655,7 +5631,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -5802,7 +5777,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
-                                builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
@@ -6945,7 +6919,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// live builder). Pre-Phase-4 this method called `clear()`; that
     /// would now violate L4.
     fn commit_winner(&mut self, winner_idx: usize) {
-        let mut winner = self.branch_cursors.swap_remove(winner_idx);
+        let winner = self.branch_cursors.swap_remove(winner_idx);
         self.branch_cursors.clear();
         // Phase 5.5 (2026-05-12): install winner.builder as the live
         // SemanticBuilder. The winner cursor's `Arc<SemanticBuilder>`
@@ -6988,11 +6962,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // clone via SemanticBuilder: Clone (Phase 5.3). The clone is
         // structurally shared via `im::Vector` HAMTs — O(log N) per
         // field root.
-        self.builder = Arc::try_unwrap(std::mem::replace(
-            &mut winner.builder,
-            Arc::new(SemanticBuilder::new()),
-        ))
-        .unwrap_or_else(|arc| (*arc).clone());
+        // Phase F.3c.4 (2026-05-20): cursor.builder field deleted. The
+        // `Arc::try_unwrap(... winner.builder ...)` install site that
+        // donated the winning cursor's Arc to `self.builder` is gone.
+        // The winner's SPPF-side state (sppf_stack, sppf_collection_arena,
+        // sppf_symbol_terms, etc.) is moved into the post-commit
+        // singleton below. self.builder remains as a stub (F.3c.5
+        // deletes).
         // Phase 5.6-tail-E (2026-05-12): replay loop is now recovery-only
         // by construction. winner.recovery_deltas holds ONLY the 5 recovery
         // variants (gated by is_recovery_delta in Step D). Non-recovery
@@ -7224,19 +7200,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             // visited set so post-commit projection cycle defense
             // continues to apply across the parse path.
             visited_dispatch: winner.visited_dispatch,
-            // B13d-R Step 2 (2026-05-08): post-commit singleton has
-            // empty pending → Consistent memo (the winner's deltas
-            // were drained at replay; recovery_deltas is now Vec::new()).
-            // Phase 5.2 (2026-05-12): preserve winner's Arc. The 5.2
-            // engine doesn't read this field — but preserving it here
-            // (vs reseting to fresh Arc) prepares for Phase 5.5 where
-            // the Arc swap REPLACES the journal-replay path; at that
-            // point `winner.builder` IS the post-commit live state, so
-            // installing it on the post-commit singleton becomes the
-            // committal step. Today (5.2) the move is a no-op vis-à-
-            // vis behavior — the live mutation surface is still
-            // `self.builder`, journaled deltas replay against it above.
-            builder: winner.builder,
+            // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
+            // The post-commit singleton no longer carries a builder
+            // Arc; the winner's SPPF-side state (sppf_stack,
+            // sppf_collection_arena, sppf_symbol_terms, etc.) below
+            // is the authoritative per-cursor state.
             // Option C / C2: preserve winner's SPPF stack so subsequent
             // reduces continue building on top of the committed history.
             sppf_stack: winner.sppf_stack,
@@ -7436,14 +7404,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// the Bug P gate (line ~7388). Fix: mirror the collection ops here
     /// matching the emit_* helpers' SPPF push semantics.
     fn apply_effect_to_cursor(&mut self, cursor: &mut BranchCursor<W>, effect: &BuilderDelta) {
-        // Builder side first (matches pre-existing semantics).
-        Self::apply_effect_to_builder(Arc::make_mut(&mut cursor.builder), effect);
-        // Phase F.3a (2026-05-20): apply_effect_to_builder may push/pop
-        // the main arg stack (e.g., EndBinderScope pushes BinderScope,
-        // PushCollectionId pushes CollectionId, SpliceIntoCollection
-        // pops top). Refresh the D8 mirror from the resulting builder
-        // state.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The
+        // pre-existing `apply_effect_to_builder(Arc::make_mut(&mut
+        // cursor.builder), effect)` call is gone. Effects' SPPF-side
+        // mirrors below are now the SOLE authoritative state for
+        // binder-scope / collection / splice operations. The mirror
+        // clears since none of these effects push a Term onto the
+        // main arg stack.
+        self.clear_action_output_mirror(cursor);
         // SPPF + cursor-state mirror.
         match effect {
             BuilderDelta::StartBinderScope { names } => {
@@ -7457,16 +7425,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 }
             }
             BuilderDelta::StartCollection => {
-                // H4 (2026-05-18): mirror emit_start_collection's per-cursor
-                // arena allocation. The builder-side `apply_effect_to_builder`
-                // above already called `builder.start_collection()` which
-                // returned the next slot id (== current arena length).
-                // Add the corresponding empty slot to the cursor's arena
-                // and depth counter.
-                let new_id = cursor
-                    .builder
-                    .collection_stack_len()
-                    .saturating_sub(1);
+                // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The
+                // new slot id is derived from cursor.collection_stack_depth
+                // directly (== the next allocator id, matching the
+                // pre-F.3c builder.collection_stack.len() return). Add
+                // the corresponding empty slot to the cursor's SPPF
+                // arena and increment the depth counter.
+                let new_id = cursor.collection_stack_depth as usize;
                 let arena = Arc::make_mut(&mut cursor.sppf_collection_arena);
                 while arena.len() <= new_id {
                     arena.push(Vec::new());
@@ -7636,23 +7601,23 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     // `install_singleton_cursor_builder` at resolve time (and at any
     // post-step boundary where downstream consumers read self.builder).
 
-    /// Phase F.3a (2026-05-20): refresh `cursor.last_action_output_cat`
-    /// from the post-mutation builder state. Called at the end of every
-    /// emit_* helper and `apply_effect_to_cursor` arm that touches
-    /// `cursor.builder` so the D8 mirror tracks the actual stack top.
+    /// Phase F.3c.4 (2026-05-20): clear `cursor.last_action_output_cat`.
+    /// Called at the end of every non-fire emit_* helper and
+    /// `apply_effect_to_cursor` — all those helpers push non-Term
+    /// values (Token/Ident/Predicate/CollectionId/OptAbsent/BinderScope)
+    /// or modify scope state without pushing onto the main arg stack,
+    /// so the "last action output cat" semantic ceases to apply. The
+    /// mirror is REPOPULATED only by `emit_fire_action`'s transient
+    /// fire success path.
     ///
-    /// Semantics: returns the cat_idx of the current
-    /// `builder.top_term_type_name()` (None if top is non-Term or stack
-    /// is empty). Byte-equivalent to the D8 reads at lines 8555 and 8605
-    /// — those reads consume the same expression. F.3b replaces those
-    /// reads with `cursor.last_action_output_cat` once parity is
-    /// verified across the gauntlet.
+    /// Pre-F.3c.4 this was `refresh_action_output_mirror` which read
+    /// `cursor.builder.top_term_type_name() → cat_of_type_name(tn)` to
+    /// refresh; F.3c.4 deletes cursor.builder and the helper simplifies
+    /// to a None-clear since all 13 non-fire call sites push non-Term
+    /// values whose post-fix mirror IS None.
     #[inline(always)]
-    fn refresh_action_output_mirror(&self, cursor: &mut BranchCursor<W>) {
-        cursor.last_action_output_cat = cursor
-            .builder
-            .top_term_type_name()
-            .and_then(|tn| self.engine.cat_of_type_name(tn));
+    fn clear_action_output_mirror(&self, cursor: &mut BranchCursor<W>) {
+        cursor.last_action_output_cat = None;
     }
 
     #[inline(always)]
@@ -7675,9 +7640,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             false,
         );
         cursor.sppf_stack.push(sid);
-        Arc::make_mut(&mut cursor.builder).push_token(kind, text, pos);
-        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
+        // intern_terminal + sppf_stack.push above carries the structural
+        // state; emit_fire_action's reconstruct_action_arg reads the
+        // Terminal node directly. Mirror clears to None since the push
+        // was a Token (non-Term).
+        self.clear_action_output_mirror(cursor);
     }
 
     /// Phase F.8 (2026-05-18): mirror a consumed-but-not-captured unary-prefix
@@ -7725,9 +7693,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             true,
         );
         cursor.sppf_stack.push(sid);
-        Arc::make_mut(&mut cursor.builder).push_ident(name, pos);
-        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Terminal
+        // node carries the Ident state. Mirror clears (Ident is non-Term).
+        self.clear_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7742,9 +7710,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         self.sppf_predicate_arena.push(Arc::clone(&pred));
         let sid = self.sppf.intern_predicate(handle);
         cursor.sppf_stack.push(sid);
-        Arc::make_mut(&mut cursor.builder).push_predicate_arc(pred);
-        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Predicate
+        // node + sppf_predicate_arena carry the payload. Mirror clears.
+        self.clear_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7756,12 +7724,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // push of `ActionArg::BinderScope` onto args.
         let depth = cursor.binder_scope_marks.len() as u16;
         cursor.binder_scope_marks.push((depth, names.clone()));
-        Arc::make_mut(&mut cursor.builder).start_binder_scope(names);
-        // Phase F.3a (2026-05-20): start_binder_scope routes subsequent
-        // pushes to the inner scope's active arg accumulator, not the
-        // main stack. The main stack top doesn't change, but reading
-        // from the helper keeps semantics consistent.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
+        // `cursor.binder_scope_marks.push((depth, names))` already happened
+        // above. Subsequent emit_extend_binder_scope appends; matching
+        // EndBinderScope effect interns the SppfNode::BinderScope and
+        // pushes its id onto sppf_stack. Mirror clears since
+        // start_binder_scope doesn't push a Term onto the main stack.
+        self.clear_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -7772,9 +7741,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         if let Some(top) = cursor.binder_scope_marks.last_mut() {
             top.1.push(name.clone());
         }
-        Arc::make_mut(&mut cursor.builder).extend_binder_scope(name);
-        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF-side
+        // `cursor.binder_scope_marks.last_mut()` append above carries
+        // the structural state. Mirror clears.
+        self.clear_action_output_mirror(cursor);
     }
 
     /// Phase F.1 (2026-05-18): SPPF-derived equivalent of
@@ -8401,15 +8371,16 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // Phase 5.6-tail-G (2026-05-12): cursor.collection_stack mirror
         // push deleted — cursor.builder.collection_stack carries the
         // authoritative slot state.
-        let id = Arc::make_mut(&mut cursor.builder).start_collection();
-        // Phase F.3a (2026-05-20): start_collection doesn't touch the main
-        // arg stack, but refresh for consistency / future-proofing.
-        self.refresh_action_output_mirror(cursor);
-        // Phase F.1 (2026-05-18): mirror the builder's collection_stack
-        // push. Parity invariant: cursor.collection_stack_depth as usize ==
-        // cursor.builder.collection_stack_len(). saturating_add guards
-        // against overflow at 255 (impossible for any realistic grammar
-        // but cheap defense-in-depth).
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The collection
+        // slot's id is now derived from cursor.collection_stack_depth
+        // directly (= depth BEFORE the saturating_add below, matching
+        // the pre-F.3c sequence: builder.start_collection returns the
+        // current builder.collection_stack.len() then pushes a new slot
+        // → builder.collection_stack.len() increments by 1, mirror
+        // saturating_add(1)). Mirror clears for action_output (this
+        // helper doesn't push onto the main arg stack).
+        let id = cursor.collection_stack_depth;
+        self.clear_action_output_mirror(cursor);
         cursor.collection_stack_depth =
             cursor.collection_stack_depth.saturating_add(1);
         // C3 dual-mode: ensure the SPPF-side collection arena has a slot
@@ -8438,9 +8409,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // the fire_action arity check matches builder.stack arity.
         let sid = self.sppf.intern_collection_id(id as u32);
         cursor.sppf_stack.push(sid);
-        Arc::make_mut(&mut cursor.builder).push_collection_id(id);
-        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF
+        // CollectionId node above mirrors the structural state.
+        self.clear_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -8457,11 +8428,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             }
         }
         // push_to_collection silently no-ops on out-of-bounds id.
-        Arc::make_mut(&mut cursor.builder).push_to_collection(id);
-        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
-        // The splice popped the top; the new top could be a CollectionId,
-        // another Term, or empty — refresh reads the actual state.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
+        // sppf_collection_arena[id].push(top) above mirrors the splice.
+        // Mirror clears (the popped top was a Term per-fire output, now
+        // absorbed into the collection slot).
+        self.clear_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -8470,9 +8441,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // emit_finalize_optional_scope_present can collect everything
         // pushed since this point.
         cursor.optional_scope_marks.push(cursor.sppf_stack.len());
-        Arc::make_mut(&mut cursor.builder).start_optional_scope();
-        // Phase F.3a (2026-05-20): refresh mirror.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
+        // `cursor.optional_scope_marks.push(cursor.sppf_stack.len())`
+        // above mirrors the open-scope state.
+        self.clear_action_output_mirror(cursor);
     }
 
     /// Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time symbol-
@@ -8599,10 +8571,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 cursor.sppf_stack.push(packing_id);
             }
         }
-        Arc::make_mut(&mut cursor.builder).finalize_optional_scope_present();
-        // Phase F.3a (2026-05-20): finalize pushes an OptionalPresent
-        // wrapped value back to the main stack. Refresh mirror.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
+        // OPTIONAL_PRESENT_RULE_IDX synthetic packing above gathers
+        // children from `cursor.sppf_stack[mark..]` into a Packing and
+        // pushes its id. reconstruct_action_arg unwraps these as
+        // ActionArg::Optional(Some(inner_args)) during the next fire's
+        // arg reconstruction.
+        self.clear_action_output_mirror(cursor);
     }
 
     #[inline(always)]
@@ -8610,9 +8585,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // C3 dual-mode: push an OptAbsent leaf onto sppf_stack.
         let sid = self.sppf.intern_opt_absent(cursor.pos as u32);
         cursor.sppf_stack.push(sid);
-        Arc::make_mut(&mut cursor.builder).push_optional_absent();
-        // Phase F.3a (2026-05-20): refresh mirror from post-mutation builder.
-        self.refresh_action_output_mirror(cursor);
+        // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF OptAbsent
+        // node above mirrors the structural state.
+        self.clear_action_output_mirror(cursor);
     }
 
     // ─── 4 mode-agnostic helpers (mirror to live walker fields when deterministic) ──
