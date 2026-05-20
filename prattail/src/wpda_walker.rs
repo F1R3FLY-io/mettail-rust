@@ -1240,6 +1240,25 @@ pub struct BranchCursor<W: SemiringRef> {
     /// ConfigKey discrimination because any two cursors with identical
     /// splice sequence reach identical arena content by construction.
     pub sppf_collection_arena: Arc<Vec<Vec<crate::sppf::SppfId>>>,
+    /// Phase F.3c.2 (2026-05-20): per-cursor memo of realized AST payloads
+    /// keyed by SPPF Symbol id. Populated by `emit_fire_action` immediately
+    /// after each successful action_fn fire, consumed by subsequent fires
+    /// that traverse the same Symbol as a child during arg reconstruction.
+    ///
+    /// Replaces `cursor.builder.stack` as the carrier of "what AST nodes
+    /// have been constructed in this parse path." The `Arc<Vec>` wrapper
+    /// matches `sppf_collection_arena`'s CoW semantics: Fork-arm children
+    /// inherit via `Arc::clone(&parent.sppf_symbol_terms)` (O(1) refcount
+    /// bump); first write in a child triggers `Arc::make_mut` deep clone.
+    ///
+    /// Stored as `Vec<(SppfId, Arc<dyn Any + Send + Sync>)>` instead of
+    /// `HashMap` because lookup populations are small (≤ depth of parse,
+    /// ~100 for trampoline depth=100). F.3c.8 promotes to HashMap if
+    /// benchmarks warrant.
+    ///
+    /// Not part of `ConfigKey` — operational per-cursor state.
+    pub sppf_symbol_terms: Arc<Vec<(crate::sppf::SppfId, Arc<dyn std::any::Any + Send + Sync>)>>,
+
     /// Phase F.3a/b (2026-05-20): walker-maintained mirror of
     /// `cursor.builder.top_term_type_name().and_then(|tn| cat_of_type_name(tn))`.
     ///
@@ -1341,6 +1360,8 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
             // Phase F.3a (2026-05-20): Option<u16> is Copy.
             last_action_output_cat: self.last_action_output_cat,
+            // Phase F.3c.2 (2026-05-20): Arc bump — CoW on first write.
+            sppf_symbol_terms: Arc::clone(&self.sppf_symbol_terms),
         }
     }
 }
@@ -1431,6 +1452,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             sppf_collection_arena: Arc::new(Vec::new()),
             // Phase F.3a (2026-05-20): fresh cursor has no action yet.
             last_action_output_cat: None,
+            // Phase F.3c.2 (2026-05-20): fresh empty memo.
+            sppf_symbol_terms: Arc::new(Vec::new()),
         }
     }
 
@@ -1502,6 +1525,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
             // Phase F.3a (2026-05-20): inherit parent's mirror.
             last_action_output_cat: parent.last_action_output_cat,
+            // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
+            sppf_symbol_terms: Arc::clone(&parent.sppf_symbol_terms),
         }
     }
 }
@@ -2657,6 +2682,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     sppf_collection_arena: Arc::new(Vec::new()),
                     // Phase F.3a (2026-05-20): fresh cursor.
                     last_action_output_cat: None,
+                    // Phase F.3c.2 (2026-05-20): fresh empty memo.
+                    sppf_symbol_terms: Arc::new(Vec::new()),
                 }];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
@@ -4265,6 +4292,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // Phase F.3a (2026-05-20): post-Drop reset clears the
                     // mirror — the dropped cursor's action history is gone.
                     last_action_output_cat: None,
+                    // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
+                    sppf_symbol_terms: Arc::new(Vec::new()),
                 });
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
@@ -4887,6 +4916,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             self.emit_push_side_effects(&mut child, &mut symbol);
                             // Stage 3.12.6 (2026-05-02): use cursor_gss_push
@@ -4965,6 +4998,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // nondeterministic mode: emit_push_optional_absent logs the delta.
                             self.emit_push_optional_absent(&mut child);
@@ -5054,6 +5091,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top(
@@ -5119,6 +5160,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
@@ -5177,6 +5222,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Read ident-text BEFORE pos advances. If peek_kind
                             // isn't Ident at runtime, this branch's cursor will
@@ -5268,6 +5317,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5338,6 +5391,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             let popped_symbol =
                                 self.gss.node(child.node).map(|n| n.symbol);
@@ -5409,6 +5466,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // B13d-R Step 2 (2026-05-08): invalidate consistency memo on push.
                             // Phase 5.5 (2026-05-12): eagerly apply effect
@@ -5515,6 +5576,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
@@ -5612,6 +5677,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Phase F.10 (2026-05-19): mirror the standard
                             // `WpdaStepAction::ConsumeAndPush` arm's
@@ -5755,6 +5824,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                // Phase F.3c.2 (2026-05-20): inherit parent's
+                                // SPPF-symbol → AST memo via Arc bump (O(1)).
+                                // First write in this child triggers Arc::make_mut.
+                                sppf_symbol_terms: Arc::clone(&cursor.sppf_symbol_terms),
                             };
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
@@ -7187,6 +7260,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             sppf_collection_arena: winner.sppf_collection_arena,
             // Phase F.3a (2026-05-20): preserve winner's mirror.
             last_action_output_cat: winner.last_action_output_cat,
+            // Phase F.3c.2 (2026-05-20): preserve winner's memo so
+            // post-commit symbol lookups continue to find their realized
+            // payloads. Move (not clone) — single-cursor post-commit.
+            sppf_symbol_terms: winner.sppf_symbol_terms,
         }];
     }
 
@@ -7799,6 +7876,245 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             .unwrap_or(&[])
     }
 
+    /// Phase F.3c.2 (2026-05-20): reconstruct an `ActionArg` from a single
+    /// SPPF node id, using `cursor.sppf_symbol_terms` as the memo for
+    /// previously-realized Symbols. Used by `fire_action_via_transient` to
+    /// build action_fn argument lists from sppf_stack children, eliminating
+    /// the need for the persistent `cursor.builder.stack`.
+    ///
+    /// Case analysis matches `realize_packing_call`'s child-reconstruction
+    /// pattern at wpda_walker.rs:~3880-3935 but operates on a SINGLE
+    /// SppfId (not a cartesian-product combo).
+    #[allow(dead_code)] // F.3c.3 will activate this; F.3c.2 keeps the parity gate cfg-gated
+    fn reconstruct_action_arg(
+        &self,
+        cursor: &BranchCursor<W>,
+        sid: crate::sppf::SppfId,
+    ) -> Option<ActionArg> {
+        use crate::sppf::{PosOrSynth, SppfNode};
+        match self.sppf.node(sid)? {
+            SppfNode::Terminal {
+                token_kind,
+                text_handle,
+                pos,
+                pushed_via_push_ident,
+            } => {
+                let pos_val = match pos {
+                    PosOrSynth::Real(p) => *p as usize,
+                    PosOrSynth::Synthesized(_) => 0,
+                };
+                let text_s = self.sppf.text(*text_handle).to_string();
+                if *pushed_via_push_ident {
+                    Some(ActionArg::Ident {
+                        name: text_s,
+                        pos: pos_val,
+                    })
+                } else {
+                    Some(ActionArg::Token {
+                        kind: token_kind.clone(),
+                        text: text_s,
+                        pos: pos_val,
+                    })
+                }
+            }
+            SppfNode::Symbol { .. } => {
+                // Look up the realized Term in the cursor's memo. Each
+                // successful emit_fire_action stores its result Arc here
+                // keyed by the freshly-interned Symbol id. If the cursor
+                // didn't run a prior fire on this Symbol (cross-Fork-arm
+                // dedup hit), return None — F.3c.3 may need a realize
+                // fallback then, but during F.3c.2's parity gate the
+                // memo is populated for every fire this cursor's lineage
+                // ran, so a miss is itself a divergence signal.
+                cursor
+                    .sppf_symbol_terms
+                    .iter()
+                    .find(|(s, _)| *s == sid)
+                    .map(|(_, arc)| ActionArg::Term {
+                        value: Arc::clone(arc),
+                        type_name: "F3c2Reconstructed",
+                    })
+            }
+            SppfNode::Packing { rule_idx, children, .. }
+                if *rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX =>
+            {
+                // OPTIONAL_PRESENT synthetic packing — wrap inner children
+                // as `ActionArg::Optional(Some(inner_args))`.
+                let inner: Option<Vec<ActionArg>> = children
+                    .iter()
+                    .map(|&c| self.reconstruct_action_arg(cursor, c))
+                    .collect();
+                inner.map(|args| ActionArg::Optional(Some(args)))
+            }
+            SppfNode::Packing { .. } => {
+                // Non-OPTIONAL_PRESENT Packing reached as a direct child:
+                // should not happen in well-formed parses — children are
+                // always Terminals or Symbols. Return None defensively.
+                None
+            }
+            SppfNode::Epsilon { .. } => {
+                // Epsilon children are filtered out at the call site
+                // (same as TriggerTerminal); unreachable here but return
+                // None defensively.
+                None
+            }
+            SppfNode::CollectionId { id } => Some(ActionArg::CollectionId(*id as u8)),
+            SppfNode::OptAbsent { .. } => Some(ActionArg::Optional(None)),
+            SppfNode::Predicate { handle } => self
+                .sppf_predicate_arena
+                .get(*handle as usize)
+                .map(|p| ActionArg::Predicate(Arc::clone(p))),
+            SppfNode::BinderScope { names_text, depth } => {
+                let names: Vec<String> = names_text
+                    .iter()
+                    .map(|h| self.sppf.text(*h).to_string())
+                    .collect();
+                Some(ActionArg::BinderScope(
+                    crate::wpda_runtime::BinderHandle::new(names, *depth),
+                ))
+            }
+            SppfNode::TriggerTerminal { .. } => {
+                // Filtered out at the call site BEFORE this is invoked
+                // (parallel to realize_packing_call's filter at line 3739).
+                None
+            }
+        }
+    }
+
+    /// Phase F.3c.2 (2026-05-20): fire an action_fn on a transient
+    /// SemanticBuilder constructed per-call from sppf_stack-reconstructed
+    /// args. Returns `Some(result_arc)` on success, `None` on elide /
+    /// arity mismatch.
+    ///
+    /// This is the same shape as `realize_packing_call`'s transient-SB
+    /// pattern at wpda_walker.rs:~3852-3960 but produces a single result
+    /// (the cursor's specific parse path) instead of a cartesian product
+    /// over derivations.
+    ///
+    /// During F.3c.2 this runs ALONGSIDE the persistent fire (the
+    /// existing `Arc::make_mut(&mut cursor.builder)` path inside
+    /// emit_fire_action) for parity verification. F.3c.3 will swap the
+    /// persistent path out and make this the sole fire mechanism.
+    #[allow(dead_code)] // F.3c.3 activates this; F.3c.2 wires it via parity gate
+    fn fire_action_via_transient(
+        &self,
+        cursor: &BranchCursor<W>,
+        symbol: StackSymbolV2,
+        children: &[crate::sppf::SppfId],
+    ) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        let cat_src_idx = symbol.category_src_idx;
+        let local_rule_idx = symbol.rule_index_in_category;
+        let entry = self.engine.action_for(cat_src_idx, local_rule_idx)?;
+        let arity = entry.arity as usize;
+        let action_fn = entry.action_fn;
+
+        // Filter TriggerTerminal children — same filter as
+        // `realize_packing_call` (line 3739-3746). TriggerTerminals
+        // contribute NO ActionArg to action_fn.
+        let action_children: Vec<crate::sppf::SppfId> = children
+            .iter()
+            .copied()
+            .filter(|&c| {
+                !matches!(
+                    self.sppf.node(c),
+                    Some(crate::sppf::SppfNode::TriggerTerminal { .. })
+                )
+            })
+            .collect();
+        if action_children.len() != arity {
+            // Arity mismatch — action would fail; mirror persistent
+            // path's behavior by returning None.
+            return None;
+        }
+
+        // Reconstruct ActionArgs.
+        let args: Option<Vec<ActionArg>> = action_children
+            .iter()
+            .map(|&sid| self.reconstruct_action_arg(cursor, sid))
+            .collect();
+        let args = args?;
+
+        // Build transient SB. Pre-allocate collection slots
+        // 0..=max(CollectionId) — same B.1 fix as realize_packing_call
+        // (line 3866-3876). Without this, monotonic start_collection
+        // returns ids in encounter order, which differs from arrival
+        // order when CollectionId(1) comes before CollectionId(0) in
+        // args.
+        let mut sb = SemanticBuilder::new();
+        let max_coll_id: Option<u32> = args
+            .iter()
+            .filter_map(|a| match a {
+                ActionArg::CollectionId(id) => Some(*id as u32),
+                _ => None,
+            })
+            .max();
+        if let Some(max_id) = max_coll_id {
+            for _ in 0..=max_id {
+                let _ = sb.start_collection();
+            }
+        }
+        // Push args. For CollectionId args, also splice the items from
+        // cursor.sppf_collection_arena[id] into the slot first so
+        // push_to_collection has things to drain.
+        for arg in &args {
+            match arg {
+                ActionArg::Token { kind, text, pos } => {
+                    sb.push_token(kind.clone(), text.clone(), *pos);
+                }
+                ActionArg::Ident { name, pos } => {
+                    sb.push_ident(name.clone(), *pos);
+                }
+                ActionArg::Term { value, .. } => {
+                    sb.push_term_arc(Arc::clone(value));
+                }
+                ActionArg::CollectionId(id) => {
+                    // Splice items from cursor.sppf_collection_arena
+                    // (NOT winner_collection_arena — at parse-time fire
+                    // we want this cursor's arena, not the post-commit
+                    // singleton's).
+                    if let Some(items) = cursor.sppf_collection_arena.get(*id as usize) {
+                        for &item_sid in items {
+                            if let Some(ActionArg::Term { value, .. }) =
+                                self.reconstruct_action_arg(cursor, item_sid)
+                            {
+                                sb.push_term_arc(value);
+                                sb.push_to_collection(*id);
+                            }
+                        }
+                    }
+                    sb.push_collection_id(*id);
+                }
+                ActionArg::Predicate(p) => {
+                    sb.push_predicate_arc(Arc::clone(p));
+                }
+                ActionArg::Optional(_)
+                | ActionArg::Collection { .. }
+                | ActionArg::BinderScope(_) => {
+                    sb.push_raw_arg(arg.clone());
+                }
+            }
+        }
+
+        // Fire. Mirror fire_action_for_on_builder's pre/post check.
+        let pre_len = sb.len();
+        if pre_len < arity {
+            return None;
+        }
+        let pre_action_len = sb.len();
+        let popped = sb.pop_args(arity);
+        action_fn(&mut sb, popped);
+        let expected_len = pre_action_len.saturating_sub(arity).saturating_add(1);
+        if sb.len() != expected_len {
+            // Action elided (cross-cat-incompatible arg). Return None.
+            return None;
+        }
+
+        // Take the result Arc. take_dyn_result returns the top of the
+        // builder.stack as an Arc<dyn Any>. Mirror semantic with
+        // realize_packing_call line 3955+.
+        sb.take_dyn_result()
+    }
+
     #[inline(always)]
     fn emit_fire_action(&mut self, cursor: &mut BranchCursor<W>, symbol: StackSymbolV2) {
         // Phase 5.6-tail-B (2026-05-12): always-eager fire on cursor.builder.
@@ -7968,12 +8284,65 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 &mut cursor.pending_packing_weight,
                 W::one_ref(),
             );
+            // Phase F.3c.2 (2026-05-20): clone children (cheap Vec<u32>)
+            // for the post-intern parity gate + memo update. The clone is
+            // ONLY needed during F.3c.2 (the parity gate). F.3c.3 will
+            // use the original children Vec inline as the SOLE fire path.
+            let children_for_transient = children.clone();
             let packing_id = self
                 .sppf
                 .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
             cursor.sppf_stack.push(symbol_id);
+
+            // Phase F.3c.2 (2026-05-20): PARITY GATE + memo update.
+            //
+            // Run the transient-SB fire path alongside the persistent one
+            // (which already executed at line ~7920). The transient is
+            // authoritative-by-parity: if it produces a result Arc, store
+            // in cursor.sppf_symbol_terms keyed by the just-interned
+            // symbol_id so subsequent fires consuming this Symbol via
+            // reconstruct_action_arg find the realized Term.
+            //
+            // Gate the parity assert on `action_for(cat, rule).is_some()`
+            // — test-mock engines (ScriptedEngine, AtomicIntEngine) have
+            // rules without registered action_fns; persistent fire treats
+            // those as no-ops; transient fire returns None at the same
+            // point; no comparison is meaningful.
+            //
+            // F.3c.3 will swap: delete the persistent fire path,
+            // promote the transient fire to authoritative.
+            let transient_result =
+                self.fire_action_via_transient(cursor, symbol, &children_for_transient);
+            if let Some(result_arc) = transient_result {
+                // Memo update — always runs (even in release) so F.3c.3's
+                // swap finds the realized Arc already cached for this
+                // Symbol.
+                let memo = Arc::make_mut(&mut cursor.sppf_symbol_terms);
+                memo.push((symbol_id, result_arc));
+            } else if self
+                .engine
+                .action_for(cat_src_idx, local_rule_idx)
+                .is_some()
+            {
+                // Action exists per the engine, but the transient path
+                // returned None. The persistent path SUCCEEDED (we
+                // wouldn't be here otherwise). This is a divergence.
+                debug_assert!(
+                    false,
+                    "F.3c.2 PARITY VIOLATION: persistent fire succeeded at \
+                     (cat={}, rule={}) but transient fire returned None \
+                     (elide / arity mismatch). children.len()={}",
+                    cat_src_idx,
+                    local_rule_idx,
+                    children_for_transient.len(),
+                );
+            }
+            // else: no action registered — persistent path was a no-op
+            // (fire_action_for_on_builder returned None via the outer
+            // `if let Some(entry) = engine.action_for(...) {} else { None }`).
+            // No memo entry possible; no parity to assert.
         }
     }
 
