@@ -1240,22 +1240,18 @@ pub struct BranchCursor<W: SemiringRef> {
     /// ConfigKey discrimination because any two cursors with identical
     /// splice sequence reach identical arena content by construction.
     pub sppf_collection_arena: Arc<Vec<Vec<crate::sppf::SppfId>>>,
-    /// Phase F.3a (2026-05-20): walker-maintained mirror of
+    /// Phase F.3a/b (2026-05-20): walker-maintained mirror of
     /// `cursor.builder.top_term_type_name().and_then(|tn| cat_of_type_name(tn))`.
     ///
-    /// Populated by `emit_fire_action` from `ActionEntry.output_cat`.
-    /// Cleared to `None` by every non-action `emit_push_*` helper
-    /// (push_token, push_ident, push_collection_id, push_optional_absent)
-    /// and by `emit_splice_into_collection`'s pop arm — anything that
-    /// mutates the builder's stack top to a non-Term invalidates the
-    /// "latest action output category" semantics.
+    /// Maintained by every cursor.builder mutation helper via
+    /// `refresh_action_output_mirror` (emit_push_token/ident/predicate/
+    /// collection_id/optional_absent, emit_splice_into_collection,
+    /// emit_fire_action — both success AND error paths — emit_start_*,
+    /// emit_finalize_optional_scope_present, apply_effect_to_cursor).
     ///
-    /// Used by the D8 cross-cat resolution reads at lines ~8555 and
-    /// ~8605 (F.3b swaps them to consume this field). During F.3a the
-    /// field coexists with `cursor.builder.top_term_type_name()` and
-    /// debug_assert checks parity at each D8 read site. Once parity
-    /// is verified across the full gauntlet, F.3c deletes
-    /// `cursor.builder` entirely (~−480 LoC).
+    /// Consumed by the D8 cross-cat resolution reads at the
+    /// GroupingClose and GroupingClosePreservingInner sites (Phase F.3b
+    /// swap, 2026-05-20). F.3c deletes cursor.builder entirely.
     ///
     /// Operational per-cursor state (not part of ConfigKey).
     pub last_action_output_cat: Option<u16>,
@@ -8714,39 +8710,16 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         }
                     });
                 if let Some(new_top_cat) = new_top_cat_opt {
-                    // Phase F.3 INVESTIGATION (2026-05-18): empirical
-                    // diagnostic over the rhocalc cross-cat cast suite
-                    // showed the SPPF stack top can be a `Terminal` (not
-                    // a Symbol) at this D8 site for cast paths like
-                    // `castfixed(int_expr) + fixed_lit`, while the
-                    // builder.top is the post-action Term with a known
-                    // type_name. This is a real SPPF/builder desync
-                    // inherited from earlier in the parse — the
-                    // FireAction's SPPF mirror skipped (sppf_stack
-                    // underflow check) where the builder's stack
-                    // didn't. F.3 cannot delete cursor.builder until
-                    // this desync is fixed (a Symbol must be on top of
-                    // sppf_stack wherever builder.top is a Term).
-                    // Tracked separately; the D8 reads stay on the
-                    // builder until then.
-                    // Phase F.3a (2026-05-20): debug_assert parity between
-                    // builder-read and walker-maintained mirror at this D8
-                    // site. F.3b will swap this read to the mirror once
-                    // parity holds across the full gauntlet.
-                    let builder_cat_opt = cursor
-                        .builder
-                        .top_term_type_name()
-                        .and_then(|tn| self.engine.cat_of_type_name(tn));
-                    debug_assert_eq!(
-                        builder_cat_opt,
-                        cursor.last_action_output_cat,
-                        "F.3a D8 mirror parity violation at GroupingClose: \
-                         builder.top_term_type_name=>cat = {:?}, \
-                         cursor.last_action_output_cat = {:?}",
-                        builder_cat_opt,
-                        cursor.last_action_output_cat,
-                    );
-                    if let Some(builder_cat) = builder_cat_opt
+                    // Phase F.3b (2026-05-20): consume the walker-maintained
+                    // `cursor.last_action_output_cat` mirror set by every
+                    // cursor.builder mutation in F.3a. Byte-equivalent to
+                    // the prior `cursor.builder.top_term_type_name().and_then(
+                    // |tn| self.engine.cat_of_type_name(tn))` — F.3a's
+                    // debug_assert_eq! parity gate verified equivalence
+                    // across the narrow gauntlet (6139/0). F.3c will
+                    // delete cursor.builder entirely; this read is the
+                    // mirror's first authoritative consumer.
+                    if let Some(builder_cat) = cursor.last_action_output_cat
                     {
                         if builder_cat != new_top_cat {
                             let new_sym =
@@ -8785,31 +8758,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             WpdaState::GroupingClosePreservingInner {
                 inner_cat_src_idx,
             } if inner_cat_src_idx == u16::MAX => {
-                // Phase F.2 (2026-05-18): keep the builder-side resolution
-                // — see D8 Return-path note above. SPPF Symbol's
-                // non_terminal_tag tracks the latest Packing's output_cat
-                // (which can include auto-injected cast intermediates),
-                // while the builder top's TYPE NAME is the post-action
-                // observable Rust type — the D8 fix is keyed on the
-                // latter and we preserve that semantic until F.3
-                // redesigns the auto-injection cast modelling.
-                // Phase F.3a (2026-05-20): debug_assert parity between
-                // builder-read and walker-maintained mirror at this D8
-                // site. F.3b swaps the read to the mirror after gauntlet.
-                let builder_cat_opt = cursor
-                    .builder
-                    .top_term_type_name()
-                    .and_then(|tn| self.engine.cat_of_type_name(tn));
-                debug_assert_eq!(
-                    builder_cat_opt,
-                    cursor.last_action_output_cat,
-                    "F.3a D8 mirror parity violation at GroupingClosePreservingInner: \
-                     builder.top_term_type_name=>cat = {:?}, \
-                     cursor.last_action_output_cat = {:?}",
-                    builder_cat_opt,
-                    cursor.last_action_output_cat,
-                );
-                let resolved = builder_cat_opt
+                // Phase F.3b (2026-05-20): consume the walker-maintained
+                // mirror set by F.3a. Byte-equivalent to the prior
+                // `cursor.builder.top_term_type_name().and_then(...)` —
+                // verified by F.3a's debug_assert_eq! parity gate across
+                // 6139/0 narrow gauntlet. F.3c will delete cursor.builder.
+                let resolved = cursor
+                    .last_action_output_cat
                     .unwrap_or_else(|| {
                         popped_symbol
                             .map(|s| s.category_src_idx)
