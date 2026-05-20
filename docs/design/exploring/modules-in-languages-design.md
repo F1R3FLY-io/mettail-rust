@@ -1,22 +1,24 @@
 # Modules in Language Specifications — Design
 
+---
+
 ## 1. Goal
 
-Enable **modular language specifications** in mettail-rust so that:
+Enable **modular language specifications** so that:
 
-1. A **module** file can declare reusable **extenders** (parameterized presentation transformers), **languages** (fully instantiated specs), **spaces** (typed channels), and eventually **process code** (Rolang programs operating on those languages).
-2. A **top-level language file** (`.ro` or equivalent) can **import** modules and assemble a language from extender expressions rather than monolithic `language! { ... }` blocks.
-3. Users express **what** to combine in the MeTTaIL/Rolang surface language; **how** that becomes Rust/Ascent remains an implementation detail (not Cargo/TOML in the user experience).
+1. A **module** file can declare reusable **extenders** (parameterized presentation transformers), **languages** (fully instantiated specs), **spaces** (typed channels), and eventually **process code** (Rholang programs operating on those languages).
+2. A **top-level** `.ro` (or equivalent) file can **import** modules and assemble a language from extender expressions rather than one monolithic spec.
+3. Authors express **what** to combine in the MeTTaIL/Rholang surface language only. Lowering to parsers, rewrite engines, or runtimes is an **implementation backend** detail—and must not use Cargo or similar host build manifests for spec composition (see §7.1).
 
-This design does **not** require implementing the full vision in one step. It defines phases, interfaces, and open questions so work can proceed incrementally without blocking current `language!`-based languages.
+This design does **not** require implementing the full vision in one step. It defines phases, interfaces, and open questions so work can proceed incrementally without blocking current monolithic specs in existing backends.
 
 ---
 
 ## 2. Problem Statement
 
-### 2.1 Current state
+### 2.1 Current state (mettail-rust anchor)
 
-Each language in `languages/src/` is a single Rust file using the `language!` proc macro:
+Today, each language in `languages/src/` is a single host file using the `language!` proc macro—a **monolithic** spec with no import graph:
 
 | File | Language | Mechanism |
 |------|----------|-----------|
@@ -41,11 +43,11 @@ Legacy `space.rs` uses an older `theory!` spelling; the supported entry point is
 | Nested modules + `export` | partial | yes | no |
 | `language foo = Ext(...)` binding | via `Theory` result | yes | `name:` in `language!` only |
 | Typed **spaces** (channels) | vision | yes | no |
-| Process code inside module | vision | yes (example) | N/A (Rust host only) |
+| Process code inside module | vision | yes (example) | host runtime only (not in module algebra) |
 
 ### 2.3 Naming direction
 
-The notes recommend treating **RhoCalc** as one language inside a broader **Rolang** platform: the host spec file should eventually allow **multiple language specs** in `.ro` files, not only a single embedded `rhocalc.rs`. Renaming `rhocalc.rs` → `rolang.rs` (or splitting host vs language) is a **follow-on** refactor; this design uses **Rolang** for the file/module language and keeps **RhoCalc** as a concrete language name where helpful.
+The notes recommend treating **RhoCalc** as one language inside a broader **Rholang** platform: `.ro` / `.module` files should eventually host **multiple language specs**, not only one embedded monolith. This design uses **Rholang** for the module/file language and keeps **RhoCalc** as a concrete language name where helpful.
 
 ---
 
@@ -58,13 +60,14 @@ The notes recommend treating **RhoCalc** as one language inside a broader **Rola
 | **Module** | Named unit in a `.module` file: imports, private/exported extenders, languages, spaces, nested modules, and (later) process code. |
 | **Language binding** | Named fully built presentation, e.g. `export language fooLang = MyExtender(Module1.bar, ...)`. Becomes the type of terms allowed on a **space**. |
 | **Space** | Typed channel carrying terms of a given language binding (`space id: LangExpr`). Analogous to MeTTa “spaces”: facts/terms of one spec, read/write on a channel. Not the same as C++ namespaces (similar *scoping* idea, different runtime model). |
-| **`language!`** | Today’s Rust proc-macro surface for a **closed** `LanguageDef`. Long-term: one possible **lowering target** after resolving a `.ro` / module graph—not the authoritative user spec. |
-| **`free`** (GSLT) | Build a presentation from a fixed dependency tree without explicit arguments (e.g. `free Rolling` → `EmptySet` → … → `Rolling`). Deferred to a later phase; see §8.3. |
+| **Library fragment** | Reusable extender body (and nested module): contributes to composition but is not, by itself, a shipped REPL/binary language. |
+| **Shipped language** | Fully composed binding (`export language L = …`) used by tools, REPL, and spaces. |
+| **`free`** (GSLT) | Build a presentation from a fixed dependency tree without explicit arguments (e.g. `free Rolling` → `EmptySet` → … → `Rolling`). Deferred to a later phase; see §6.4. |
 
 **Mapping to GSLT** (`UnivAlg.module`, `Rholang.module`):
 
 ```
-GSLT                    Rolang (ModuleSketch)
+GSLT                    Rholang (ModuleSketch)
 ------                  ---------------------
 Module                  module
 Theory                  extender
@@ -79,25 +82,32 @@ let x = T() in ( ... )   (free / nested construction — phase 3)
 
 ## 4. User-Facing Architecture
 
-### 4.1 Two layers (sketch)
+### 4.1 Two layers
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer A: Module / .ro file language (Rolang spec)          │
+│  Layer A: Rholang spec (modules / .ro)                      │
 │  - import, module, extender, language, space, export        │
-│  - Self-contained; not Cargo/TOML                           │
+│  - Authors compose here only; no Cargo for spec composition │
 └───────────────────────────┬─────────────────────────────────┘
-                            │ resolve + compose presentations
+                            │ resolve imports → compose presentations
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Layer B: Implementation backends (pluggable)               │
-│  - Today: expand to Rust + language! / codegen              │
-│  - semantics <backend> in extender (default: Rust)          │
-│  - Future: other targets, Ascent replacement, etc.          │
+│  - semantics <backend> in extender (e.g. Rust, Go, …)         │
+│  - Lowers one canonical language IR → parser, rewrites, REPL  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Principle:** Layer A is owned by MeTTaIL. Layer B is selected per extender or project config but must not appear in the **authoring** syntax for combining modules (no “put module paths in `Cargo.toml`” for users).
+**Principles:**
+
+- Layer A is owned by MeTTaIL and is **backend-neutral**.
+- Layer B is chosen per extender (`semantics …`) or project tooling, not in Rholang `import` syntax.
+- **One normalization path** from composed modules to a single canonical language description before any backend runs—avoid duplicate composition implementations ([theory_composition.md](./theory_composition.md)).
+
+### 4.1.1 No Cargo for Rholang authors
+
+**Invariant:** Rholang / `.module` authors do **not** use `Cargo.toml` (or host-build manifests such as a theory DAG TOML) to decide **what** to combine. Composition is only via `import "…"`, extenders, and `export language`. Host build files may exist for framework implementers but are out of scope for spec authors.
 
 ### 4.2 File kinds
 
@@ -110,9 +120,9 @@ let x = T() in ( ... )   (free / nested construction — phase 3)
 
 ### 4.3 Import resolution
 
-Imports are **filesystem-relative** (or search-path based), resolved when the Rolang toolchain loads a file—not at Rust macro expansion time by default.
+Imports are **filesystem-relative** (or search-path based), resolved when the Rholang toolchain loads a file.
 
-```rolang
+```rholang
 import "path/to/UnivAlg.module"
 import "path/to/other.module" as M1
 import {
@@ -137,9 +147,11 @@ Rules:
 
 The normative user syntax is documented in [ModuleSketch.md](./ModuleSketch.md). Summary for implementers:
 
+**Judgement syntax (HOL-style):** Terms, equations, and rewrites in module bodies should use **judgement form** (`Label . … |- … : Cat`, `=`, `~>`), not legacy BNFC `Label . Cat ::= "…"` alone. GSLT and §10 examples below may show BNFC for readability; composed specs target HOL ([hol-syntax.md](./hol-syntax.md)). **Equation and rewrite patterns** (left of `=` / `~>`) stay pure structural HOL; host-specific eval hooks attach only at declared sites (§6.5).
+
 ### 5.1 Module body
 
-```rolang
+```rholang
 module MyModule {
   export extender MyExtender(arg1, arg2) {
     { arg1 \/ arg2 }
@@ -160,7 +172,7 @@ module MyModule {
   space foo: fooLang                      // module-private space
   export space bar: fooLang               // public space
 
-  // Phase 4+: Rolang process code (let, for, !, etc.)
+  // Phase 4+: Rholang process code (let, for, !, etc.)
 }
 ```
 
@@ -205,7 +217,7 @@ Examples:
 
 The sketch shows **labeled backticks** for embedding terms of a given language:
 
-```rolang
+```rholang
 let myVar <- fooLang`5` in { ... foo!(fooLang`term`) ... }
 ```
 
@@ -241,22 +253,72 @@ struct Presentation {
 - Same label, compatible types: merge (later: replacements pick winner).
 - Incompatible duplicate term labels without replacement: **error**.
 
-This aligns with [theory_composition.md](./theory_composition.md) (exports, replacements, conjunction). The module design **subsumes** that document’s Rust strategy once presentations exist as data.
+This aligns with [theory_composition.md](./theory_composition.md) (exports, replacements, conjunction). The module design **subsumes** that document once composition lives in the shared `normalize` step.
 
-### 6.2 From presentation to `LanguageDef`
+### 6.2 Canonical language IR
 
-Lowering pipeline:
+Each `export language` names one **canonical language description** (internal IR: presentation / descriptor—fields mirror types, terms, equations, rewrites, relations, literals). Backends consume that IR; they do not define the module algebra.
 
+Reusing one IR avoids rewriting every backend when adding modules; new work is **front of pipeline** (parse, compose, check)—see §6.3.
+
+### 6.3 Composition pipeline (normalize)
+
+Whether specs start as `.module` files or are produced by a host frontend, the tool chain should follow **one** merge story:
+
+```text
+  import graph (acyclic)  →  collect fragment descriptors
+        →  normalize (ordered walk: extend, export, replacement, \/ )
+        →  merge entry-file deltas (local types/terms/… for shipped language)
+        →  validate  →  single canonical language IR  →  backend codegen
 ```
-.module / .ro  →  parse  →  resolve imports  →  evaluate extender graph
-    →  Presentation (for each export language)
-    →  validate (existing validate_language)
-    →  backend: language! tokens OR direct generate_all(LanguageDef)
-```
 
-Reusing `LanguageDef` avoids rewriting codegen; the new work is **front of pipeline** (parse, compose, check).
+**Mental model:** Library fragments are **partial** specs; the shipped `export language` (plus any entry-file blocks) is the **linker** that flattens them into one spec, then a backend runs once.
 
-### 6.3 GSLT features — phasing
+**Inside `normalize` (per fragment, in dependency order):**
+
+| Step | Effect |
+|------|--------|
+| Extend base | Inherit types, terms, equations, rewrites from parameter / `extends` |
+| Exports | Rename categories through inherited rules (e.g. `Elem => Proc`) |
+| Replacements | Override selected constructors (phase 2) |
+| Union (`\/`) | Merge two presentations (e.g. `add \/ mult`) |
+| Entry deltas | Append blocks that belong only to the final shipped language |
+
+**Conflict policy:** Duplicate rule labels without an explicit replacement → **error**; policy for entry-file vs imported fragments TBD (recommend: entry-file wins on clash, with warning).
+
+**Monolithic specs:** A single module that defines `export language L = …` without importing others remains valid (today’s one-file languages).
+
+### 6.4 Library fragment vs shipped language
+
+| Content | Library fragment (`export extender` / nested `module`) | Shipped language (`export language` + entry file) |
+|---------|----------------------------------------------------------|---------------------------------------------------|
+| Reusable algebra (Monoid, UnivAlg) | Yes | No |
+| Parameterized slice reused in several languages | Yes | Rarely |
+| Language name used by REPL / runtime | No | Yes |
+| `import` graph | Participates as dependency | Consumes imports + composes |
+| Spaces tied to a language | Optional export | Typical |
+| Process code in module body | Optional (phase 4) | Optional |
+| Backend `semantics` default | Per extender | Inherited / overridden at ship point |
+
+**Rule of thumb:** If another shipped language should `import` and apply it, it belongs in a **library fragment**. What is specific to one deployed language stays in that language’s composition expression or entry-file deltas.
+
+### 6.5 Implementation attachments (backend hooks)
+
+Host code is **not** part of the equational pattern algebra. Backends may attach implementation at fixed **sites** only:
+
+| Site | Pure HOL? | Typical attachment |
+|------|-----------|-------------------|
+| `types` (native sort) | — | Backend type or semantic model |
+| `literals` (`eval`) | — | Parse literal text to value |
+| `terms` (trailing eval / fold / step) | Pattern HOL; hook after | Native evaluation |
+| `equations` | Yes (LHS/RHS) | No host code in patterns |
+| `rewrites` (LHS / `~>` pattern) | Yes | No host code in patterns |
+| `relations` / `logic` | Mixed | Backend-specific rules (e.g. custom rewrite engine relations) |
+| `examples { }` (optional) | — | Surface-syntax fixtures (e.g. sample Rholang processes); **does not** change the composed algebra—tests/docs only |
+
+The `semantics M1.Go` clause on an extender selects which backend interprets attachments. Defaults are an implementation concern, not part of Rholang composition syntax.
+
+### 6.6 GSLT features — phasing
 
 | Feature | GSLT example | Phase |
 |---------|--------------|-------|
@@ -270,7 +332,7 @@ Reusing `LanguageDef` avoids rewriting codegen; the new work is **front of pipel
 | Relations / custom logic | sketch `relations` | 2 (map to `logic`) |
 | Spaces + process code | sketch § example | 4 |
 
-### 6.4 `free` extender (deferred detail)
+### 6.7 `free` extender (deferred detail)
 
 GSLT `Rolling.module` (not in repo snapshot) uses parameter annotations so that **free** invocation selects a default theory for each parameter (e.g. `free Rolling` expands to a tree ending in `EmptySet`). Semantics:
 
@@ -281,42 +343,41 @@ Document as **phase 3**; do not block phase 1 on correct categorical terminology
 
 ---
 
-## 7. Relationship to `language!` and Rust
+## 7. Tooling and backends
 
-### 7.1 Non-goals for user experience
+### 7.1 No Cargo for Rholang authors
 
-- Users do **not** declare module dependencies in `Cargo.toml` for spec composition.
-- Users do **not** need to write Rust to combine two `.module` files.
+See §4.1.1. Rholang authors do not use `Cargo.toml` to compose specs. They also do not need to write host-language code to merge two `.module` files.
 
-### 7.2 Acceptable Rust integration (implementation)
+### 7.2 Composer tool (language-neutral)
 
-| Approach | Use |
-|----------|-----|
-| **Offline compiler** (`mettail-ro` / `mettail-module build`) | Parse `.module`, emit `generated/foo.rs` with `language! { ... }`, checked into repo or `OUT_DIR` | Recommended for phase 1 |
-| **Proc-macro `include_lang!`** | Macro invokes compiler at build time; needs stable paths | phase 2 |
-| **Runtime composition** | Dynamic presentations | exploratory only; see theory_composition Option A |
+A **module compiler** (working name `mettail-module`) should:
 
-**Recommendation:** Start with an **offline** tool in the mettail-rust workspace:
+1. Parse `.module` / `.ro` and resolve `import` (cycle-free).
+2. Evaluate extender expressions → fragment descriptors.
+3. Run `normalize` for each `export language` (§6.3).
+4. Emit backend input (format depends on target) or canonical IR (e.g. JSON) for CI golden tests.
+
+Suggested layout:
 
 ```
-languages/
-  src/
-    rhocalc.rs          # generated from rhocalc.ro (eventually)
-  specs/                # new: hand-authored modules
-    core/UnivAlg.module
-    rhocalc/RhoCalc.module
+languages/specs/
+  core/UnivAlg.module
+  arithmetic/ComplexArithmetic.module
+  calculator/Calculator.module
 ```
 
-`languages/build.rs` (or a separate binary) runs the composer before `cargo build`. Rust crate dependencies remain ordinary (Ascent, runtime); only the **spec graph** is non-Rust.
+Import search path: directory of the importing file, then project roots / `METTAIL_MODULE_PATH` / tool config (not `Cargo.toml`).
 
 ### 7.3 `semantics` clause
 
-Sketch: `semantics M1.Go` inside extender blocks. Default: **Rust** / existing codegen.
+`semantics M1.Go` (or similar) on an extender selects the **implementation backend** for attachments (§6.5). Rholang does not embed backend names in `import` paths.
 
-- Phase 1: ignore or error on non-Rust except `Rust`.
-- Later: plugin interface emitting alternate parsers or runtimes.
+### 7.4 Backends today
 
-### 7.4 Capitalization
+A backend may embed specs in a host language (e.g. mettail-rust’s `language!` macro today). That embedding is **not** the Rholang module language; it consumes the canonical IR produced after `normalize` (§6.3).
+
+### 7.5 Capitalization
 
 GSLT uses `Module` / `Theory`; sketch uses lowercase `module` / `extender`. **Decision:** follow [ModuleSketch.md](./ModuleSketch.md) for new syntax; provide a mechanical mapping document for GSLT importers. BNFC grammar in sketch is authoritative for the parser generator.
 
@@ -338,8 +399,9 @@ GSLT uses `Module` / `Theory`; sketch uses lowercase `module` / `extender`. **De
 2. Import resolver + cycle detection.
 3. `Presentation` struct mirroring `LanguageDef` fields (or wrap `LanguageDef`).
 4. Extender: single base reference + one suffix block (`terms` only for POC).
-5. CLI: `mettail-module compile path/to/Foo.module --lang bar` → prints or writes `language!` snippet.
-6. Tests: port `UnivAlg.module` **Monoid** chain as extenders; assert composed output matches hand-written `calculator` fragment or small fixture.
+5. CLI: `mettail-module compile path/to/Foo.module --lang bar` → canonical IR and/or backend stub.
+6. Golden tests: deterministic composed IR (hash or snapshot) per `export language`.
+7. Tests: port `UnivAlg.module` **Monoid** chain; assert composed IR matches a small fixture.
 
 **Out of scope:** `/\`, replacements, spaces, process code, `free`.
 
@@ -353,34 +415,33 @@ GSLT uses `Module` / `Theory`; sketch uses lowercase `module` / `extender`. **De
 ### Phase 3 — `free`, fixpoint languages, refactor entry
 
 - `free ExtName` expansion
-- Optional: split `rhocalc.rs` into generated + thin runtime Rust (`pathmap`, `receive`, …)
-- Rename / introduce `rolang` host file
+- Optional: split monolithic host encodings into composed modules + separate runtime
+- Optional `.ro` entry files alongside backend-specific encodings
 
 ### Phase 4 — Spaces and process code
 
 - `space` / `export space` typing in module AST
-- Embed Rolang processes in modules (sketch `let` / `for` / channel example)
+- Embed Rholang processes in modules (sketch `let` / `for` / channel example)
 - Runtime wiring to REPL or f1r3node-style spaces (separate runtime design)
 
 ---
 
-## 9. Component Design (mettail-rust)
+## 9. Component Design (tooling)
 
-### 9.1 Suggested crates / modules
+### 9.1 Suggested components (names provisional)
 
-| Component | Location (proposed) | Responsibility |
-|-----------|---------------------|----------------|
-| `rolang-parser` or `mettail-rolang` | new workspace crate | Parse `.module` / `.ro`, BNFC or hand-written per sketch |
-| `mettail-present` | new or `macros/src/present/` | `Presentation`, merge, check, lower to `LanguageDef` |
-| `mettail-module` | binary | CLI: resolve, compile, explain graph |
-| `macros` | existing | Consume `LanguageDef` unchanged initially |
-| `languages` | existing | Generated `language!` + hand-written runtime shims |
+| Component | Responsibility |
+|-----------|----------------|
+| Rholang parser | Parse `.module` / `.ro` per [ModuleSketch.md](./ModuleSketch.md) / BNFC |
+| Composition core | Fragment descriptors, `normalize`, validation |
+| `mettail-module` CLI | Resolve imports, compile `export language`, explain graph, emit IR |
+| Backend adapter(s) | Lower canonical IR to concrete tools (mettail-rust is the first) |
 
 Keep **IO out of macros** initially: deterministic fixtures, no network.
 
 ### 9.2 Validation reuse
 
-After lowering to `LanguageDef`, call existing `validate_language` (`macros/src/ast/validation.rs`) so module composition cannot produce ill-formed languages that codegen would reject anyway.
+Validation runs on the **merged** canonical IR so composed modules cannot produce specs a backend would reject (mettail-rust reuses `validate_language` today).
 
 ### 9.3 Testing strategy
 
@@ -389,64 +450,133 @@ After lowering to `LanguageDef`, call existing `validate_language` (`macros/src/
 | Unit | Import alias, cycle detection, `/\` conflicts |
 | Golden | GSLT modules → composed presentation snapshot (JSON or pretty AST) |
 | Integration | Composed `RhoCalc`-like spec generates parser; smoke parse terms from `repl/src/examples/` |
-| Regression | Existing `cargo test --all-features --workspace` unchanged when not using modules |
+| Regression | Existing backend tests unchanged when modules not used on a language |
 
 Deterministic: fixed module paths in `languages/specs/test/`.
 
-### 9.4 Migration: monolithic `rhocalc.rs`
+### 9.4 Migration from monolithic specs
 
-**Strategy:** Do not delete `rhocalc.rs` until phase 2 proves equivalence.
+**Strategy:** Keep the monolithic spec until composed modules reach parity (golden IR + backend behavior tests).
 
-1. Extract a **reference presentation** from current `language!` block (manual or tool-assisted).
+1. Extract a **reference presentation** from the monolithic spec (manual or tool-assisted).
 2. Rebuild via extenders mimicking `Rholang.module` layering (`ParMonoid` → … → `RhoCalc`).
-3. `diff` generated Ascent/parser artifacts against `languages/src/generated/rhocalc-*`.
-4. Switch build to generated file when diff is empty or explained.
+3. Compare composed IR and backend artifacts to the reference.
+4. Switch the shipped language to module-authored sources when diff is empty or explained.
 
-Hand-written Rust in `languages/src/rhocalc/` (runtime, wire, pathmap) **stays** as host code; only the **spec** moves to modules.
+Host **runtime** code (communication, wire formats, etc.) stays outside modules; only the **algebra** moves into `.module` files.
 
 ---
 
-## 10. Example Walkthrough (GSLT → Rolang)
+## 10. Example Walkthrough (GSLT → Rholang)
 
-**UnivAlg** (simplified):
+Examples below use **HOL judgements** (`|- … : Cat`, `=`, `~>`) as in [hol-syntax.md](./hol-syntax.md). GSLT sources often spell the same rules with BNFC `::=`; composed Rholang modules target HOL only (§5).
 
-```rolang
+### 10.0 UnivAlg (simplified)
+
+Port of `UnivAlg.module` — algebra fragment only; `Group`, `Ring`, etc. follow the same pattern.
+
+```rholang
 module UnivAlg {
+
   export extender EmptySet() {
     Empty
-      types { ... }  // Elem export — details in phase 2
+      exports { Elem }
   }
 
   export extender Monoid(s: EmptySet) {
     s
       terms {
-        One . Elem ::= "1" ;
-        Mult . Elem ::= "(" Elem "*" Elem ")" ;
+        One . |- "1" : Elem;
+        Mult . a:Elem, b:Elem |- "(" a "*" b ")" : Elem;
       }
-      equations { ... }
+      equations {
+        Assoc . |- (Mult (Mult x y) z) = (Mult x (Mult y z));
+        LeftUnit . |- (Mult x (One)) = x;
+        RightUnit . |- (Mult (One) x) = x;
+      }
   }
-  // CommutativeMonoid, Rig, ...
+
+  export extender CommutativeMonoid(m: Monoid) {
+    m
+      replacements {
+        [] One.Elem => Zero . |- "0" : Elem;
+        [0, 1] Mult.Elem => Plus . a:Elem, b:Elem |- "(" a "+" b ")" : Elem;
+      }
+      equations {
+        Comm . |- (Plus x y) = (Plus y x);
+      }
+  }
+
+  export extender Rig(add: CommutativeMonoid, mult: Monoid) {
+    { add \/ mult }
+      equations {
+        DistL . |- (Mult x (Plus y z)) = (Plus (Mult x y) (Mult x z));
+        DistR . |- (Mult (Plus x y) z) = (Plus (Mult x z) (Mult y z));
+        AnnL . |- (Mult x (Zero)) = (Zero);
+        AnnR . |- (Mult (Zero) x) = (Zero);
+      }
+  }
+
+  // Group, AbelianGroup, Ring — same style as GSLT UnivAlg
 }
 ```
 
-**Rholang layer** (from `Rholang.module`):
+### 10.0.1 Rholang process calculus layer
 
-```rolang
+Port of `Rholang.module` (imports algebra, adds process constructs). Replacement right-hand sides are **HOL term judgements**, not `::=`.
+
+```rholang
 import "UnivAlg.module" as u
 
 module Rholang {
+
   export extender ParMonoid(cm: u.CommutativeMonoid) {
     cm
-      // exports, replacements, rewrites — phase 2
+      exports { Elem => Proc }
+      replacements {
+        [] Zero.Proc => PZero . |- "0" : Proc;
+        [0, 1] Plus.Proc => PPar . a:Proc, b:Proc |- "{" a "|" b "}" : Proc;
+      }
+      rewrites {
+        RPar1 . | Q:Proc, Src ~> Tgt |- (PPar {Src, Q}) ~> (PPar {Tgt, Q});
+        RPar2 . | Src1 ~> Tgt1, Src2 ~> Tgt2
+            |- (PPar {Src1, Src2}) ~> (PPar {Tgt1, Tgt2});
+      }
   }
 
-  export language FreeRholang = ... // phase 3: free expansion
+  export extender QuoteDropCalc(pm: ParMonoid) {
+    pm
+      exports { Name }
+      terms {
+        PDrop . n:Name |- "*" n : Proc;
+        NQuote . p:Proc |- "@" p : Name;
+      }
+      equations {
+        QuoteDrop . |- (NQuote (PDrop N)) = N;
+        DropQuote . |- (PDrop (NQuote P)) = P;
+      }
+  }
+
+  export extender RhoCalc(qd: QuoteDropCalc) {
+    qd
+      terms {
+        PSend . n:Name, q:Proc |- n "!" "(" q ")" : Proc;
+        PRecv . ^x.p:[Name -> Proc], n:Name
+            |- "for" "(" x "<-" n ")" "{" p "}" : Proc;
+      }
+      rewrites {
+        RComm . |- (PPar {(PRecv ^x.p n), (PSend n q)})
+            ~> (subst p (NQuote q) x);
+      }
+  }
+
+  export language FreeRholang = ...  // phase 3: free / default actuals
 }
 ```
 
-**Consumer module** (sketch style):
+### 10.0.2 Consumer module (sketch style)
 
-```rolang
+```rholang
 import "Rholang.module"
 
 module App {
@@ -469,7 +599,7 @@ languages/specs/
     Calculator.module          # entry: base calculator + optional imports
 ```
 
-**Today:** Calculator is one `language! { ... }` block (~500+ lines) in `calculator.rs` with `Proc`, scalar types (`Int`, `Float`, …), injections (`ProcInt`, `ProcFloat`, …), and arithmetic on each scalar. **Target:** scalar core stays in `Calculator.module`; complex numbers arrive via `\/` from an imported module.
+**Today (mettail-rust):** Calculator is one monolithic spec (~500+ lines) with `Proc`, scalar types (`Int`, `Float`, …), injections (`ProcInt`, `ProcFloat`, …), and arithmetic on each scalar. **Target:** scalar core stays in `Calculator.module`; complex numbers arrive via `\/` from an imported module.
 
 ---
 
@@ -477,7 +607,7 @@ languages/specs/
 
 The module exports an extender parameterized on a **base presentation** that already provides `Float` (and, for injection into the REPL primary category, `Proc`). The extender adds a `Complex` category, literals, operations, and a `Proc` injection—mirroring how Calculator today has `ProcFloat` for floats.
 
-```rolang
+```rholang
 // languages/specs/arithmetic/ComplexArithmetic.module
 
 module ComplexArithmetic {
@@ -486,24 +616,24 @@ module ComplexArithmetic {
   export extender ComplexOnFloat(base: BaseWithFloat) {
     base
       types {
-        // Pair (re, im) backed by native floats; codegen may lower to a Rust struct.
-        ![mettail_runtime::Complex64] as Complex
+        // Pair (re, im); backend chooses representation (e.g. native float pair).
+        Complex
       }
       literals {
         Complex {
           // Examples: 3+4i, 3-4i, -i, 2.5+0.5i
           pattern: r"(-?([0-9](_?[0-9])*(\.[0-9](_?[0-9])*)?|[0-9](_?[0-9])*)[+-]([0-9](_?[0-9])*(\.[0-9](_?[0-9])*)?|[0-9](_?[0-9])*)i|-?i)";
-          eval: ![ { mettail_prattail::parse_complex_lit(text).map_err(|_| ()) } ]
+          eval: /* backend: parse complex literal text */
         }
       }
       terms {
-        CAdd . a:Complex, b:Complex |- a "+" b : Complex ![a + b] fold;
-        CSub . a:Complex, b:Complex |- a "-" b : Complex ![a - b] fold;
-        CMul . a:Complex, b:Complex |- a "*" b : Complex ![a * b] fold;
-        CDiv . a:Complex, b:Complex |- a "/" b : Complex ![a / b] fold;
-        CNeg . a:Complex |- "-" a : Complex ![(-a)] fold;
-        CConj . a:Complex |- "conj" "(" a ")" : Complex ![a.conj()] step;
-        CAbs . a:Complex |- "abs" "(" a ")" : Float ![a.norm()] step;
+        CAdd . a:Complex, b:Complex |- a "+" b : Complex /* fold eval */;
+        CSub . a:Complex, b:Complex |- a "-" b : Complex ;
+        CMul . a:Complex, b:Complex |- a "*" b : Complex ;
+        CDiv . a:Complex, b:Complex |- a "/" b : Complex ;
+        CNeg . a:Complex |- "-" a : Complex ;
+        CConj . a:Complex |- "conj" "(" a ")" : Complex ;
+        CAbs . a:Complex |- "abs" "(" a ")" : Float ;
 
         // Inject into Proc so complex values mix with existing calculator terms.
         ProcComplex . z:Complex |- z : Proc ;
@@ -523,7 +653,7 @@ module ComplexArithmetic {
     Empty
       types {
         Proc
-        ![f64] as Float
+        Float
       }
   }
 }
@@ -537,15 +667,15 @@ module ComplexArithmetic {
 | `base` first in body | Inherits `Proc`, `Float`, and all existing scalar terms from the argument. |
 | `ProcComplex` | Same idea as `ProcFloat` / `ProcInt` in today's `calculator.rs`. |
 | Literal-only complex values | `Complex { pattern, eval }` is enough for phase 1; extra constructors are optional. |
-| `![mettail_runtime::Complex64]` | Illustrates native backing; exact type name is an implementation choice. |
+| Native `Complex` sort | Declared in `types`; backend maps to a concrete representation. |
 
 ---
 
 #### Step 2 — `Calculator.module` (consumer)
 
-Calculator **imports** the library and **unions** the complex extender onto a local “scalar core” extender. The exported `language` binding is what codegen lowers to `language! { name: Calculator, ... }`.
+Calculator **imports** the library and **unions** the complex extender onto a local “scalar core” extender. The exported `language` binding is the shipped language the backend consumes.
 
-```rolang
+```rholang
 // languages/specs/calculator/Calculator.module
 
 import "arithmetic/ComplexArithmetic.module" as Cpx
@@ -557,22 +687,22 @@ module Calculator {
     Empty
       types {
         Proc
-        ![i32] as Int
-        ![f64] as Float
-        ![bool] as Bool
-        ![str] as Str
+        Int
+        Float
+        Bool
+        Str
         // … UInt32, BigInt, collections, etc.
       }
       literals {
-        Int { pattern: r"..."; eval: ![ ... ] }
-        Float { pattern: r"..."; eval: ![ ... ] }
+        Int { pattern: r"..."; eval: /* backend */ }
+        Float { pattern: r"..."; eval: /* backend */ }
         // …
       }
       terms {
         ProcInt . i:Int |- i : Proc ;
         ProcFloat . f:Float |- f : Proc ;
-        AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
-        AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
+        AddInt . a:Int, b:Int |- a "+" b : Int ;
+        AddFloat . a:Float, b:Float |- a "+" b : Float ;
         // … remainder of scalar calculator (comparisons, lists, maps, casts, …)
       }
       rewrites {
@@ -599,15 +729,15 @@ CalcScalars()  ──argument──►  ComplexOnFloat(·)
                          ▼
                   export language Calculator
                          │
-                         ▼ (lower)
-              language! { name: Calculator, ... }  →  calculator.rs (generated)
+                         ▼
+              normalize → shipped language Calculator → backend(s)
 ```
 
 ---
 
 #### Step 3 — What users gain
 
-After lowering and build, the REPL language `calculator` accepts **both** existing scalar terms and complex terms, without maintaining two separate `language!` files:
+After composition, the shipped **Calculator** language accepts **both** scalar and complex terms without duplicating the scalar extender in every consumer module:
 
 | Input (illustrative) | Meaning |
 |----------------------|---------|
@@ -620,21 +750,21 @@ After lowering and build, the REPL language `calculator` accepts **both** existi
 
 Optional: a slimmer calculator that **does not** import complex numbers is a second binding in the same file or a sibling module:
 
-```rolang
+```rholang
 export language CalculatorScalarsOnly = CalcScalars()
 ```
 
 ---
 
-#### Step 4 — Mapping to today's `calculator.rs`
+#### Step 4 — Mapping from a monolithic spec
 
-| Today (`calculator.rs`) | Modular form |
-|-------------------------|--------------|
-| Single `language! { types, literals, terms, rewrites }` | `CalcScalars()` extender + `export language Calculator = CalcFull()` |
+| Monolithic spec (one file) | Modular form |
+|----------------------------|--------------|
+| All types, terms, rewrites together | `CalcScalars()` + `export language Calculator = CalcFull()` |
 | All types in one block | `CalcScalars` types; `Complex` only in `ComplexArithmetic.module` |
-| `ProcFloat`, `AddFloat`, … | Stay in `CalcScalars` |
+| Scalar injections / ops | Stay in `CalcScalars` |
 | (not present) | `ProcComplex`, `CAdd`, … from `Cpx.ComplexOnFloat(...)` via `\/` |
-| Rust `language!` macro | Emitted by `mettail-module compile` (§7.2) |
+| Backend lowering | `mettail-module` (or backend-specific frontend) reads composed IR |
 
 **Phasing:** Phase 1 can compile `Calculator.module` that only imports and calls `ComplexOnFloat` with **terms** on `Complex`; `exports` renaming and full `replacements` are not required for this example. Phase 2 adds stricter checks that `base` actually exports `Float` and `Proc` before applying `ComplexOnFloat`.
 
@@ -644,7 +774,7 @@ export language CalculatorScalarsOnly = CalcScalars()
 
 If complex operations should stay **namespaced** under the import alias (no merge into one flat language), omit `\/` and reference the extender explicitly:
 
-```rolang
+```rholang
 import "arithmetic/ComplexArithmetic.module" as Cpx
 
 module Calculator {
@@ -664,14 +794,13 @@ Here `CalculatorWithCpx` is exactly the parameterized application—useful for t
 | # | Question | Notes |
 |---|----------|-------|
 | 1 | Exact path resolution algorithm and config file name | Avoid Cargo.toml; consider `.mettail/config` |
-| 2 | `Replacements` syntax in Rolang | GSLT has indices `[]`, `[0,1]`; not in sketch BNFC |
-| 3 | BNFC vs Rust proc-macro parser for `.module` | Sketch includes BNFC; may generate parser into `rolang-parser` |
-| 4 | Proc-macros reading files at compile time | `include_lang!` vs build.rs only |
-| 5 | Interaction with `gslt-to-rholang` branch | May share AST; coordinate before duplicating parsers |
-| 6 | Spaces runtime | Typed channels need runtime spec separate from presentation |
-| 7 | `theory!` deprecation | `space.rs` legacy; document removal when `language!` + modules stable |
-| 8 | Versioning / ABI of `.module` files | Semver on language bindings? |
-| 9 | Detailed spec | Merge when received; may override capitalization or `free` semantics |
+| 2 | `Replacements` syntax in Rholang | GSLT has indices `[]`, `[0,1]`; not in sketch BNFC |
+| 3 | Parser generator for `.module` | BNFC in sketch; hand-written parser alternative |
+| 4 | `examples { }` block | Optional surface fixtures (see §6.5); grammar TBD |
+| 5 | Spaces runtime | Typed channels need runtime spec separate from presentation |
+| 6 | Versioning / ABI of `.module` files | Semver on language bindings? |
+| 7 | Entry-file vs import clash policy | Local delta wins vs hard error (§6.3) |
+| 8 | Detailed spec | Merge when received; may override capitalization or `free` semantics |
 
 ---
 
@@ -680,34 +809,21 @@ Here `CalculatorWithCpx` is exactly the parameterized application—useful for t
 **Phase 1 done when:**
 
 - Two `.module` files import each other (acyclic) and export a `language` binding.
-- Composed presentation lowers to valid `LanguageDef` and passes `validate_language`.
-- CLI emits Rust that compiles in `languages` crate.
+- Composed presentation lowers to valid canonical IR and passes validation.
+- Golden IR snapshot stable for a fixture language.
 - At least one automated test ports a fragment of `UnivAlg.module`.
 
 **Long-term done when:**
 
-- `rhocalc.rs` spec is module-authored; runtime Rust is the only hand-maintained part.
-- Users can author new languages by importing extenders without editing proc-macro Rust.
+- Shipped languages (e.g. RhoCalc, Calculator) are module-authored; host runtime code stays separate.
+- Users can author new languages by importing extenders in Rholang only.
 - Spaces and embedded process code type-check against `export language` bindings.
 
 ---
 
-## 13. References
+## 13. Appendix — Partial grammar
 
-| Resource | Path |
-|----------|------|
-| Syntax sketch | [ModuleSketch.md](./ModuleSketch.md) |
-| Theory composition (Rust options) | [theory_composition.md](./theory_composition.md) |
-| Current `language!` anatomy | [docs/examples/rhocalc/01-language-spec.md](../../examples/rhocalc/01-language-spec.md) |
-| GSLT UnivAlg | `~/Projects/MeTTaIL/GSLT/src/test/module/UnivAlg.module` |
-| GSLT Rholang | `~/Projects/MeTTaIL/GSLT/src/test/module/Rholang.module` |
-| Implemented language design example | [rhocalc-permanent-communication-design.md](../made/rhocalc-permanent-communication-design.md) |
-
----
-
-## 14. Appendix — Partial grammar (from sketch)
-
-Copied for convenience; **ModuleSketch.md** remains authoritative if they diverge.
+BNFC-style productions for the Rholang module surface (import, module, extender, language binding). Full `ExtenderExpr` and `LanguageExpr` productions match the normative sketch in §5.
 
 ```
 File . BasicFile ::= [Import] Module ;
@@ -727,7 +843,8 @@ Content . SpaceContent ::= "space" Ident ":" LanguageExpr ;
 Content . ModuleContent ::= Module ;
 
 ExtenderExpr . UnionEE ::= ExtenderExpr "\/" ExtenderExpr ;
--- see ModuleSketch.md for full ExtenderExpr and LanguageExpr productions
+-- ExtenderExpr: Empty, Union (\/), grouped blocks, suffix types|terms|literals|equations|relations|rewrites
+-- LanguageExpr: dotted paths with optional ( … ) application; see §5.2–5.3
 ```
 
 ---
