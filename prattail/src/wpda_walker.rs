@@ -7337,46 +7337,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         )
     }
 
-    /// Phase 5.5 (2026-05-12): apply a non-recovery BuilderDelta to the
-    /// given builder. Used by Fork-arm dispatch sites that emit "effect"
-    /// deltas (EndBinderScope, StartBinderScope, StartCollection, etc.)
-    /// alongside ConsumeAndReplace actions. The journal still receives
-    /// the delta for commit_winner-time logging (Phase 5.6 will strip
-    /// this), but the eager application is required to keep cursor.builder
-    /// in sync with the codegen's intended state at each step.
-    ///
-    /// Recovery-typed deltas (RecoveryEvent / SubstituteToken / InsertToken
-    /// / CommitLexAlternative / ApplyRecoverySequence) are NO-OPs here
-    /// — their replay is mandatory at commit_winner because they mutate
-    /// the mutable token source / recovery_events, not the builder.
-    fn apply_effect_to_builder(builder: &mut SemanticBuilder, effect: &BuilderDelta) {
-        match effect {
-            BuilderDelta::StartBinderScope { names } => {
-                builder.start_binder_scope(names.clone());
-            }
-            BuilderDelta::EndBinderScope => {
-                builder.end_binder_scope();
-            }
-            BuilderDelta::StartCollection => {
-                let _ = builder.start_collection();
-            }
-            BuilderDelta::PushCollectionId { id } => {
-                builder.push_collection_id(*id);
-            }
-            BuilderDelta::SpliceIntoCollection { id } => {
-                builder.push_to_collection(*id);
-            }
-            BuilderDelta::RecoveryEvent { .. }
-            | BuilderDelta::SubstituteToken { .. }
-            | BuilderDelta::InsertToken { .. }
-            | BuilderDelta::CommitLexAlternative { .. }
-            | BuilderDelta::ApplyRecoverySequence { .. } => {
-                // Recovery deltas mutate walker.recovery_events /
-                // mutable_token_source, NOT cursor.builder. They're
-                // applied by commit_winner's recovery-arm replay.
-            }
-        }
-    }
+    // Phase F.3c.7 (2026-05-20): `apply_effect_to_builder` DELETED.
+    // This static helper applied a non-recovery `BuilderDelta` to a
+    // `SemanticBuilder` reference. Its sole caller was the persistent-
+    // builder path inside `apply_effect_to_cursor`, which was rewired
+    // in Phase F.3c.4 (commit `ac8b502`) to skip builder mutation —
+    // SPPF mirror writes are the new source of truth. Rustc flagged
+    // the function as `dead_code` after F.3c.4. Now removed.
 
     /// Bug N (Phase 3.1.5): SPPF-aware effect application. Applies the
     /// effect to `cursor.builder` via the static `apply_effect_to_builder`,
@@ -7487,83 +7454,17 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         }
     }
 
-    /// Phase 5.5 (2026-05-12): fire a semantic action on a given
-    /// SemanticBuilder reference (rather than `self.builder`). Used by
-    /// `emit_fire_action` to eagerly apply on `cursor.builder` via
-    /// `Arc::make_mut`, so nondeterministic-mode parsing has the action's
-    /// pushed term available BEFORE subsequent SpliceIntoCollection
-    /// effects (which move stack elements into collection slots —
-    /// they must move the action's converted term, not the raw arg).
-    ///
-    /// Returns `None` on success; `Some(msg)` if the action's arity
-    /// exceeds the builder's stack — caller sets walker state to
-    /// `Error { message }` accordingly.
-    fn fire_action_for_on_builder(
-        engine: &E,
-        builder: &mut SemanticBuilder,
-        symbol: StackSymbolV2,
-    ) -> Option<String> {
-        if let Some(entry) = engine.action_for(
-            symbol.category_src_idx,
-            symbol.rule_index_in_category,
-        ) {
-            let arity = entry.arity as usize;
-            let action_fn = entry.action_fn;
-            if builder.len() >= arity {
-                // Cat-A fix (2026-05-13): post-action invariant check. Every
-                // action_fn pushes EXACTLY ONE Term on the success path. The
-                // failure path is `match arg.into_term::<T>() { None => return }`
-                // (type-mismatch on a cross-cat arg) — args are popped but no
-                // push happens. Pre-fix, the cursor continued to Accept with
-                // an inconsistent builder; lex-min could then select it and
-                // `take_dyn_result` would error "winner committed but builder
-                // result was empty". Pass-2c's implicit-cast Fork branches
-                // exposed this latent bug systematically (16 tests broken).
-                //
-                // The check: builder.len() must increase by exactly 1
-                // (gain 1 from push, lose `arity` from pop_args). If not, the
-                // action silent-failed → return Err so the walker transitions
-                // the cursor to `WpdaState::Error` and drops it.
-                //
-                // Invariant verified across all action emitters in
-                // `macros/src/gen/runtime/wpda_codegen/semantic_actions.rs`
-                // and generated artifacts: every action_fn ends with
-                // `b.push_term::<...>(...)` on success. No action legitimately
-                // pushes 0 or 2+ terms.
-                let pre_action_len = builder.len();
-                let args = builder.pop_args(arity);
-                action_fn(builder, args);
-                let expected_len = pre_action_len.saturating_sub(arity).saturating_add(1);
-                if builder.len() != expected_len {
-                    Some(format!(
-                        "semantic-action type mismatch at rule (src={}, rule={}): \
-                         action did not push the expected single Term — silent \
-                         failure on arg type-coercion (e.g., `arg.into_term::<T>()` \
-                         returned None for a cross-cat-incompatible arg). \
-                         Builder shape inconsistent: had {} → {} (expected {}).",
-                        symbol.category_src_idx,
-                        symbol.rule_index_in_category,
-                        pre_action_len,
-                        builder.len(),
-                        expected_len,
-                    ))
-                } else {
-                    None
-                }
-            } else {
-                Some(format!(
-                    "semantic-action arity mismatch at rule (src={}, rule={}): \
-                     expected {} args but builder held {}",
-                    symbol.category_src_idx,
-                    symbol.rule_index_in_category,
-                    arity,
-                    builder.len(),
-                ))
-            }
-        } else {
-            None
-        }
-    }
+    // Phase F.3c.7 (2026-05-20): `fire_action_for_on_builder` DELETED.
+    // This static helper fired a semantic action on a `SemanticBuilder`
+    // reference (rather than `self.builder`); its sole caller was the
+    // persistent-builder branch of `emit_fire_action`, which was rewired
+    // in Phase F.3c.3 (commit `73c8071`) to the transient-builder path
+    // via `fire_action_via_transient`. Rustc flagged the function as
+    // `dead_code` after F.3c.3. The post-action invariant check (every
+    // action_fn pushes EXACTLY ONE Term; mismatch = silent type-coercion
+    // failure, e.g. `arg.into_term::<T>()` returned None) now lives in
+    // `fire_action_via_transient` and the arity-underflow Error handling
+    // moved into `emit_fire_action` directly (F.3c.3).
 
     // ══════════════════════════════════════════════════════════════════════
     // Per-variant mutation helpers
