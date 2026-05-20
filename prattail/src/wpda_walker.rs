@@ -1124,15 +1124,34 @@ pub struct BranchCursor<W: SemiringRef> {
     /// the SemanticBuilder argument-stack as the structural record of which
     /// SPPF subtrees have been constructed so far in this cursor. Cursors
     /// share the walker's central `Sppf` arena (by SppfId); cloning the
-    /// stack is O(N) in the stack depth (small), not O(N) in builder
-    /// content (large).
+    /// stack would be O(N) in the stack depth without the Arc wrap.
     ///
     /// Dual-mode through C2-C8: the field is populated alongside the
     /// SemanticBuilder mutations (no behavior change). The C8+ removal of
     /// `builder` makes this the sole structural-history field.
     ///
-    /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §2.1.
-    pub sppf_stack: Vec<crate::sppf::SppfId>,
+    /// Phase F.11 (2026-05-20): wrapped in `Arc<Vec<SppfId>>`. Pre-F.11
+    /// the field was `Vec<SppfId>`, deep-cloned on every Fork via
+    /// `BranchCursor::clone`. For N-deep operator-form chains (`+`, `^`,
+    /// `?:`), each Fork during reduce-ascent cost O(N), compounding to
+    /// O(N²) total parse time, or O(N³) under mild Fork ambiguity. The
+    /// Plan agent (Explore + Plan, 2026-05-19) empirically confirmed
+    /// this: `test_deep_parens_100000` passed in 2.935s and
+    /// `test_deep_unary_neg_10000` in 0.713s (deep but no SPPF Packing
+    /// reduces along the spine), while `test_right_assoc_chain_1000`,
+    /// `test_right_assoc_chain_10000`, `test_left_assoc_chain_10000`,
+    /// `test_deep_ternary_1000` all hung past 1260s.
+    ///
+    /// The Arc-CoW wrap mirrors the Phase 5.2 `cursor.builder:
+    /// Arc<SemanticBuilder>` pattern (now deleted in F.3c.4) and the
+    /// Phase F.4 `cursor.sppf_collection_arena: Arc<Vec<Vec<SppfId>>>`
+    /// pattern. Fork-arm cursor clone is O(1) (Arc refcount bump);
+    /// `Arc::make_mut` deep-clones the inner Vec only on the first
+    /// mutation in a forked cursor.
+    ///
+    /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §2.1 (original C2)
+    /// and `~/.claude/plans/replicated-conjuring-turtle.md` (F.11 design).
+    pub sppf_stack: Arc<Vec<crate::sppf::SppfId>>,
     /// Option C / C3: per-cursor record of `sppf_stack` length snapshots
     /// at each `emit_start_optional_scope` call. On
     /// `emit_finalize_optional_scope_present`, the topmost mark is popped
@@ -1333,7 +1352,9 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             visited_dispatch: self.visited_dispatch.clone(),
             // Phase F.3c.4 (2026-05-20): builder field deleted; the
             // Arc::clone is no longer needed.
-            sppf_stack: self.sppf_stack.clone(),
+            // Phase F.11 (2026-05-20): Arc bump — clone is O(1); first
+            // mutation in the cloned cursor triggers Arc::make_mut CoW.
+            sppf_stack: Arc::clone(&self.sppf_stack),
             optional_scope_marks: self.optional_scope_marks.clone(),
             binder_scope_marks: self.binder_scope_marks.clone(),
             // Phase C.2/C.3 (2026-05-17): clone the pending weight too.
@@ -1432,7 +1453,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             // structurally identical at construction time.
             // Phase F.3c.4 (2026-05-20): builder field deleted.
             // Option C / C2: seed cursor's SPPF stack is empty (no reduces yet).
-            sppf_stack: Vec::new(),
+            // Phase F.11 (2026-05-20): fresh empty Arc; mutators will
+            // Arc::make_mut on first push (cheap when refcount == 1).
+            sppf_stack: Arc::new(Vec::new()),
             optional_scope_marks: Vec::new(),
             binder_scope_marks: Vec::new(),
             // Phase C.2 (2026-05-17): seed cursor has not entered any Fork-
@@ -1498,7 +1521,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // construction history. Clone is O(depth-of-current-rule),
             // which is bounded by a small constant; cheaper than the
             // Arc::clone above on the builder Arc bump cost basis.
-            sppf_stack: parent.sppf_stack.clone(),
+            sppf_stack: Arc::clone(&parent.sppf_stack),
             optional_scope_marks: parent.optional_scope_marks.clone(),
             binder_scope_marks: parent.binder_scope_marks.clone(),
             // Phase C.3 (2026-05-17): per-Q1.A+, Fork-arm child cursors
@@ -2654,7 +2677,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // empty SPPF stack. Realization at EOI reads the root
                     // SppfId from `self.committed_sppf_root` (added in C6),
                     // not from a cursor's stack.
-                    sppf_stack: Vec::new(),
+                    // Phase F.11 (2026-05-20): Arc-wrapped (CoW).
+                    sppf_stack: Arc::new(Vec::new()),
                     optional_scope_marks: Vec::new(),
                     binder_scope_marks: Vec::new(),
                     // Phase C.2 (2026-05-17): post-resolution singleton
@@ -4261,7 +4285,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // Option C / C2: post-Drop reset starts with empty SPPF
                     // stack. The drop discards the failed cursor's tree
                     // construction; the deterministic-mode singleton resets.
-                    sppf_stack: Vec::new(),
+                    // Phase F.11 (2026-05-20): Arc-wrapped (CoW).
+                    sppf_stack: Arc::new(Vec::new()),
                     optional_scope_marks: Vec::new(),
                     binder_scope_marks: Vec::new(),
                     // Phase C.2 (2026-05-17): post-Drop reset clears the
@@ -4881,7 +4906,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -4962,7 +4987,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5054,7 +5079,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5122,7 +5147,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5183,7 +5208,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5277,7 +5302,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5350,7 +5375,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5424,7 +5449,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5533,7 +5558,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5633,7 +5658,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5779,7 +5804,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: cursor.sppf_stack.clone(),
+                                sppf_stack: Arc::clone(&cursor.sppf_stack),
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -6844,7 +6869,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         #[cfg(debug_assertions)]
                         {
                             let sppf_len = self.sppf.len() as u32;
-                            for &sid in &cursor.sppf_stack {
+                            for &sid in cursor.sppf_stack.iter() {
                                 debug_assert!(
                                     sid < sppf_len,
                                     "merge_equivalent_cursors: cursor.sppf_stack \
@@ -6852,7 +6877,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                     sid, sppf_len
                                 );
                             }
-                            for &sid in &merged[idx].sppf_stack {
+                            for &sid in merged[idx].sppf_stack.iter() {
                                 debug_assert!(
                                     sid < sppf_len,
                                     "merge_equivalent_cursors: winner.sppf_stack \
@@ -7389,7 +7414,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             BuilderDelta::EndBinderScope => {
                 if let Some((depth, names)) = cursor.binder_scope_marks.pop() {
                     let sid = self.sppf.intern_binder_scope(&names, depth);
-                    cursor.sppf_stack.push(sid);
+                    Arc::make_mut(&mut cursor.sppf_stack).push(sid);
                 }
             }
             BuilderDelta::StartCollection => {
@@ -7416,7 +7441,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // side and pushing the SppfId onto sppf_stack so the
                 // subsequent emit_fire_action's arity check passes.
                 let sid = self.sppf.intern_collection_id(*id as u32);
-                cursor.sppf_stack.push(sid);
+                Arc::make_mut(&mut cursor.sppf_stack).push(sid);
             }
             BuilderDelta::SpliceIntoCollection { id } => {
                 // Phase F.9 (2026-05-19): mirror `emit_splice_into_collection`'s
@@ -7441,7 +7466,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // arena slot. Bounds-check on `id` matches the helper's
                 // defensive guard at `emit_splice_into_collection`.
                 if (*id as usize) < cursor.sppf_collection_arena.len() {
-                    if let Some(top) = cursor.sppf_stack.pop() {
+                    if let Some(top) = Arc::make_mut(&mut cursor.sppf_stack).pop() {
                         Arc::make_mut(&mut cursor.sppf_collection_arena)
                             [*id as usize]
                             .push(top);
@@ -7541,7 +7566,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             text_opt,
             false,
         );
-        cursor.sppf_stack.push(sid);
+        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
         // intern_terminal + sppf_stack.push above carries the structural
         // state; emit_fire_action's reconstruct_action_arg reads the
@@ -7580,7 +7605,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             owner_cat,
             owner_rule_idx,
         );
-        cursor.sppf_stack.push(sid);
+        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
     }
 
     #[inline(always)]
@@ -7594,7 +7619,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             Some(name.as_str()),
             true,
         );
-        cursor.sppf_stack.push(sid);
+        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Terminal
         // node carries the Ident state. Mirror clears (Ident is non-Term).
         self.clear_action_output_mirror(cursor);
@@ -7611,7 +7636,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         let handle = self.sppf_predicate_arena.len() as u32;
         self.sppf_predicate_arena.push(Arc::clone(&pred));
         let sid = self.sppf.intern_predicate(handle);
-        cursor.sppf_stack.push(sid);
+        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Predicate
         // node + sppf_predicate_arena carry the payload. Mirror clears.
         self.clear_action_output_mirror(cursor);
@@ -8146,7 +8171,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 }
             }
             let children: Vec<crate::sppf::SppfId> =
-                cursor.sppf_stack.drain(split_at..).collect();
+                Arc::make_mut(&mut cursor.sppf_stack).drain(split_at..).collect();
             // lo_pos: leftmost child's span_lo, or fall back to hi_pos if
             // arity == 0 (epsilon-like reduce). With Phase F.8 the
             // leftmost child for a unary-prefix rule is the TriggerTerminal
@@ -8219,7 +8244,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     let symbol_id =
                         self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
                     self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-                    cursor.sppf_stack.push(symbol_id);
+                    Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
                     // Memoize the realized result Arc keyed by symbol_id
                     // so subsequent fires that consume this Symbol as a
                     // child (via reconstruct_action_arg) find it.
@@ -8241,7 +8266,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-            cursor.sppf_stack.push(symbol_id);
+            Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
         }
     }
 
@@ -8310,7 +8335,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // C3 dual-mode: push a CollectionId placeholder onto sppf_stack so
         // the fire_action arity check matches builder.stack arity.
         let sid = self.sppf.intern_collection_id(id as u32);
-        cursor.sppf_stack.push(sid);
+        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF
         // CollectionId node above mirrors the structural state.
         self.clear_action_output_mirror(cursor);
@@ -8325,7 +8350,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // length check first to avoid spurious CoW when sppf_stack is
         // empty.
         if (id as usize) < cursor.sppf_collection_arena.len() {
-            if let Some(top) = cursor.sppf_stack.pop() {
+            if let Some(top) = Arc::make_mut(&mut cursor.sppf_stack).pop() {
                 Arc::make_mut(&mut cursor.sppf_collection_arena)[id as usize].push(top);
             }
         }
@@ -8460,8 +8485,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // with OPTIONAL_PRESENT_RULE_IDX, push the resulting Packing id.
         if let Some(mark) = cursor.optional_scope_marks.pop() {
             if mark <= cursor.sppf_stack.len() {
-                let children: Vec<crate::sppf::SppfId> =
-                    cursor.sppf_stack.drain(mark..).collect();
+                let stack = Arc::make_mut(&mut cursor.sppf_stack);
+                let children: Vec<crate::sppf::SppfId> = stack.drain(mark..).collect();
                 // Phase C.1 (2026-05-17): synthetic OPTIONAL_PRESENT always
                 // interns with `W::one_ref()` per the weight semantics table
                 // in `~/.claude/plans/phase-c-sppf-w-resolved.md` §2.5.
@@ -8470,7 +8495,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     children,
                     W::one_ref(),
                 );
-                cursor.sppf_stack.push(packing_id);
+                stack.push(packing_id);
             }
         }
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
@@ -8486,7 +8511,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     fn emit_push_optional_absent(&mut self, cursor: &mut BranchCursor<W>) {
         // C3 dual-mode: push an OptAbsent leaf onto sppf_stack.
         let sid = self.sppf.intern_opt_absent(cursor.pos as u32);
-        cursor.sppf_stack.push(sid);
+        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF OptAbsent
         // node above mirrors the structural state.
         self.clear_action_output_mirror(cursor);
