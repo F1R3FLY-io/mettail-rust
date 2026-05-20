@@ -4692,6 +4692,64 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 } else {
                     cursor.pos
                 };
+                // Phase F.11 R7 hoist-and-share (2026-05-19): pre-compute the
+                // children's visited_recovery / visited_dispatch / recovery_depth
+                // snapshot ONCE so the F Fork-arm siblings can share it via
+                // O(1) OrdSet `.clone()` (Arc refcount bump). The post-loop
+                // per-child insert blocks at the old lines 6059-6076 +
+                // 6101-6112 were each calling `child.visited_*.insert(key)`
+                // separately for the F siblings — every sibling triggered
+                // an independent `Arc::make_mut` spine-clone for the SAME
+                // parent dispatch config key.
+                //
+                // Empirical: perf + massif on test_right_assoc_chain_100 at
+                // depth=100 showed 31.56% of peak heap (~23MB / 72MB) was
+                // `Arc<Node<Value<(usize,u16,u8)>>>::make_mut` from
+                // OrdSet::insert at line 6109 (visited_dispatch) and its
+                // deeper btree spine path. Calculator's PrefixDispatch
+                // unified bucket spawns F ≈ 3-5 cross-cat-projection branches
+                // per `^` operand, so the per-sibling redundancy multiplies
+                // the spine-clone count by F.
+                //
+                // Correctness invariants preserved:
+                // - H1' broadening (commit 4668720, 2026-05-18): every
+                //   non-recovery Fork child still inherits the updated
+                //   visited_dispatch (computed once here, shared across
+                //   children via Arc).
+                // - Recovery depth-bump semantics (Stage 3.20 / L12): every
+                //   recovery Fork child still has recovery_depth bumped by 1.
+                // - The "is_recovery true but config missing" defensive
+                //   branch (formerly the `else` at line 6066-6075) still
+                //   bumps depth without modifying visited_recovery.
+                // - Per-branch DROP gate at line 4709-4714: unchanged. It
+                //   reads `parent_in_visited` from the parent's pre-mutation
+                //   `cursor.visited_dispatch` (line 4658-4660) and
+                //   `is_cross_cat_delegate_branch`; the hoist preserves
+                //   the order so this read sees the unmodified parent set.
+                let (child_visited_recovery, child_recovery_depth) = if is_recovery {
+                    let depth = cursor.recovery_depth.saturating_add(1);
+                    let set = if let Some(key) = recovery_dispatch_config {
+                        let mut s = cursor.visited_recovery.clone();
+                        s.insert(key);
+                        s
+                    } else {
+                        cursor.visited_recovery.clone()
+                    };
+                    (set, depth)
+                } else {
+                    (cursor.visited_recovery.clone(), cursor.recovery_depth)
+                };
+                let child_visited_dispatch = if !is_recovery {
+                    if let Some(key) = parent_dispatch_config {
+                        let mut s = cursor.visited_dispatch.clone();
+                        s.insert(key);
+                        s
+                    } else {
+                        cursor.visited_dispatch.clone()
+                    }
+                } else {
+                    cursor.visited_dispatch.clone()
+                };
                 let mut children = Vec::with_capacity(branches.len());
                 // B14 C5: parallel tracker — for each child pushed below,
                 // record whether its originating branch was CrossCatDelegate.
@@ -4769,9 +4827,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -4836,9 +4899,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -4914,9 +4982,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -4968,9 +5041,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5015,9 +5093,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5095,9 +5178,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5154,9 +5242,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5214,9 +5307,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5313,9 +5411,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
@@ -5399,9 +5502,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
                                 incoming_edge_stack: cursor.incoming_edge_stack.clone(),
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 builder: Arc::clone(&cursor.builder),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 sppf_stack: cursor.sppf_stack.clone(),
@@ -5527,9 +5635,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // non-recovery Forks (Push, OptGroupAbsent,
                                 // lex-alt, etc.) the inherited values
                                 // pass through unchanged.
-                                recovery_depth: cursor.recovery_depth,
-                                visited_recovery: cursor.visited_recovery.clone(),
-                                visited_dispatch: cursor.visited_dispatch.clone(),
+                                // Phase F.11 R7 hoist (2026-05-19): read
+                                // the pre-loop snapshot computed above.
+                                // Each sibling pays O(1) Arc refcount-bump
+                                // instead of an independent Arc::make_mut
+                                // spine clone.
+                                recovery_depth: child_recovery_depth,
+                                visited_recovery: child_visited_recovery.clone(),
+                                visited_dispatch: child_visited_dispatch.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6048,68 +6161,86 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         }
                     }
                 }
-                // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
-                // post-loop bump for recovery Forks. Each child inherited
-                // the parent's recovery_depth via the per-arm allocation
-                // (added to all 10 ForkActionKind arms via replace_all);
-                // here we bump the depth by 1 and insert the dispatch
-                // config into visited_recovery so the next dispatch at
-                // the same configuration is refused. For non-recovery
-                // Forks the inherited values pass through unchanged.
-                if is_recovery {
-                    if let Some(key) = recovery_dispatch_config {
-                        for child in children.iter_mut() {
-                            child.recovery_depth =
-                                child.recovery_depth.saturating_add(1);
-                            child.visited_recovery.insert(key);
-                        }
-                    } else {
-                        // is_recovery true but config missing: cursor wasn't
-                        // in PrefixDispatch when the recovery Fork was
-                        // dispatched. Treat as malformed dispatch — bump
-                        // depth without visited entry so the cap still bites.
-                        for child in children.iter_mut() {
-                            child.recovery_depth =
-                                child.recovery_depth.saturating_add(1);
-                        }
-                    }
-                }
-                // B14 C5 (2026-05-08): per-child insertion of the dispatch
-                // config so the cycle gate at apply_action_to_cursor :: Push
-                // (line 4213-4231) and the per-branch gate at
-                // (line 4546-4558) can detect re-entry.
+                // Phase F.11 R7 hoist (2026-05-19): the per-child post-loop
+                // insert blocks below are DISABLED — the work was moved
+                // above the per-branch allocation loop (lines ~4694-4731)
+                // so all F Fork-arm siblings inherit a single pre-computed
+                // OrdSet snapshot (`child_visited_recovery`,
+                // `child_visited_dispatch`) and pre-bumped depth
+                // (`child_recovery_depth`) via O(1) Arc-refcount-bump
+                // `.clone()`. Pre-hoist, each of the F siblings independently
+                // ran `Arc::make_mut` to deep-clone the OrdSet spine before
+                // inserting the SAME key, costing F × O(log N) Arc allocs
+                // per Fork (perf+massif: 31.56% of peak heap at depth=100).
                 //
-                // H1' EXTENSION (2026-05-18, replicated-conjuring-turtle.md):
-                // previously this insertion fired ONLY for children whose
-                // originating branch was CrossCatDelegate. Empirical
-                // diagnostic (`docs/design/notes/2026-05-18-cursor-
-                // explosion-rhocalc.md`) traced the rhocalc OOM cycle to a
-                // PrefixDispatch-branch Fork that re-entered the same
-                // `(pos, cat_src, cur_bp)` indefinitely with only the
-                // cursor's `weight.src` cat-idx cycling — visited_dispatch
-                // never grew because all branches were non-CrossCatDelegate.
+                // The original logic is preserved as comments below so the
+                // historical bounded-recovery (Stage 3.20 / L12) and B14 C5 /
+                // H1' rationale stays attached to the code path. Re-enabling
+                // either block at the same time as the pre-loop computation
+                // would DOUBLE-insert the key.
                 //
-                // Per the GLL descriptor-uniqueness argument (Scott &
-                // Johnstone 2010 §3), any re-entry to the same dispatch
-                // configuration is non-productive regardless of branch
-                // type. The insertion is now unconditional for non-recovery
-                // Forks; the per-branch gate at line 4546-4558 (extended
-                // below in a sibling commit) catches re-entry uniformly.
-                //
-                // `child_came_from_cross_cat` is retained as a structural
-                // tracker for the (now-equivalent) per-branch gate.
-                if let Some(key) = parent_dispatch_config {
-                    if !is_recovery {
-                        debug_assert_eq!(
-                            children.len(),
-                            child_came_from_cross_cat.len(),
-                            "B14 C5: parallel tracker out of sync with children",
-                        );
-                        for child in children.iter_mut() {
-                            child.visited_dispatch.insert(key);
-                        }
-                    }
-                }
+                // // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
+                // // post-loop bump for recovery Forks. Each child inherited
+                // // the parent's recovery_depth via the per-arm allocation
+                // // (added to all 10 ForkActionKind arms via replace_all);
+                // // here we bump the depth by 1 and insert the dispatch
+                // // config into visited_recovery so the next dispatch at
+                // // the same configuration is refused. For non-recovery
+                // // Forks the inherited values pass through unchanged.
+                // if is_recovery {
+                //     if let Some(key) = recovery_dispatch_config {
+                //         for child in children.iter_mut() {
+                //             child.recovery_depth =
+                //                 child.recovery_depth.saturating_add(1);
+                //             child.visited_recovery.insert(key);
+                //         }
+                //     } else {
+                //         // is_recovery true but config missing: cursor wasn't
+                //         // in PrefixDispatch when the recovery Fork was
+                //         // dispatched. Treat as malformed dispatch — bump
+                //         // depth without visited entry so the cap still bites.
+                //         for child in children.iter_mut() {
+                //             child.recovery_depth =
+                //                 child.recovery_depth.saturating_add(1);
+                //         }
+                //     }
+                // }
+                // // B14 C5 (2026-05-08): per-child insertion of the dispatch
+                // // config so the cycle gate at apply_action_to_cursor :: Push
+                // // (line 4213-4231) and the per-branch gate at
+                // // (line 4546-4558) can detect re-entry.
+                // //
+                // // H1' EXTENSION (2026-05-18, replicated-conjuring-turtle.md):
+                // // previously this insertion fired ONLY for children whose
+                // // originating branch was CrossCatDelegate. Empirical
+                // // diagnostic (`docs/design/notes/2026-05-18-cursor-
+                // // explosion-rhocalc.md`) traced the rhocalc OOM cycle to a
+                // // PrefixDispatch-branch Fork that re-entered the same
+                // // `(pos, cat_src, cur_bp)` indefinitely with only the
+                // // cursor's `weight.src` cat-idx cycling — visited_dispatch
+                // // never grew because all branches were non-CrossCatDelegate.
+                // //
+                // // Per the GLL descriptor-uniqueness argument (Scott &
+                // // Johnstone 2010 §3), any re-entry to the same dispatch
+                // // configuration is non-productive regardless of branch
+                // // type. The insertion is now unconditional for non-recovery
+                // // Forks; the per-branch gate at line 4546-4558 (extended
+                // // below in a sibling commit) catches re-entry uniformly.
+                // //
+                // // `child_came_from_cross_cat` is retained as a structural
+                // // tracker for the (now-equivalent) per-branch gate.
+                // if let Some(key) = parent_dispatch_config {
+                //     if !is_recovery {
+                //         debug_assert_eq!(
+                //             children.len(),
+                //             child_came_from_cross_cat.len(),
+                //             "B14 C5: parallel tracker out of sync with children",
+                //         );
+                //         for child in children.iter_mut() {
+                //             child.visited_dispatch.insert(key);
+                //         }
+                //     }
+                // }
                 CursorOutcome::ForkInto(children)
             }
             WpdaStepAction::Accept => {
