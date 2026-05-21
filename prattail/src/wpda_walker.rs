@@ -615,6 +615,18 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
         (u16, u32, u8),
         std::collections::HashSet<u16>,
     >,
+    /// Phase F.13 H12 Stage 1.1 (2026-05-21): Tomita-GLR dispatch-cohort
+    /// sharing cache. Walker-global; populated when a cross-cat-projection
+    /// Fork-arm Push allocates a child cursor, consumed at the matching
+    /// `CategoryEntry(S)` pop. See `crate::dispatch_cohort` for the
+    /// mathematical foundation and per-stage plan.
+    ///
+    /// Stage 1.1 ships the field as a dead-code scaffold (no reads,
+    /// no writes). Stage 1.2 wires writes; Stage 1.3 wires reads.
+    /// Gated by `dispatch-cohort` cargo feature — when off, the field
+    /// is omitted and behavior is exactly the per-cursor sub-parse path.
+    #[cfg(feature = "dispatch-cohort")]
+    dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache<W>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2198,6 +2210,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             },
             // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
             dispatch_branch_seen: std::collections::HashMap::new(),
+            #[cfg(feature = "dispatch-cohort")]
+            dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
         }
     }
 
@@ -2263,6 +2277,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             },
             // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
             dispatch_branch_seen: std::collections::HashMap::new(),
+            #[cfg(feature = "dispatch-cohort")]
+            dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
         }
     }
 
@@ -2323,6 +2339,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             },
             // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
             dispatch_branch_seen: std::collections::HashMap::new(),
+            #[cfg(feature = "dispatch-cohort")]
+            dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
         }
     }
 
@@ -2372,6 +2390,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         }
         // Phase F.13 H11b (2026-05-21): clear cross-cat dispatch dedup table.
         self.dispatch_branch_seen.clear();
+        // Phase F.13 H12 Stage 1.1 (2026-05-21): clear dispatch-cohort
+        // cache at parse boundary. SPPF SymbolIds are per-parse; the
+        // sub-parse results in the cache are tied to the prior parse's
+        // SPPF arena and would be unsound to reuse across resets.
+        #[cfg(feature = "dispatch-cohort")]
+        self.dispatch_cohort_cache.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
