@@ -219,6 +219,57 @@ impl<T: StarSemiring> StarSemiringRef for T {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// TropicalDeltaWeight — per-Phase F.13 H12 Stage 1.5.3 (2026-05-21)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Phase F.13 H12 Stage 1.5.3 (2026-05-21): semiring extension that
+/// supports recovering a multiplicative delta `delta(pre, post)` such
+/// that `pre ⊗ delta = post` on the PRIMARY (tropical) component.
+///
+/// Required by `dispatch_cohort` revive to compute per-packing cohort
+/// cursor weight: `cohort.pre ⊗ delta(worker.pre, worker.post)` =
+/// `cohort.pre ⊗ (sum of Fork branch weights along worker's path)`.
+///
+/// Implemented for [`LexicographicWeight`] via tropical primary
+/// subtraction (`f64::-`). Default implementation panics in debug
+/// (forces explicit override) and returns `post` in release
+/// (defensive but degenerate).
+///
+/// **Soundness for LexicographicWeight**: under left-projection
+/// semantics of [`Semiring::times`], `cohort.pre ⊗ delta` produces a
+/// weight whose primary is `cohort.pre.primary + delta.primary` and
+/// whose tiebreak is `cohort.pre.tiebreak` (when cohort.pre is
+/// non-identity, which is invariant for production cohort sites —
+/// every cross-cat dispatch traverses at least one non-identity
+/// `BP_TIER_*`-weighted ForkBranch arm).
+///
+/// **Mathematical content**: in tropical (min, +) arithmetic, the
+/// `times` operator is `+`, which is invertible. Therefore for any
+/// `(pre, post)`, the unique delta satisfying `pre ⊗ delta = post`
+/// (on the tropical primary component alone) is `post.primary -
+/// pre.primary`. The tiebreak fields of `delta` are algebraically
+/// irrelevant under cohort.pre's left-projection; we preserve
+/// `post.tiebreak` to document intent.
+pub trait TropicalDeltaWeight: SemiringRef {
+    /// Compute the multiplicative delta on the primary component:
+    /// `delta(pre, post)` such that `pre ⊗ delta = post` (modulo
+    /// tiebreak fields).
+    ///
+    /// Default panics in debug (forces explicit override); returns
+    /// `post` in release as a degenerate fallback.
+    fn tropical_primary_delta(pre: &Self, post: &Self) -> Self {
+        let _ = pre;
+        debug_assert!(
+            false,
+            "TropicalDeltaWeight default impl invoked — override required \
+             for weight types used by the cohort cache (production: \
+             LexicographicWeight)"
+        );
+        post.clone()
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // matrix_star_ref — Lehmann's algorithm (1977) for closed semirings,
 // SemiringRef variant
 // ══════════════════════════════════════════════════════════════════════════════

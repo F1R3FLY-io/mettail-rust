@@ -156,7 +156,8 @@ use std::cmp::Ordering;
 use std::fmt;
 
 use crate::automata::semiring::{
-    CompleteSemiring, DetectableZero, IdempotentSemiring, Semiring, StarSemiring, TropicalWeight,
+    CompleteSemiring, DetectableZero, IdempotentSemiring, Semiring, StarSemiring, TropicalDeltaWeight,
+    TropicalWeight,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -467,6 +468,33 @@ impl fmt::Display for LexicographicWeight {
 
 impl DetectableZero for LexicographicWeight {}
 impl IdempotentSemiring for LexicographicWeight {}
+
+/// Phase F.13 H12 Stage 1.5.3 (2026-05-21): tropical primary delta.
+/// `pre.primary` and `post.primary` are `TropicalWeight(f64)`; tropical
+/// `times` is `+`, so the inverse is `-`. Tiebreak fields are preserved
+/// from `post` (algebraically irrelevant under cohort.pre's
+/// left-projection at the consume site).
+impl TropicalDeltaWeight for LexicographicWeight {
+    #[inline]
+    fn tropical_primary_delta(pre: &Self, post: &Self) -> Self {
+        let delta_primary = post.primary.0 - pre.primary.0;
+        debug_assert!(
+            delta_primary >= 0.0 || !delta_primary.is_finite(),
+            "TropicalDeltaWeight: negative delta {} = post.primary {} - \
+             pre.primary {} — sub-parse weight should be monotone \
+             non-decreasing in production grammars",
+            delta_primary,
+            post.primary.0,
+            pre.primary.0,
+        );
+        LexicographicWeight {
+            primary: TropicalWeight(delta_primary),
+            lex_alt_idx: post.lex_alt_idx,
+            src_idx: post.src_idx,
+            rule_idx: post.rule_idx,
+        }
+    }
+}
 impl CompleteSemiring for LexicographicWeight {}
 
 /// Phase C-bis (2026-05-17, per
@@ -760,5 +788,86 @@ mod tests {
             let ba = b.lex_cmp(&a);
             prop_assert_eq!(ab, ba.reverse());
         }
+
+        // Phase F.13 H12 Stage 1.5.3b (2026-05-21): TropicalDeltaWeight
+        // axioms.
+
+        /// `delta(pre, post)` should reconstruct `post.primary` when
+        /// `pre` is added back (tropical primary recovery).
+        #[test]
+        fn axiom_tropical_delta_recovers_primary(
+            pre in nonidentity_finite_weight(),
+            post in nonidentity_finite_weight(),
+        ) {
+            // Constrain post.primary >= pre.primary to satisfy the
+            // monotonicity debug_assert in tropical_primary_delta.
+            let pre_c = pre.primary.0.min(post.primary.0);
+            let post_c = pre.primary.0.max(post.primary.0);
+            let pre2 = LexicographicWeight::from_cost(pre_c, pre.src_idx, pre.rule_idx);
+            let post2 = LexicographicWeight::from_cost(post_c, post.src_idx, post.rule_idx);
+            let delta = LexicographicWeight::tropical_primary_delta(&pre2, &post2);
+            // Recovery: pre.primary + delta.primary = post.primary.
+            let recovered = pre2.primary.0 + delta.primary.0;
+            prop_assert!((recovered - post2.primary.0).abs() < 1e-9);
+        }
+
+        /// For non-identity cohort.pre, cohort.pre.times(&delta) carries
+        /// cohort.pre's tiebreak (left-projection).
+        #[test]
+        fn axiom_cohort_revive_preserves_cohort_tiebreak(
+            cohort_pre in nonidentity_finite_weight(),
+            pre in nonidentity_finite_weight(),
+            post in nonidentity_finite_weight(),
+        ) {
+            // Ensure post.primary >= pre.primary.
+            let pre_c = pre.primary.0.min(post.primary.0);
+            let post_c = pre.primary.0.max(post.primary.0);
+            let pre2 = LexicographicWeight::from_cost(pre_c, pre.src_idx, pre.rule_idx);
+            let post2 = LexicographicWeight::from_cost(post_c, post.src_idx, post.rule_idx);
+            let delta = LexicographicWeight::tropical_primary_delta(&pre2, &post2);
+            let revive = cohort_pre.times(&delta);
+            // cohort_pre is non-identity → left-projection preserves its tiebreak.
+            prop_assert_eq!(revive.src_idx, cohort_pre.src_idx);
+            prop_assert_eq!(revive.rule_idx, cohort_pre.rule_idx);
+            // Primary: cohort_pre.primary + delta.primary (which = post.primary - pre.primary).
+            let expected = cohort_pre.primary.0 + (post2.primary.0 - pre2.primary.0);
+            prop_assert!((revive.primary.0 - expected).abs() < 1e-9);
+        }
+    }
+
+    // Phase F.13 H12 Stage 1.5.3b: hand-picked semantic test.
+    #[test]
+    fn delta_recovers_per_packing_weight() {
+        // Synthetic scenario: a cohort member with (primary 0.5, src 3, rule 7)
+        // arrives at a dispatch with two workers (Branch A, Branch B). Worker
+        // pre-dispatch weight = (primary 0.1, src 9, rule 11). Worker post-pop
+        // weights differ by path (Branch A: +0.2, Branch B: +0.3).
+        let cohort_pre = LexicographicWeight::from_cost(0.5, 3, 7);
+        let worker_pre = LexicographicWeight::from_cost(0.1, 9, 11);
+        let worker_post_a = LexicographicWeight::from_cost(0.3, 9, 11);
+        let worker_post_b = LexicographicWeight::from_cost(0.4, 9, 11);
+
+        let delta_a = LexicographicWeight::tropical_primary_delta(&worker_pre, &worker_post_a);
+        let delta_b = LexicographicWeight::tropical_primary_delta(&worker_pre, &worker_post_b);
+
+        // Delta primaries: tropical subtraction.
+        assert!((delta_a.primary.0 - 0.2).abs() < 1e-9);
+        assert!((delta_b.primary.0 - 0.3).abs() < 1e-9);
+
+        let revive_a = cohort_pre.times(&delta_a);
+        let revive_b = cohort_pre.times(&delta_b);
+
+        // Per-cursor baseline equivalence: cohort_pre.primary + delta.primary.
+        assert!((revive_a.primary.0 - 0.7).abs() < 1e-9);
+        assert!((revive_b.primary.0 - 0.8).abs() < 1e-9);
+
+        // Left-projection: cohort_pre's tiebreak preserved.
+        assert_eq!(revive_a.src_idx, 3);
+        assert_eq!(revive_a.rule_idx, 7);
+        assert_eq!(revive_b.src_idx, 3);
+        assert_eq!(revive_b.rule_idx, 7);
+
+        // Per-packing distinction restored: revive_a ≠ revive_b.
+        assert_ne!(revive_a.primary.0, revive_b.primary.0);
     }
 }
