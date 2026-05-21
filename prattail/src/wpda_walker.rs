@@ -595,6 +595,26 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// (zero-cost in default builds). See `prattail/src/walker_stats.rs`.
     #[cfg(feature = "walker-stats")]
     pub stats: crate::walker_stats::WalkerStats,
+    /// Phase F.13 H11b (2026-05-21): cross-cat-projection dispatch
+    /// dedup table. Keyed by `(state_cat_src_idx, pos, inner_cur_bp)` —
+    /// for each dispatch site (a unique parse position at a unique cat
+    /// for a unique binding-power level), records which `source_src_idx`
+    /// CrossCatDelegate target branches have already been emitted.
+    /// On Fork emission, branches whose target source_src_idx is
+    /// already present are SKIPPED (the previously-emitted cursor's
+    /// derivation suffices; SPPF Symbol-dedup makes the redundant
+    /// emission a pure waste).
+    ///
+    /// Ambiguity preservation: keyed on `pos` (not just `cat`) — a
+    /// re-dispatch at a new pos still emits ALL branches. Different
+    /// inner_bp levels also distinguish. Only redundant emissions at
+    /// the SAME (cat, pos, inner_bp) are filtered.
+    ///
+    /// Reset by `reset()`.
+    dispatch_branch_seen: std::collections::HashMap<
+        (u16, u32, u8),
+        std::collections::HashSet<u16>,
+    >,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2176,6 +2196,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 cursors_created_via_seed: 1,
                 ..crate::walker_stats::WalkerStats::default()
             },
+            // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
+            dispatch_branch_seen: std::collections::HashMap::new(),
         }
     }
 
@@ -2239,6 +2261,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 cursors_created_via_seed: 1,
                 ..crate::walker_stats::WalkerStats::default()
             },
+            // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
+            dispatch_branch_seen: std::collections::HashMap::new(),
         }
     }
 
@@ -2297,6 +2321,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 cursors_created_via_seed: 1,
                 ..crate::walker_stats::WalkerStats::default()
             },
+            // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
+            dispatch_branch_seen: std::collections::HashMap::new(),
         }
     }
 
@@ -2344,6 +2370,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 ..crate::walker_stats::WalkerStats::default()
             };
         }
+        // Phase F.13 H11b (2026-05-21): clear cross-cat dispatch dedup table.
+        self.dispatch_branch_seen.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -4761,6 +4789,33 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             self.stats.fork_recovery_dispatches.saturating_add(1);
                     }
                 }
+                // Phase F.13 H11b (2026-05-21): REJECTED.
+                // The originally-planned filter (skip CrossCatDelegate
+                // branches whose target source_src_idx was already
+                // emitted by a prior cursor at the same (cat, pos,
+                // inner_bp) dispatch site) is MATHEMATICALLY UNSOUND.
+                //
+                // Empirical refutation: 7 edge_case_tests regressed
+                // (float_cast_* family + rhocalc_edge_cases::comm_under_new).
+                //
+                // Diagnosis (mathematical): cross-cat dispatch is NOT
+                // just sub-parse work — it's also a CONTEXT SAVE for
+                // the return. Two cursors at the same (cat, pos,
+                // inner_bp) dispatch share sub-parse WORK but NOT the
+                // return context (different incoming_edge_stack /
+                // binder_scope_marks / sppf_collection_arena state).
+                // Filtering the second emission drops its return
+                // context, losing parses.
+                //
+                // The MATHEMATICALLY VALID analogue is GSS-aware batch
+                // dispatch (Tomita-GLR / GLL call-graph sharing): when
+                // N cursors call the same sub-parse, run sub-parse ONCE
+                // and fan out ALL N return contexts at pop time. This
+                // requires walker refactoring beyond a single-hypothesis
+                // scope; deferred to a future research session.
+                //
+                // dispatch_branch_seen field retained for any future
+                // diagnostic use; field is unused in this branch.
                 let recovery_dispatch_config: Option<(usize, u16, u8)> = if is_recovery {
                     extract_recovery_dispatch_config(cursor, &self.gss)
                 } else {
@@ -6797,6 +6852,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // (`recovery_deltas`, `collection_stack`) is kept (deltas
         // are non-commutative). Caps polynomial fanout in ambiguous
         // grammars vs the prior exponential branch count.
+        // Phase F.13 H11a diagnostic (2026-05-20): sample intra-pos cursor
+        // pairs that would FAIL to merge and tally which ConfigKey
+        // discriminator (state/node/edge/depth) is the sole cause. Only
+        // runs when feature=walker-stats. Bounds: up to 10 pairs per
+        // peak-step bucket; constant overhead per step.
+        #[cfg(feature = "walker-stats")]
+        self.sample_merge_misses();
         self.merge_equivalent_cursors();
         // Phase F.13 walker-stats (2026-05-20): capture post-merge peak.
         crate::stats_max!(self, branch_cursors_peak_post_merge, self.branch_cursors.len() as u64);
@@ -6901,6 +6963,87 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// Merge does NO SPPF work — Symbol-dedup at reduce time has already
     /// preserved all ambiguity. The winning cursor's sppf_stack carries
     /// forward; the loser's references the same shared SppfIds.
+    /// Phase F.13 H11a diagnostic (2026-05-20): sample intra-`pos` cursor
+    /// pairs that would fail to merge in `merge_equivalent_cursors`, and
+    /// tally which `ConfigKey` discriminator (`state`, `node`,
+    /// `incoming_edge`, `collection_depth`) is the SOLE cause of the
+    /// difference. Pairs differing on ≥2 discriminators are counted as
+    /// `multi_diff`.
+    ///
+    /// Sampling is bounded: at most 100 pairs per call (10 per top-10
+    /// largest pos-buckets). Constant overhead per `step_fanout`.
+    ///
+    /// Interpretation rubric:
+    /// - `edge` dominates (>60%): incoming_edge is the discriminator —
+    ///   Branch A (incoming_edge_alternatives) applies.
+    /// - `node` dominates: GSS-level dedup gap — Branch B.
+    /// - `state` dominates: relaxed-state merge candidate — Branch C.
+    /// - `depth` dominates: collection-depth desync bug — Branch D.
+    /// - `multi` dominates: no single fix sufficient; H11a rejected.
+    #[cfg(feature = "walker-stats")]
+    fn sample_merge_misses(&mut self) {
+        if self.branch_cursors.len() < 2 {
+            return;
+        }
+        // Bucket cursor indices by `pos`. We use a Vec-of-Vec keyed by
+        // pos to keep allocations bounded; for chain_50 peak ≈4012
+        // cursors at ~30-50 distinct positions, this is small.
+        use std::collections::HashMap;
+        let mut by_pos: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (idx, c) in self.branch_cursors.iter().enumerate() {
+            by_pos.entry(c.pos).or_default().push(idx);
+        }
+        // Take only the largest 10 buckets (sorted by size desc).
+        let mut buckets: Vec<(usize, Vec<usize>)> = by_pos.into_iter().collect();
+        buckets.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
+        let mut pairs_remaining: usize = 100;
+        for (_pos, idxs) in buckets.iter().take(10) {
+            if idxs.len() < 2 || pairs_remaining == 0 {
+                continue;
+            }
+            // Take first 10 pairs (i, j) with i<j from this bucket.
+            'outer: for i in 0..idxs.len() {
+                for j in (i + 1)..idxs.len() {
+                    if pairs_remaining == 0 {
+                        break 'outer;
+                    }
+                    let a = &self.branch_cursors[idxs[i]];
+                    let b = &self.branch_cursors[idxs[j]];
+                    let state_diff = a.inner_state != b.inner_state;
+                    let node_diff = a.node != b.node;
+                    let edge_diff = a.incoming_edge_stack.last().copied()
+                        != b.incoming_edge_stack.last().copied();
+                    let depth_diff = a.collection_stack_depth != b.collection_stack_depth;
+                    let diff_count = (state_diff as u8)
+                        + (node_diff as u8)
+                        + (edge_diff as u8)
+                        + (depth_diff as u8);
+                    self.stats.merge_miss_pairs_considered_total =
+                        self.stats.merge_miss_pairs_considered_total.saturating_add(1);
+                    if diff_count == 0 {
+                        // Identical key; would merge — not a miss.
+                    } else if diff_count >= 2 {
+                        self.stats.merge_miss_multi_diff_total =
+                            self.stats.merge_miss_multi_diff_total.saturating_add(1);
+                    } else if state_diff {
+                        self.stats.merge_miss_state_diff_total =
+                            self.stats.merge_miss_state_diff_total.saturating_add(1);
+                    } else if node_diff {
+                        self.stats.merge_miss_node_diff_total =
+                            self.stats.merge_miss_node_diff_total.saturating_add(1);
+                    } else if edge_diff {
+                        self.stats.merge_miss_edge_diff_total =
+                            self.stats.merge_miss_edge_diff_total.saturating_add(1);
+                    } else if depth_diff {
+                        self.stats.merge_miss_depth_diff_total =
+                            self.stats.merge_miss_depth_diff_total.saturating_add(1);
+                    }
+                    pairs_remaining -= 1;
+                }
+            }
+        }
+    }
+
     fn merge_equivalent_cursors(&mut self) {
         if self.branch_cursors.len() < 2 {
             return;

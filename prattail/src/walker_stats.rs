@@ -133,6 +133,32 @@ pub struct WalkerStats {
     /// Branches whose `new_state` is `WpdaState::CrossCatDelegate { .. }`.
     /// Confirms cross-cat projection as the dominant Fork-branch source.
     pub fork_cross_cat_projection_branches: u64,
+
+    // ── F.13 H11a diagnostic: merge-miss pair sampling ─────────────────
+    /// Total intra-`pos` pairs sampled by the diagnostic pass (denominator
+    /// for the merge-miss breakdown ratios).
+    pub merge_miss_pairs_considered_total: u64,
+    /// Pairs that differ on ONLY `state` (other 3 discriminators match).
+    pub merge_miss_state_diff_total: u64,
+    /// Pairs that differ on ONLY `node` (other 3 discriminators match).
+    pub merge_miss_node_diff_total: u64,
+    /// Pairs that differ on ONLY `incoming_edge` (other 3 discriminators match).
+    pub merge_miss_edge_diff_total: u64,
+    /// Pairs that differ on ONLY `collection_depth` (other 3 discriminators match).
+    pub merge_miss_depth_diff_total: u64,
+    /// Pairs that differ on ≥ 2 discriminators (multi-axis divergence).
+    pub merge_miss_multi_diff_total: u64,
+
+    // ── F.13 H11b diagnostic: cross-cat census ─────────────────────────
+    /// Number of cross-cat Fork branches that would be filtered by H11b's
+    /// dispatch_branch_seen mechanism (i.e., branches whose target
+    /// `(source_cat, pos, inner_bp)` was already emitted by an earlier
+    /// cursor at this dispatch site).
+    pub fork_branches_dropped_pre_emit: u64,
+    /// Number of cross-cat Fork branches whose target `(cat, pos)` already
+    /// has at least one SPPF Symbol interned. Coarser signal than
+    /// `dropped_pre_emit` — confirms structural redundancy.
+    pub fork_target_symbol_already_in_sppf: u64,
 }
 
 impl WalkerStats {
@@ -212,6 +238,35 @@ impl fmt::Display for WalkerStats {
             self.fork_kind_consume_family,
             self.fork_kind_other,
         )?;
+        // F.13 H11a diagnostic
+        if self.merge_miss_pairs_considered_total > 0 {
+            let denom = self.merge_miss_pairs_considered_total as f64;
+            writeln!(
+                f,
+                "  merge_miss: pairs={} state_only={} ({:.1}%) node_only={} ({:.1}%) edge_only={} ({:.1}%) depth_only={} ({:.1}%) multi={} ({:.1}%)",
+                self.merge_miss_pairs_considered_total,
+                self.merge_miss_state_diff_total,
+                100.0 * self.merge_miss_state_diff_total as f64 / denom,
+                self.merge_miss_node_diff_total,
+                100.0 * self.merge_miss_node_diff_total as f64 / denom,
+                self.merge_miss_edge_diff_total,
+                100.0 * self.merge_miss_edge_diff_total as f64 / denom,
+                self.merge_miss_depth_diff_total,
+                100.0 * self.merge_miss_depth_diff_total as f64 / denom,
+                self.merge_miss_multi_diff_total,
+                100.0 * self.merge_miss_multi_diff_total as f64 / denom,
+            )?;
+        }
+        // F.13 H11b diagnostic
+        if self.fork_cross_cat_projection_branches > 0 || self.fork_branches_dropped_pre_emit > 0 {
+            writeln!(
+                f,
+                "  cross_cat: total_branches={} would_drop={} target_in_sppf={}",
+                self.fork_cross_cat_projection_branches,
+                self.fork_branches_dropped_pre_emit,
+                self.fork_target_symbol_already_in_sppf,
+            )?;
+        }
         Ok(())
     }
 }
@@ -299,6 +354,14 @@ mod tests {
             fork_kind_other: 12,
             fork_recovery_dispatches: 0,
             fork_cross_cat_projection_branches: 5_904,
+            merge_miss_pairs_considered_total: 0,
+            merge_miss_state_diff_total: 0,
+            merge_miss_node_diff_total: 0,
+            merge_miss_edge_diff_total: 0,
+            merge_miss_depth_diff_total: 0,
+            merge_miss_multi_diff_total: 0,
+            fork_branches_dropped_pre_emit: 0,
+            fork_target_symbol_already_in_sppf: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
