@@ -4520,7 +4520,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // Handles CollectionMarker (id alloc + bp patch + arg push)
                 // AND OptionalGroupAt(1) (scope open).
                 self.emit_push_side_effects(cursor, &mut symbol);
-                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -4546,7 +4546,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 self.cursor_resolution_check(cursor)
             }
             WpdaStepAction::Replace { symbol, weight, new_state } => {
-                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -4605,7 +4605,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time
                 // side effects (CollectionMarker + OptionalGroupAt(1)).
                 self.emit_push_side_effects(cursor, &mut symbol);
-                let _ = self.cursor_gss_push(cursor, symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
@@ -4625,7 +4625,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 self.cursor_resolution_check(cursor)
             }
             WpdaStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
-                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
@@ -4645,7 +4645,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     let pos = cursor.pos;
                     self.emit_push_ident(cursor, text, pos);
                 }
-                let _ = self.cursor_gss_replace_top(cursor, symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
@@ -4657,7 +4657,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 weight,
                 new_state,
             } => {
-                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_replace_top_auto(cursor, replace_symbol, cursor.pos, weight.clone());
                 // B9 / Class 2 (2026-05-08): apply emit_push_side_effects
                 // BEFORE pushing the symbol — for CollectionMarker, this
                 // allocates an accumulator id and patches symbol.bp =
@@ -4669,7 +4669,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // the Push arm at line ~2998 and Fork arms at ~3390.
                 let mut push_symbol = push_symbol;
                 self.emit_push_side_effects(cursor, &mut push_symbol);
-                let _ = self.cursor_gss_push(cursor, push_symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_push_auto(cursor, push_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -4695,7 +4695,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     }
                     Err(_msg) => return CursorOutcome::Drop,
                 }
-                let _ = self.cursor_gss_replace_top(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_replace_top_auto(cursor, replace_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -5133,7 +5133,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                     kind,
                                 );
                             } else {
-                                let _ = self.cursor_gss_push(
+                                let _ = self.cursor_gss_push_auto(
                                     &mut child,
                                     symbol,
                                     pos_after,
@@ -5228,7 +5228,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             // Stage 3.12.6: use cursor_gss_push so the
                             // child's incoming_edge_stack records the
                             // new edge id for its eventual pop.
-                            let _ = self.cursor_gss_push(
+                            let _ = self.cursor_gss_push_auto(
                                 &mut child,
                                 replace_symbol,
                                 pos_after,
@@ -5301,7 +5301,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 // First write in this child triggers Arc::make_mut.
                             };
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -5454,7 +5454,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             }
                             let pos_now = child.pos;
                             self.emit_push_ident(&mut child, text, pos_now);
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -5675,7 +5675,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 child.recovery_deltas.push(effect);
                             }
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -5780,7 +5780,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             let pos_now = child.pos;
                             self.emit_push_token(&mut child, kind, text, pos_now);
                             self.emit_push_side_effects(&mut child, &mut sym);
-                            let _ = self.cursor_gss_push(
+                            let _ = self.cursor_gss_push_auto(
                                 &mut child,
                                 sym,
                                 pos_now,
@@ -5909,7 +5909,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             }
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_push(
+                            let _ = self.cursor_gss_push_auto(
                                 &mut child,
                                 sym,
                                 pos_now,
@@ -6029,7 +6029,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             }
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_push(
+                            let _ = self.cursor_gss_push_auto(
                                 &mut child,
                                 sym,
                                 pos_now,
@@ -6064,7 +6064,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 child_source_priority,
                             );
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -6115,7 +6115,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             }
                             let pos_now = child.pos;
                             self.emit_push_ident(&mut child, text, pos_now);
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -6195,7 +6195,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 child.recovery_deltas.push(effect);
                             }
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -6303,7 +6303,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 self.emit_extend_binder_scope(&mut child, text.clone());
                             }
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -6367,7 +6367,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 child.recovery_deltas.push(effect);
                             }
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -6452,7 +6452,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 child_source_priority,
                             );
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 replace_symbol,
                                 pos_now,
@@ -6460,7 +6460,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             );
                             let mut sym = branch.symbol;
                             self.emit_push_side_effects(&mut child, &mut sym);
-                            let _ = self.cursor_gss_push(
+                            let _ = self.cursor_gss_push_auto(
                                 &mut child,
                                 sym,
                                 pos_now,
@@ -6502,7 +6502,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 }
                             }
                             let pos_now = child.pos;
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 &mut child,
                                 branch.symbol,
                                 pos_now,
@@ -6654,7 +6654,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         self.top_node = Some(sentinel);
                     }
                 }
-                let _ = self.cursor_gss_push(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_push_auto(cursor, replace_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -6692,7 +6692,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         self.top_node = Some(sentinel);
                     }
                 }
-                let _ = self.cursor_gss_push(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_push_auto(cursor, replace_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -9024,6 +9024,24 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         new_id
     }
 
+    /// Phase F.13 H13 Step 0 (2026-05-21): `cursor_gss_push` variant that
+    /// AUTO-DERIVES the `EdgeKind` from the StackSymbolV2's SymbolKind.
+    /// This is the default path post-H13: every push site automatically
+    /// gets a semantic-aware tag without per-site changes. Override with
+    /// `cursor_gss_push_with_kind` when the caller has richer context
+    /// (e.g., CrossCatProjection vs CategoryEntryRoot disambiguation).
+    #[inline(always)]
+    fn cursor_gss_push_auto(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        sym: StackSymbolV2,
+        pos: usize,
+        w: W,
+    ) -> crate::gss::GssNodeId {
+        let kind = crate::gss::EdgeKind::from_symbol(&sym);
+        self.cursor_gss_push_with_kind(cursor, sym, pos, w, kind)
+    }
+
     #[inline(always)]
     fn cursor_gss_push(
         &mut self,
@@ -9387,7 +9405,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         if builder_cat != new_top_cat {
                             let new_sym =
                                 StackSymbolV2::category_entry(builder_cat);
-                            let _ = self.cursor_gss_replace_top(
+                            let _ = self.cursor_gss_replace_top_auto(
                                 cursor,
                                 new_sym,
                                 cursor.pos,
@@ -9490,6 +9508,60 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     // designed; the orphaned helper is removed.
 
     #[inline(always)]
+    /// Phase F.13 H13 Step 0 (2026-05-21): `cursor_gss_replace_top` variant
+    /// that AUTO-DERIVES the `EdgeKind` from the StackSymbolV2's SymbolKind.
+    #[inline(always)]
+    fn cursor_gss_replace_top_auto(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        sym: StackSymbolV2,
+        pos: usize,
+        w: W,
+    ) -> crate::gss::GssNodeId {
+        let kind = crate::gss::EdgeKind::from_symbol(&sym);
+        self.cursor_gss_replace_top_with_kind(cursor, sym, pos, w, kind)
+    }
+
+    /// Phase F.13 H13 Step 0 (2026-05-21): kinded variant of
+    /// `cursor_gss_replace_top`. Mirrors `cursor_gss_push_with_kind`.
+    #[inline(always)]
+    fn cursor_gss_replace_top_with_kind(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        sym: StackSymbolV2,
+        pos: usize,
+        w: W,
+        kind: crate::gss::EdgeKind,
+    ) -> crate::gss::GssNodeId {
+        let target = if (cursor.node == 0 && self.gss.node(0).is_none())
+            || cursor.node == crate::gss::GSS_NODE_NONE
+        {
+            let root = self.gss.get_or_create_node(WpdaGssNode {
+                pos: cursor.pos,
+                symbol: StackSymbolV2::category_entry(0),
+            });
+            cursor.node = root;
+            if self.deterministic {
+                self.top_node = Some(root);
+            }
+            root
+        } else {
+            cursor.node
+        };
+        let cursor_top_edge = cursor.incoming_edge_stack.last().copied();
+        let (new_id, edge_id) =
+            self.gss.replace_top_with_edge_id_kind(target, sym, pos, w, cursor_top_edge, kind);
+        cursor.node = new_id;
+        if !cursor.incoming_edge_stack.is_empty() {
+            cursor.incoming_edge_stack.pop();
+        }
+        cursor.incoming_edge_stack.push(edge_id);
+        if self.deterministic {
+            self.top_node = Some(new_id);
+        }
+        new_id
+    }
+
     fn cursor_gss_replace_top(
         &mut self,
         cursor: &mut BranchCursor<W>,

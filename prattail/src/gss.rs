@@ -391,29 +391,147 @@ pub struct WpdaGssNode {
 /// specific variants as their grammar semantics are formalized.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EdgeKind {
-    /// Fallback for sites not yet specifically classified. Always
-    /// strict identity (compares by source_id).
-    Generic { source_id: GssEdgeId },
+    /// Fallback / identity-strict — compared via GssEdgeId equality.
+    /// Use when the semantic kind cannot be determined OR when the kind
+    /// is divergent on pop (post-pop predecessor depends on cursor history).
+    Generic,
+
+    // ─── Convergent variants: post-pop predecessor determined by payload ───
+    /// CategoryEntry root sentinel synthesis (cursor_gss_push fallback
+    /// when cursor.node is GSS_NODE_NONE or 0). All such edges target
+    /// the universal sentinel frame.
+    CategoryEntryRoot,
     /// Cross-cat projection Fork branch: walker emits a Push to
     /// `CategoryEntry(source_src_idx)` to delegate to a sub-cat parse.
     /// Convergent: post-pop returns to the outer dispatch site whose
-    /// `(source_src_idx, dest_src_idx, inner_cur_bp)` are payload.
-    /// Two cursors that emit the same CrossCatProjection at the same
-    /// `(pos, dest_cat, cur_bp)` produce equivalent sub-parse work AND
-    /// equivalent post-pop state.
+    /// `(source_src_idx, inner_cur_bp)` are payload.
     CrossCatProjection {
         source_src_idx: u16,
         inner_cur_bp: u8,
     },
+    /// PrefixDispatch consumed a literal and pushed a `RuleAt` frame
+    /// to begin parsing the rule's items. Payload = (cat, rule, item position).
+    PrefixRuleEntry {
+        cat_src: u16,
+        rule_idx: u16,
+        item_pos: u8,
+    },
+    /// InfixLoop dispatch's `ConsumeAndPush` of an InfixContinuation
+    /// symbol (after matching the infix operator). Payload = (cat, rule,
+    /// bp from symbol).
+    InfixContinuation {
+        cat_src: u16,
+        rule_idx: u16,
+        l_bp: u8,
+    },
+    /// Lex-alternative Fork branch (LexAlt family). Payload =
+    /// (cat, rule). Distinguished from PrefixRuleEntry because lex-Fork
+    /// is a Fork-time variant; runtime semantics are similar but
+    /// emission context differs.
+    LexAltLiteral {
+        cat_src: u16,
+        rule_idx: u16,
+    },
+    /// Optional-group `OptionalGroupAt(sub_pos)` marker. Payload =
+    /// (cat, rule, sub_pos, outer_bp).
+    OptionalGroupAt {
+        cat_src: u16,
+        rule_idx: u16,
+        sub_pos: u8,
+        outer_bp: u8,
+    },
+
+    // ─── Identity-strict variants (divergent on pop) ────────────────────────
+    /// Collection-element marker push. Pop must restore the calling
+    /// frame's accumulator-slot id. Comparison falls back to GssEdgeId.
+    CollectionElement {
+        result_src: u16,
+        rule_idx: u16,
+        acc_id: u8,
+    },
+    /// Grouping marker push. Pop restores the outer Pratt `cur_bp`.
+    /// Comparison falls back to GssEdgeId.
+    GroupingMarker {
+        result_src: u16,
+        outer_bp: u8,
+    },
+    /// Mixfix continuation marker. Comparison falls back to GssEdgeId.
+    MixfixMarker {
+        result_src: u16,
+        rule_idx: u16,
+        operands_completed: u8,
+    },
+    /// Return-frame push. Comparison falls back to GssEdgeId (divergent
+    /// because the return frame's predecessor varies per cursor history).
+    ReturnFrame {
+        cat_src: u16,
+        rule_idx: u16,
+    },
 }
 
-/// Phase F.13 H13 (2026-05-21): sentinel EdgeKind used for edges that
-/// existed before the EdgeKind tagging was added, or in legacy
-/// constructors that don't yet thread the parameter. Always treated
-/// as identity-strict via the GssEdgeId.
 impl EdgeKind {
-    pub fn generic(source_id: GssEdgeId) -> Self {
-        EdgeKind::Generic { source_id }
+    /// Derive an EdgeKind from a StackSymbolV2. Maps SymbolKind variants
+    /// to the corresponding EdgeKind. Used by `cursor_gss_push_auto` to
+    /// auto-tag edges at every push site.
+    pub fn from_symbol(sym: &crate::wpda_runtime::StackSymbolV2) -> Self {
+        use crate::wpda_runtime::SymbolKind;
+        match sym.kind {
+            SymbolKind::CategoryEntry => {
+                // Could be CategoryEntryRoot sentinel OR CrossCatProjection;
+                // callers that know it's cross-cat should construct the
+                // CrossCatProjection variant explicitly.
+                EdgeKind::CategoryEntryRoot
+            }
+            SymbolKind::RuleAt(item_pos) => EdgeKind::PrefixRuleEntry {
+                cat_src: sym.category_src_idx,
+                rule_idx: sym.rule_index_in_category,
+                item_pos,
+            },
+            SymbolKind::InfixContinuation => EdgeKind::InfixContinuation {
+                cat_src: sym.category_src_idx,
+                rule_idx: sym.rule_index_in_category,
+                l_bp: sym.bp.unwrap_or(0),
+            },
+            SymbolKind::CollectionMarker => EdgeKind::CollectionElement {
+                result_src: sym.category_src_idx,
+                rule_idx: sym.rule_index_in_category,
+                acc_id: sym.bp.unwrap_or(0),
+            },
+            SymbolKind::GroupingMarker => EdgeKind::GroupingMarker {
+                result_src: sym.category_src_idx,
+                outer_bp: sym.bp.unwrap_or(0),
+            },
+            SymbolKind::MixfixMarker => EdgeKind::MixfixMarker {
+                result_src: sym.category_src_idx,
+                rule_idx: sym.rule_index_in_category,
+                operands_completed: sym.bp.unwrap_or(0),
+            },
+            SymbolKind::OptionalGroupAt(sub_pos) => EdgeKind::OptionalGroupAt {
+                cat_src: sym.category_src_idx,
+                rule_idx: sym.rule_index_in_category,
+                sub_pos,
+                outer_bp: sym.bp.unwrap_or(0),
+            },
+            SymbolKind::Return => EdgeKind::ReturnFrame {
+                cat_src: sym.category_src_idx,
+                rule_idx: sym.rule_index_in_category,
+            },
+        }
+    }
+
+    /// True for variants whose payload alone determines post-pop
+    /// equivalence. Two convergent edges with same EdgeKind are
+    /// merge-equivalent under H13's relaxed key.
+    pub fn is_convergent(&self) -> bool {
+        matches!(
+            self,
+            EdgeKind::CategoryEntryRoot
+                | EdgeKind::CrossCatProjection { .. }
+                | EdgeKind::PrefixRuleEntry { .. }
+                | EdgeKind::InfixContinuation { .. }
+                | EdgeKind::LexAltLiteral { .. }
+                | EdgeKind::OptionalGroupAt { .. }
+        )
     }
 }
 
@@ -500,7 +618,7 @@ impl<W: SemiringRef> WpdaGss<W> {
         edges.push(WpdaGssEdge {
             target,
             weight,
-            kind: EdgeKind::Generic { source_id: edge_id },
+            kind: EdgeKind::Generic,
         });
         edge_id
     }
@@ -748,6 +866,40 @@ impl<W: SemiringRef> WpdaGss<W> {
         }
         // Prefer the cursor's specific edge target; fall back to first
         // (single-pred case) or 0 (no preds — terminal replace).
+        let edge_id = matching_edge_id.or(first_edge_id).unwrap_or(0);
+        (new_id, edge_id)
+    }
+
+    /// Phase F.13 H13 Step 0 (2026-05-21): kinded variant of
+    /// `replace_top_with_edge_id`. Each new edge created from the
+    /// replace operation receives the supplied `EdgeKind`.
+    pub fn replace_top_with_edge_id_kind(
+        &mut self,
+        frontier_node: GssNodeId,
+        new_symbol: StackSymbolV2,
+        pos: usize,
+        weight: W,
+        cursor_incoming_edge: Option<GssEdgeId>,
+        kind: EdgeKind,
+    ) -> (GssNodeId, GssEdgeId) {
+        let new_id = self.get_or_create_node(WpdaGssNode { pos, symbol: new_symbol });
+        let preds: Vec<(GssNodeId, W)> = self
+            .edges_from(frontier_node)
+            .iter()
+            .map(|e| (e.target, weight.times_ref(&e.weight)))
+            .collect();
+        let cursor_target = cursor_incoming_edge.and_then(|e| self.edge_target(e));
+        let mut matching_edge_id: Option<GssEdgeId> = None;
+        let mut first_edge_id: Option<GssEdgeId> = None;
+        for (target, w) in preds {
+            let edge_id = self.add_edge_kind(new_id, target, w, kind.clone());
+            if first_edge_id.is_none() {
+                first_edge_id = Some(edge_id);
+            }
+            if cursor_target == Some(target) && matching_edge_id.is_none() {
+                matching_edge_id = Some(edge_id);
+            }
+        }
         let edge_id = matching_edge_id.or(first_edge_id).unwrap_or(0);
         (new_id, edge_id)
     }
