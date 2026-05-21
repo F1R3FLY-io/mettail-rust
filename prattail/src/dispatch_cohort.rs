@@ -319,7 +319,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // Memory cap: refuse further snapshots beyond cap.
                 // Pathological grammars with > 8 packings per Symbol
                 // fall through to per-cursor for the overflow workers.
-                const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 8;
+                const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 4;
                 if worker_snapshots.len() < MAX_WORKER_SNAPSHOTS_PER_KEY {
                     worker_snapshots.push(snap);
                     self.snapshot_appends_total += 1;
@@ -349,6 +349,17 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ///   still catches subsequent register hits with the full
     ///   snapshots Vec).
     #[allow(clippy::type_complexity)]
+    /// Phase F.13 H12 Stage 1.5.1 — drain ONLY the NEW snapshots
+    /// since the last drain, keeping pending_cohort PERSISTENT for
+    /// cross-step multi-packing fanout. Members are cloned per drain
+    /// (NOT taken), so subsequent worker snapshots in later steps
+    /// can also revive against the same cohort.
+    ///
+    /// Memory bound: with `MAX_PENDING_COHORT_PER_KEY=4` and
+    /// `MAX_WORKER_SNAPSHOTS_PER_KEY=4`, max total revivals per key
+    /// per parse = 4 × 4 = 16. Across N keys, max revivals = 16N.
+    /// Each clone is O(cursor-depth); total memory bounded.
+    #[allow(clippy::type_complexity)]
     pub fn take_pending_for_drain(
         &mut self,
         key: &DispatchKey,
@@ -366,16 +377,23 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 if pending_cohort.is_empty() {
                     return None;
                 }
-                let snaps: Vec<WorkerSnapshot<W>> =
-                    worker_snapshots.clone();
+                if *snapshots_drained >= worker_snapshots.len() {
+                    return None;
+                }
+                // Only NEW snapshots since last drain.
+                let new_snaps: Vec<WorkerSnapshot<W>> = worker_snapshots
+                    [*snapshots_drained..]
+                    .to_vec();
                 *snapshots_drained = worker_snapshots.len();
-                let members = std::mem::take(pending_cohort);
+                // Clone members for persistent fanout across steps.
+                // Bounded by MAX_PENDING_COHORT_PER_KEY cap at pause time.
+                let members_clone = pending_cohort.clone();
                 Some((
                     *symbol_id,
                     *hi_pos,
                     *pos_at_dispatch,
-                    snaps,
-                    members,
+                    new_snaps,
+                    members_clone,
                 ))
             }
             _ => None,
@@ -396,7 +414,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         key: DispatchKey,
         member: CohortMember<W>,
     ) -> bool {
-        const MAX_PENDING_COHORT_PER_KEY: usize = 16;
+        const MAX_PENDING_COHORT_PER_KEY: usize = 4;
         match self.entries.get_mut(&key) {
             Some(DispatchCacheEntry::InFlight { pending_cohort, .. })
                 if pending_cohort.len() < MAX_PENDING_COHORT_PER_KEY =>
