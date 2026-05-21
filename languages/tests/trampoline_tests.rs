@@ -128,11 +128,27 @@ fn test_deep_parens_100000() {
 // ── Tests: Right-associative chains ──
 
 #[test]
+fn test_right_assoc_chain_50() {
+    mettail_runtime::clear_var_cache();
+    let input = right_assoc_chain(50);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "50 right-assoc ops should parse: {:?}", result.err());
+}
+
+#[test]
 fn test_right_assoc_chain_100() {
     mettail_runtime::clear_var_cache();
     let input = right_assoc_chain(100);
     let result = Int::parse_structured(&input);
     assert!(result.is_ok(), "100 right-assoc ops should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_right_assoc_chain_200() {
+    mettail_runtime::clear_var_cache();
+    let input = right_assoc_chain(200);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "200 right-assoc ops should parse: {:?}", result.err());
 }
 
 #[test]
