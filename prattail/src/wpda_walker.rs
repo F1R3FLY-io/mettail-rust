@@ -5109,12 +5109,37 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             // (not raw gss.push_symbol) so the child's
                             // incoming_edge_stack records the new edge id
                             // for its eventual pop.
-                            let _ = self.cursor_gss_push(
-                                &mut child,
-                                symbol,
-                                pos_after,
-                                branch.weight.clone(),
-                            );
+                            //
+                            // Phase F.13 H13 Step 0 (2026-05-21): if this
+                            // branch is a CrossCatDelegate (the 88% of
+                            // chain_50's Push branches), tag with
+                            // CrossCatProjection EdgeKind for diagnostic
+                            // equivalence classification. Other Push
+                            // branches use the default Generic.
+                            if let WpdaState::CrossCatDelegate {
+                                source_src_idx,
+                                inner_cur_bp,
+                            } = &branch.new_state
+                            {
+                                let kind = crate::gss::EdgeKind::CrossCatProjection {
+                                    source_src_idx: *source_src_idx,
+                                    inner_cur_bp: *inner_cur_bp,
+                                };
+                                let _ = self.cursor_gss_push_with_kind(
+                                    &mut child,
+                                    symbol,
+                                    pos_after,
+                                    branch.weight.clone(),
+                                    kind,
+                                );
+                            } else {
+                                let _ = self.cursor_gss_push(
+                                    &mut child,
+                                    symbol,
+                                    pos_after,
+                                    branch.weight.clone(),
+                                );
+                            }
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -7011,8 +7036,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     let b = &self.branch_cursors[idxs[j]];
                     let state_diff = a.inner_state != b.inner_state;
                     let node_diff = a.node != b.node;
-                    let edge_diff = a.incoming_edge_stack.last().copied()
-                        != b.incoming_edge_stack.last().copied();
+                    let a_edge = a.incoming_edge_stack.last().copied();
+                    let b_edge = b.incoming_edge_stack.last().copied();
+                    let edge_diff = a_edge != b_edge;
                     let depth_diff = a.collection_stack_depth != b.collection_stack_depth;
                     let diff_count = (state_diff as u8)
                         + (node_diff as u8)
@@ -7037,6 +7063,32 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     } else if depth_diff {
                         self.stats.merge_miss_depth_diff_total =
                             self.stats.merge_miss_depth_diff_total.saturating_add(1);
+                    }
+                    // Phase F.13 H13 Step 0: check if the pair would
+                    // merge under EdgeKind-relaxed equivalence. Compute
+                    // when state, node, depth all match (the H13
+                    // relaxed key drops only `incoming_edge` identity).
+                    if !state_diff && !node_diff && !depth_diff {
+                        // Only edge identity differs — check kind.
+                        let a_kind = a_edge.and_then(|e| self.gss.edge_kind(e));
+                        let b_kind = b_edge.and_then(|e| self.gss.edge_kind(e));
+                        let kinds_match = match (&a_kind, &b_kind) {
+                            (None, None) => true,
+                            (Some(crate::gss::EdgeKind::CrossCatProjection {
+                                source_src_idx: a_s,
+                                inner_cur_bp: a_b,
+                            }), Some(crate::gss::EdgeKind::CrossCatProjection {
+                                source_src_idx: b_s,
+                                inner_cur_bp: b_b,
+                            })) => a_s == b_s && a_b == b_b,
+                            // Generic uses identity — already counted as
+                            // differing because edge_diff was true.
+                            _ => false,
+                        };
+                        if kinds_match {
+                            self.stats.merge_miss_pairs_edge_kind_equivalent =
+                                self.stats.merge_miss_pairs_edge_kind_equivalent.saturating_add(1);
+                        }
                     }
                     pairs_remaining -= 1;
                 }
@@ -8931,6 +8983,45 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         if self.deterministic {
             self.state = patched_state;
         }
+    }
+
+    /// Phase F.13 H13 Step 0 (2026-05-21): variant of `cursor_gss_push`
+    /// that records a specific `EdgeKind` on the new edge. Default
+    /// `cursor_gss_push` uses `EdgeKind::Generic` placeholder.
+    #[inline(always)]
+    fn cursor_gss_push_with_kind(
+        &mut self,
+        cursor: &mut BranchCursor<W>,
+        sym: StackSymbolV2,
+        pos: usize,
+        w: W,
+        kind: crate::gss::EdgeKind,
+    ) -> crate::gss::GssNodeId {
+        // Synthesize a fresh root if cursor is at the sentinel —
+        // duplicates cursor_gss_push's logic for parity.
+        let predecessor = if (cursor.node == 0 && self.gss.node(0).is_none())
+            || cursor.node == crate::gss::GSS_NODE_NONE
+        {
+            let root = self.gss.get_or_create_node(WpdaGssNode {
+                pos: cursor.pos,
+                symbol: StackSymbolV2::category_entry(0),
+            });
+            cursor.node = root;
+            if self.deterministic {
+                self.top_node = Some(root);
+            }
+            root
+        } else {
+            cursor.node
+        };
+        let new_id = self.gss.get_or_create_node(WpdaGssNode { pos, symbol: sym });
+        let edge_id = self.gss.add_edge_kind(new_id, predecessor, w, kind);
+        cursor.node = new_id;
+        cursor.incoming_edge_stack.push(edge_id);
+        if self.deterministic {
+            self.top_node = Some(new_id);
+        }
+        new_id
     }
 
     #[inline(always)]

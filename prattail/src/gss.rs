@@ -366,6 +366,57 @@ pub struct WpdaGssNode {
     pub symbol: StackSymbolV2,
 }
 
+/// Phase F.13 H13 Step 0 (2026-05-21): semantic taxonomy of GSS edges
+/// for cursor-equivalence diagnostics (and eventual merge-key
+/// relaxation).
+///
+/// Each edge carries a `kind: EdgeKind` recording the semantic
+/// reason for its creation. Two edges are STRUCTURALLY EQUIVALENT
+/// if their `EdgeKind`s match under the equivalence relation `≡_E`
+/// (see `crate::walker_stats`).
+///
+/// **Convergent** variants (no `source_id` field): edges whose
+/// post-pop predecessor frame is determined by payload alone.
+/// Two convergent edges of the same variant + same payload produce
+/// equivalent post-pop cursor state.
+///
+/// **Divergent** variants (carry `source_id: GssEdgeId`): edges
+/// whose post-pop predecessor depends on cursor-specific history
+/// not captured in the payload. These retain GssEdgeId identity
+/// strictness to preserve Stage 3.12.6's wrong-pop defense.
+///
+/// **Generic** is the fallback for sites not yet specifically
+/// classified — strictly identity-equivalent via `source_id`.
+/// Subsequent H13 iterations will refine Generic call sites into
+/// specific variants as their grammar semantics are formalized.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum EdgeKind {
+    /// Fallback for sites not yet specifically classified. Always
+    /// strict identity (compares by source_id).
+    Generic { source_id: GssEdgeId },
+    /// Cross-cat projection Fork branch: walker emits a Push to
+    /// `CategoryEntry(source_src_idx)` to delegate to a sub-cat parse.
+    /// Convergent: post-pop returns to the outer dispatch site whose
+    /// `(source_src_idx, dest_src_idx, inner_cur_bp)` are payload.
+    /// Two cursors that emit the same CrossCatProjection at the same
+    /// `(pos, dest_cat, cur_bp)` produce equivalent sub-parse work AND
+    /// equivalent post-pop state.
+    CrossCatProjection {
+        source_src_idx: u16,
+        inner_cur_bp: u8,
+    },
+}
+
+/// Phase F.13 H13 (2026-05-21): sentinel EdgeKind used for edges that
+/// existed before the EdgeKind tagging was added, or in legacy
+/// constructors that don't yet thread the parameter. Always treated
+/// as identity-strict via the GssEdgeId.
+impl EdgeKind {
+    pub fn generic(source_id: GssEdgeId) -> Self {
+        EdgeKind::Generic { source_id }
+    }
+}
+
 /// An edge in the typed GSS, weighted by an arbitrary [`Semiring`].
 #[derive(Debug, Clone)]
 pub struct WpdaGssEdge<W: SemiringRef> {
@@ -373,6 +424,10 @@ pub struct WpdaGssEdge<W: SemiringRef> {
     pub target: GssNodeId,
     /// Edge weight (e.g., [`crate::automata::lex_weight::LexicographicWeight`]).
     pub weight: W,
+    /// Phase F.13 H13 Step 0 (2026-05-21): semantic taxonomy.
+    /// Default is `Generic { source_id }` until the call site is
+    /// specifically classified.
+    pub kind: EdgeKind,
 }
 
 /// Typed graph-structured stack for the WPDS-runtime walker.
@@ -429,6 +484,10 @@ impl<W: SemiringRef> WpdaGss<W> {
     ///    weighted differently — the semiring sum is the canonical
     ///    representative.
     pub fn add_edge(&mut self, source: GssNodeId, target: GssNodeId, weight: W) -> GssEdgeId {
+        // Phase F.13 H13 Step 0 (2026-05-21): tag with Generic placeholder.
+        // Higher-level callers (push_symbol_with_edge_id_kind /
+        // replace_top_with_edge_id_kind) should use `add_edge_kind` to
+        // pass a specific EdgeKind.
         let edges = self.edges.entry(source).or_default();
         for (idx, existing) in edges.iter_mut().enumerate() {
             if existing.target == target {
@@ -437,8 +496,54 @@ impl<W: SemiringRef> WpdaGss<W> {
             }
         }
         let idx = edges.len();
-        edges.push(WpdaGssEdge { target, weight });
-        pack_edge_id(source, idx)
+        let edge_id = pack_edge_id(source, idx);
+        edges.push(WpdaGssEdge {
+            target,
+            weight,
+            kind: EdgeKind::Generic { source_id: edge_id },
+        });
+        edge_id
+    }
+
+    /// Phase F.13 H13 Step 0 (2026-05-21): like `add_edge` but accepts a
+    /// specific `EdgeKind` tag. Used by `push_symbol_with_edge_id_kind`
+    /// and `replace_top_with_edge_id_kind` to record semantic context.
+    pub fn add_edge_kind(
+        &mut self,
+        source: GssNodeId,
+        target: GssNodeId,
+        weight: W,
+        kind: EdgeKind,
+    ) -> GssEdgeId {
+        let edges = self.edges.entry(source).or_default();
+        for (idx, existing) in edges.iter_mut().enumerate() {
+            if existing.target == target {
+                existing.weight = existing.weight.plus_ref(&weight);
+                // Dedup-on-plus: keep the existing edge's kind.
+                // (If the existing was Generic and new is specific,
+                // it would be valid to upgrade — defer to a later
+                // iteration to keep semantics simple here.)
+                return pack_edge_id(source, idx);
+            }
+        }
+        let idx = edges.len();
+        let edge_id = pack_edge_id(source, idx);
+        edges.push(WpdaGssEdge {
+            target,
+            weight,
+            kind,
+        });
+        edge_id
+    }
+
+    /// Phase F.13 H13 Step 0 (2026-05-21): look up the `EdgeKind` of a
+    /// specific edge by its `GssEdgeId`. Returns `None` if the edge
+    /// does not exist.
+    pub fn edge_kind(&self, edge_id: GssEdgeId) -> Option<EdgeKind> {
+        let (source, idx) = unpack_edge_id(edge_id);
+        self.edges.get(&source).and_then(|edges| {
+            edges.get(idx as usize).map(|e| e.kind.clone())
+        })
     }
 
     /// Stage 3.12.6 (2026-05-02): look up the target node of a specific

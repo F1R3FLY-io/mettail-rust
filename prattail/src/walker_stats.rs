@@ -159,6 +159,14 @@ pub struct WalkerStats {
     /// has at least one SPPF Symbol interned. Coarser signal than
     /// `dropped_pre_emit` — confirms structural redundancy.
     pub fork_target_symbol_already_in_sppf: u64,
+
+    // ── F.13 H13 Step 0 diagnostic: edge-kind-relaxed merge would-merge ──
+    /// Number of merge-miss pairs (intra-`pos`, multi-discriminator) whose
+    /// `incoming_edge_stack.last()` differs by `GssEdgeId` but would
+    /// match under the H13 EdgeKind-relaxed equivalence. If this count
+    /// is ≥ 60% of `merge_miss_pairs_considered_total`, H13 Step 2
+    /// (actual merge relaxation) is justified. Otherwise H13 is REJECTED.
+    pub merge_miss_pairs_edge_kind_equivalent: u64,
 }
 
 impl WalkerStats {
@@ -267,6 +275,18 @@ impl fmt::Display for WalkerStats {
                 self.fork_target_symbol_already_in_sppf,
             )?;
         }
+        // F.13 H13 Step 0 diagnostic
+        if self.merge_miss_pairs_considered_total > 0
+            && self.merge_miss_pairs_edge_kind_equivalent > 0
+        {
+            let denom = self.merge_miss_pairs_considered_total as f64;
+            writeln!(
+                f,
+                "  H13_diagnostic: would_merge_under_edge_kind={} ({:.1}%) — gate ≥ 60% to proceed to Step 2",
+                self.merge_miss_pairs_edge_kind_equivalent,
+                100.0 * self.merge_miss_pairs_edge_kind_equivalent as f64 / denom,
+            )?;
+        }
         Ok(())
     }
 }
@@ -362,6 +382,7 @@ mod tests {
             merge_miss_multi_diff_total: 0,
             fork_branches_dropped_pre_emit: 0,
             fork_target_symbol_already_in_sppf: 0,
+            merge_miss_pairs_edge_kind_equivalent: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
