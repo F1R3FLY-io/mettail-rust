@@ -54,6 +54,7 @@
 
 use crate::automata::semiring::SemiringRef;
 use crate::sppf::SppfId;
+use crate::wpda_runtime::WpdaState;
 
 /// Cache key for cross-cat-projection dispatch sites. Mirrors the
 /// payload of `WpdaState::CrossCatDelegate { source_src_idx,
@@ -109,6 +110,16 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// cohort member's `weight_at_dispatch` at resume time so the
         /// final weight matches the per-cursor (pre-H12) bit-for-bit.
         sub_weight: W,
+        /// The worker cursor's `inner_state` at the moment it emitted
+        /// the Pop action (i.e., just before apply_pop_body_to_cursor
+        /// transitioned it to the post-pop state). Cohort members at
+        /// revive time inherit this state — the next walker step will
+        /// re-emit the same Pop action, triggering the normal
+        /// post-pop processing on the cohort member (action fire,
+        /// splice into collection, etc.) — independent for each cohort
+        /// member. SPPF Symbol-dedup makes the redundant intern calls
+        /// idempotent under LexicographicWeight.
+        worker_inner_state: WpdaState,
     },
     /// Sub-parse failed (recovery dispatch exhausted, gauntlet-invalid
     /// input, etc.). All subsequent cohort members at this key drop
@@ -223,16 +234,18 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         self.failed_total = 0;
     }
 
-    /// Phase F.13 H12 Stage 1.2 (2026-05-21): Register a
-    /// cross-cat-projection dispatch. Returns the outcome of the
-    /// lookup so the caller (the Fork-arm Push branch) can record the
-    /// appropriate counter increment.
-    ///
-    /// Stage 1.2 only WRITES — the outcome is not yet acted upon by
-    /// the walker. Stage 1.3 will use the outcome to PAUSE cohort
-    /// members and synthesize resumed singletons from Resolved
-    /// entries.
-    pub fn register(&mut self, key: DispatchKey) -> RegisterOutcome {
+    /// Phase F.13 H12 Stage 1.2/1.3 (2026-05-21): Register a
+    /// cross-cat-projection dispatch. The Fork-arm Push branch uses
+    /// the returned `RegisterOutcome` to decide:
+    ///   - WorkerInserted: allocate the worker child normally.
+    ///   - InflightCollision: clone the parent, push into the entry's
+    ///     pending_cohort via `pause_cohort_member`, DROP the would-be
+    ///     child cursor (no append to the Fork's children Vec).
+    ///   - ResolvedHit: short-circuit; synthesize a resumed child
+    ///     immediately using the carried (symbol_id, hi_pos,
+    ///     sub_weight, worker_inner_state).
+    ///   - FailedHit: drop the cursor.
+    pub fn register(&mut self, key: DispatchKey) -> RegisterOutcome<W> {
         self.registrations_total += 1;
         match self.entries.get_mut(&key) {
             None => {
@@ -250,9 +263,19 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 self.inflight_collisions_total += 1;
                 RegisterOutcome::InflightCollision
             }
-            Some(DispatchCacheEntry::Resolved { .. }) => {
+            Some(DispatchCacheEntry::Resolved {
+                symbol_id,
+                hi_pos,
+                sub_weight,
+                worker_inner_state,
+            }) => {
                 self.resolved_hits_total += 1;
-                RegisterOutcome::ResolvedHit
+                RegisterOutcome::ResolvedHit {
+                    symbol_id: *symbol_id,
+                    hi_pos: *hi_pos,
+                    sub_weight: sub_weight.clone(),
+                    worker_inner_state: worker_inner_state.clone(),
+                }
             }
             Some(DispatchCacheEntry::Failed) => {
                 self.failed_hits_total += 1;
@@ -261,37 +284,79 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
     }
 
-    /// Phase F.13 H12 Stage 1.2 (2026-05-21): Transition an `InFlight`
-    /// entry to `Resolved`. Called from `apply_pop_body_to_cursor`
+    /// Phase F.13 H12 Stage 1.3 (2026-05-21): Transition an `InFlight`
+    /// entry to `Resolved`, returning the paused cohort members for
+    /// revive by the caller. Called from `cursor_gss_pop_via_edge`
     /// when a CategoryEntry pop matches a CrossCatProjection edge.
     ///
-    /// Returns the count of cohort members that were paused (Stage 1.3
-    /// will revive them). Stage 1.2 ignores the return value; cohort
-    /// members are not yet paused so the count is always 0.
+    /// Stage 1.3 caller responsibility: for each returned CohortMember,
+    /// construct a revived BranchCursor (set pos=hi_pos, push symbol_id
+    /// onto sppf_stack, re-push CategoryEntry(S) onto GSS so the next
+    /// pop walks the normal post-pop path, restore inner_state to
+    /// worker_inner_state) and add to walker.pending_cohort_revives.
+    /// step_fanout drains pending_cohort_revives into new_cursors at
+    /// end-of-step.
     pub fn resolve(
         &mut self,
         key: DispatchKey,
         symbol_id: SppfId,
         hi_pos: u32,
         sub_weight: W,
-    ) -> usize {
-        match self.entries.get_mut(&key) {
-            Some(entry @ DispatchCacheEntry::InFlight { .. }) => {
-                let paused_count = match entry {
-                    DispatchCacheEntry::InFlight {
-                        pending_cohort, ..
-                    } => pending_cohort.len(),
-                    _ => 0,
-                };
-                *entry = DispatchCacheEntry::Resolved {
-                    symbol_id,
-                    hi_pos,
-                    sub_weight,
-                };
-                self.resolved_total += 1;
-                paused_count
+        worker_inner_state: WpdaState,
+    ) -> Vec<CohortMember<W>> {
+        let entry = match self.entries.get_mut(&key) {
+            Some(e) => e,
+            None => return Vec::new(),
+        };
+        let pending = match entry {
+            DispatchCacheEntry::InFlight { pending_cohort, .. } => {
+                std::mem::take(pending_cohort)
             }
-            _ => 0,
+            _ => return Vec::new(),
+        };
+        *entry = DispatchCacheEntry::Resolved {
+            symbol_id,
+            hi_pos,
+            sub_weight,
+            worker_inner_state,
+        };
+        self.resolved_total += 1;
+        pending
+    }
+
+    /// Phase F.13 H12 Stage 1.3 (2026-05-21): clone a cohort member
+    /// onto the InFlight entry's `pending_cohort` for later revive at
+    /// resolve(). No-op if the entry is not InFlight (returns false).
+    pub fn pause_cohort_member(
+        &mut self,
+        key: DispatchKey,
+        member: CohortMember<W>,
+    ) -> bool {
+        match self.entries.get_mut(&key) {
+            Some(DispatchCacheEntry::InFlight { pending_cohort, .. }) => {
+                pending_cohort.push(member);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Phase F.13 H12 Stage 1.3 (2026-05-21): read a Resolved entry's
+    /// data for synthesizing a resumed child immediately (the
+    /// ResolvedHit path — cursor arrives AFTER the worker has resolved).
+    /// Returns None if the entry is not Resolved.
+    pub fn get_resolved(
+        &self,
+        key: &DispatchKey,
+    ) -> Option<(SppfId, u32, &W, &WpdaState)> {
+        match self.entries.get(key) {
+            Some(DispatchCacheEntry::Resolved {
+                symbol_id,
+                hi_pos,
+                sub_weight,
+                worker_inner_state,
+            }) => Some((*symbol_id, *hi_pos, sub_weight, worker_inner_state)),
+            _ => None,
         }
     }
 
@@ -343,22 +408,26 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     }
 }
 
-/// Phase F.13 H12 Stage 1.2 (2026-05-21): outcome of a `register`
-/// call. The Fork-arm Push branch uses this to decide whether to:
-///   - WorkerInserted: proceed normally (this cursor is the worker).
-///   - InflightCollision: Stage 1.3 will PAUSE this cursor; Stage 1.2
-///     ignores and lets the cursor proceed normally.
-///   - ResolvedHit: Stage 1.3 will synthesize a resumed singleton
-///     from the cached result; Stage 1.2 ignores and lets the cursor
-///     proceed normally.
-///   - FailedHit: Stage 1.3 will drop this cursor; Stage 1.2 ignores
-///     and lets the cursor proceed normally (the sub-parse will fail
-///     just as the original did).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterOutcome {
+/// Phase F.13 H12 Stage 1.2/1.3 (2026-05-21): outcome of a `register`
+/// call. The Fork-arm Push branch uses this to decide whether to
+/// proceed normally, pause, synthesize a resumed child, or drop.
+pub enum RegisterOutcome<W: SemiringRef> {
+    /// First cursor at this key. Proceed normally to allocate the
+    /// worker child.
     WorkerInserted,
+    /// Existing InFlight entry. Pause this cursor: clone parent into
+    /// the entry's pending_cohort, DROP the would-be child.
     InflightCollision,
-    ResolvedHit,
+    /// Existing Resolved entry. Synthesize a resumed child
+    /// immediately using the carried sub-parse result data.
+    ResolvedHit {
+        symbol_id: SppfId,
+        hi_pos: u32,
+        sub_weight: W,
+        worker_inner_state: WpdaState,
+    },
+    /// Existing Failed entry. Drop the cursor — the sub-parse is
+    /// known to fail.
     FailedHit,
 }
 
