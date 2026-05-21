@@ -3093,6 +3093,29 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 eprintln!("{}", self.stats);
             }
         }
+        // Phase F.13 H12 Stage 1.2 (2026-05-21): emit dispatch-cohort
+        // cache stats alongside the walker-stats summary. Independent
+        // of walker-stats feature — the cohort cache has its own
+        // counters on the cache struct. Same env-var gate.
+        #[cfg(feature = "dispatch-cohort")]
+        {
+            if std::env::var_os("PRATTAIL_WALKER_STATS")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
+                struct CacheSummary<'a, W: crate::automata::semiring::SemiringRef>(
+                    &'a crate::dispatch_cohort::DispatchCohortCache<W>,
+                );
+                impl<'a, W: crate::automata::semiring::SemiringRef> std::fmt::Display
+                    for CacheSummary<'a, W>
+                {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        self.0.write_summary(f)
+                    }
+                }
+                eprintln!("{}", CacheSummary(&self.dispatch_cohort_cache));
+            }
+        }
         // Phase 5.6-tail-B (2026-05-12): the pre-tail deterministic-mode fast-path
         // returned directly using `self.builder.take_dyn_result()`. Under
         // always-eager Arc::make_mut (Phase 5.3+), all mutations land on
@@ -9010,6 +9033,26 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 source_src_idx: *source_src_idx,
                 inner_cur_bp: *inner_cur_bp,
             };
+            // Phase F.13 H12 Stage 1.2 (2026-05-21): register the
+            // cross-cat-projection dispatch in the cohort cache. The
+            // register call is observation-only in Stage 1.2 — the
+            // returned `RegisterOutcome` is unused. Stage 1.3 will
+            // gate the child-allocation path on the outcome:
+            //   - WorkerInserted → proceed normally.
+            //   - InflightCollision → PAUSE the cursor (push it into
+            //     `pending_cohort`; do not append a child to
+            //     `children`).
+            //   - ResolvedHit → synthesize a singleton resumed child.
+            //   - FailedHit → drop the cursor.
+            #[cfg(feature = "dispatch-cohort")]
+            {
+                let key = crate::dispatch_cohort::DispatchKey::new(
+                    pos_after,
+                    *source_src_idx,
+                    *inner_cur_bp,
+                );
+                let _outcome = self.dispatch_cohort_cache.register(key);
+            }
             let _ = self.cursor_gss_push_with_kind(
                 &mut child,
                 symbol,
@@ -9495,6 +9538,43 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         cursor: &mut BranchCursor<W>,
     ) -> Option<crate::gss::GssNodeId> {
         let edge_id = cursor.incoming_edge_stack.pop();
+        // Phase F.13 H12 Stage 1.2 (2026-05-21): if the popped edge
+        // is a CrossCatProjection, the cursor just exited a cross-cat
+        // sub-parse — record the result in the dispatch-cohort cache.
+        // The dispatch position is the to-be-popped GSS node's pos
+        // (read BEFORE we mutate cursor.node below); the resolution
+        // position is the cursor's current pos; the resulting SPPF
+        // symbol is on top of the cursor's sppf_stack.
+        //
+        // Stage 1.2 only WRITES — the resolve transition records the
+        // data but no consumer reads it yet. Stage 1.3 will use the
+        // Resolved entries to short-circuit cohort members.
+        #[cfg(feature = "dispatch-cohort")]
+        if let Some(eid) = edge_id {
+            if let Some(crate::gss::EdgeKind::CrossCatProjection {
+                source_src_idx,
+                inner_cur_bp,
+            }) = self.gss.edge_kind(eid)
+            {
+                if let Some(node) = self.gss.node(cursor.node) {
+                    let dispatch_pos = node.pos;
+                    let symbol_id_opt = cursor.sppf_stack.last().copied();
+                    if let Some(symbol_id) = symbol_id_opt {
+                        let key = crate::dispatch_cohort::DispatchKey::new(
+                            dispatch_pos,
+                            source_src_idx,
+                            inner_cur_bp,
+                        );
+                        let _ = self.dispatch_cohort_cache.resolve(
+                            key,
+                            symbol_id,
+                            cursor.pos as u32,
+                            W::one_ref(),
+                        );
+                    }
+                }
+            }
+        }
         let target = edge_id.and_then(|e| self.gss.edge_target(e));
         cursor.node = target.unwrap_or(crate::gss::GSS_NODE_NONE);
         if self.deterministic {
