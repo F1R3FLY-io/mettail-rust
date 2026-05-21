@@ -61,12 +61,10 @@ pub mod hang_dump;
 pub mod token_id;
 /// Phase F.13 walker statistics counters (gated by `walker-stats` feature).
 pub mod walker_stats;
-/// Phase F.13 H12 Tomita-GLR dispatch-cohort sharing (gated by
-/// `dispatch-cohort` feature). Shares cross-cat-projection sub-parse
-/// work across cohort members at the same `(pos, source_src_idx,
-/// inner_cur_bp)` key. Each cohort member retains its own return frame;
-/// only the sub-parse work is shared.
-#[cfg(feature = "dispatch-cohort")]
+/// Phase F.13 H12 Tomita-GLR dispatch-cohort sharing. Shares
+/// cross-cat-projection sub-parse work across cohort members at the
+/// same `(pos, source_src_idx, inner_cur_bp)` key. Each cohort member
+/// retains its own return frame; only the sub-parse work is shared.
 pub mod dispatch_cohort;
 // Stage 10.6 (2026-05-05): `pub mod trampoline` DELETED (file deleted, 7,351 LoC).
 // The Walker (WPDS) is the surviving parser backend. All recovery infrastructure

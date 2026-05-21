@@ -39,25 +39,6 @@ hang-dump = ["dep:signal-hook", "dep:parking_lot"]
 ## Use: `cargo test --features mettail-prattail/walker-stats ... \
 ##       -- --nocapture` with `PRATTAIL_WALKER_STATS=1` env var.
 walker-stats = []
-## Phase F.13 H12 Stage 1.1+ (2026-05-21): Tomita-GLR dispatch-cohort
-## sharing cache. Keyed by (pos, source_src_idx, inner_cur_bp). First
-## cursor at a key runs the cross-cat-projection sub-parse; subsequent
-## cohort members at the same key PAUSE and RESUME with the cached
-## (SppfId, hi_pos, sub_weight). Each cohort member applies its own
-## distinct return-frame to the shared sub-parse result.
-##
-## Soundness anchor: engine.step(CrossCatDelegate, _, S, P, B) reads
-## no cursor-local state (engine_impl.rs:1387-1394); SPPF Symbol-dedup
-## at (nt, lo, hi) (sppf.rs:511-525) is the output-identity witness.
-##
-## Per-staging plan (`phase-f13-algorithmic-cross-cat-cohort.md`):
-##   Stage 1.1 — scaffolding (types + field; no reads/writes).
-##   Stage 1.2 — write-only (cache populated; reads disabled).
-##   Stage 1.3 — read path (4b: re-push CategoryEntry+Return on resume).
-##   Stage 1.4 — read path optimization (4a: ghost-edge pop).
-##   Stage 1.5 — ambiguity fanout (Vec<(SppfId, hi_pos, W)>).
-##   Stage 1.6 — promote to default-on; delete the feature gate.
-dispatch-cohort = []
 
 [dependencies]
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved

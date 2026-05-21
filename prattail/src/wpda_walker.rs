@@ -625,17 +625,15 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// no writes). Stage 1.2 wires writes; Stage 1.3 wires reads.
     /// Gated by `dispatch-cohort` cargo feature — when off, the field
     /// is omitted and behavior is exactly the per-cursor sub-parse path.
-    #[cfg(feature = "dispatch-cohort")]
     dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache<W>,
-    /// Phase F.13 H12 Stage 1.3 (2026-05-21): cohort members revived
-    /// during this `step_fanout` iteration. resolve() in
-    /// cursor_gss_pop_via_edge enumerates the InFlight entry's pending
-    /// cohort, builds a resumed BranchCursor for each, and pushes the
-    /// resumed cursor here. step_fanout drains this Vec into
-    /// `new_cursors` at end-of-step so the revived cursors are
-    /// processed in the NEXT step.
-    #[cfg(feature = "dispatch-cohort")]
-    pending_cohort_revives: Vec<BranchCursor<W>>,
+    /// Phase F.13 H12 Stage 1.5 (2026-05-21): keys whose cache
+    /// entries need end-of-step revive drain. Populated by
+    /// `cursor_gss_pop_via_edge` when resolve() returns FirstResolve.
+    /// Drained by `step_fanout` at end-of-iteration BEFORE
+    /// `merge_equivalent_cursors`, emitting `paused × snapshots`
+    /// revived cursors per key.
+    pending_cohort_drain_keys:
+        rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2219,10 +2217,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             },
             // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
             dispatch_branch_seen: std::collections::HashMap::new(),
-            #[cfg(feature = "dispatch-cohort")]
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
-            #[cfg(feature = "dispatch-cohort")]
-            pending_cohort_revives: Vec::new(),
+            pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -2288,10 +2284,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             },
             // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
             dispatch_branch_seen: std::collections::HashMap::new(),
-            #[cfg(feature = "dispatch-cohort")]
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
-            #[cfg(feature = "dispatch-cohort")]
-            pending_cohort_revives: Vec::new(),
+            pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -2352,10 +2346,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             },
             // Phase F.13 H11b (2026-05-21): dispatch_branch_seen dedup table.
             dispatch_branch_seen: std::collections::HashMap::new(),
-            #[cfg(feature = "dispatch-cohort")]
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
-            #[cfg(feature = "dispatch-cohort")]
-            pending_cohort_revives: Vec::new(),
+            pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -2409,10 +2401,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // cache at parse boundary. SPPF SymbolIds are per-parse; the
         // sub-parse results in the cache are tied to the prior parse's
         // SPPF arena and would be unsound to reuse across resets.
-        #[cfg(feature = "dispatch-cohort")]
         self.dispatch_cohort_cache.clear();
-        #[cfg(feature = "dispatch-cohort")]
-        self.pending_cohort_revives.clear();
+        self.pending_cohort_drain_keys.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -3114,7 +3104,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // cache stats alongside the walker-stats summary. Independent
         // of walker-stats feature — the cohort cache has its own
         // counters on the cache struct. Same env-var gate.
-        #[cfg(feature = "dispatch-cohort")]
         {
             if std::env::var_os("PRATTAIL_WALKER_STATS")
                 .map(|v| v == "1")
@@ -5094,17 +5083,15 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // for the SKIP branch of an Opt-Group Fork.
                     match branch.action_kind {
                         ForkActionKind::Push => {
-                            // Phase F.13 H12 Stage 1.0 (2026-05-21): the
-                            // inline BranchCursor allocation + side effects
-                            // + kinded GSS push (formerly ~95 LoC inline)
-                            // is now `allocate_fork_push_child`.
-                            //
-                            // Stage 1.3 (2026-05-21): the helper returns
-                            // Option<BranchCursor<W>> — None means the
-                            // cursor was PAUSED (cohort collision) or
-                            // DROPPED (failed sub-parse cache hit).
-                            // Skip the children.push in those cases.
-                            if let Some(child) = self.allocate_fork_push_child(
+                            // Phase F.13 H12 Stage 1.5 (2026-05-21):
+                            // allocate_fork_push_child returns
+                            // Vec<BranchCursor<W>>:
+                            //   - 0 cursors: paused or dropped.
+                            //   - 1 cursor: worker (single-packing
+                            //     ResolvedHit or normal worker).
+                            //   - N cursors: multi-packing ResolvedHit
+                            //     fanout — one per worker snapshot.
+                            let new_children = self.allocate_fork_push_child(
                                 &cursor,
                                 branch,
                                 pos_after,
@@ -5112,7 +5099,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 child_visited_recovery.clone(),
                                 child_visited_dispatch.clone(),
                                 child_source_priority,
-                            ) {
+                            );
+                            for child in new_children {
                                 children.push(child);
                                 child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                             }
@@ -6830,16 +6818,41 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 }
             }
         }
-        // Phase F.13 H12 Stage 1.3 (2026-05-21): drain any cohort
-        // members revived during this step into new_cursors. Revives
-        // happen inside cursor_gss_pop_via_edge when a CrossCatProjection
-        // edge is popped and the cache entry transitions InFlight →
-        // Resolved. Each revived BranchCursor enters the NEXT step's
-        // frontier.
-        #[cfg(feature = "dispatch-cohort")]
-        if !self.pending_cohort_revives.is_empty() {
-            let revives = std::mem::take(&mut self.pending_cohort_revives);
-            new_cursors.extend(revives);
+        // Phase F.13 H12 Stage 1.5 (2026-05-21): end-of-step cohort
+        // drain. For each dispatch key whose worker resolved during
+        // this step, emit `paused × snapshots` revived cursors. The
+        // drain happens AFTER all sibling workers have contributed
+        // their snapshots (within the SAME step_fanout iteration),
+        // so multi-packing ambiguity is captured correctly.
+        if !self.pending_cohort_drain_keys.is_empty() {
+            let drain_keys = std::mem::take(&mut self.pending_cohort_drain_keys);
+            for key in drain_keys {
+                if let Some((symbol_id, hi_pos, pos_at_dispatch, snapshots, members)) =
+                    self.dispatch_cohort_cache.take_pending_for_drain(&key)
+                {
+                    for member in members {
+                        for snap in &snapshots {
+                            // Filter terminal-state snapshots: workers
+                            // that ended in Error wouldn't have produced
+                            // a revivable cursor in the per-cursor
+                            // baseline either.
+                            if snap.worker_inner_state.is_terminal() {
+                                continue;
+                            }
+                            let revived = self.revive_cohort_member_with_snapshot(
+                                member.clone(),
+                                symbol_id,
+                                pos_at_dispatch,
+                                hi_pos,
+                                key.source_src_idx,
+                                key.inner_cur_bp,
+                                snap,
+                            );
+                            new_cursors.push(revived);
+                        }
+                    }
+                }
+            }
         }
         self.branch_cursors = new_cursors;
         // Phase F.13 walker-stats (2026-05-20): capture pre-merge peak.
@@ -9009,24 +9022,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         new_id
     }
 
-    /// Phase F.13 H12 Stage 1.0–1.3 (2026-05-21): Fork-arm Push child
-    /// allocator. Returns `Option<BranchCursor<W>>`:
-    ///   - Some(worker) — normal worker allocation OR resumed cohort
-    ///     child synthesized from a Resolved cache entry.
-    ///   - None — cursor PAUSED in pending_cohort (InflightCollision)
-    ///     or DROPPED (FailedHit). Caller skips the `children.push`.
-    ///
-    /// Stage 1.0 was pure structural extraction.
-    /// Stage 1.2 added cache `register` calls (observation-only).
-    /// Stage 1.3 gates child allocation on the register outcome:
-    ///   - WorkerInserted → allocate worker as before.
-    ///   - InflightCollision → clone parent into entry's
-    ///     pending_cohort, return None.
-    ///   - ResolvedHit → build resumed child via
-    ///     revive_cohort_member, return Some(resumed).
-    ///   - FailedHit → return None.
-    ///
-    /// For non-CrossCatDelegate branches, behavior is unchanged.
+    /// Phase F.13 H12 Stage 1.5 (2026-05-21): Fork-arm Push child
+    /// allocator. Returns `Vec<BranchCursor<W>>`:
+    ///   - Empty vec: cursor PAUSED (InflightCollision) or DROPPED
+    ///     (FailedHit). Caller skips push.
+    ///   - 1 cursor: WorkerInserted (normal worker) OR single-packing
+    ///     ResolvedHit.
+    ///   - N cursors: multi-packing ResolvedHit — one revived cursor
+    ///     per worker snapshot. Caller `children.extend(...)`.
     fn allocate_fork_push_child(
         &mut self,
         parent: &BranchCursor<W>,
@@ -9036,11 +9039,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         child_visited_recovery: OrdSet<(usize, u16, u8)>,
         child_visited_dispatch: OrdSet<(usize, u16, u8)>,
         child_source_priority: u32,
-    ) -> Option<BranchCursor<W>> {
+    ) -> Vec<BranchCursor<W>> {
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache
         // consultation for CrossCatDelegate branches. Resolved/Failed/
         // InflightCollision outcomes short-circuit normal allocation.
-        #[cfg(feature = "dispatch-cohort")]
         if let WpdaState::CrossCatDelegate {
             source_src_idx,
             inner_cur_bp,
@@ -9056,38 +9058,66 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // Worker child — fall through to normal allocation.
                 }
                 RegisterOutcome::InflightCollision => {
-                    // Stage 1.3.1 conservative fallthrough (2026-05-21).
-                    // The pause-and-revive path is implemented but
-                    // gated off because cohort revive with a single
-                    // worker snapshot is unsound for multi-packing
-                    // Symbols (ambiguous sub-parses like the `-3!`
-                    // case — Symbol(Int, 0, 3) has TWO packings
-                    // Fact(-3) and Neg(Fact(3))). Stage 1.5
-                    // ambiguity fanout will safely capture this.
-                    let _ = key;
-                    // Fall through to worker allocation.
+                    // Stage 1.5 (2026-05-21): pause cohort member.
+                    // If the cache's cap is exceeded
+                    // (MAX_PENDING_COHORT_PER_KEY), pause_cohort_member
+                    // returns false; fall through to per-cursor sub-parse
+                    // so the cursor is not lost.
+                    let member = crate::dispatch_cohort::CohortMember {
+                        return_frame: parent.clone(),
+                        weight_at_dispatch: parent
+                            .weight
+                            .times_ref(&branch.weight),
+                    };
+                    if self
+                        .dispatch_cohort_cache
+                        .pause_cohort_member(key, member)
+                    {
+                        return Vec::new();
+                    }
+                    // Cap exceeded — fall through to allocate as worker.
                 }
-                RegisterOutcome::ResolvedHit { .. } => {
-                    // Stage 1.3.1 conservative fallthrough (2026-05-21).
-                    // Bug A + Bug B fixes in revive_cohort_member are
-                    // correct for single-packing Symbols (closes the 6
-                    // float_cast_* failures). But cohort sharing is
-                    // unsound for multi-packing Symbols (e.g., `-3!`
-                    // → Symbol(Int, 0, 3) with both Fact(-3) and
-                    // Neg(Fact(3)) packings). Detecting multi-packing
-                    // at resolve time is racy because Branch B's
-                    // packing arrives AFTER Branch A's resolve fires.
-                    // Stage 1.5 (ambiguity fanout in
-                    // DispatchCacheEntry::Resolved) will store
-                    // per-packing snapshots and revive cursors per
-                    // packing — closing this gap. Tracked at Task #119.
+                RegisterOutcome::ResolvedHit {
+                    symbol_id,
+                    hi_pos,
+                    pos_at_dispatch,
+                    worker_snapshots,
+                } => {
+                    // Stage 1.5 (2026-05-21): synthesize one revived
+                    // cursor per worker snapshot.
                     let _ = key;
-                    // Fall through to worker allocation.
+                    let synthetic_weight_at_dispatch =
+                        parent.weight.times_ref(&branch.weight);
+                    let mut revived_cursors = Vec::with_capacity(
+                        worker_snapshots.len(),
+                    );
+                    for snap in &worker_snapshots {
+                        if snap.worker_inner_state.is_terminal() {
+                            continue;
+                        }
+                        let synthetic_member =
+                            crate::dispatch_cohort::CohortMember {
+                                return_frame: parent.clone(),
+                                weight_at_dispatch:
+                                    synthetic_weight_at_dispatch.clone(),
+                            };
+                        let revived = self.revive_cohort_member_with_snapshot(
+                            synthetic_member,
+                            symbol_id,
+                            pos_at_dispatch,
+                            hi_pos,
+                            s,
+                            b,
+                            snap,
+                        );
+                        revived_cursors.push(revived);
+                    }
+                    return revived_cursors;
                 }
                 RegisterOutcome::FailedHit => {
                     // Failed hit — drop cursor (sub-parse known to
                     // fail; per-cursor path would have failed too).
-                    return None;
+                    return Vec::new();
                 }
             }
         }
@@ -9139,7 +9169,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 branch.weight,
             );
         }
-        Some(child)
+        vec![child]
     }
 
     /// Phase F.13 H12 Stage 1.3 (2026-05-21): revive a paused cohort
@@ -9162,22 +9192,17 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     ///   - Restores inner_state to the worker's pre-pop state so the
     ///     next walker step re-emits Pop and triggers the normal
     ///     post-pop processing.
-    /// Phase F.13 H12 Stage 1.3.1 (2026-05-21): corrected cohort revive.
-    /// Approach 4b refined with Bug A + Bug B fixes per
-    /// `phase-f13-stage-1-3-1-corrected-revive.md`:
-    ///   - Bug A: GSS push at `pos_at_dispatch` (not `hi_pos`), matching
-    ///     the worker's CategoryEntry placement. This keeps
-    ///     `merge_equivalent_cursors::ConfigKey::node` consistent with
-    ///     the per-cursor path AND lets engine's Unwinding-CategoryEntry
-    ///     `_gss.edges_from()` read see the same GSS topology.
-    ///   - Bug B: `cursor.weight = pre_dispatch × symbol_weight_sum`.
-    ///     The SPPF Symbol's weight_sum (Goodman-aggregated under
-    ///     LexicographicWeight::plus = lex-min) is the canonical
-    ///     sub-parse weight contribution. Without this multiplication,
-    ///     the cohort cursor is artificially light and wins lex-min
-    ///     selections wrongly.
-    #[cfg(feature = "dispatch-cohort")]
-    fn revive_cohort_member(
+    /// Phase F.13 H12 Stage 1.5 (2026-05-21): cohort revive with a
+    /// per-packing `WorkerSnapshot`. Approach 4b refined:
+    ///   - Bug A: GSS push at `pos_at_dispatch` (not `hi_pos`).
+    ///   - Bug B: weight = `pre_dispatch × snap.worker_pending_packing_weight`.
+    ///     PER-PACKING (not symbol_weight_sum aggregate) so cohort
+    ///     fanout preserves per-derivation algebraic distinction.
+    ///     Downstream `merge_equivalent_cursors` collapses identical
+    ///     ConfigKeys, restoring the per-cursor baseline's final shape.
+    ///   - last_action_output_cat / inner_state / sppf_stack inheritance
+    ///     identical to Stage 1.3.1 single-snapshot case.
+    fn revive_cohort_member_with_snapshot(
         &mut self,
         member: crate::dispatch_cohort::CohortMember<W>,
         symbol_id: crate::sppf::SppfId,
@@ -9185,35 +9210,28 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         hi_pos: u32,
         source_src_idx: u16,
         inner_cur_bp: u8,
-        worker_inner_state: WpdaState,
-        worker_last_action_output_cat: Option<u16>,
-        worker_pending_packing_weight: W,
+        snap: &crate::dispatch_cohort::WorkerSnapshot<W>,
     ) -> BranchCursor<W> {
         let mut cursor = member.return_frame;
-        // Bug B fix: weight = cohort's pre_dispatch × sub_parse weight delta.
-        // sppf.symbol_weight_sum reads the Symbol node's weight_sum field
-        // (the ⊕-aggregate over all linked Packings, set by Goodman
-        // aggregation in link_packing_to_symbol).
+        // Stage 1.5 (corrected): weight = cohort's pre_dispatch ×
+        // SPPF symbol_weight_sum. The Symbol's weight_sum is the
+        // Goodman-aggregate over all linked Packings under
+        // Semiring::plus (lex-min for LexicographicWeight).
+        //
+        // NOTE: worker_pending_packing_weight at pop time is
+        // W::one_ref() because emit_fire_action's mem::replace
+        // already consumed the residual. Using it as the weight
+        // contribution would lose the entire sub-parse weight
+        // (Stage 1.3.1 Bug B regression).
         let symbol_weight_sum = self.sppf.symbol_weight_sum(symbol_id);
-        cursor.weight = member.weight_at_dispatch.times_ref(&symbol_weight_sum);
-        // Sub-parse's emit_fire_action consumes pending_packing_weight
-        // (mem::replace(_, W::one_ref())) during the sub-parse. For
-        // Calculator's grammar every sub-parse fires ≥1 action, so the
-        // worker's post-sub-parse value is identical across cohort
-        // members. Inherit from worker.
-        cursor.pending_packing_weight = worker_pending_packing_weight;
-        // F.3b load-bearing inheritance (sub-parse output cat is
-        // dispatch-key-deterministic).
-        cursor.last_action_output_cat = worker_last_action_output_cat;
-        // Push cached symbol_id onto sppf_stack.
+        cursor.weight = member
+            .weight_at_dispatch
+            .times_ref(&symbol_weight_sum);
+        cursor.pending_packing_weight =
+            snap.worker_pending_packing_weight.clone();
+        cursor.last_action_output_cat = snap.worker_last_action_output_cat;
         Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
-        // Set pos to hi_pos.
         cursor.pos = hi_pos as usize;
-        // Bug A fix: GSS push at `pos_at_dispatch`, NOT `hi_pos`. The
-        // worker's CategoryEntry GSS node lives at pos_at_dispatch; the
-        // cohort must structurally match for ConfigKey-based merge
-        // equivalence and for the engine's pred_kind read in
-        // Unwinding-CategoryEntry (engine_impl.rs:449-451).
         let cat_sym = StackSymbolV2::category_entry(source_src_idx);
         let kind = crate::gss::EdgeKind::CrossCatProjection {
             source_src_idx,
@@ -9226,9 +9244,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             W::one_ref(),
             kind,
         );
-        // Restore the worker's pre-pop inner_state so the next step
-        // re-emits the equivalent Pop action.
-        cursor.inner_state = worker_inner_state;
+        cursor.inner_state = snap.worker_inner_state.clone();
         cursor
     }
 
@@ -9710,7 +9726,6 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // Stage 1.2 only WRITES — the resolve transition records the
         // data but no consumer reads it yet. Stage 1.3 will use the
         // Resolved entries to short-circuit cohort members.
-        #[cfg(feature = "dispatch-cohort")]
         if let Some(eid) = edge_id {
             if let Some(crate::gss::EdgeKind::CrossCatProjection {
                 source_src_idx,
@@ -9727,49 +9742,36 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             source_src_idx,
                             inner_cur_bp,
                         );
-                        // Stage 1.3: capture the worker's pre-pop
-                        // inner_state so cohort members can revive
-                        // into the exact same Pop-emitting state.
-                        let pre_pop_state = cursor.inner_state.clone();
-                        // Stage 1.3.1 (2026-05-21): capture the
-                        // worker's last_action_output_cat at the
-                        // moment of resolve. Per Plan agent analysis
-                        // (phase-f13-cohort-revive-bug.md), this is
-                        // the F.3b load-bearing field READ by
-                        // apply_pop_body_to_cursor:9651 — the prime
-                        // suspect for float_cast_* failure family.
-                        let worker_lao_cat = cursor.last_action_output_cat;
-                        let worker_ppw = cursor.pending_packing_weight.clone();
-                        let worker_w = cursor.weight.clone();
-                        let paused = self.dispatch_cohort_cache.resolve(
-                            key,
+                        // Stage 1.5 (2026-05-21): construct a per-pop
+                        // WorkerSnapshot. The resolve() call accumulates
+                        // snapshots from sibling workers; end-of-step
+                        // drain fans out `paused × snapshots` revived
+                        // cursors per cache key.
+                        let snap = crate::dispatch_cohort::WorkerSnapshot {
+                            worker_inner_state: cursor.inner_state.clone(),
+                            worker_last_action_output_cat:
+                                cursor.last_action_output_cat,
+                            worker_pending_packing_weight: cursor
+                                .pending_packing_weight
+                                .clone(),
+                            worker_weight: cursor.weight.clone(),
+                        };
+                        let outcome = self.dispatch_cohort_cache.resolve(
+                            key.clone(),
                             symbol_id,
                             cursor.pos as u32,
                             dispatch_pos,
-                            W::one_ref(),
-                            pre_pop_state,
-                            worker_lao_cat,
-                            worker_ppw.clone(),
-                            worker_w.clone(),
+                            snap,
                         );
-                        // Stage 1.3: revive each paused cohort member.
-                        // The revived cursors go into the walker's
-                        // pending_cohort_revives buffer; step_fanout
-                        // drains it into new_cursors at end-of-step so
-                        // they enter the NEXT step's frontier.
-                        for member in paused {
-                            let revived = self.revive_cohort_member(
-                                member,
-                                symbol_id,
-                                dispatch_pos,
-                                cursor.pos as u32,
-                                source_src_idx,
-                                inner_cur_bp,
-                                cursor.inner_state.clone(),
-                                worker_lao_cat,
-                                worker_ppw.clone(),
-                            );
-                            self.pending_cohort_revives.push(revived);
+                        match outcome {
+                            crate::dispatch_cohort::ResolveOutcome::FirstResolve => {
+                                self.pending_cohort_drain_keys.insert(key);
+                            }
+                            crate::dispatch_cohort::ResolveOutcome::SnapshotAppended => {
+                                // Drain already scheduled by FirstResolve.
+                                self.pending_cohort_drain_keys.insert(key);
+                            }
+                            crate::dispatch_cohort::ResolveOutcome::NoOp => {}
                         }
                     }
                 }
