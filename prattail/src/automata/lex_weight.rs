@@ -477,16 +477,25 @@ impl IdempotentSemiring for LexicographicWeight {}
 impl TropicalDeltaWeight for LexicographicWeight {
     #[inline]
     fn tropical_primary_delta(pre: &Self, post: &Self) -> Self {
-        let delta_primary = post.primary.0 - pre.primary.0;
-        debug_assert!(
-            delta_primary >= 0.0 || !delta_primary.is_finite(),
-            "TropicalDeltaWeight: negative delta {} = post.primary {} - \
-             pre.primary {} — sub-parse weight should be monotone \
-             non-decreasing in production grammars",
-            delta_primary,
-            post.primary.0,
-            pre.primary.0,
-        );
+        // Tropical (additive) subtraction, CLAMPED to non-negative.
+        //
+        // Negative deltas occur when the worker's cursor.weight was
+        // reduced mid-sub-parse via merge_equivalent_cursors collapsing
+        // it to a lex-min winner from a DIFFERENT cursor's path
+        // (potentially a cursor that came through a CHEAPER pre-dispatch
+        // history). Propagating that negative delta to a cohort revive
+        // would give the cohort cursor an artificially-light weight
+        // — letting it dominate downstream lex-min selections it
+        // shouldn't.
+        //
+        // The clamp `(post - pre).max(0)` enforces a CONSERVATIVE
+        // semantic: cohort cursors don't get merge-bonus discounts
+        // they didn't earn. Mathematically this preserves the
+        // per-packing distinction we want (different snapshots yield
+        // different deltas via their post values) while preventing
+        // cohort cursors from undercutting their per-cursor baseline
+        // weights.
+        let delta_primary = (post.primary.0 - pre.primary.0).max(0.0);
         LexicographicWeight {
             primary: TropicalWeight(delta_primary),
             lex_alt_idx: post.lex_alt_idx,

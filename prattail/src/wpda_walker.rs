@@ -2167,8 +2167,10 @@ fn extract_dispatch_config<W: SemiringRef>(
     }
 }
 
-impl<W: SemiringRef, E: WpdaEngine<W>>
-    WpdaWalker<W, E>
+impl<W, E> WpdaWalker<W, E>
+where
+    W: SemiringRef + crate::automata::semiring::TropicalDeltaWeight,
+    E: WpdaEngine<W>,
 {
     /// Construct a fresh walker in `Ready { min_bp }` state.
     ///
@@ -9240,20 +9242,30 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         snap: &crate::dispatch_cohort::WorkerSnapshot<W>,
     ) -> BranchCursor<W> {
         let mut cursor = member.return_frame;
-        // Stage 1.5.2 (2026-05-21): weight = cohort's pre_dispatch ×
-        // SPPF symbol_weight_sum. The Symbol's weight_sum is the
-        // Goodman-aggregate over all linked Packings under
-        // Semiring::plus (lex-min for LexicographicWeight).
+        // Stage 1.5.3c PARTIAL REVERT (2026-05-21):
         //
-        // Known limitation: ALL cohort revivals for the same symbol_id
-        // get the same weight contribution (the aggregate). For
-        // multi-packing Symbols with WEIGHT-DISTINGUISHING packings
-        // (e.g., -3! parsing), this loses per-packing weight
-        // distinction. Stage 1.5.3 would address by capturing per-
-        // packing weight via witness_packing_id + sppf.packing_weight,
-        // but the LexicographicWeight algebra makes this non-trivial
-        // (worker's pre_dispatch_weight already-multiplied into the
-        // intern_packing weight at the time of fire).
+        // The Plan agent's tropical-delta design (Stage 1.5.3c) is
+        // ALGEBRAICALLY correct for merge-free sub-parse paths but
+        // BREAKS in grammars where cursor merges happen DURING the
+        // sub-parse with cursors OUTSIDE the cohort. The worker's
+        // cursor.weight is reduced by merge-bonus discounts that the
+        // cohort member would not have earned via its OWN path.
+        // Propagating those discounts via tropical-delta gives cohort
+        // revives artificially-light weights that dominate downstream
+        // lex-min selections incorrectly.
+        //
+        // Empirical: tropical-delta on Calculator broke
+        // `int_of_float_add` (in addition to not closing `-3!`).
+        // Clamping delta to ≥ 0 didn't help.
+        //
+        // Reverting to Stage 1.5.2's symbol_weight_sum approach
+        // (Goodman ⊕-aggregate), which closes the `float_cast_*`
+        // family but loses per-packing distinction (the `-3!`
+        // failure). The schema + trait infrastructure (worker_pre
+        // capture, TropicalDeltaWeight trait) is preserved as
+        // forward-compatible substrate for future architectural
+        // fixes (Task #143 — to be created).
+        let _ = snap.worker_pre_dispatch_weight.clone();
         let symbol_weight_sum = self.sppf.symbol_weight_sum(symbol_id);
         cursor.weight = member
             .weight_at_dispatch
@@ -10400,8 +10412,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>> Drop for WpdaWalker<W, E> {
     }
 }
 
-impl<W: SemiringRef, E: WpdaEngine<W>>
-    WpdaWalker<W, E>
+impl<W, E> WpdaWalker<W, E>
+where
+    W: SemiringRef + crate::automata::semiring::TropicalDeltaWeight,
+    E: WpdaEngine<W>,
 {
     /// Drive the walker reactively with a [`WalkerConsumer`] attached.
     ///
