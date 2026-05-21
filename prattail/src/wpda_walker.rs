@@ -5030,116 +5030,24 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // for the SKIP branch of an Opt-Group Fork.
                     match branch.action_kind {
                         ForkActionKind::Push => {
-                            // Stage 3.12 latent-bug fix (2026-05-01): apply
-                            // emit_push_side_effects on each branch so
-                            // OptionalGroupAt(1) and CollectionMarker
-                            // pushes through Fork get the same implicit
-                            // side effects as deterministic Push. Pre-3.12
-                            // this was missing — TAKE branches with
-                            // OptionalGroupAt(1) silently skipped scope
-                            // opening, breaking nested Opt-Group parses
-                            // that landed in nondeterministic mode.
-                            //
-                            // We allocate a child cursor first (with empty
-                            // recovery_deltas), THEN run side effects against
-                            // the CHILD's cursor view. Side effects mutate
-                            // the child's cursor.builder via Arc::make_mut;
-                            // recovery_deltas receives only recovery-typed
-                            // effects (gated by is_recovery_delta).
-                            let mut symbol = branch.symbol;
-                            let mut child = BranchCursor {
-                                node: cursor.node,
-                                pos: pos_after,
-                                weight: cursor.weight.times_ref(&branch.weight),
-                                inner_state: branch.new_state.clone(),
-                                recovery_deltas: cursor.recovery_deltas.clone(),
-                                source_priority: child_source_priority,
-                                // Stage 3.12.6 (2026-05-02): inherit parent's
-                                // stack-suffix history; the push below appends
-                                // a new edge id to it.
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
-                                // Bounded recovery (Stage 3.20 / L12,
-                                // 2026-05-06): inherit parent's recovery
-                                // book-keeping. The Fork-arm prologue
-                                // (when this is a recovery Fork) bumps
-                                // depth + extends visited_recovery on
-                                // each child after allocation; for
-                                // non-recovery Forks (Push, OptGroupAbsent,
-                                // lex-alt, etc.) the inherited values
-                                // pass through unchanged.
-                                // Phase F.11 R7 hoist (2026-05-19): read
-                                // the pre-loop snapshot computed above.
-                                // Each sibling pays O(1) Arc refcount-bump
-                                // instead of an independent Arc::make_mut
-                                // spine clone.
-                                recovery_depth: child_recovery_depth,
-                                visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
-                                // Phase 5.2 (2026-05-12): O(1) Arc bump.
-                                // Child shares parent's `SemanticBuilder`
-                                // until a 5.3+ mutator triggers
-                                // `Arc::make_mut` copy-on-write.
-                                // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
-                                optional_scope_marks: cursor.optional_scope_marks.clone(),
-                                binder_scope_marks: cursor.binder_scope_marks.clone(),
-                                // Phase C.3 (2026-05-17): Fork-arm child
-                                // accumulates branch weight into pending,
-                                // for the next emit_fire_action to consume.
-                                pending_packing_weight: cursor
-                                    .pending_packing_weight
-                                    .times_ref(&branch.weight),
-                                // Phase F.1 (2026-05-18): Fork-arm child
-                                // inherits parent's collection depth.
-                                collection_stack_depth: cursor.collection_stack_depth,
-                                // Phase F.4 (2026-05-18): Arc bump.
-                                sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
-                                // Phase F.3a (2026-05-20): inherit parent's
-                                // last_action_output_cat. Fork-arm children
-                                // share the parent's "most recent action
-                                // output cat" until a per-branch action
-                                // fires or a per-branch push clears it.
-                                last_action_output_cat: cursor.last_action_output_cat,
-                                // Phase F.3c.2 (2026-05-20): inherit parent's
-                                // SPPF-symbol → AST memo via Arc bump (O(1)).
-                                // First write in this child triggers Arc::make_mut.
-                            };
-                            self.emit_push_side_effects(&mut child, &mut symbol);
-                            // Stage 3.12.6 (2026-05-02): use cursor_gss_push
-                            // (not raw gss.push_symbol) so the child's
-                            // incoming_edge_stack records the new edge id
-                            // for its eventual pop.
-                            //
-                            // Phase F.13 H13 Step 0 (2026-05-21): if this
-                            // branch is a CrossCatDelegate (the 88% of
-                            // chain_50's Push branches), tag with
-                            // CrossCatProjection EdgeKind for diagnostic
-                            // equivalence classification. Other Push
-                            // branches use the default Generic.
-                            if let WpdaState::CrossCatDelegate {
-                                source_src_idx,
-                                inner_cur_bp,
-                            } = &branch.new_state
-                            {
-                                let kind = crate::gss::EdgeKind::CrossCatProjection {
-                                    source_src_idx: *source_src_idx,
-                                    inner_cur_bp: *inner_cur_bp,
-                                };
-                                let _ = self.cursor_gss_push_with_kind(
-                                    &mut child,
-                                    symbol,
-                                    pos_after,
-                                    branch.weight.clone(),
-                                    kind,
-                                );
-                            } else {
-                                let _ = self.cursor_gss_push_auto(
-                                    &mut child,
-                                    symbol,
-                                    pos_after,
-                                    branch.weight.clone(),
-                                );
-                            }
+                            // Phase F.13 H12 Stage 1.0 (2026-05-21): the
+                            // inline BranchCursor allocation + side effects
+                            // + kinded GSS push (formerly ~95 LoC inline)
+                            // is now `allocate_fork_push_child`. Behavior
+                            // bit-identical; Stage 1.1+ will gate the
+                            // helper on a cohort-cache lookup so cross-cat
+                            // dispatches hitting an in-flight worker
+                            // become PAUSED cohort members instead of
+                            // running redundant sub-parses.
+                            let child = self.allocate_fork_push_child(
+                                &cursor,
+                                branch,
+                                pos_after,
+                                child_recovery_depth,
+                                child_visited_recovery.clone(),
+                                child_visited_dispatch.clone(),
+                                child_source_priority,
+                            );
                             children.push(child);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
@@ -9022,6 +8930,78 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             self.top_node = Some(new_id);
         }
         new_id
+    }
+
+    /// Phase F.13 H12 Stage 1.0 (2026-05-21): factor Fork-arm Push child
+    /// allocation into one helper. Pre-Stage-1.0 this was an inline
+    /// block at `wpda_walker.rs:5050-5145`. The refactor is structural:
+    /// the helper receives the parent, branch, and child book-keeping
+    /// state, produces the child cursor (with EdgeKind classification
+    /// via cursor_gss_push_with_kind / cursor_gss_push_auto), and
+    /// returns it. Behaviorally identical to the inline pre-refactor.
+    ///
+    /// Stage 1.1+ will introduce a `dispatch_cohort_cache` lookup
+    /// BEFORE this helper is called for CrossCatDelegate branches; if
+    /// the cache hits, the helper is bypassed entirely (cohort resume
+    /// instead of running a duplicate sub-parse).
+    fn allocate_fork_push_child(
+        &mut self,
+        parent: &BranchCursor<W>,
+        branch: ForkBranch<W>,
+        pos_after: usize,
+        child_recovery_depth: u8,
+        child_visited_recovery: OrdSet<(usize, u16, u8)>,
+        child_visited_dispatch: OrdSet<(usize, u16, u8)>,
+        child_source_priority: u32,
+    ) -> BranchCursor<W> {
+        let mut symbol = branch.symbol;
+        let mut child = BranchCursor {
+            node: parent.node,
+            pos: pos_after,
+            weight: parent.weight.times_ref(&branch.weight),
+            inner_state: branch.new_state.clone(),
+            recovery_deltas: parent.recovery_deltas.clone(),
+            source_priority: child_source_priority,
+            incoming_edge_stack: parent.incoming_edge_stack.clone(),
+            recovery_depth: child_recovery_depth,
+            visited_recovery: child_visited_recovery,
+            visited_dispatch: child_visited_dispatch,
+            sppf_stack: Arc::clone(&parent.sppf_stack),
+            optional_scope_marks: parent.optional_scope_marks.clone(),
+            binder_scope_marks: parent.binder_scope_marks.clone(),
+            pending_packing_weight: parent
+                .pending_packing_weight
+                .times_ref(&branch.weight),
+            collection_stack_depth: parent.collection_stack_depth,
+            sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
+            last_action_output_cat: parent.last_action_output_cat,
+        };
+        self.emit_push_side_effects(&mut child, &mut symbol);
+        if let WpdaState::CrossCatDelegate {
+            source_src_idx,
+            inner_cur_bp,
+        } = &branch.new_state
+        {
+            let kind = crate::gss::EdgeKind::CrossCatProjection {
+                source_src_idx: *source_src_idx,
+                inner_cur_bp: *inner_cur_bp,
+            };
+            let _ = self.cursor_gss_push_with_kind(
+                &mut child,
+                symbol,
+                pos_after,
+                branch.weight,
+                kind,
+            );
+        } else {
+            let _ = self.cursor_gss_push_auto(
+                &mut child,
+                symbol,
+                pos_after,
+                branch.weight,
+            );
+        }
+        child
     }
 
     /// Phase F.13 H13 Step 0 (2026-05-21): `cursor_gss_push` variant that
