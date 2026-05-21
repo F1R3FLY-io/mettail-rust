@@ -9051,7 +9051,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             let s = *source_src_idx;
             let b = *inner_cur_bp;
             let key = crate::dispatch_cohort::DispatchKey::new(pos_after, s, b);
-            let outcome = self.dispatch_cohort_cache.register(key.clone());
+            // Stage 1.5.3 (2026-05-21): pass worker's pre-dispatch
+            // weight so the cache can recover the per-packing weight
+            // delta at revive time (tropical primary subtraction).
+            let worker_pre_weight = parent.weight.times_ref(&branch.weight);
+            let outcome = self
+                .dispatch_cohort_cache
+                .register(key.clone(), worker_pre_weight);
             use crate::dispatch_cohort::RegisterOutcome;
             match outcome {
                 RegisterOutcome::WorkerInserted => {
@@ -9772,6 +9778,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         // snapshots from sibling workers; end-of-step
                         // drain fans out `paused × snapshots` revived
                         // cursors per cache key.
+                        // Stage 1.5.3 (2026-05-21): retrieve the root
+                        // worker's pre-dispatch weight that was stashed
+                        // at register time. Falls back to one() if no
+                        // entry — unreachable in normal flow.
+                        let worker_pre = self
+                            .dispatch_cohort_cache
+                            .read_worker_pre(&key)
+                            .unwrap_or_else(W::one_ref);
                         let snap = crate::dispatch_cohort::WorkerSnapshot {
                             worker_inner_state: cursor.inner_state.clone(),
                             worker_last_action_output_cat:
@@ -9780,6 +9794,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 .pending_packing_weight
                                 .clone(),
                             worker_weight: cursor.weight.clone(),
+                            worker_pre_dispatch_weight: worker_pre,
                         };
                         let outcome = self.dispatch_cohort_cache.resolve(
                             key.clone(),

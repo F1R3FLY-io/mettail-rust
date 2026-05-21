@@ -79,17 +79,22 @@ pub struct WorkerSnapshot<W: SemiringRef> {
     /// `apply_pop_body_to_cursor:9651` consumes this; cohort revive
     /// must inherit identically.
     pub worker_last_action_output_cat: Option<u16>,
-    /// Worker's `pending_packing_weight` at pop. THIS IS THE
-    /// PER-PACKING WEIGHT CONTRIBUTION — derived from the worker's
-    /// path through the sub-parse and the per-Fork-arm branch weights.
-    /// Stage 1.5 multiplies cohort member's `weight_at_dispatch` by
-    /// THIS to compute revived cursor's weight (NOT the SPPF Symbol's
-    /// aggregate weight_sum — that's the ⊕ over ALL packings, which
-    /// would lose per-packing distinction).
+    /// Worker's `pending_packing_weight` at pop. Cohort revive inherits
+    /// this so downstream emit_fire_action behavior matches.
     pub worker_pending_packing_weight: W,
-    /// Worker's cumulative `weight` at pop. Diagnostic only; revive
-    /// computes weight from `weight_at_dispatch × worker_pending_packing_weight`.
+    /// Worker's cumulative `weight` at pop time. With
+    /// `worker_pre_dispatch_weight`, revive computes per-packing weight
+    /// delta = post - pre (tropical primary subtraction).
     pub worker_weight: W,
+    /// Phase F.13 H12 Stage 1.5.3 (2026-05-21): worker's cumulative
+    /// `weight` at register time (BEFORE the sub-parse started).
+    /// Captured per snapshot so revive can compute per-packing weight
+    /// delta = `tropical_primary_delta(worker_pre, worker_post)` —
+    /// the additive primary cost of the sub-parse path through
+    /// THIS packing. Replaces Stage 1.5.2's symbol_weight_sum
+    /// aggregate (which lost per-packing distinction and broke
+    /// `-3!`-style multi-packing tests).
+    pub worker_pre_dispatch_weight: W,
 }
 
 impl<W: SemiringRef> std::fmt::Debug for WorkerSnapshot<W> {
@@ -114,6 +119,12 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// triggered the InFlight→Resolved transition; later sibling
         /// workers append while we're still in the same step.
         worker_snapshots: Vec<WorkerSnapshot<W>>,
+        /// Phase F.13 H12 Stage 1.5.3 (2026-05-21): the root worker's
+        /// pre-dispatch weight (= parent.weight × branch.weight at
+        /// register time). Internal Fork sub-cursors of this worker
+        /// inherit this; ALL snapshots derived from this dispatch
+        /// share the same worker_pre_dispatch_weight.
+        worker_pre_dispatch_weight: W,
     },
     /// Sub-parse complete. Subsequent cursors that hit this key
     /// synthesize a resumed child per snapshot (multi-packing case
@@ -136,6 +147,11 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// `[snapshots_drained..]` are NEW since last drain — revive
         /// every paused member against each new snapshot.
         snapshots_drained: usize,
+        /// Phase F.13 H12 Stage 1.5.3 (2026-05-21): the root worker's
+        /// pre-dispatch weight, preserved through the InFlight→Resolved
+        /// transition. Used by `read_worker_pre()` for cohort revive
+        /// weight delta computation.
+        worker_pre_dispatch_weight: W,
     },
     Failed,
 }
@@ -147,6 +163,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 cohort_size,
                 pending_cohort,
                 worker_snapshots,
+                worker_pre_dispatch_weight: _,
             } => f
                 .debug_struct("InFlight")
                 .field("cohort_size", cohort_size)
@@ -236,7 +253,16 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
 
     /// Phase F.13 H12 Stage 1.5 — register a cross-cat-projection
     /// dispatch. Returns the outcome (ResolvedHit clones snapshots).
-    pub fn register(&mut self, key: DispatchKey) -> RegisterOutcome<W> {
+    ///
+    /// Stage 1.5.3: `worker_pre_weight` is the root worker's
+    /// cumulative weight at the moment of register (= parent.weight ×
+    /// branch.weight at the Fork-arm allocation site). Stashed on the
+    /// InFlight entry for later cohort revive weight delta computation.
+    pub fn register(
+        &mut self,
+        key: DispatchKey,
+        worker_pre_weight: W,
+    ) -> RegisterOutcome<W> {
         self.registrations_total += 1;
         match self.entries.get_mut(&key) {
             None => {
@@ -246,6 +272,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         cohort_size: 1,
                         pending_cohort: Vec::new(),
                         worker_snapshots: Vec::new(),
+                        worker_pre_dispatch_weight: worker_pre_weight,
                     },
                 );
                 RegisterOutcome::WorkerInserted
@@ -299,11 +326,13 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             DispatchCacheEntry::InFlight {
                 pending_cohort,
                 worker_snapshots,
+                worker_pre_dispatch_weight,
                 ..
             } => {
                 let drained_pending = std::mem::take(pending_cohort);
                 let mut snapshots = std::mem::take(worker_snapshots);
                 snapshots.push(snap);
+                let preserved_pre = worker_pre_dispatch_weight.clone();
                 *entry = DispatchCacheEntry::Resolved {
                     symbol_id,
                     hi_pos,
@@ -311,6 +340,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     worker_snapshots: snapshots,
                     pending_cohort: drained_pending,
                     snapshots_drained: 0,
+                    worker_pre_dispatch_weight: preserved_pre,
                 };
                 self.resolved_total += 1;
                 ResolveOutcome::FirstResolve
@@ -373,6 +403,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 worker_snapshots,
                 pending_cohort,
                 snapshots_drained,
+                worker_pre_dispatch_weight: _,
             } => {
                 if pending_cohort.is_empty() {
                     return None;
@@ -397,6 +428,24 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 ))
             }
             _ => None,
+        }
+    }
+
+    /// Phase F.13 H12 Stage 1.5.3 — read the cached worker
+    /// pre-dispatch weight for a key. Returns None if the key has no
+    /// entry. Used by the walker's resolve site to populate
+    /// `WorkerSnapshot::worker_pre_dispatch_weight`.
+    pub fn read_worker_pre(&self, key: &DispatchKey) -> Option<W> {
+        match self.entries.get(key)? {
+            DispatchCacheEntry::InFlight {
+                worker_pre_dispatch_weight,
+                ..
+            } => Some(worker_pre_dispatch_weight.clone()),
+            DispatchCacheEntry::Resolved {
+                worker_pre_dispatch_weight,
+                ..
+            } => Some(worker_pre_dispatch_weight.clone()),
+            DispatchCacheEntry::Failed => None,
         }
     }
 
