@@ -9084,8 +9084,17 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     worker_snapshots,
                 } => {
                     // Stage 1.5 (2026-05-21): synthesize one revived
-                    // cursor per worker snapshot.
-                    let _ = key;
+                    // cursor per worker snapshot available NOW.
+                    //
+                    // Stage 1.5.2 (2026-05-21): ALSO pause a synthetic
+                    // cohort member so cross-step snapshots arriving
+                    // LATER (from sibling workers that pop in
+                    // subsequent step_fanout iterations) can also
+                    // revive this member at end-of-step drain. Without
+                    // this pause, ResolvedHit-consumed members are
+                    // lost from the persistent pending_cohort — they
+                    // never receive snap_B's revival in the multi-
+                    // packing cross-step case (the `-3!` failure).
                     let synthetic_weight_at_dispatch =
                         parent.weight.times_ref(&branch.weight);
                     let mut revived_cursors = Vec::with_capacity(
@@ -9112,6 +9121,18 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         );
                         revived_cursors.push(revived);
                     }
+                    // Park a synthetic member onto the entry's
+                    // pending_cohort for future cross-step snapshots.
+                    // pause_cohort_member handles Resolved entries
+                    // (dispatch_cohort.rs:412-432) and honors
+                    // MAX_PENDING_COHORT_PER_KEY cap.
+                    let future_member = crate::dispatch_cohort::CohortMember {
+                        return_frame: parent.clone(),
+                        weight_at_dispatch: synthetic_weight_at_dispatch,
+                    };
+                    let _ = self
+                        .dispatch_cohort_cache
+                        .pause_cohort_member(key, future_member);
                     return revived_cursors;
                 }
                 RegisterOutcome::FailedHit => {
@@ -9213,16 +9234,20 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         snap: &crate::dispatch_cohort::WorkerSnapshot<W>,
     ) -> BranchCursor<W> {
         let mut cursor = member.return_frame;
-        // Stage 1.5 (corrected): weight = cohort's pre_dispatch ×
+        // Stage 1.5.2 (2026-05-21): weight = cohort's pre_dispatch ×
         // SPPF symbol_weight_sum. The Symbol's weight_sum is the
         // Goodman-aggregate over all linked Packings under
         // Semiring::plus (lex-min for LexicographicWeight).
         //
-        // NOTE: worker_pending_packing_weight at pop time is
-        // W::one_ref() because emit_fire_action's mem::replace
-        // already consumed the residual. Using it as the weight
-        // contribution would lose the entire sub-parse weight
-        // (Stage 1.3.1 Bug B regression).
+        // Known limitation: ALL cohort revivals for the same symbol_id
+        // get the same weight contribution (the aggregate). For
+        // multi-packing Symbols with WEIGHT-DISTINGUISHING packings
+        // (e.g., -3! parsing), this loses per-packing weight
+        // distinction. Stage 1.5.3 would address by capturing per-
+        // packing weight via witness_packing_id + sppf.packing_weight,
+        // but the LexicographicWeight algebra makes this non-trivial
+        // (worker's pre_dispatch_weight already-multiplied into the
+        // intern_packing weight at the time of fire).
         let symbol_weight_sum = self.sppf.symbol_weight_sum(symbol_id);
         cursor.weight = member
             .weight_at_dispatch
