@@ -19,6 +19,26 @@ ascent-parallel = []
 ## JSON output is hand-formatted (per feedback_postcard_over_serde_json:
 ## avoid serde_json; postcard is binary so doesn't fit human-readable dumps).
 hang-dump = ["dep:signal-hook", "dep:parking_lot"]
+## Phase F.13 (2026-05-20): walker statistics counters for algorithmic-
+## bottleneck attribution. Adds 19 u64 counters to WpdaWalker tracking
+## apply_action_to_cursor invocations, cursor proliferation peaks,
+## merge_equivalent_cursors collapse ratios, cursor lifecycle sources/
+## sinks, and Fork composition by ForkActionKind variant.
+##
+## Zero-cost when off: all increment macros expand to empty blocks and
+## the `stats` field on WpdaWalker is conditionally compiled out.
+## Verified via `cargo expand` / `cargo asm`.
+##
+## Output trigger: env var `PRATTAIL_WALKER_STATS=1` causes
+## `resolve_at_end_of_input` to print a human-readable summary to stderr.
+##
+## Per-walker scope eliminates parallel-test interference (each parse
+## owns its counters). No atomics/locks required (walker is single-threaded
+## per parse session).
+##
+## Use: `cargo test --features mettail-prattail/walker-stats ... \
+##       -- --nocapture` with `PRATTAIL_WALKER_STATS=1` env var.
+walker-stats = []
 
 [dependencies]
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved

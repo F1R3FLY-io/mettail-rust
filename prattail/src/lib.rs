@@ -59,6 +59,8 @@ pub mod rd_analysis;
 pub mod grammar;
 pub mod hang_dump;
 pub mod token_id;
+/// Phase F.13 walker statistics counters (gated by `walker-stats` feature).
+pub mod walker_stats;
 // Stage 10.6 (2026-05-05): `pub mod trampoline` DELETED (file deleted, 7,351 LoC).
 // The Walker (WPDS) is the surviving parser backend. All recovery infrastructure
 // (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,

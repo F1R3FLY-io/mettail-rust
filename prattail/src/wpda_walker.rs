@@ -589,6 +589,12 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// consumed by `reconstruct_action_arg` for `SppfNode::Symbol` lookups.
     /// Reset by `reset()`.
     sppf_symbol_terms: std::collections::HashMap<crate::sppf::SppfId, Arc<dyn Any + Send + Sync>>,
+    /// Phase F.13 (2026-05-20): walker statistics counters for
+    /// algorithmic-bottleneck attribution. Gated by `walker-stats`
+    /// Cargo feature; field doesn't exist when feature is off
+    /// (zero-cost in default builds). See `prattail/src/walker_stats.rs`.
+    #[cfg(feature = "walker-stats")]
+    pub stats: crate::walker_stats::WalkerStats,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2162,6 +2168,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             sppf_predicate_arena: Vec::new(),
             // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
             sppf_symbol_terms: std::collections::HashMap::new(),
+            // Phase F.13 walker-stats (2026-05-20): zero-cost when feature off.
+            // Seed counter incremented below the struct literal so it's
+            // outside the field initializer.
+            #[cfg(feature = "walker-stats")]
+            stats: crate::walker_stats::WalkerStats {
+                cursors_created_via_seed: 1,
+                ..crate::walker_stats::WalkerStats::default()
+            },
         }
     }
 
@@ -2217,6 +2231,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             sppf_predicate_arena: Vec::new(),
             // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
             sppf_symbol_terms: std::collections::HashMap::new(),
+            // Phase F.13 walker-stats (2026-05-20): zero-cost when feature off.
+            // Seed counter incremented below the struct literal so it's
+            // outside the field initializer.
+            #[cfg(feature = "walker-stats")]
+            stats: crate::walker_stats::WalkerStats {
+                cursors_created_via_seed: 1,
+                ..crate::walker_stats::WalkerStats::default()
+            },
         }
     }
 
@@ -2267,6 +2289,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             sppf_predicate_arena: Vec::new(),
             // Phase F.13 H1 (2026-05-20): walker-global memo, lazy init.
             sppf_symbol_terms: std::collections::HashMap::new(),
+            // Phase F.13 walker-stats (2026-05-20): zero-cost when feature off.
+            // Seed counter incremented below the struct literal so it's
+            // outside the field initializer.
+            #[cfg(feature = "walker-stats")]
+            stats: crate::walker_stats::WalkerStats {
+                cursors_created_via_seed: 1,
+                ..crate::walker_stats::WalkerStats::default()
+            },
         }
     }
 
@@ -2305,6 +2335,15 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // the engine's input change); stale memo entries would leak Arc
         // payloads across parses.
         self.sppf_symbol_terms.clear();
+        // Phase F.13 walker-stats (2026-05-20): zero counters at parse boundary
+        // and increment seed (matches the constructor's `cursors_created_via_seed = 1`).
+        #[cfg(feature = "walker-stats")]
+        {
+            self.stats = crate::walker_stats::WalkerStats {
+                cursors_created_via_seed: 1,
+                ..crate::walker_stats::WalkerStats::default()
+            };
+        }
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -2990,6 +3029,18 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
+        // Phase F.13 walker-stats (2026-05-20): at parse boundary, emit
+        // stats summary if env var PRATTAIL_WALKER_STATS=1 is set.
+        // Mirrors PRATTAIL_HANG_DUMP precedent in hang_dump.rs.
+        #[cfg(feature = "walker-stats")]
+        {
+            if std::env::var_os("PRATTAIL_WALKER_STATS")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
+                eprintln!("{}", self.stats);
+            }
+        }
         // Phase 5.6-tail-B (2026-05-12): the pre-tail deterministic-mode fast-path
         // returned directly using `self.builder.take_dyn_result()`. Under
         // always-eager Arc::make_mut (Phase 5.3+), all mutations land on
@@ -4376,6 +4427,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         action: WpdaStepAction<W>,
         tokens: &dyn WpdaTokenSource,
     ) -> CursorOutcome<W> {
+        // Phase F.13 walker-stats (2026-05-20): count per-cursor invocations.
+        crate::stats_inc!(self, apply_action_calls);
         match action {
             WpdaStepAction::Advance(s) => {
                 self.set_cursor_inner_state(cursor, s);
@@ -4620,6 +4673,51 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 self.cursor_resolution_check(cursor)
             }
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                // Phase F.13 walker-stats (2026-05-20): count Fork firings
+                // and per-branch composition by ForkActionKind variant +
+                // CrossCatDelegate detection.
+                crate::stats_inc!(self, fork_total);
+                #[cfg(feature = "walker-stats")]
+                {
+                    for b in &branches {
+                        match &b.action_kind {
+                            ForkActionKind::Push { .. } => {
+                                self.stats.fork_kind_push =
+                                    self.stats.fork_kind_push.saturating_add(1);
+                            }
+                            ForkActionKind::OptGroupAbsent { .. } => {
+                                self.stats.fork_kind_opt_group_absent =
+                                    self.stats.fork_kind_opt_group_absent.saturating_add(1);
+                            }
+                            ForkActionKind::LexAlt { .. }
+                            | ForkActionKind::LexAltPrefixOp { .. }
+                            | ForkActionKind::LexAltPostfixOp { .. }
+                            | ForkActionKind::LexAltInfixOp { .. }
+                            | ForkActionKind::LexAltMixfixOp { .. } => {
+                                self.stats.fork_kind_lex_alt_family =
+                                    self.stats.fork_kind_lex_alt_family.saturating_add(1);
+                            }
+                            ForkActionKind::Consume { .. }
+                            | ForkActionKind::ConsumeAndReplace { .. }
+                            | ForkActionKind::ConsumeIdentAndReplace { .. }
+                            | ForkActionKind::ConsumeAndPop { .. }
+                            | ForkActionKind::ConsumeAndReplaceWithEffect { .. }
+                            | ForkActionKind::ConsumeAndCaptureAndPush { .. }
+                            | ForkActionKind::ConsumeIdentAndPop { .. } => {
+                                self.stats.fork_kind_consume_family =
+                                    self.stats.fork_kind_consume_family.saturating_add(1);
+                            }
+                            _ => {
+                                self.stats.fork_kind_other =
+                                    self.stats.fork_kind_other.saturating_add(1);
+                            }
+                        }
+                        if matches!(&b.new_state, WpdaState::CrossCatDelegate { .. }) {
+                            self.stats.fork_cross_cat_projection_branches =
+                                self.stats.fork_cross_cat_projection_branches.saturating_add(1);
+                        }
+                    }
+                }
                 // Phase 5.6-tail-C (2026-05-12): Hack #7 prologue + Phase 5.5
                 // cursor.builder refresh DELETED.
                 //
@@ -4655,6 +4753,14 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 // After child allocation, bump each child's recovery_depth
                 // by 1 and insert the dispatch config into visited_recovery.
                 let is_recovery = is_recovery_fork(&branches);
+                // Phase F.13 walker-stats (2026-05-20): count recovery dispatches.
+                #[cfg(feature = "walker-stats")]
+                {
+                    if is_recovery {
+                        self.stats.fork_recovery_dispatches =
+                            self.stats.fork_recovery_dispatches.saturating_add(1);
+                    }
+                }
                 let recovery_dispatch_config: Option<(usize, u16, u8)> = if is_recovery {
                     extract_recovery_dispatch_config(cursor, &self.gss)
                 } else {
@@ -6408,6 +6514,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 //         }
                 //     }
                 // }
+                // Phase F.13 walker-stats (2026-05-20): count all Fork-arm
+                // children created. Batched here (vs 21 individual sites)
+                // so the count reflects post-gating survivors.
+                crate::stats_add!(self, cursors_created_via_fork, children.len() as u64);
                 CursorOutcome::ForkInto(children)
             }
             WpdaStepAction::Accept => {
@@ -6603,6 +6713,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     /// Returns the new `WpdaState` after this micro-step (which may still
     /// be `AmbiguityFanout` if Case 4 fires).
     fn step_fanout(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaState {
+        // Phase F.13 walker-stats (2026-05-20): count step + accumulate
+        // pre-step cursor count for avg-cursors-per-step derivation.
+        crate::stats_inc!(self, step_fanout_calls);
+        crate::stats_add!(self, branch_cursors_sum, self.branch_cursors.len() as u64);
         let mut new_cursors: Vec<BranchCursor<W>> = Vec::with_capacity(self.branch_cursors.len());
         // Track which entries in `new_cursors` are Resolved.
         let mut resolved_indices: Vec<usize> = Vec::new();
@@ -6640,7 +6754,11 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                 return self.state.clone();
             }
             match outcome {
-                CursorOutcome::Drop => { /* discard */ }
+                CursorOutcome::Drop => {
+                    // Phase F.13 walker-stats (2026-05-20): count outcome-Drop sink.
+                    crate::stats_inc!(self, cursors_dropped_via_outcome_drop);
+                    /* discard */
+                }
                 CursorOutcome::Alive => new_cursors.push(cursor),
                 // **Tiebreak chain link 4 (load-bearing).** `extend` preserves
                 // the source-order of `children` produced by Fork. Combined
@@ -6659,6 +6777,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             }
         }
         self.branch_cursors = new_cursors;
+        // Phase F.13 walker-stats (2026-05-20): capture pre-merge peak.
+        crate::stats_max!(self, branch_cursors_peak_pre_merge, self.branch_cursors.len() as u64);
         // Stage 3.5b (2026-05-01) intentionally drops the prior
         // `resolved_indices` consumption: it was only used by the
         // mid-stream commit path, which is now WPDS-incorrect (Bug 1).
@@ -6678,6 +6798,8 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         // are non-commutative). Caps polynomial fanout in ambiguous
         // grammars vs the prior exponential branch count.
         self.merge_equivalent_cursors();
+        // Phase F.13 walker-stats (2026-05-20): capture post-merge peak.
+        crate::stats_max!(self, branch_cursors_peak_post_merge, self.branch_cursors.len() as u64);
 
         // B10 / Option κ Part 3 (2026-05-07): lex-dominated cursor
         // subsumption. After strict-key merge, group remaining cursors
@@ -6783,6 +6905,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         if self.branch_cursors.len() < 2 {
             return;
         }
+        // Phase F.13 walker-stats (2026-05-20): accumulate merge attempt
+        // count (input cursors). Collapses counted per-cursor in the
+        // Occupied arm below.
+        crate::stats_add!(self, merge_attempts_total, self.branch_cursors.len() as u64);
         let mut by_key: std::collections::HashMap<ConfigKey, usize> =
             std::collections::HashMap::with_capacity(self.branch_cursors.len());
         let mut merged: Vec<BranchCursor<W>> =
@@ -6813,6 +6939,10 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     merged.push(cursor);
                 }
                 std::collections::hash_map::Entry::Occupied(o) => {
+                    // Phase F.13 walker-stats (2026-05-20): count each
+                    // cursor collapsed by merge.
+                    crate::stats_inc!(self, merge_collapses_total);
+                    crate::stats_inc!(self, cursors_dropped_via_merge);
                     let idx = *o.get();
                     // C8.2 (2026-05-16): the M11.5 builder-snapshot injection
                     // (capturing per-cursor builder state into weight entries
