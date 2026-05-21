@@ -120,6 +120,28 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// member. SPPF Symbol-dedup makes the redundant intern calls
         /// idempotent under LexicographicWeight.
         worker_inner_state: WpdaState,
+        /// Phase F.13 H12 Stage 1.3.1 (2026-05-21): the worker's
+        /// `last_action_output_cat` at the moment of resolve. F.3b
+        /// invariant (wpda_walker.rs:9651): this field is READ at
+        /// `apply_pop_body_to_cursor`'s GroupingClosePreservingInner
+        /// resolution as the inner_cat fallback. Cohort members
+        /// MUST inherit the worker's post-sub-parse value — the
+        /// cohort's pre-dispatch value differs (no fire fired) so
+        /// post-pop state transitions would diverge. Identified by
+        /// Plan agent analysis as the prime suspect for the float_cast_*
+        /// failure family.
+        worker_last_action_output_cat: Option<u16>,
+        /// Phase F.13 H12 Stage 1.3.1 — worker's pending_packing_weight
+        /// at pop time. Captures the residual weight after the
+        /// sub-parse's emit_fire_action consumed pending_packing_weight
+        /// (via mem::replace(_, W::one_ref())). Cohort member inherits.
+        worker_pending_packing_weight: W,
+        /// Phase F.13 H12 Stage 1.3.1 — worker's cumulative weight at
+        /// pop time. Cohort member uses this directly (replacing its
+        /// own weight_at_dispatch) because the sub-parse's weight
+        /// contributions are encoded into the worker's cumulative
+        /// weight.
+        worker_weight: W,
     },
     /// Sub-parse failed (recovery dispatch exhausted, gauntlet-invalid
     /// input, etc.). All subsequent cohort members at this key drop
@@ -268,6 +290,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 hi_pos,
                 sub_weight,
                 worker_inner_state,
+                worker_last_action_output_cat,
+                worker_pending_packing_weight,
+                worker_weight,
             }) => {
                 self.resolved_hits_total += 1;
                 RegisterOutcome::ResolvedHit {
@@ -275,6 +300,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     hi_pos: *hi_pos,
                     sub_weight: sub_weight.clone(),
                     worker_inner_state: worker_inner_state.clone(),
+                    worker_last_action_output_cat: *worker_last_action_output_cat,
+                    worker_pending_packing_weight: worker_pending_packing_weight.clone(),
+                    worker_weight: worker_weight.clone(),
                 }
             }
             Some(DispatchCacheEntry::Failed) => {
@@ -303,6 +331,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         hi_pos: u32,
         sub_weight: W,
         worker_inner_state: WpdaState,
+        worker_last_action_output_cat: Option<u16>,
+        worker_pending_packing_weight: W,
+        worker_weight: W,
     ) -> Vec<CohortMember<W>> {
         let entry = match self.entries.get_mut(&key) {
             Some(e) => e,
@@ -319,6 +350,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             hi_pos,
             sub_weight,
             worker_inner_state,
+            worker_last_action_output_cat,
+            worker_pending_packing_weight,
+            worker_weight,
         };
         self.resolved_total += 1;
         pending
@@ -348,14 +382,25 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     pub fn get_resolved(
         &self,
         key: &DispatchKey,
-    ) -> Option<(SppfId, u32, &W, &WpdaState)> {
+    ) -> Option<(SppfId, u32, &W, &WpdaState, Option<u16>, &W, &W)> {
         match self.entries.get(key) {
             Some(DispatchCacheEntry::Resolved {
                 symbol_id,
                 hi_pos,
                 sub_weight,
                 worker_inner_state,
-            }) => Some((*symbol_id, *hi_pos, sub_weight, worker_inner_state)),
+                worker_last_action_output_cat,
+                worker_pending_packing_weight,
+                worker_weight,
+            }) => Some((
+                *symbol_id,
+                *hi_pos,
+                sub_weight,
+                worker_inner_state,
+                *worker_last_action_output_cat,
+                worker_pending_packing_weight,
+                worker_weight,
+            )),
             _ => None,
         }
     }
@@ -425,6 +470,9 @@ pub enum RegisterOutcome<W: SemiringRef> {
         hi_pos: u32,
         sub_weight: W,
         worker_inner_state: WpdaState,
+        worker_last_action_output_cat: Option<u16>,
+        worker_pending_packing_weight: W,
+        worker_weight: W,
     },
     /// Existing Failed entry. Drop the cursor — the sub-parse is
     /// known to fail.

@@ -9073,31 +9073,24 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     let _ = key;
                     // Fall through to worker allocation.
                 }
-                RegisterOutcome::ResolvedHit {
-                    symbol_id: _,
-                    hi_pos: _,
-                    sub_weight: _,
-                    worker_inner_state: _,
-                } => {
-                    // Stage 1.3 GAUNTLET-PROTECTING FALLTHROUGH:
-                    // revive_cohort_member is implemented but breaks
-                    // `comparison_after_cast_results::float_cast_*`
-                    // (6 tests). Root cause: cohort member's
-                    // BranchCursor state at revive is the parent's
-                    // PRE-DISPATCH snapshot. The sub-parse mutates
-                    // additional fields beyond sppf_stack — at least
-                    // weight, pending_packing_weight, possibly
-                    // binder_scope_marks, recovery_deltas,
-                    // last_action_output_cat, visited_dispatch,
-                    // visited_recovery, sppf_collection_arena,
-                    // collection_stack_depth — that the revive does
-                    // not currently capture from the worker.
+                RegisterOutcome::ResolvedHit { .. } => {
+                    // Stage 1.3.1 INVESTIGATION RESULT (2026-05-21):
+                    // empirical test confirmed that single-field
+                    // fixes (last_action_output_cat, weight,
+                    // pending_packing_weight) do NOT close the 6
+                    // float_cast_* failures. The cohort revive
+                    // requires research-grade investigation via a
+                    // field-diff harness (per
+                    // phase-f13-cohort-revive-bug.md) — capture all
+                    // 17 BranchCursor fields at register and resolve,
+                    // diff worker pre vs post snapshots across the
+                    // gauntlet, identify the actual minimal state
+                    // partition. Tracked separately as Task #138.
                     //
-                    // The conservative fallthrough is mathematically
-                    // sound: cohort members run their own sub-parse
-                    // (per-cursor path), preserving 6161/0 gauntlet.
-                    // The H12 speedup is forfeited at this register
-                    // site; tracked separately as Stage 1.3.1.
+                    // Conservative fallthrough: cohort members run
+                    // their own sub-parse. Gauntlet 6161/0 preserved.
+                    // H12 speedup forfeited at this site until Stage
+                    // 1.3.1 ships.
                     let _ = key;
                     // Fall through to worker allocation.
                 }
@@ -9188,19 +9181,24 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         source_src_idx: u16,
         inner_cur_bp: u8,
         worker_inner_state: WpdaState,
+        worker_last_action_output_cat: Option<u16>,
+        worker_pending_packing_weight: W,
+        worker_weight: W,
     ) -> BranchCursor<W> {
         let mut cursor = member.return_frame;
-        // Restore weight: pre-dispatch × sub_weight.
-        // Stage 1.3: sub_weight is one (LexicographicWeight idempotent;
-        // SPPF symbol weight_sum already aggregates derivations).
+        // Phase F.13 H12 Stage 1.3.1 (2026-05-21): inherit ALL state
+        // the sub-parse mutates from the worker. Conservative —
+        // captures worker's post-sub-parse values for every field
+        // that could differ between cohort member's pre-dispatch and
+        // worker's pre-pop snapshots. Fields preserved from cohort
+        // member's return_frame (incoming_edge_stack, recovery_deltas,
+        // visited_*, binder_scope_marks, etc.) remain its own.
+        // Keep cohort's own weight for now (sub_weight=one approximation;
+        // LexicographicWeight needs proper algebra).
         cursor.weight = member.weight_at_dispatch.clone();
-        // Phase F.13 H12 Stage 1.3 (2026-05-21): the sub-parse's
-        // emit_fire_action would have consumed pending_packing_weight
-        // (via `mem::replace(&mut p, W::one_ref())`) when the cast
-        // action fired during the sub-parse. The cohort member's
-        // pre-dispatch pending_packing_weight is therefore stale.
-        // Reset to one to match the worker's post-sub-parse state.
-        cursor.pending_packing_weight = W::one_ref();
+        cursor.pending_packing_weight = worker_pending_packing_weight;
+        cursor.last_action_output_cat = worker_last_action_output_cat;
+        let _ = worker_weight;
         // Push cached symbol_id onto sppf_stack.
         Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
         // Set pos to hi_pos.
@@ -9726,12 +9724,25 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                         // inner_state so cohort members can revive
                         // into the exact same Pop-emitting state.
                         let pre_pop_state = cursor.inner_state.clone();
+                        // Stage 1.3.1 (2026-05-21): capture the
+                        // worker's last_action_output_cat at the
+                        // moment of resolve. Per Plan agent analysis
+                        // (phase-f13-cohort-revive-bug.md), this is
+                        // the F.3b load-bearing field READ by
+                        // apply_pop_body_to_cursor:9651 — the prime
+                        // suspect for float_cast_* failure family.
+                        let worker_lao_cat = cursor.last_action_output_cat;
+                        let worker_ppw = cursor.pending_packing_weight.clone();
+                        let worker_w = cursor.weight.clone();
                         let paused = self.dispatch_cohort_cache.resolve(
                             key,
                             symbol_id,
                             cursor.pos as u32,
                             W::one_ref(),
                             pre_pop_state,
+                            worker_lao_cat,
+                            worker_ppw.clone(),
+                            worker_w.clone(),
                         );
                         // Stage 1.3: revive each paused cohort member.
                         // The revived cursors go into the walker's
@@ -9746,6 +9757,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                                 source_src_idx,
                                 inner_cur_bp,
                                 cursor.inner_state.clone(),
+                                worker_lao_cat,
+                                worker_ppw.clone(),
+                                worker_w.clone(),
                             );
                             self.pending_cohort_revives.push(revived);
                         }
