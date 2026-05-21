@@ -1342,6 +1342,24 @@ pub struct BranchCursor<W: SemiringRef> {
     // ConfigKey). Replaced by `LatticeTokenSource` (M3) where alt identity
     // lives in the SHARED input DAG; the cursor's `pos: usize` (DAG node-id)
     // suffices to distinguish alt timelines.
+    /// Phase F.13 H12 Stage 1.5.3R-a (2026-05-21): cohort-origin tag for
+    /// dispatch-cohort revived cursors. None for per-cursor (normal worker
+    /// path); Some(key) for cohort-revived cursors. Used by ConfigKey so
+    /// cohort revives bucket separately from per-cursor cursors that happen
+    /// to share the same (state, node, pos, edge, depth). Soundness: a
+    /// per-cursor cursor at the same configuration has INDEPENDENT
+    /// provenance and an INDEPENDENT outer rule to fire; merging it with
+    /// a cohort revive silently substitutes the worker's outer-rule fire
+    /// for the per-cursor's distinct fire (the `-3!` bug). Graduates back
+    /// to None when the cursor pops past `cohort_revive_depth`.
+    pub cohort_origin: Option<crate::dispatch_cohort::DispatchKey>,
+    /// Phase F.13 H12 Stage 1.5.3R-a (2026-05-21): cursor's
+    /// incoming_edge_stack depth at the moment of cohort revival.
+    /// Cohort tag graduates (clears to None) at the next pop that
+    /// brings depth below this value — semantic boundary between
+    /// "still inside the sub-parse's parent rule's continuation"
+    /// and "back in outer grammar."
+    pub cohort_revive_depth: u32,
 }
 
 impl<W: SemiringRef> std::fmt::Debug for BranchCursor<W>
@@ -1425,6 +1443,8 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             sppf_collection_arena: Arc::clone(&self.sppf_collection_arena),
             // Phase F.3a (2026-05-20): Option<u16> is Copy.
             last_action_output_cat: self.last_action_output_cat,
+            cohort_origin: self.cohort_origin.clone(),
+            cohort_revive_depth: self.cohort_revive_depth,
             // Phase F.13 H1 (2026-05-20): sppf_symbol_terms field DELETED;
             // memo is walker-global now.
         }
@@ -1519,6 +1539,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             sppf_collection_arena: Arc::new(Vec::new()),
             // Phase F.3a (2026-05-20): fresh cursor has no action yet.
             last_action_output_cat: None,
+            cohort_origin: None,
+            cohort_revive_depth: 0,
             // Phase F.3c.2 (2026-05-20): fresh empty memo.
         }
     }
@@ -1591,6 +1613,8 @@ impl<W: SemiringRef> BranchCursor<W> {
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
             // Phase F.3a (2026-05-20): inherit parent's mirror.
             last_action_output_cat: parent.last_action_output_cat,
+            cohort_origin: parent.cohort_origin.clone(),
+            cohort_revive_depth: parent.cohort_revive_depth,
             // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
         }
     }
@@ -1654,6 +1678,18 @@ struct ConfigKey {
     /// inner CollectionMarker has popped but the other's has not.
     /// Including depth in the key segregates them cleanly.
     collection_depth: usize,
+    /// Phase F.13 H12 Stage 1.5.3R-c (2026-05-21): cohort-origin
+    /// discriminator. Cohort-revived cursors carry `Some(key)`; per-
+    /// cursor cursors carry `None`. Two cursors at the same
+    /// `(state, node, pos, edge, depth)` bucket SEPARATELY when their
+    /// cohort_origin differs. This prevents `merge_equivalent_cursors`
+    /// from collapsing a cohort revive (which inherited the worker's
+    /// distinct outer-rule fire via `snap.worker_inner_state`) with
+    /// a per-cursor cursor that has an independent outer-rule fire.
+    /// Both survive to end-of-parse; both contribute distinct packings
+    /// linked to the same SPPF Symbol; realize fanout enumerates all
+    /// derivations. See `phase-f13-stage-1-5-3-redux.md` §3.
+    cohort_origin: Option<crate::dispatch_cohort::DispatchKey>,
 }
 
 /// Step 3 (Fork plan F4): deferred mutation of the live
@@ -2809,6 +2845,8 @@ where
                     sppf_collection_arena: Arc::new(Vec::new()),
                     // Phase F.3a (2026-05-20): fresh cursor.
                     last_action_output_cat: None,
+                    cohort_origin: None,
+                    cohort_revive_depth: 0,
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
                         }];
                 self.state = new_state.clone();
@@ -4449,6 +4487,8 @@ where
                     // Phase F.3a (2026-05-20): post-Drop reset clears the
                     // mirror — the dropped cursor's action history is gone.
                     last_action_output_cat: None,
+                    cohort_origin: None,
+                    cohort_revive_depth: 0,
                     // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
                         });
             }
@@ -5169,6 +5209,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5260,6 +5302,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5327,6 +5371,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5387,6 +5433,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5480,6 +5528,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5552,6 +5602,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5625,6 +5677,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5733,6 +5787,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5832,6 +5888,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5977,6 +6035,8 @@ where
                                 // output cat" until a per-branch action
                                 // fires or a per-branch push clears it.
                                 last_action_output_cat: cursor.last_action_output_cat,
+                                cohort_origin: cursor.cohort_origin.clone(),
+                                cohort_revive_depth: cursor.cohort_revive_depth,
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -7127,6 +7187,12 @@ where
                 //
                 // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
                 collection_depth: cursor.collection_stack_depth as usize,
+                // Phase F.13 H12 Stage 1.5.3R-c (2026-05-21): cohort
+                // origin bucketing. Cohort revives bucket separately
+                // from per-cursor cursors so they don't collapse via
+                // lex-min and discard each other's distinct outer
+                // packings (the `-3!` bug).
+                cohort_origin: cursor.cohort_origin.clone(),
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -7581,6 +7647,8 @@ where
             sppf_collection_arena: winner.sppf_collection_arena,
             // Phase F.3a (2026-05-20): preserve winner's mirror.
             last_action_output_cat: winner.last_action_output_cat,
+            cohort_origin: winner.cohort_origin.clone(),
+            cohort_revive_depth: winner.cohort_revive_depth,
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
@@ -9172,6 +9240,8 @@ where
             collection_stack_depth: parent.collection_stack_depth,
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
             last_action_output_cat: parent.last_action_output_cat,
+            cohort_origin: parent.cohort_origin.clone(),
+            cohort_revive_depth: parent.cohort_revive_depth,
         };
         self.emit_push_side_effects(&mut child, &mut symbol);
         if let WpdaState::CrossCatDelegate {
@@ -9242,29 +9312,22 @@ where
         snap: &crate::dispatch_cohort::WorkerSnapshot<W>,
     ) -> BranchCursor<W> {
         let mut cursor = member.return_frame;
-        // Stage 1.5.3c PARTIAL REVERT (2026-05-21):
-        //
-        // The Plan agent's tropical-delta design (Stage 1.5.3c) is
-        // ALGEBRAICALLY correct for merge-free sub-parse paths but
-        // BREAKS in grammars where cursor merges happen DURING the
-        // sub-parse with cursors OUTSIDE the cohort. The worker's
-        // cursor.weight is reduced by merge-bonus discounts that the
-        // cohort member would not have earned via its OWN path.
-        // Propagating those discounts via tropical-delta gives cohort
-        // revives artificially-light weights that dominate downstream
-        // lex-min selections incorrectly.
-        //
-        // Empirical: tropical-delta on Calculator broke
-        // `int_of_float_add` (in addition to not closing `-3!`).
-        // Clamping delta to ≥ 0 didn't help.
-        //
-        // Reverting to Stage 1.5.2's symbol_weight_sum approach
-        // (Goodman ⊕-aggregate), which closes the `float_cast_*`
-        // family but loses per-packing distinction (the `-3!`
-        // failure). The schema + trait infrastructure (worker_pre
-        // capture, TropicalDeltaWeight trait) is preserved as
-        // forward-compatible substrate for future architectural
-        // fixes (Task #143 — to be created).
+        // Stage 1.5.3R-b (2026-05-21): tag cursor with cohort_origin.
+        // ConfigKey reads this so cohort revives bucket separately
+        // from per-cursor cursors. Graduation rule G2 clears the tag
+        // at next Pop past cohort_revive_depth (handled in
+        // cursor_gss_pop_via_edge). The depth captured here is the
+        // cursor's incoming_edge_stack length AFTER the CategoryEntry
+        // re-push below, so graduation fires when the cohort cursor
+        // exits the dispatch's return frame.
+        cursor.cohort_origin = Some(crate::dispatch_cohort::DispatchKey {
+            pos: pos_at_dispatch,
+            source_src_idx,
+            inner_cur_bp,
+        });
+        // worker_pre_dispatch_weight retained on schema; reserved for
+        // a future per-packing weight delta scheme (Stage 1.5.3
+        // tropical-delta was falsified empirically).
         let _ = snap.worker_pre_dispatch_weight.clone();
         let symbol_weight_sum = self.sppf.symbol_weight_sum(symbol_id);
         cursor.weight = member
@@ -9287,6 +9350,11 @@ where
             W::one_ref(),
             kind,
         );
+        // Stage 1.5.3R-b: capture depth AFTER the CategoryEntry push.
+        // Graduation rule G2: cohort_origin clears when depth drops
+        // below this value (the cohort cursor has exited its dispatch's
+        // return frame).
+        cursor.cohort_revive_depth = cursor.incoming_edge_stack.len() as u32;
         cursor.inner_state = snap.worker_inner_state.clone();
         cursor
     }
@@ -9833,6 +9901,17 @@ where
         cursor.node = target.unwrap_or(crate::gss::GSS_NODE_NONE);
         if self.deterministic {
             self.top_node = target;
+        }
+        // Stage 1.5.3R-b G2 graduation (2026-05-21): if this cohort
+        // cursor has popped past its revive depth, it has exited the
+        // sub-parse's parent rule's continuation; clear the cohort
+        // tag so it merges freely with per-cursor cursors at the
+        // outer level.
+        if cursor.cohort_origin.is_some()
+            && (cursor.incoming_edge_stack.len() as u32) < cursor.cohort_revive_depth
+        {
+            cursor.cohort_origin = None;
+            cursor.cohort_revive_depth = 0;
         }
         target
     }
