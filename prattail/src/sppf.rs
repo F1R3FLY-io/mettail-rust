@@ -671,6 +671,22 @@ impl<W: SemiringRef> Sppf<W> {
         self.nodes.get(id as usize)
     }
 
+    /// Phase F.13 H12 Stage 1.3.1 (2026-05-21): aggregate weight of a
+    /// Symbol node — the `weight_sum` field that accumulates `⊕`-updates
+    /// from each linked Packing (Goodman-style aggregation per
+    /// `link_packing_to_symbol`). Used by the cohort-cache revive path
+    /// to derive the sub-parse's weight delta (`pre_dispatch × symbol_weight_sum`
+    /// is the LexicographicWeight-canonical cohort-final weight).
+    ///
+    /// Returns `W::one_ref()` for non-Symbol nodes (defensive default —
+    /// `times_ref` against one is identity).
+    pub fn symbol_weight_sum(&self, id: SppfId) -> W {
+        match self.node(id) {
+            Some(SppfNode::Symbol { weight_sum, .. }) => weight_sum.clone(),
+            _ => W::one_ref(),
+        }
+    }
+
     /// All Packings linked to a Symbol, in insertion order. Empty slice if
     /// the symbol has no linked packings (or if `symbol_id` is not a Symbol).
     pub fn packings_of(&self, symbol_id: SppfId) -> &[SppfId] {

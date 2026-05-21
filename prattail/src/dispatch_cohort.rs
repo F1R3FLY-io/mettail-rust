@@ -106,9 +106,16 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         symbol_id: SppfId,
         /// The input position after the sub-parse.
         hi_pos: u32,
-        /// The weight delta from dispatch to pop. Combined with each
-        /// cohort member's `weight_at_dispatch` at resume time so the
-        /// final weight matches the per-cursor (pre-H12) bit-for-bit.
+        /// Phase F.13 H12 Stage 1.3.1 (2026-05-21): the input position
+        /// at which the cross-cat-projection's CategoryEntry was pushed
+        /// onto the worker's GSS. Cohort revive must push CategoryEntry
+        /// at the SAME pos for structural equivalence with the
+        /// per-cursor path (Bug A from `phase-f13-stage-1-3-1-corrected-revive.md`).
+        pos_at_dispatch: u32,
+        /// The weight delta from dispatch to pop. Stage 1.3.1+:
+        /// SUPERSEDED by `sppf.symbol_weight_sum(symbol_id)` which is
+        /// the LexicographicWeight-canonical witness. Retained for
+        /// observation; revive ignores it.
         sub_weight: W,
         /// The worker cursor's `inner_state` at the moment it emitted
         /// the Pop action (i.e., just before apply_pop_body_to_cursor
@@ -288,6 +295,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             Some(DispatchCacheEntry::Resolved {
                 symbol_id,
                 hi_pos,
+                pos_at_dispatch,
                 sub_weight,
                 worker_inner_state,
                 worker_last_action_output_cat,
@@ -298,6 +306,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 RegisterOutcome::ResolvedHit {
                     symbol_id: *symbol_id,
                     hi_pos: *hi_pos,
+                    pos_at_dispatch: *pos_at_dispatch,
                     sub_weight: sub_weight.clone(),
                     worker_inner_state: worker_inner_state.clone(),
                     worker_last_action_output_cat: *worker_last_action_output_cat,
@@ -329,6 +338,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         key: DispatchKey,
         symbol_id: SppfId,
         hi_pos: u32,
+        pos_at_dispatch: u32,
         sub_weight: W,
         worker_inner_state: WpdaState,
         worker_last_action_output_cat: Option<u16>,
@@ -348,6 +358,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         *entry = DispatchCacheEntry::Resolved {
             symbol_id,
             hi_pos,
+            pos_at_dispatch,
             sub_weight,
             worker_inner_state,
             worker_last_action_output_cat,
@@ -379,14 +390,16 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// data for synthesizing a resumed child immediately (the
     /// ResolvedHit path — cursor arrives AFTER the worker has resolved).
     /// Returns None if the entry is not Resolved.
+    #[allow(clippy::type_complexity)]
     pub fn get_resolved(
         &self,
         key: &DispatchKey,
-    ) -> Option<(SppfId, u32, &W, &WpdaState, Option<u16>, &W, &W)> {
+    ) -> Option<(SppfId, u32, u32, &W, &WpdaState, Option<u16>, &W, &W)> {
         match self.entries.get(key) {
             Some(DispatchCacheEntry::Resolved {
                 symbol_id,
                 hi_pos,
+                pos_at_dispatch,
                 sub_weight,
                 worker_inner_state,
                 worker_last_action_output_cat,
@@ -395,6 +408,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             }) => Some((
                 *symbol_id,
                 *hi_pos,
+                *pos_at_dispatch,
                 sub_weight,
                 worker_inner_state,
                 *worker_last_action_output_cat,
@@ -468,6 +482,7 @@ pub enum RegisterOutcome<W: SemiringRef> {
     ResolvedHit {
         symbol_id: SppfId,
         hi_pos: u32,
+        pos_at_dispatch: u32,
         sub_weight: W,
         worker_inner_state: WpdaState,
         worker_last_action_output_cat: Option<u16>,

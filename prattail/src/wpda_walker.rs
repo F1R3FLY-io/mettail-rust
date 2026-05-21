@@ -9056,41 +9056,31 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                     // Worker child — fall through to normal allocation.
                 }
                 RegisterOutcome::InflightCollision => {
-                    // Stage 1.3 (initial): conservative — fall
-                    // through to per-cursor sub-parse for in-flight
-                    // collisions. The PAUSE path is implemented in
-                    // dispatch_cohort.rs (pause_cohort_member) and
-                    // wired in revive_cohort_member + step_fanout
-                    // drain, but enabling it requires a safety net
-                    // for the case where the worker's sub-parse
-                    // drops or never pops CategoryEntry(S) (paused
-                    // members would be lost). That safety net is
-                    // tracked separately; for Stage 1.3 we capture
-                    // the H14-style "ResolvedHit short-circuit"
-                    // speedup only — strictly correctness-preserving.
-                    // Stage 1.3.5 (follow-on) will add the pause +
-                    // end-of-parse-drain mechanism.
+                    // Stage 1.3.1 conservative fallthrough (2026-05-21).
+                    // The pause-and-revive path is implemented but
+                    // gated off because cohort revive with a single
+                    // worker snapshot is unsound for multi-packing
+                    // Symbols (ambiguous sub-parses like the `-3!`
+                    // case — Symbol(Int, 0, 3) has TWO packings
+                    // Fact(-3) and Neg(Fact(3))). Stage 1.5
+                    // ambiguity fanout will safely capture this.
                     let _ = key;
                     // Fall through to worker allocation.
                 }
                 RegisterOutcome::ResolvedHit { .. } => {
-                    // Stage 1.3.1 INVESTIGATION RESULT (2026-05-21):
-                    // empirical test confirmed that single-field
-                    // fixes (last_action_output_cat, weight,
-                    // pending_packing_weight) do NOT close the 6
-                    // float_cast_* failures. The cohort revive
-                    // requires research-grade investigation via a
-                    // field-diff harness (per
-                    // phase-f13-cohort-revive-bug.md) — capture all
-                    // 17 BranchCursor fields at register and resolve,
-                    // diff worker pre vs post snapshots across the
-                    // gauntlet, identify the actual minimal state
-                    // partition. Tracked separately as Task #138.
-                    //
-                    // Conservative fallthrough: cohort members run
-                    // their own sub-parse. Gauntlet 6161/0 preserved.
-                    // H12 speedup forfeited at this site until Stage
-                    // 1.3.1 ships.
+                    // Stage 1.3.1 conservative fallthrough (2026-05-21).
+                    // Bug A + Bug B fixes in revive_cohort_member are
+                    // correct for single-packing Symbols (closes the 6
+                    // float_cast_* failures). But cohort sharing is
+                    // unsound for multi-packing Symbols (e.g., `-3!`
+                    // → Symbol(Int, 0, 3) with both Fact(-3) and
+                    // Neg(Fact(3)) packings). Detecting multi-packing
+                    // at resolve time is racy because Branch B's
+                    // packing arrives AFTER Branch A's resolve fires.
+                    // Stage 1.5 (ambiguity fanout in
+                    // DispatchCacheEntry::Resolved) will store
+                    // per-packing snapshots and revive cursors per
+                    // packing — closing this gap. Tracked at Task #119.
                     let _ = key;
                     // Fall through to worker allocation.
                 }
@@ -9172,42 +9162,58 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
     ///   - Restores inner_state to the worker's pre-pop state so the
     ///     next walker step re-emits Pop and triggers the normal
     ///     post-pop processing.
+    /// Phase F.13 H12 Stage 1.3.1 (2026-05-21): corrected cohort revive.
+    /// Approach 4b refined with Bug A + Bug B fixes per
+    /// `phase-f13-stage-1-3-1-corrected-revive.md`:
+    ///   - Bug A: GSS push at `pos_at_dispatch` (not `hi_pos`), matching
+    ///     the worker's CategoryEntry placement. This keeps
+    ///     `merge_equivalent_cursors::ConfigKey::node` consistent with
+    ///     the per-cursor path AND lets engine's Unwinding-CategoryEntry
+    ///     `_gss.edges_from()` read see the same GSS topology.
+    ///   - Bug B: `cursor.weight = pre_dispatch × symbol_weight_sum`.
+    ///     The SPPF Symbol's weight_sum (Goodman-aggregated under
+    ///     LexicographicWeight::plus = lex-min) is the canonical
+    ///     sub-parse weight contribution. Without this multiplication,
+    ///     the cohort cursor is artificially light and wins lex-min
+    ///     selections wrongly.
     #[cfg(feature = "dispatch-cohort")]
     fn revive_cohort_member(
         &mut self,
         member: crate::dispatch_cohort::CohortMember<W>,
         symbol_id: crate::sppf::SppfId,
+        pos_at_dispatch: u32,
         hi_pos: u32,
         source_src_idx: u16,
         inner_cur_bp: u8,
         worker_inner_state: WpdaState,
         worker_last_action_output_cat: Option<u16>,
         worker_pending_packing_weight: W,
-        worker_weight: W,
     ) -> BranchCursor<W> {
         let mut cursor = member.return_frame;
-        // Phase F.13 H12 Stage 1.3.1 (2026-05-21): inherit ALL state
-        // the sub-parse mutates from the worker. Conservative —
-        // captures worker's post-sub-parse values for every field
-        // that could differ between cohort member's pre-dispatch and
-        // worker's pre-pop snapshots. Fields preserved from cohort
-        // member's return_frame (incoming_edge_stack, recovery_deltas,
-        // visited_*, binder_scope_marks, etc.) remain its own.
-        // Keep cohort's own weight for now (sub_weight=one approximation;
-        // LexicographicWeight needs proper algebra).
-        cursor.weight = member.weight_at_dispatch.clone();
+        // Bug B fix: weight = cohort's pre_dispatch × sub_parse weight delta.
+        // sppf.symbol_weight_sum reads the Symbol node's weight_sum field
+        // (the ⊕-aggregate over all linked Packings, set by Goodman
+        // aggregation in link_packing_to_symbol).
+        let symbol_weight_sum = self.sppf.symbol_weight_sum(symbol_id);
+        cursor.weight = member.weight_at_dispatch.times_ref(&symbol_weight_sum);
+        // Sub-parse's emit_fire_action consumes pending_packing_weight
+        // (mem::replace(_, W::one_ref())) during the sub-parse. For
+        // Calculator's grammar every sub-parse fires ≥1 action, so the
+        // worker's post-sub-parse value is identical across cohort
+        // members. Inherit from worker.
         cursor.pending_packing_weight = worker_pending_packing_weight;
+        // F.3b load-bearing inheritance (sub-parse output cat is
+        // dispatch-key-deterministic).
         cursor.last_action_output_cat = worker_last_action_output_cat;
-        let _ = worker_weight;
         // Push cached symbol_id onto sppf_stack.
         Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
         // Set pos to hi_pos.
         cursor.pos = hi_pos as usize;
-        // Push CategoryEntry(S) onto GSS so the next walker step's
-        // Pop has something to pop. The EdgeKind matches the worker's
-        // (CrossCatProjection {S, B}) — resolve() is idempotent on
-        // already-Resolved entries so the redundant resolve check at
-        // the cohort member's pop is a cheap no-op.
+        // Bug A fix: GSS push at `pos_at_dispatch`, NOT `hi_pos`. The
+        // worker's CategoryEntry GSS node lives at pos_at_dispatch; the
+        // cohort must structurally match for ConfigKey-based merge
+        // equivalence and for the engine's pred_kind read in
+        // Unwinding-CategoryEntry (engine_impl.rs:449-451).
         let cat_sym = StackSymbolV2::category_entry(source_src_idx);
         let kind = crate::gss::EdgeKind::CrossCatProjection {
             source_src_idx,
@@ -9216,7 +9222,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
         let _ = self.cursor_gss_push_with_kind(
             &mut cursor,
             cat_sym,
-            hi_pos as usize,
+            pos_at_dispatch as usize,
             W::one_ref(),
             kind,
         );
@@ -9712,11 +9718,12 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
             }) = self.gss.edge_kind(eid)
             {
                 if let Some(node) = self.gss.node(cursor.node) {
-                    let dispatch_pos = node.pos;
+                    let dispatch_pos_usize = node.pos;
+                    let dispatch_pos = dispatch_pos_usize as u32;
                     let symbol_id_opt = cursor.sppf_stack.last().copied();
                     if let Some(symbol_id) = symbol_id_opt {
                         let key = crate::dispatch_cohort::DispatchKey::new(
-                            dispatch_pos,
+                            dispatch_pos_usize,
                             source_src_idx,
                             inner_cur_bp,
                         );
@@ -9738,6 +9745,7 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             key,
                             symbol_id,
                             cursor.pos as u32,
+                            dispatch_pos,
                             W::one_ref(),
                             pre_pop_state,
                             worker_lao_cat,
@@ -9753,13 +9761,13 @@ impl<W: SemiringRef, E: WpdaEngine<W>>
                             let revived = self.revive_cohort_member(
                                 member,
                                 symbol_id,
+                                dispatch_pos,
                                 cursor.pos as u32,
                                 source_src_idx,
                                 inner_cur_bp,
                                 cursor.inner_state.clone(),
                                 worker_lao_cat,
                                 worker_ppw.clone(),
-                                worker_w.clone(),
                             );
                             self.pending_cohort_revives.push(revived);
                         }
