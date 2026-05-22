@@ -1690,6 +1690,25 @@ struct ConfigKey {
     /// linked to the same SPPF Symbol; realize fanout enumerates all
     /// derivations. See `phase-f13-stage-1-5-3-redux.md` §3.
     cohort_origin: Option<crate::dispatch_cohort::DispatchKey>,
+    /// Phase F.13 H12 Stage 1.5.3-Alt#1 (2026-05-21): GLL descriptor
+    /// completion (Scott-Johnstone "GLL Parsing", ENTCS 253(7):
+    /// 177-189, 2010 §3). The formal GLL descriptor is the 4-tuple
+    /// `(L, u, i, w)` — grammar slot, GSS-tip node, input position,
+    /// AND SPPF node. Pre-Alt#1, ConfigKey carried `(L=state+edge,
+    /// u=node, i=pos)` plus operational fields (collection_depth,
+    /// cohort_origin) but was MISSING `w`. Two cursors with identical
+    /// `(state, node, pos, edge, depth, cohort_origin)` but distinct
+    /// `sppf_stack.last()` represent semantically distinct derivations
+    /// (different reduction history). Merging them collapses one's
+    /// distinct packing.
+    ///
+    /// Concrete falsification: `-3!` parse has Sub-A and Sub-B
+    /// (lex-Fork branches inside ProcInt's Int sub-parse) reaching
+    /// the same configuration with different sppf_stack tops
+    /// (`Symbol(Int,0,3)` packing P_Fact vs P_Neg). Without `sppf_top`
+    /// in ConfigKey, merge collapses them, losing the `-6`
+    /// interpretation.
+    sppf_top: Option<crate::sppf::SppfId>,
 }
 
 /// Step 3 (Fork plan F4): deferred mutation of the live
@@ -7193,6 +7212,13 @@ where
                 // lex-min and discard each other's distinct outer
                 // packings (the `-3!` bug).
                 cohort_origin: cursor.cohort_origin.clone(),
+                // Phase F.13 H12 Stage 1.5.3-Alt#1 (2026-05-21): GLL
+                // descriptor completion. Two cursors with distinct
+                // sppf_stack tops represent semantically distinct
+                // derivations and MUST NOT merge — even when their
+                // (state, node, pos, edge, depth, cohort_origin)
+                // would otherwise match.
+                sppf_top: cursor.sppf_stack.last().copied(),
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
