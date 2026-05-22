@@ -217,6 +217,15 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     pub entries: rustc_hash::FxHashMap<DispatchKey, DispatchCacheEntry<W>>,
     pub registrations_total: u64,
     pub inflight_collisions_total: u64,
+    /// Phase F.13 H12 Stage 1.5.3R-d (2026-05-21): count of cohort
+    /// cursors emitted via revive (from either pause→drain or
+    /// register-time ResolvedHit). Tracks H12 reuse efficacy.
+    pub cohort_cursors_emitted_total: u64,
+    /// Phase F.13 H12 Stage 1.5.3R-d (2026-05-21): count of cohort
+    /// cursors that graduated (cohort_origin cleared via G2 rule).
+    /// Compared to emitted_total tells us how many cohorts survive
+    /// past their dispatch's return frame.
+    pub cohort_cursors_graduated_total: u64,
     pub resolved_hits_total: u64,
     pub failed_hits_total: u64,
     pub resolved_total: u64,
@@ -236,6 +245,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             resolved_total: 0,
             failed_total: 0,
             snapshot_appends_total: 0,
+            cohort_cursors_emitted_total: 0,
+            cohort_cursors_graduated_total: 0,
         }
     }
 
@@ -249,6 +260,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         self.resolved_total = 0;
         self.failed_total = 0;
         self.snapshot_appends_total = 0;
+        self.cohort_cursors_emitted_total = 0;
+        self.cohort_cursors_graduated_total = 0;
     }
 
     /// Phase F.13 H12 Stage 1.5 — register a cross-cat-projection
@@ -518,6 +531,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             self.snapshot_appends_total,
             self.failed_total,
             self.entries.len(),
+        )?;
+        writeln!(
+            f,
+            "  cohort_cursors_emitted={}  cohort_cursors_graduated={}",
+            self.cohort_cursors_emitted_total,
+            self.cohort_cursors_graduated_total,
         )?;
         Ok(())
     }

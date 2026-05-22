@@ -9356,6 +9356,13 @@ where
         // return frame).
         cursor.cohort_revive_depth = cursor.incoming_edge_stack.len() as u32;
         cursor.inner_state = snap.worker_inner_state.clone();
+        // Stage 1.5.3R-d: observability counter.
+        self.dispatch_cohort_cache.cohort_cursors_emitted_total += 1;
+        // Stage 1.5.3R-d: invariant — origin is set IFF depth is set.
+        debug_assert!(
+            cursor.cohort_origin.is_some() == (cursor.cohort_revive_depth > 0),
+            "cohort_origin and cohort_revive_depth must be consistent"
+        );
         cursor
     }
 
@@ -9912,6 +9919,7 @@ where
         {
             cursor.cohort_origin = None;
             cursor.cohort_revive_depth = 0;
+            self.dispatch_cohort_cache.cohort_cursors_graduated_total += 1;
         }
         target
     }
