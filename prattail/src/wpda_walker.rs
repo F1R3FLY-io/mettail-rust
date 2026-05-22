@@ -1709,6 +1709,31 @@ struct ConfigKey {
     /// in ConfigKey, merge collapses them, losing the `-6`
     /// interpretation.
     sppf_top: Option<crate::sppf::SppfId>,
+    /// Phase F.13 Stage 2.0 (2026-05-22): GLL/Tomita descriptor —
+    /// lex-Fork provenance. A cursor's `weight.lex_alt_idx`,
+    /// `weight.src_idx`, `weight.rule_idx` are LEX-FORK BRANCH STAMPS
+    /// set at `from_cost_with_lex` (forks.rs:194-326). Per
+    /// `LexicographicWeight::times` left-projection (lex_weight.rs:
+    /// 409-422), these tiebreak components stay constant along the
+    /// cursor's path after the first non-identity multiplication.
+    ///
+    /// Two cursors at the same `(state, node, pos, edge, depth,
+    /// cohort_origin, sppf_top)` but with distinct lex-Fork
+    /// provenance are DISTINCT PARSES of the same grammar slot
+    /// under different lex-disambiguation choices. They are NOT
+    /// mergeable: the `LexicographicWeight::plus` lex-min collapse
+    /// would silently drop the non-winning lex interpretation.
+    ///
+    /// Concrete falsification: `-3!` parse has Branch A
+    /// (`lex_alt_idx=0`, NumLit "-3" → Fact) and Branch B
+    /// (`lex_alt_idx=2`, Minus "-" → Neg) reaching identical
+    /// `(state, node, pos, edge, depth, sppf_top)` at the
+    /// InfixLoop post-reduce cursor. Without this field, merge
+    /// collapses Branch B BEFORE its outer Neg-reduce fires,
+    /// losing the `-6` derivation.
+    lex_alt_idx: u16,
+    weight_src_idx: u16,
+    weight_rule_idx: u16,
 }
 
 /// Step 3 (Fork plan F4): deferred mutation of the live
@@ -2224,7 +2249,9 @@ fn extract_dispatch_config<W: SemiringRef>(
 
 impl<W, E> WpdaWalker<W, E>
 where
-    W: SemiringRef + crate::automata::semiring::TropicalDeltaWeight,
+    W: SemiringRef
+        + crate::automata::semiring::TropicalDeltaWeight
+        + crate::automata::semiring::LexProvenance,
     E: WpdaEngine<W>,
 {
     /// Construct a fresh walker in `Ready { min_bp }` state.
@@ -7219,6 +7246,21 @@ where
                 // (state, node, pos, edge, depth, cohort_origin)
                 // would otherwise match.
                 sppf_top: cursor.sppf_stack.last().copied(),
+                // Phase F.13 Stage 2.0b (2026-05-22): lex-Fork
+                // provenance via LexProvenance trait. LexicographicWeight's
+                // `times` left-projects these fields, so the first
+                // non-identity multiplication stamps them and they
+                // stay constant along the cursor's path. Two cursors
+                // with distinct stamps are DISTINCT PARSES under
+                // different lex-disambiguation choices and MUST NOT
+                // merge — Branch A (lex_alt_idx=0, NumLit "-3" → Fact)
+                // and Branch B (lex_alt_idx=2, Minus "-" → Neg) at
+                // the same configuration bucket separately, both
+                // reach their respective outer reduces, both packings
+                // get linked, realize enumerates both. Closes `-3!`.
+                lex_alt_idx: cursor.weight.lex_alt_idx(),
+                weight_src_idx: cursor.weight.lex_src_idx(),
+                weight_rule_idx: cursor.weight.lex_rule_idx(),
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -10527,7 +10569,9 @@ impl<W: SemiringRef, E: WpdaEngine<W>> Drop for WpdaWalker<W, E> {
 
 impl<W, E> WpdaWalker<W, E>
 where
-    W: SemiringRef + crate::automata::semiring::TropicalDeltaWeight,
+    W: SemiringRef
+        + crate::automata::semiring::TropicalDeltaWeight
+        + crate::automata::semiring::LexProvenance,
     E: WpdaEngine<W>,
 {
     /// Drive the walker reactively with a [`WalkerConsumer`] attached.

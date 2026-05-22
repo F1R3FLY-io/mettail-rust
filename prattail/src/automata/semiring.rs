@@ -270,6 +270,45 @@ pub trait TropicalDeltaWeight: SemiringRef {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// LexProvenance — per-Phase F.13 Stage 2.0 (2026-05-22)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Phase F.13 Stage 2.0 (2026-05-22): expose a cursor's lex-Fork
+/// branch provenance for inclusion in `ConfigKey`. This completes
+/// the GLL/Tomita descriptor with lex-disambiguation identity:
+/// two cursors with distinct lex-Fork branch stamps represent
+/// distinct parses under different lex-disambiguation choices and
+/// must NOT merge.
+///
+/// `LexicographicWeight` carries explicit fields (`lex_alt_idx`,
+/// `src_idx`, `rule_idx`) populated at lex-Fork emit sites via
+/// `from_cost_with_lex`. `LexicographicWeight::times` left-projects,
+/// so these stamps stay constant along a cursor's path after the
+/// first non-identity multiplication.
+///
+/// Default impls return 0 for weight types without inherent lex
+/// provenance (e.g., `BooleanWeight`, `TropicalWeight`); they merge
+/// as before (all cursors share identical provenance, no
+/// discrimination).
+pub trait LexProvenance: SemiringRef {
+    /// Lex-Fork branch index stamped at emit time (alt_idx=0 for
+    /// primary, alt_idx≥1 for secondaries).
+    fn lex_alt_idx(&self) -> u16 {
+        0
+    }
+    /// Source category index of the rule the lex-Fork branch
+    /// dispatched to.
+    fn lex_src_idx(&self) -> u16 {
+        0
+    }
+    /// Rule index within the source category.
+    fn lex_rule_idx(&self) -> u16 {
+        0
+    }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
 // matrix_star_ref — Lehmann's algorithm (1977) for closed semirings,
 // SemiringRef variant
 // ══════════════════════════════════════════════════════════════════════════════

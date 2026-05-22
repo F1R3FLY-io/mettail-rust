@@ -156,8 +156,8 @@ use std::cmp::Ordering;
 use std::fmt;
 
 use crate::automata::semiring::{
-    CompleteSemiring, DetectableZero, IdempotentSemiring, Semiring, StarSemiring, TropicalDeltaWeight,
-    TropicalWeight,
+    CompleteSemiring, DetectableZero, IdempotentSemiring, LexProvenance, Semiring, StarSemiring,
+    TropicalDeltaWeight, TropicalWeight,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -502,6 +502,24 @@ impl TropicalDeltaWeight for LexicographicWeight {
             src_idx: post.src_idx,
             rule_idx: post.rule_idx,
         }
+    }
+}
+
+/// Phase F.13 Stage 2.0 (2026-05-22): LexicographicWeight has
+/// inherent lex-Fork provenance from `from_cost_with_lex`. Expose
+/// the three discriminator fields for inclusion in `ConfigKey`.
+impl LexProvenance for LexicographicWeight {
+    #[inline]
+    fn lex_alt_idx(&self) -> u16 {
+        self.lex_alt_idx
+    }
+    #[inline]
+    fn lex_src_idx(&self) -> u16 {
+        self.src_idx
+    }
+    #[inline]
+    fn lex_rule_idx(&self) -> u16 {
+        self.rule_idx
     }
 }
 impl CompleteSemiring for LexicographicWeight {}
