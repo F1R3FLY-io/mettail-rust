@@ -1360,6 +1360,43 @@ pub struct BranchCursor<W: SemiringRef> {
     /// "still inside the sub-parse's parent rule's continuation"
     /// and "back in outer grammar."
     pub cohort_revive_depth: u32,
+    /// Phase F.13 Stage 2.1 (2026-05-22): per-cursor lex-Fork
+    /// provenance stack. Each entry records one lex-Fork branch the
+    /// cursor traversed. Populated at `ForkActionKind::LexAlt*` apply
+    /// arms (the lex-Fork child-allocation sites in
+    /// `apply_action_to_cursor`). Read by `ConfigKey` via
+    /// `cursor.lex_fork_path.last()` — the most recent stamp suffices
+    /// for merge distinguishability (GLL descriptor uniqueness:
+    /// cursors at the same `(state, node, pos, edge, depth,
+    /// cohort_origin, sppf_top)` that traversed the same most-recent
+    /// lex-Fork branch necessarily share the same lex history because
+    /// the configuration tuple already includes `pos`).
+    ///
+    /// `Arc<Vec<_>>` mirrors `sppf_stack` (Arc-CoW): clone is O(1)
+    /// (Arc refcount bump); first lex-Fork stamp triggers
+    /// `Arc::make_mut` deep clone — bounded by the number of
+    /// lex-ambiguous positions in the input.
+    ///
+    /// Independent of `LexicographicWeight` — the weight's `times`
+    /// left-projection erases tiebreak fields, so this is a CURSOR
+    /// IDENTITY discriminator, NOT a weight payload (per Stage 2.0
+    /// falsification — `cursor.weight.lex_alt_idx` is always 0 at
+    /// merge time, see commit `7c628d0`).
+    pub lex_fork_path: std::sync::Arc<Vec<LexForkStamp>>,
+}
+
+/// Phase F.13 Stage 2.1 (2026-05-22): a single lex-Fork branch
+/// traversal stamp. Appended to `BranchCursor::lex_fork_path` at
+/// lex-Fork APPLY time (one per `ForkActionKind::LexAlt*` child
+/// allocation). Equal stamps mean same lex-Fork branch at same pos;
+/// distinct stamps at the same configuration mean DISTINCT PARSES
+/// under different lex-disambiguation choices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LexForkStamp {
+    pub pos: u32,
+    pub alt_idx: u16,
+    pub src_idx: u16,
+    pub rule_idx: u16,
 }
 
 impl<W: SemiringRef> std::fmt::Debug for BranchCursor<W>
@@ -1445,6 +1482,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             last_action_output_cat: self.last_action_output_cat,
             cohort_origin: self.cohort_origin.clone(),
             cohort_revive_depth: self.cohort_revive_depth,
+            lex_fork_path: std::sync::Arc::clone(&self.lex_fork_path),
             // Phase F.13 H1 (2026-05-20): sppf_symbol_terms field DELETED;
             // memo is walker-global now.
         }
@@ -1541,6 +1579,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             last_action_output_cat: None,
             cohort_origin: None,
             cohort_revive_depth: 0,
+            lex_fork_path: std::sync::Arc::new(Vec::new()),
             // Phase F.3c.2 (2026-05-20): fresh empty memo.
         }
     }
@@ -1615,6 +1654,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             last_action_output_cat: parent.last_action_output_cat,
             cohort_origin: parent.cohort_origin.clone(),
             cohort_revive_depth: parent.cohort_revive_depth,
+            lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
             // Phase F.3c.2 (2026-05-20): inherit parent's memo via Arc bump.
         }
     }
@@ -1734,6 +1774,12 @@ struct ConfigKey {
     lex_alt_idx: u16,
     weight_src_idx: u16,
     weight_rule_idx: u16,
+    /// Phase F.13 Stage 2.1 (2026-05-22): lex-Fork provenance stamp,
+    /// read from `cursor.lex_fork_path.last()` (intrinsic cursor
+    /// state, NOT weight payload). Two cursors at the same
+    /// configuration with distinct most-recent lex-Fork stamps are
+    /// DISTINCT PARSES and bucket separately at merge.
+    lex_fork_stamp: Option<LexForkStamp>,
 }
 
 /// Step 3 (Fork plan F4): deferred mutation of the live
@@ -2893,6 +2939,7 @@ where
                     last_action_output_cat: None,
                     cohort_origin: None,
                     cohort_revive_depth: 0,
+                    lex_fork_path: std::sync::Arc::new(Vec::new()),
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
                         }];
                 self.state = new_state.clone();
@@ -4535,6 +4582,7 @@ where
                     last_action_output_cat: None,
                     cohort_origin: None,
                     cohort_revive_depth: 0,
+                    lex_fork_path: std::sync::Arc::new(Vec::new()),
                     // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
                         });
             }
@@ -5257,6 +5305,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5350,6 +5399,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5419,6 +5469,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5481,6 +5532,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5576,6 +5628,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5650,6 +5703,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5725,6 +5779,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -5793,6 +5848,18 @@ where
                             // `alt_idx` is retained for diagnostic
                             // tracing only; no per-cursor sidecar state
                             // (per M4 + WPDS-stack-purity).
+                            // Phase F.13 Stage 2.1b (2026-05-22): stamp
+                            // lex-Fork branch on child's lex_fork_path
+                            // BEFORE constructing the child. Read the
+                            // alt index + rule into the stamp so
+                            // ConfigKey can discriminate this branch
+                            // from sibling lex-Fork branches.
+                            let __lex_fork_stamp = LexForkStamp {
+                                pos: cursor.pos as u32,
+                                alt_idx,
+                                src_idx: branch.symbol.category_src_idx,
+                                rule_idx,
+                            };
                             let _ = rule_idx;
                             let _ = alt_idx;
                             let mut sym = branch.symbol;
@@ -5835,10 +5902,16 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
                             };
+                            // Phase F.13 Stage 2.1b (2026-05-22): push
+                            // stamp onto child's lex_fork_path. Arc::make_mut
+                            // performs CoW if shared with parent.
+                            std::sync::Arc::make_mut(&mut child.lex_fork_path)
+                                .push(__lex_fork_stamp);
                             // Capture the alt's token text at child.pos
                             // (the original byte position, before
                             // advancing). Mirrors emit_push_token in
@@ -5861,13 +5934,22 @@ where
                         }
 
                         ForkActionKind::LexAltPrefixOp {
-                            alt_idx: _,
+                            alt_idx,
                             trigger: _,
-                            rule_idx: _,
+                            rule_idx,
                             body_src_idx: _,
                             next_pos,
                             outer_bp: _,
                         } => {
+                            // Phase F.13 Stage 2.1b (2026-05-22): stamp
+                            // lex-Fork branch on child's lex_fork_path
+                            // for ConfigKey discrimination.
+                            let __lex_fork_stamp = LexForkStamp {
+                                pos: cursor.pos as u32,
+                                alt_idx,
+                                src_idx: branch.symbol.category_src_idx,
+                                rule_idx,
+                            };
                             // M6c.6.4.d (2026-05-14): unary-prefix lex-Fork
                             // apply arm. Mirrors the standard
                             // `Fixed(trigger) → ConsumeAndPush(BinderRule)`
@@ -5936,10 +6018,17 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
                             };
+                            // Phase F.13 Stage 2.1b (2026-05-22): push
+                            // lex-Fork stamp onto child's lex_fork_path
+                            // (Arc-CoW). Discriminates this branch from
+                            // sibling lex-Fork branches at ConfigKey.
+                            std::sync::Arc::make_mut(&mut child.lex_fork_path)
+                                .push(__lex_fork_stamp);
                             // Phase F.10 (2026-05-19): mirror the standard
                             // `WpdaStepAction::ConsumeAndPush` arm's
                             // `TriggerMode::ConsumeAsTriggerOnly` branch
@@ -6083,6 +6172,7 @@ where
                                 last_action_output_cat: cursor.last_action_output_cat,
                                 cohort_origin: cursor.cohort_origin.clone(),
                                 cohort_revive_depth: cursor.cohort_revive_depth,
+                                lex_fork_path: std::sync::Arc::clone(&cursor.lex_fork_path),
                                 // Phase F.3c.2 (2026-05-20): inherit parent's
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
@@ -7261,6 +7351,9 @@ where
                 lex_alt_idx: cursor.weight.lex_alt_idx(),
                 weight_src_idx: cursor.weight.lex_src_idx(),
                 weight_rule_idx: cursor.weight.lex_rule_idx(),
+                // Phase F.13 Stage 2.1 (2026-05-22): cursor-level
+                // lex-Fork stamp (orthogonal to weight).
+                lex_fork_stamp: cursor.lex_fork_path.last().copied(),
             };
             match by_key.entry(key) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -7717,6 +7810,7 @@ where
             last_action_output_cat: winner.last_action_output_cat,
             cohort_origin: winner.cohort_origin.clone(),
             cohort_revive_depth: winner.cohort_revive_depth,
+            lex_fork_path: winner.lex_fork_path,
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
@@ -9310,6 +9404,7 @@ where
             last_action_output_cat: parent.last_action_output_cat,
             cohort_origin: parent.cohort_origin.clone(),
             cohort_revive_depth: parent.cohort_revive_depth,
+            lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
         };
         self.emit_push_side_effects(&mut child, &mut symbol);
         if let WpdaState::CrossCatDelegate {
