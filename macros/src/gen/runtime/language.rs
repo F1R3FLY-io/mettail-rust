@@ -626,12 +626,32 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                                    weight-based pruning — equivalent terms
                                    collapse by observational equivalence per
                                    feedback_never_disambiguate_early.md. */
-                                let mut seen: std::collections::HashSet<std::string::String> =
+                                // Phase F.13 Stage 2.2 (2026-05-22):
+                                // structural (Hash-based) dedup, NOT
+                                // Display-based. Display equivalence is
+                                // NOT observational equivalence: e.g.,
+                                // Calculator `-3!` parses as both
+                                // Int::Fact(NumLit(-3)) (display "-3!",
+                                // evals to "error") AND
+                                // Int::Neg(Fact(NumLit(3))) (display
+                                // "-3!", evals to "-6"). Per the
+                                // ambiguity-preservation mandate
+                                // (feedback_never_disambiguate_early.md),
+                                // observationally-distinct ASTs MUST
+                                // reach the evaluator; only bit-
+                                // identical clones may collapse. Hash
+                                // collision probability is ~2⁻⁶⁴ —
+                                // negligible at the alt counts we
+                                // encounter.
+                                let mut seen_hashes: std::collections::HashSet<u64> =
                                     std::collections::HashSet::with_capacity(flat.len());
                                 let mut deduped: Vec<Self> = Vec::with_capacity(flat.len());
                                 for a in flat.into_iter() {
-                                    let display = format!("{}", a);
-                                    if seen.insert(display) {
+                                    use std::hash::{Hash, Hasher};
+                                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                    a.hash(&mut hasher);
+                                    let h = hasher.finish();
+                                    if seen_hashes.insert(h) {
                                         deduped.push(a);
                                     }
                                 }
@@ -683,10 +703,19 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                             progressed.into_iter().map(|i| results[i].clone()).collect()
                         };
 
-                        // Dedup by Display
-                        let mut seen = std::collections::HashSet::new();
+                        // Phase F.13 Stage 2.2 (2026-05-22): Hash-dedup
+                        // (NOT Display-dedup). Display equivalence is
+                        // NOT observational equivalence — see
+                        // from_alternatives commentary above.
+                        let mut seen_hashes: std::collections::HashSet<u64> =
+                            std::collections::HashSet::new();
                         let unique: Vec<Self> = kept.into_iter()
-                            .filter(|a| seen.insert(format!("{}", a)))
+                            .filter(|a| {
+                                use std::hash::{Hash, Hasher};
+                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                a.hash(&mut hasher);
+                                seen_hashes.insert(hasher.finish())
+                            })
                             .collect();
 
                         Self::from_alternatives(unique)
@@ -2982,14 +3011,25 @@ fn generate_language_struct_multi(
                 // observational equivalence, which is the principled
                 // ambiguity-resolution mechanism (Tomita 1986 §6.3 SPPF
                 // Symbol-dedup, lifted from SPPF nodes to user-AST terms).
+                // Phase F.13 Stage 2.2 (2026-05-22): structural
+                // (Hash-based) dedup. Display equivalence is NOT
+                // observational equivalence (see from_alternatives
+                // commentary). `-3!` produces both
+                // CalculatorTermInner::Int(Fact(NumLit(-3))) (evals
+                // "error") and CalculatorTermInner::Int(Neg(Fact(NumLit(3))))
+                // (evals "-6") — both display "-3!" but their ASTs
+                // hash differently and BOTH must reach Ascent.
                 if successes.len() > 1 {
-                    let mut seen: std::collections::HashSet<String> =
+                    let mut seen_hashes: std::collections::HashSet<u64> =
                         std::collections::HashSet::with_capacity(successes.len());
                     let mut deduped: Vec<_> = Vec::with_capacity(successes.len());
                     let mut deduped_weights: Vec<f64> = Vec::with_capacity(success_weights.len());
                     for (s, w) in successes.into_iter().zip(success_weights.into_iter()) {
-                        let display = format!("{}", s);
-                        if seen.insert(display) {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        s.hash(&mut hasher);
+                        let h = hasher.finish();
+                        if seen_hashes.insert(h) {
                             deduped.push(s);
                             deduped_weights.push(w);
                         }
