@@ -2053,27 +2053,9 @@ fn generate_engine_auto_literal_arm(
         // Bare value display for all numeric types (matches main). Suffixes
         // like `n` / `r` / `u32` / `i32` are accepted at parse via optional
         // regex fragments and explicit tokens, not required in display.
-        //
-        // Phase F.13 H12 Display-fix (2026-05-21): negative numeric
-        // literals must self-parenthesize when their `min_bp > 0`
-        // (i.e., they appear as the operand of any precedence-bearing
-        // operator). Without this, atomic-negative literals collide
-        // with prefix-Neg of a positive literal at the Display level:
-        //   `Fact(NumLit(-3))` and `Neg(Fact(NumLit(3)))` both display
-        //   "-3!" — losing semantic distinction across `from_alternatives`'s
-        //   Display-dedup gate (`term_wrapper.rs:322-331`).
-        //
-        // The check `s.starts_with('-')` is type-agnostic: works for
-        // i32, BigInt, Rational, Decimal — any numeric type whose
-        // Display impl produces "-N" for negatives.
         quote! {
             #category::#literal_label(v) => {
-                let s = format!("{}", v);
-                if min_bp > 0 && s.starts_with('-') {
-                    stack.push(DisplayTask::WriteString(format!("({})", s)));
-                } else {
-                    stack.push(DisplayTask::WriteString(s));
-                }
+                stack.push(DisplayTask::WriteString(format!("{}", v)));
             }
         }
     }
