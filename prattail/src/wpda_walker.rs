@@ -9547,50 +9547,13 @@ where
         self.cursor_gss_push_with_kind(cursor, sym, pos, w, kind)
     }
 
-    #[inline(always)]
-    fn cursor_gss_push(
-        &mut self,
-        cursor: &mut BranchCursor<W>,
-        sym: StackSymbolV2,
-        pos: usize,
-        w: W,
-    ) -> crate::gss::GssNodeId {
-        // Stage 3.9 / ι Phase 4 (2026-05-01): if the cursor's `node` is
-        // the sentinel (0) — meaning no GSS frame has been pushed yet —
-        // synthesize a `CategoryEntry(0)` root first. Mirrors the
-        // pre-Phase-4 `apply_action::Push` fallback at the live path.
-        // Stage 3.12 fix (2026-05-02): also synthesize a fresh root when
-        // `cursor.node == GSS_NODE_NONE` (the cursor previously unwound
-        // past the entry frame). Without this, push_symbol would record
-        // a phantom edge to id u32::MAX.
-        let predecessor = if (cursor.node == 0 && self.gss.node(0).is_none())
-            || cursor.node == crate::gss::GSS_NODE_NONE
-        {
-            let root = self.gss.get_or_create_node(WpdaGssNode {
-                pos: cursor.pos,
-                symbol: StackSymbolV2::category_entry(0),
-            });
-            cursor.node = root;
-            if self.deterministic {
-                self.top_node = Some(root);
-            }
-            root
-        } else {
-            cursor.node
-        };
-        let (new_id, edge_id) =
-            self.gss.push_symbol_with_edge_id(predecessor, sym, pos, w);
-        cursor.node = new_id;
-        // Stage 3.12.6 (2026-05-02): record this push on the cursor's
-        // stack-suffix mirror. On the matching pop, the cursor will
-        // follow this exact edge — preserving its calling context even
-        // when GSS dedup makes the new node share with sibling cursors.
-        cursor.incoming_edge_stack.push(edge_id);
-        if self.deterministic {
-            self.top_node = Some(new_id);
-        }
-        new_id
-    }
+    // Phase F.13 Stage 2.3.8 (2026-05-23): non-kinded `cursor_gss_push`
+    // helper DELETED — orphaned by H13. All push sites migrated to
+    // `cursor_gss_push_auto` (auto-derives EdgeKind from SymbolKind) or
+    // `cursor_gss_push_with_kind` (explicit EdgeKind for richer caller
+    // context like CrossCatProjection). The non-kinded variant produced
+    // edges with `EdgeKind::Generic`, which the H13 taxonomy treats as a
+    // fallback for unrecognized push sites. No live call site remained.
 
     // Phase 5.6-tail follow-up (2026-05-12): `cursor_gss_pop` DELETED.
     // The legacy single-predecessor scalar pop was superseded by
@@ -10095,7 +10058,6 @@ where
     // fan-out would require a new caller protocol that was never
     // designed; the orphaned helper is removed.
 
-    #[inline(always)]
     /// Phase F.13 H13 Step 0 (2026-05-21): `cursor_gss_replace_top` variant
     /// that AUTO-DERIVES the `EdgeKind` from the StackSymbolV2's SymbolKind.
     #[inline(always)]
@@ -10150,52 +10112,12 @@ where
         new_id
     }
 
-    fn cursor_gss_replace_top(
-        &mut self,
-        cursor: &mut BranchCursor<W>,
-        sym: StackSymbolV2,
-        pos: usize,
-        w: W,
-    ) -> crate::gss::GssNodeId {
-        // Stage 3.9 / ι Phase 4 (2026-05-01): same sentinel guard as
-        // cursor_gss_push — `replace_top` on a non-existent node is
-        // undefined; synthesize a CategoryEntry(0) root first.
-        // Stage 3.12 fix (2026-05-02): same GSS_NODE_NONE guard.
-        let target = if (cursor.node == 0 && self.gss.node(0).is_none())
-            || cursor.node == crate::gss::GSS_NODE_NONE
-        {
-            let root = self.gss.get_or_create_node(WpdaGssNode {
-                pos: cursor.pos,
-                symbol: StackSymbolV2::category_entry(0),
-            });
-            cursor.node = root;
-            if self.deterministic {
-                self.top_node = Some(root);
-            }
-            root
-        } else {
-            cursor.node
-        };
-        // Stage 3.12.7 (2026-05-02): pass cursor's recorded incoming edge
-        // so replace_top_with_edge_id can find the predecessor that
-        // matches THIS cursor's stack-suffix path, not an arbitrary
-        // first-edge under multi-pred GSS structural sharing.
-        let cursor_top_edge = cursor.incoming_edge_stack.last().copied();
-        let (new_id, edge_id) =
-            self.gss.replace_top_with_edge_id(target, sym, pos, w, cursor_top_edge);
-        cursor.node = new_id;
-        // Stage 3.12.6 (2026-05-02): replace_top conceptually pops the
-        // top frame and pushes a new one with the same predecessor.
-        // Update the cursor's stack: pop the old top edge, push the new.
-        if !cursor.incoming_edge_stack.is_empty() {
-            cursor.incoming_edge_stack.pop();
-        }
-        cursor.incoming_edge_stack.push(edge_id);
-        if self.deterministic {
-            self.top_node = Some(new_id);
-        }
-        new_id
-    }
+    // Phase F.13 Stage 2.3.8 (2026-05-23): non-kinded
+    // `cursor_gss_replace_top` helper DELETED — orphaned by H13.
+    // All replace_top sites migrated to `cursor_gss_replace_top_auto`
+    // (auto-derives EdgeKind from SymbolKind) or
+    // `cursor_gss_replace_top_with_kind` (explicit EdgeKind for caller
+    // context). Symmetric removal to the cursor_gss_push deletion above.
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
