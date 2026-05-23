@@ -384,18 +384,48 @@ pub(crate) fn emit_engine_impl_full(
                                 // mid-stream loops.
                                 match recovery_infra_for(state_cat_src_idx) {
                                     Some(infra) => {
-                                        let view = mettail_prattail::recovery_dispatch::WalkerRuntimeView::new(
-                                            _gss,
-                                            frontier_top,
-                                            *pos,
-                                            state_cat_src_idx,
-                                            *cur_bp,
-                                        );
-                                        mettail_prattail::recovery_dispatch::emit_recovery_fork::<__DwW>(
-                                            view,
-                                            tokens,
-                                            infra,
-                                        )
+                                        // Phase F.13 Task #117 (2026-05-23):
+                                        // try cohort-cached path first via
+                                        // the walker's pinned TLS pointer.
+                                        // Falls through to the uncached path
+                                        // when the cache pointer is null
+                                        // (engine.step called outside a
+                                        // walker parse loop).
+                                        let cached: Option<mettail_prattail::wpda_walker::WpdaStepAction<__DwW>> =
+                                            mettail_prattail::recovery_cohort::with_active_cache_typed::<__DwW, _, _>(
+                                                |cache| {
+                                                    let view = mettail_prattail::recovery_dispatch::WalkerRuntimeView::new(
+                                                        _gss,
+                                                        frontier_top,
+                                                        *pos,
+                                                        state_cat_src_idx,
+                                                        *cur_bp,
+                                                    );
+                                                    mettail_prattail::recovery_dispatch::emit_recovery_fork_cached::<__DwW>(
+                                                        view,
+                                                        tokens,
+                                                        infra,
+                                                        cache,
+                                                    )
+                                                },
+                                            );
+                                        match cached {
+                                            Some(action) => action,
+                                            None => {
+                                                let view = mettail_prattail::recovery_dispatch::WalkerRuntimeView::new(
+                                                    _gss,
+                                                    frontier_top,
+                                                    *pos,
+                                                    state_cat_src_idx,
+                                                    *cur_bp,
+                                                );
+                                                mettail_prattail::recovery_dispatch::emit_recovery_fork::<__DwW>(
+                                                    view,
+                                                    tokens,
+                                                    infra,
+                                                )
+                                            }
+                                        }
                                     }
                                     None => WpdaStepAction::Error(format!(
                                         "no recovery infra for category src_idx {} at pos {} — \

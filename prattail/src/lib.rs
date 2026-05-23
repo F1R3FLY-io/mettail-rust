@@ -66,6 +66,12 @@ pub mod walker_stats;
 /// same `(pos, source_src_idx, inner_cur_bp)` key. Each cohort member
 /// retains its own return frame; only the sub-parse work is shared.
 pub mod dispatch_cohort;
+/// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
+/// Synchronous analogue of `dispatch_cohort` for the
+/// `emit_recovery_fork` path — shares the WFST-produced
+/// `Vec<ForkBranch<W>>` across cohort members that hit the same
+/// `(pos, state_cat_src_idx, cur_bp)` recovery dead-end.
+pub mod recovery_cohort;
 // Stage 10.6 (2026-05-05): `pub mod trampoline` DELETED (file deleted, 7,351 LoC).
 // The Walker (WPDS) is the surviving parser backend. All recovery infrastructure
 // (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,

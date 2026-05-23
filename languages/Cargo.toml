@@ -192,3 +192,8 @@ harness = false
 [[bench]]
 name = "recovery_bench"
 harness = false
+
+[[bench]]
+name = "recovery_cohort_bench"
+harness = false
+path = "benches/recovery_cohort_bench.rs"

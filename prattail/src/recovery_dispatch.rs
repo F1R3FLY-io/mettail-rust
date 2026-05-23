@@ -313,6 +313,93 @@ where
     }
 }
 
+/// Phase F.13 Task #117 (2026-05-23): cohort-shared variant of
+/// `emit_recovery_fork`.
+///
+/// On a cache hit, reuses the prior cohort member's branches without
+/// re-running the WFST search; on a miss, computes via
+/// `emit_recovery_fork` then inserts into the cache.
+///
+/// **Soundness:** the recovery work depends ONLY on inputs that are
+/// walker-global (not per-cursor) at the dispatch site —
+/// `(pos, state_cat_src_idx, cur_bp)` (the cache key) plus
+/// `tokens` / `runtime_view.gss.frontier_size()` / `runtime_view.frontier_top`
+/// (all walker-globals within a single parse step). Cohort members
+/// differ only in their per-cursor `recovery_depth` and
+/// `visited_recovery` sets, both gated by the existing
+/// `apply_action_to_cursor::Fork` arm AFTER the recovery fork is
+/// constructed. See `recovery_cohort` module docs for the full
+/// equivalence-class argument.
+pub fn emit_recovery_fork_cached<W>(
+    runtime_view: WalkerRuntimeView<'_, W>,
+    tokens: &dyn WpdaTokenSource,
+    infra: &RecoveryInfra,
+    cache: &mut crate::recovery_cohort::RecoveryCohortCache<W>,
+) -> WpdaStepAction<W>
+where
+    W: SemiringRef + Clone + From<LexicographicWeight>,
+{
+    // Mirror the inputs `build_recovery_context` and the WFST search
+    // consume so the cache key matches `emit_recovery_fork`'s
+    // equivalence-class boundary exactly.
+    let frame_kind = derive_frame_kind(runtime_view.frontier_top);
+    let frame_kind_disc = frame_kind_discriminant(&frame_kind);
+    let frontier_size = runtime_view.gss.frontier_size();
+    let key = crate::recovery_cohort::RecoveryDispatchKey::new(
+        runtime_view.pos,
+        runtime_view.state_cat_src_idx,
+        runtime_view.cur_bp,
+        frame_kind_disc,
+        frontier_size,
+    );
+    use crate::recovery_cohort::RecoveryCacheLookup;
+    match cache.lookup(&key) {
+        RecoveryCacheLookup::Hit { branches } => WpdaStepAction::Fork {
+            branches,
+            consume_trigger: false,
+        },
+        RecoveryCacheLookup::ErrorHit { msg } => WpdaStepAction::Error(msg),
+        RecoveryCacheLookup::Miss => {
+            let result = emit_recovery_fork(runtime_view, tokens, infra);
+            match &result {
+                WpdaStepAction::Fork { branches, .. } => {
+                    cache.insert(key, branches.clone(), None);
+                }
+                WpdaStepAction::Error(msg) => {
+                    cache.insert(key, Vec::new(), Some(msg.clone()));
+                }
+                _ => {
+                    // emit_recovery_fork only returns Fork|Error per its
+                    // documented contract; this arm is unreachable. We
+                    // deliberately do NOT insert on the unexpected
+                    // result so subsequent cohort members re-attempt.
+                }
+            }
+            result
+        }
+    }
+}
+
+/// Phase F.13 Task #117 (2026-05-23): map a `FrameKind` enum variant
+/// to a stable u8 discriminant for use as a `RecoveryDispatchKey` key
+/// component. Encodes the per-cursor frontier-frame distinction that
+/// recovery context propagates into the WFST search.
+fn frame_kind_discriminant(kind: &crate::recovery::FrameKind) -> u8 {
+    use crate::recovery::FrameKind;
+    match kind {
+        FrameKind::Prefix => 0,
+        FrameKind::InfixRHS => 1,
+        FrameKind::Postfix => 2,
+        FrameKind::Collection => 3,
+        FrameKind::Group => 4,
+        FrameKind::Mixfix => 5,
+        FrameKind::Lambda => 6,
+        FrameKind::Dollar => 7,
+        FrameKind::CastWrap => 8,
+        FrameKind::Other => 9,
+    }
+}
+
 /// Map a `RepairAction` to a `RepairAction` discriminator (mirrors
 /// `RecoveryEvent::action_kind` encoding).
 fn action_kind_discriminator(a: &RepairAction) -> u8 {

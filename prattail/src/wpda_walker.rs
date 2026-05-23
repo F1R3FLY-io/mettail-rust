@@ -634,6 +634,15 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// revived cursors per key.
     pending_cohort_drain_keys:
         rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort
+    /// cache. Memoizes `emit_recovery_fork`'s `Vec<ForkBranch<W>>`
+    /// across cohort members at the same
+    /// `(pos, state_cat_src_idx, cur_bp)` dispatch site within a
+    /// single parse. The walker pins a pointer to this field in a
+    /// thread-local via `recovery_cohort::with_active_cache` around
+    /// each `engine.step` call so the codegen-emitted
+    /// `emit_recovery_fork_cached` can read it.
+    recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache<W>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2349,6 +2358,7 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
         }
     }
 
@@ -2416,6 +2426,7 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
         }
     }
 
@@ -2478,6 +2489,7 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
         }
     }
 
@@ -2533,6 +2545,10 @@ where
         // SPPF arena and would be unsound to reuse across resets.
         self.dispatch_cohort_cache.clear();
         self.pending_cohort_drain_keys.clear();
+        // Phase F.13 Task #117 (2026-05-23): recovery cache is per-
+        // parse — `tokens` and `infra.token_id_map` keying are
+        // parse-local. Clear at reset boundary.
+        self.recovery_cohort_cache.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -3087,6 +3103,15 @@ where
     where
         W: 'static + std::fmt::Debug,
     {
+        // Phase F.13 Task #117 (2026-05-23): pin recovery cache pointer
+        // for the duration of the parse loop so the codegen-emitted
+        // emit_recovery_fork_cached can find it via TLS without
+        // changing the engine.step ABI.
+        let recovery_cache_ptr = &mut self.recovery_cohort_cache
+            as *mut crate::recovery_cohort::RecoveryCohortCache<W>
+            as *mut ();
+        let _recovery_guard =
+            crate::recovery_cohort::RecoveryCachePinGuard::pin(recovery_cache_ptr);
         for _ in 0..max_steps {
             // T4 SIGUSR1 hang-dump (2026-05-12): publish a fresh snapshot
             // so an out-of-band SIGUSR1 / watchdog dump sees current walker
@@ -10709,6 +10734,14 @@ where
         C: WalkerConsumer<W> + CursorObserver<W>,
         W: 'static + std::fmt::Debug,
     {
+        // Phase F.13 Task #117 (2026-05-23): pin recovery cache pointer
+        // for the observed-parse loop too. Mirrors the pin in
+        // run_to_end_of_input above.
+        let recovery_cache_ptr = &mut self.recovery_cohort_cache
+            as *mut crate::recovery_cohort::RecoveryCohortCache<W>
+            as *mut ();
+        let _recovery_guard =
+            crate::recovery_cohort::RecoveryCachePinGuard::pin(recovery_cache_ptr);
         for _ in 0..max_steps {
             // T4 SIGUSR1 hang-dump (2026-05-12): publish per-step snapshot
             // for SIGUSR1 / watchdog dumps. No-op when feature is off.
