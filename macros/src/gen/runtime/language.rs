@@ -701,7 +701,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                                 let mut deduped: Vec<Self> = Vec::with_capacity(flat.len());
                                 for a in flat.into_iter() {
                                     use std::hash::Hasher;
-                                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                    let mut hasher = rustc_hash::FxHasher::default();
                                     a.semantic_hash(&mut hasher);
                                     let h = hasher.finish();
                                     if seen_hashes.insert(h) {
@@ -765,7 +765,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                         let unique: Vec<Self> = kept.into_iter()
                             .filter(|a| {
                                 use std::hash::Hasher;
-                                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                                let mut hasher = rustc_hash::FxHasher::default();
                                 a.semantic_hash(&mut hasher);
                                 seen_hashes.insert(hasher.finish())
                             })
@@ -3079,7 +3079,7 @@ fn generate_language_struct_multi(
                     let mut deduped_weights: Vec<f64> = Vec::with_capacity(success_weights.len());
                     for (s, w) in successes.into_iter().zip(success_weights.into_iter()) {
                         use std::hash::Hasher;
-                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        let mut hasher = rustc_hash::FxHasher::default();
                         s.semantic_hash(&mut hasher);
                         let h = hasher.finish();
                         if seen_hashes.insert(h) {
