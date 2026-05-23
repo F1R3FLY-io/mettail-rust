@@ -151,9 +151,24 @@ fn generate_semantic_engine(
             let cat_str = cat.to_string().to_lowercase();
             let helper_fn = format_ident!("semantic_hash_handle_{}", cat_str);
             let variants = collect_category_variants(cat, language);
+            // Phase F.13 Stage 2.3.6 (2026-05-23): per-variant indices
+            // for per-node u8 discriminator. Reduces semantic_hash byte
+            // cost from ~5 bytes/node (tag + label.as_bytes()) to 1
+            // byte/node (variant_idx), matching derive(Hash). See
+            // [[f13-stage-2-3-semantic-hash]] for the chain_10000
+            // +46 % slowdown that motivated this optimization.
+            assert!(
+                variants.len() <= 255,
+                "Category {} has {} variants > 255; semantic_hash variant_idx is u8. \
+                 Bump to u16 if a real language hits this.",
+                cat, variants.len(),
+            );
             let variant_arms: Vec<TokenStream> = variants
                 .iter()
-                .map(|v| generate_semantic_variant_arm(cat, v, transparent_labels, language))
+                .enumerate()
+                .map(|(idx, v)| {
+                    generate_semantic_variant_arm(cat, idx as u8, v, transparent_labels, language)
+                })
                 .collect();
             quote! {
                 #[inline(never)]
@@ -220,30 +235,28 @@ fn generate_semantic_engine(
 /// variant tag, delegating directly to the inner child.
 fn generate_semantic_variant_arm(
     category: &Ident,
+    variant_idx: u8,
     variant: &VariantKind,
     transparent_labels: &HashSet<String>,
     language: &LanguageDef,
 ) -> TokenStream {
+    // Phase F.13 Stage 2.3.6 (2026-05-23): per-variant u8 discriminator
+    // replaces (kind_tag + label.as_bytes()). Unique within category;
+    // combined with the inner-enum category tag, globally unique. Matches
+    // derive(Hash) per-node cost (1 byte) instead of 4-12 bytes.
     match variant {
         VariantKind::Nullary { label } => {
-            // Nullary: emit label-name bytes as the discriminator (so
-            // distinct nullary labels like Int::Err vs Int::CastErrInt
-            // hash distinctly — they evaluate to distinct error sentinels).
-            let label_str = label.to_string();
             quote! {
                 #category::#label => {
-                    state.write_u8(3u8);  // tag: Nullary
-                    std::hash::Hasher::write(state, #label_str.as_bytes());
+                    state.write_u8(#variant_idx);
                 }
             }
         }
 
         VariantKind::Literal { label } => {
-            // Literal: emit tag + payload. Literals are NEVER transparent
-            // (they're leaf values that the evaluator observes).
             quote! {
                 #category::#label(v) => {
-                    state.write_u8(2u8);  // tag: Literal
+                    state.write_u8(#variant_idx);
                     std::hash::Hash::hash(v, state);
                 }
             }
@@ -252,40 +265,38 @@ fn generate_semantic_variant_arm(
         VariantKind::Var { label } => {
             quote! {
                 #category::#label(v) => {
-                    state.write_u8(1u8);  // tag: Var
+                    state.write_u8(#variant_idx);
                     std::hash::Hash::hash(v, state);
                 }
             }
         }
 
         VariantKind::Regular { label, fields } => {
-            generate_semantic_regular_arm(category, label, fields, transparent_labels, language)
+            generate_semantic_regular_arm(category, variant_idx, label, fields, transparent_labels, language)
         }
 
         VariantKind::Collection { label, .. } => {
-            // Collections: emit tag + delegate to collection's Hash (its
-            // elements may themselves be category types — those would use
-            // standard Hash, not semantic_hash. This is a known limitation;
-            // semantic equivalence inside collections is approximated by
-            // structural equivalence. Future refinement could add a
-            // per-element semantic_hash visitor for category-typed
-            // collections).
-            let label_str = label.to_string();
+            // Collections: emit variant_idx + delegate to collection's
+            // Hash (its elements may themselves be category types — those
+            // would use standard Hash, not semantic_hash. This is a known
+            // limitation; semantic equivalence inside collections is
+            // approximated by structural equivalence. Future refinement
+            // could add a per-element semantic_hash visitor for
+            // category-typed collections).
             quote! {
                 #category::#label(coll) => {
-                    state.write_u8(5u8);  // tag: Collection
-                    std::hash::Hasher::write(state, #label_str.as_bytes());
+                    state.write_u8(#variant_idx);
                     std::hash::Hash::hash(coll, state);
                 }
             }
         }
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-            generate_semantic_binder_arm(category, label, pre_scope_fields, body_cat)
+            generate_semantic_binder_arm(category, variant_idx, label, pre_scope_fields, body_cat)
         }
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            generate_semantic_multi_binder_arm(category, label, pre_scope_fields, body_cat)
+            generate_semantic_multi_binder_arm(category, variant_idx, label, pre_scope_fields, body_cat)
         }
     }
 }
@@ -299,6 +310,7 @@ fn generate_semantic_variant_arm(
 /// cast permutations to a canonical core.
 fn generate_semantic_regular_arm(
     category: &Ident,
+    variant_idx: u8,
     label: &Ident,
     fields: &[FieldInfo],
     transparent_labels: &HashSet<String>,
@@ -310,7 +322,7 @@ fn generate_semantic_regular_arm(
     if is_transparent {
         // Transparent: single Box<ChildCat> field by definition (verified
         // by classify_simple_projection_shape). Push the child as a
-        // SemanticHashTask. NO discriminant write, NO variant tag.
+        // SemanticHashTask. NO discriminant write.
         // The inner term's semantic_hash is written by the next iteration
         // of semantic_hash_iterative.
         //
@@ -328,11 +340,9 @@ fn generate_semantic_regular_arm(
             // Shouldn't happen for transparent rules (would fail
             // classify_simple_projection_shape), but be defensive.
             // Fall back to non-transparent behavior.
-            let task_variant = format_ident!("SemHash{}", field.category);
             quote! {
                 #category::#label(inner) => {
-                    state.write_u8(4u8);
-                    std::hash::Hasher::write(state, #label_str.as_bytes());
+                    state.write_u8(#variant_idx);
                     std::hash::Hash::hash(inner, state);
                 }
             }
@@ -347,10 +357,9 @@ fn generate_semantic_regular_arm(
             }
         }
     } else {
-        // Non-transparent: emit discriminant (Regular tag) + label bytes
-        // + recurse on fields. Follows the iterative_hash pattern with
-        // eager Box<T> hashing when before a collection field, stack
-        // push for trailing Box<T>.
+        // Non-transparent: emit u8 variant_idx + recurse on fields.
+        // Follows the iterative_hash pattern with eager Box<T> hashing
+        // when before a collection field, stack push for trailing Box<T>.
         let field_names: Vec<Ident> =
             (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
 
@@ -359,10 +368,9 @@ fn generate_semantic_regular_arm(
 
         let mut final_stmts: Vec<TokenStream> = Vec::new();
 
-        // Emit discriminant + label bytes ONCE at the top of the arm.
+        // Emit single-byte variant discriminator ONCE at the top.
         final_stmts.push(quote! {
-            state.write_u8(4u8);  // tag: Regular
-            std::hash::Hasher::write(state, #label_str.as_bytes());
+            state.write_u8(#variant_idx);
         });
 
         // Fields up to and including last collection: hash eagerly.
@@ -468,21 +476,21 @@ fn generate_semantic_regular_arm(
 /// Binders are never transparent.
 fn generate_semantic_binder_arm(
     category: &Ident,
+    variant_idx: u8,
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
 ) -> TokenStream {
-    let label_str = label.to_string();
+    let _ = label; // label_str no longer hashed; idx is the discriminator
     let total_fields = pre_scope_fields.len() + 1;
     let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
     let scope_name = &field_names[total_fields - 1];
 
     let mut hash_stmts: Vec<TokenStream> = Vec::new();
 
-    // Discriminant + label bytes.
+    // Per-variant u8 discriminator (replaces tag + label.as_bytes()).
     hash_stmts.push(quote! {
-        state.write_u8(6u8);  // tag: Binder
-        std::hash::Hasher::write(state, #label_str.as_bytes());
+        state.write_u8(#variant_idx);
     });
 
     // Hash pre-scope fields eagerly via re-entrant semantic_hash.
@@ -523,11 +531,12 @@ fn generate_semantic_binder_arm(
 /// Generate semantic_hash arm for a MultiBinder variant.
 fn generate_semantic_multi_binder_arm(
     category: &Ident,
+    variant_idx: u8,
     label: &Ident,
     pre_scope_fields: &[FieldInfo],
     body_cat: &Ident,
 ) -> TokenStream {
-    let label_str = label.to_string();
+    let _ = label; // label_str no longer hashed; idx is the discriminator
     let total_fields = pre_scope_fields.len() + 1;
     let field_names: Vec<Ident> = (0..total_fields).map(|i| format_ident!("f{}", i)).collect();
     let scope_name = &field_names[total_fields - 1];
@@ -535,8 +544,7 @@ fn generate_semantic_multi_binder_arm(
     let mut hash_stmts: Vec<TokenStream> = Vec::new();
 
     hash_stmts.push(quote! {
-        state.write_u8(7u8);  // tag: MultiBinder
-        std::hash::Hasher::write(state, #label_str.as_bytes());
+        state.write_u8(#variant_idx);
     });
 
     for (i, field) in pre_scope_fields.iter().enumerate() {
