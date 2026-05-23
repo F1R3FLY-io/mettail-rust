@@ -19,4 +19,5 @@ pub mod iterative_hash;
 pub mod match_pattern;
 pub mod normalize;
 pub mod parse_alt_filter;
+pub mod semantic_hash;
 pub mod subst;

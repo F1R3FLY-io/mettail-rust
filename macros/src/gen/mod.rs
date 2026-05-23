@@ -70,6 +70,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use term_ops::iterative_drop::generate_iterative_drop;
     use term_ops::iterative_hash::generate_iterative_hash;
     use term_ops::match_pattern::generate_match_pattern;
+    use term_ops::semantic_hash::generate_semantic_hash;
     use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
     use term_ops::subst::{generate_env_substitution, generate_substitution};
     use types::enums::generate_ast_enums;
@@ -155,6 +156,11 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         "iterative_hash",
         generate_iterative_hash(language),
     );
+    let semantic_hash_impl = spill_and_include(
+        &lang_name,
+        "semantic_hash",
+        generate_semantic_hash(language),
+    );
     let guard_codegen_impl = spill_and_include(
         &lang_name,
         "guard_codegen",
@@ -216,6 +222,8 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         #iterative_drop_impl
 
         #iterative_hash_impl
+
+        #semantic_hash_impl
 
         #guard_codegen_impl
 
