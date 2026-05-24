@@ -7263,16 +7263,40 @@ where
                     }
                     let a = &self.branch_cursors[idxs[i]];
                     let b = &self.branch_cursors[idxs[j]];
+                    // ── Original 4 axes ────────────────────────────────
                     let state_diff = a.inner_state != b.inner_state;
                     let node_diff = a.node != b.node;
                     let a_edge = a.incoming_edge_stack.last().copied();
                     let b_edge = b.incoming_edge_stack.last().copied();
                     let edge_diff = a_edge != b_edge;
                     let depth_diff = a.collection_stack_depth != b.collection_stack_depth;
+                    // ── Phase F.13 Stage 3.A: 6 newer axes ─────────────
+                    let cohort_origin_diff = a.cohort_origin != b.cohort_origin;
+                    let a_sppf_top = a.sppf_stack.last().copied();
+                    let b_sppf_top = b.sppf_stack.last().copied();
+                    let sppf_top_diff = a_sppf_top != b_sppf_top;
+                    // LexProvenance trait methods (default impl returns 0
+                    // for non-Lex weights). Inherited via the walker's
+                    // W: ... + LexProvenance bound at line ~2317.
+                    let lex_alt_idx_diff =
+                        a.weight.lex_alt_idx() != b.weight.lex_alt_idx();
+                    let weight_src_idx_diff =
+                        a.weight.lex_src_idx() != b.weight.lex_src_idx();
+                    let weight_rule_idx_diff =
+                        a.weight.lex_rule_idx() != b.weight.lex_rule_idx();
+                    let a_lex_stamp = a.lex_fork_path.last().copied();
+                    let b_lex_stamp = b.lex_fork_path.last().copied();
+                    let lex_fork_stamp_diff = a_lex_stamp != b_lex_stamp;
                     let diff_count = (state_diff as u8)
                         + (node_diff as u8)
                         + (edge_diff as u8)
-                        + (depth_diff as u8);
+                        + (depth_diff as u8)
+                        + (cohort_origin_diff as u8)
+                        + (sppf_top_diff as u8)
+                        + (lex_alt_idx_diff as u8)
+                        + (weight_src_idx_diff as u8)
+                        + (weight_rule_idx_diff as u8)
+                        + (lex_fork_stamp_diff as u8);
                     self.stats.merge_miss_pairs_considered_total =
                         self.stats.merge_miss_pairs_considered_total.saturating_add(1);
                     if diff_count == 0 {
@@ -7280,6 +7304,26 @@ where
                     } else if diff_count >= 2 {
                         self.stats.merge_miss_multi_diff_total =
                             self.stats.merge_miss_multi_diff_total.saturating_add(1);
+                        // Per-axis "participation in multi-diff" tallies.
+                        let bools = [
+                            state_diff,
+                            node_diff,
+                            edge_diff,
+                            depth_diff,
+                            cohort_origin_diff,
+                            sppf_top_diff,
+                            lex_alt_idx_diff,
+                            weight_src_idx_diff,
+                            weight_rule_idx_diff,
+                            lex_fork_stamp_diff,
+                        ];
+                        for (k, &b_diff) in bools.iter().enumerate() {
+                            if b_diff {
+                                self.stats.merge_miss_multi_participation[k] =
+                                    self.stats.merge_miss_multi_participation[k]
+                                        .saturating_add(1);
+                            }
+                        }
                     } else if state_diff {
                         self.stats.merge_miss_state_diff_total =
                             self.stats.merge_miss_state_diff_total.saturating_add(1);
@@ -7292,6 +7336,24 @@ where
                     } else if depth_diff {
                         self.stats.merge_miss_depth_diff_total =
                             self.stats.merge_miss_depth_diff_total.saturating_add(1);
+                    } else if cohort_origin_diff {
+                        self.stats.merge_miss_cohort_origin_diff_total =
+                            self.stats.merge_miss_cohort_origin_diff_total.saturating_add(1);
+                    } else if sppf_top_diff {
+                        self.stats.merge_miss_sppf_top_diff_total =
+                            self.stats.merge_miss_sppf_top_diff_total.saturating_add(1);
+                    } else if lex_alt_idx_diff {
+                        self.stats.merge_miss_lex_alt_idx_diff_total =
+                            self.stats.merge_miss_lex_alt_idx_diff_total.saturating_add(1);
+                    } else if weight_src_idx_diff {
+                        self.stats.merge_miss_weight_src_idx_diff_total =
+                            self.stats.merge_miss_weight_src_idx_diff_total.saturating_add(1);
+                    } else if weight_rule_idx_diff {
+                        self.stats.merge_miss_weight_rule_idx_diff_total =
+                            self.stats.merge_miss_weight_rule_idx_diff_total.saturating_add(1);
+                    } else if lex_fork_stamp_diff {
+                        self.stats.merge_miss_lex_fork_stamp_diff_total =
+                            self.stats.merge_miss_lex_fork_stamp_diff_total.saturating_add(1);
                     }
                     // Phase F.13 H13 Step 0: check if the pair would
                     // merge under EdgeKind-relaxed equivalence. Compute
@@ -7317,6 +7379,46 @@ where
                         if kinds_match {
                             self.stats.merge_miss_pairs_edge_kind_equivalent =
                                 self.stats.merge_miss_pairs_edge_kind_equivalent.saturating_add(1);
+                        }
+                    }
+                    // Phase F.13 Stage 3.A Lead #1 gate: (pred,
+                    // EdgeKind) equivalence. Sole-cause means only
+                    // edge_diff is true; pair would merge if we replaced
+                    // GssEdgeId identity with (pred_node, EdgeKind).
+                    if !state_diff
+                        && !node_diff
+                        && !depth_diff
+                        && !cohort_origin_diff
+                        && !sppf_top_diff
+                        && !lex_alt_idx_diff
+                        && !weight_src_idx_diff
+                        && !weight_rule_idx_diff
+                        && !lex_fork_stamp_diff
+                        && edge_diff
+                    {
+                        if let (Some(ea), Some(eb)) = (a_edge, b_edge) {
+                            let a_pred = self.gss.edge_target(ea);
+                            let b_pred = self.gss.edge_target(eb);
+                            let a_kind = self.gss.edge_kind(ea);
+                            let b_kind = self.gss.edge_kind(eb);
+                            // Generic-kinded edges keep identity (matches
+                            // Stage B's Identity arm for Generic); other
+                            // kinds match by (pred, kind) projection.
+                            let is_generic_a = matches!(
+                                a_kind, Some(crate::gss::EdgeKind::Generic));
+                            let is_generic_b = matches!(
+                                b_kind, Some(crate::gss::EdgeKind::Generic));
+                            if !is_generic_a && !is_generic_b
+                                && a_pred == b_pred
+                                && a_kind == b_kind
+                                && a_pred.is_some()
+                            {
+                                self.stats
+                                    .merge_miss_pairs_pred_edge_class_equivalent =
+                                    self.stats
+                                        .merge_miss_pairs_pred_edge_class_equivalent
+                                        .saturating_add(1);
+                            }
                         }
                     }
                     pairs_remaining -= 1;

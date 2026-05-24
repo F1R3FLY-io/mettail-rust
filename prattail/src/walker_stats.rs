@@ -167,6 +167,48 @@ pub struct WalkerStats {
     /// is ≥ 60% of `merge_miss_pairs_considered_total`, H13 Step 2
     /// (actual merge relaxation) is justified. Otherwise H13 is REJECTED.
     pub merge_miss_pairs_edge_kind_equivalent: u64,
+
+    // ── F.13 Stage 3.A (2026-05-23): 7-axis sole-cause attribution ──
+    // The legacy `merge_miss_*_diff_total` counters above cover only the
+    // original 4 ConfigKey axes (state, node, edge, depth). ConfigKey
+    // has grown to 11 fields; the 7 newer ones (cohort_origin, sppf_top,
+    // lex_alt_idx, weight_src_idx, weight_rule_idx, lex_fork_stamp) all
+    // landed in `merge_miss_multi_diff_total` regardless of which truly
+    // differs. These 7 sole-cause counters partition the previous
+    // catch-all and let us rank the actual dominant under-merging axis.
+    /// Pairs that differ on ONLY `cohort_origin`.
+    pub merge_miss_cohort_origin_diff_total: u64,
+    /// Pairs that differ on ONLY `sppf_top` (= `sppf_stack.last()`).
+    pub merge_miss_sppf_top_diff_total: u64,
+    /// Pairs that differ on ONLY `weight.lex_alt_idx`.
+    pub merge_miss_lex_alt_idx_diff_total: u64,
+    /// Pairs that differ on ONLY `weight.lex_src_idx`.
+    pub merge_miss_weight_src_idx_diff_total: u64,
+    /// Pairs that differ on ONLY `weight.lex_rule_idx`.
+    pub merge_miss_weight_rule_idx_diff_total: u64,
+    /// Pairs that differ on ONLY `lex_fork_path.last()` (= LexForkStamp).
+    pub merge_miss_lex_fork_stamp_diff_total: u64,
+
+    // ── F.13 Stage 3.A: Lead #1 `(pred, EdgeKind)`-equivalence ─────────
+    /// Pairs whose `incoming_edge_stack.last()` differs by `GssEdgeId`
+    /// AND on no other axis, but whose underlying
+    /// `(predecessor_node, EdgeKind)` projection MATCHES. This is the
+    /// would-merge count for Lead #1 (EdgeKind-class incoming_edge).
+    /// Strictly finer than `merge_miss_pairs_edge_kind_equivalent`
+    /// (H13's kind-only) because it preserves predecessor-frame
+    /// identity. If this ratio over `merge_miss_pairs_considered_total`
+    /// is ≥ 40 %, Lead #1 is justified.
+    pub merge_miss_pairs_pred_edge_class_equivalent: u64,
+
+    // ── F.13 Stage 3.A: per-axis multi-diff participation ──────────────
+    /// Of the pairs in `merge_miss_multi_diff_total`, how many had each
+    /// axis as ONE OF the differing fields. Indexed as: 0=state,
+    /// 1=node, 2=edge, 3=collection_depth, 4=cohort_origin, 5=sppf_top,
+    /// 6=lex_alt_idx, 7=weight_src_idx, 8=weight_rule_idx,
+    /// 9=lex_fork_stamp. Sums over the 10 indices may exceed
+    /// `merge_miss_multi_diff_total` (each multi-diff pair contributes
+    /// to multiple indices).
+    pub merge_miss_multi_participation: [u64; 10],
 }
 
 impl WalkerStats {
@@ -285,6 +327,52 @@ impl fmt::Display for WalkerStats {
                 "  H13_diagnostic: would_merge_under_edge_kind={} ({:.1}%) — gate ≥ 60% to proceed to Step 2",
                 self.merge_miss_pairs_edge_kind_equivalent,
                 100.0 * self.merge_miss_pairs_edge_kind_equivalent as f64 / denom,
+            )?;
+        }
+        // F.13 Stage 3.A diagnostic: 7-axis sole-cause + Lead #1 gate
+        if self.merge_miss_pairs_considered_total > 0 {
+            let denom = self.merge_miss_pairs_considered_total as f64;
+            writeln!(
+                f,
+                "  merge_miss_extended_sole: cohort_origin={} ({:.1}%) sppf_top={} ({:.1}%) lex_alt_idx={} ({:.1}%) weight_src_idx={} ({:.1}%) weight_rule_idx={} ({:.1}%) lex_fork_stamp={} ({:.1}%)",
+                self.merge_miss_cohort_origin_diff_total,
+                100.0 * self.merge_miss_cohort_origin_diff_total as f64 / denom,
+                self.merge_miss_sppf_top_diff_total,
+                100.0 * self.merge_miss_sppf_top_diff_total as f64 / denom,
+                self.merge_miss_lex_alt_idx_diff_total,
+                100.0 * self.merge_miss_lex_alt_idx_diff_total as f64 / denom,
+                self.merge_miss_weight_src_idx_diff_total,
+                100.0 * self.merge_miss_weight_src_idx_diff_total as f64 / denom,
+                self.merge_miss_weight_rule_idx_diff_total,
+                100.0 * self.merge_miss_weight_rule_idx_diff_total as f64 / denom,
+                self.merge_miss_lex_fork_stamp_diff_total,
+                100.0 * self.merge_miss_lex_fork_stamp_diff_total as f64 / denom,
+            )?;
+            if self.merge_miss_multi_diff_total > 0 {
+                let names = [
+                    "state", "node", "edge", "depth", "cohort_origin",
+                    "sppf_top", "lex_alt_idx", "weight_src_idx",
+                    "weight_rule_idx", "lex_fork_stamp",
+                ];
+                write!(f, "  merge_miss_multi_participation:")?;
+                for (i, n) in names.iter().enumerate() {
+                    let c = self.merge_miss_multi_participation[i];
+                    let multi_denom = self.merge_miss_multi_diff_total as f64;
+                    write!(
+                        f,
+                        " {}={} ({:.1}%)",
+                        n,
+                        c,
+                        100.0 * c as f64 / multi_denom,
+                    )?;
+                }
+                writeln!(f)?;
+            }
+            writeln!(
+                f,
+                "  Lead1_gate: pred_edge_class_equivalent={} ({:.1}%) — Stage A gate ≥ 40% to ship Lead #1 (incoming_edge → (pred, EdgeKind))",
+                self.merge_miss_pairs_pred_edge_class_equivalent,
+                100.0 * self.merge_miss_pairs_pred_edge_class_equivalent as f64 / denom,
             )?;
         }
         Ok(())
