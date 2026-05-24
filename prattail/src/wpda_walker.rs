@@ -55,9 +55,17 @@ use std::any::Any;
 // Phase 5.7 (2026-05-12): persistent OrdSet for cursor visited sets.
 // Replaces BTreeSet for `visited_recovery` and `visited_dispatch` —
 // these sets are cloned at every Fork (and at seed/Drop reset). The
-// im::OrdSet's Arc-based structural sharing makes clone O(1) instead
-// of O(N), aligning with Phase 5's persistent-builder cursor model.
-use im::OrdSet;
+// Phase F.13 Task #136-followup (2026-05-23): replaced `im::OrdSet`
+// with `rustc_hash::FxHashSet` for visited_dispatch + visited_recovery.
+// im::OrdSet's path-copy semantics on `.insert()` under Arc-CoW triggers
+// a full BTree-spine memcpy per mutation when refcount > 1; on a
+// 10000-deep chain with O(N) Forks per step that compounded to ~31 GB
+// of accumulated path-copy state (see
+// memory/2026-05-23-nextest-hangs-diagnosis.md). FxHashSet pays O(N)
+// per Fork's clone (vs O(1) Arc bump) but O(1) per insert (vs O(log N)
+// path-copy chunks), and the constant factor is dramatically smaller
+// — net win in this access pattern.
+use rustc_hash::FxHashSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -1159,7 +1167,7 @@ pub struct BranchCursor<W: SemiringRef> {
     /// Delete at pos=5 → Insert at pos=5 → ...). Bounded in size by
     /// `recovery_depth` (each insert here corresponds to a depth
     /// increment).
-    pub visited_recovery: OrdSet<(usize, u16, u8)>,
+    pub visited_recovery: FxHashSet<(usize, u16, u8)>,
     /// B12 / Candidate E (2026-05-07): per-cursor configurations at
     /// which a CROSS-CAT-PROJECTION Fork has already fired on this
     /// cursor's path. Each entry is `(pos, state_cat_src_idx, cur_bp)`
@@ -1176,7 +1184,7 @@ pub struct BranchCursor<W: SemiringRef> {
     /// 2010). Mirrors `visited_recovery` propagation: cloned to each
     /// child on Fork, inserted with the parent's dispatch config
     /// after a projection Fork emission.
-    pub visited_dispatch: OrdSet<(usize, u16, u8)>,
+    pub visited_dispatch: FxHashSet<(usize, u16, u8)>,
     // Phase 5.6-tail-A (2026-05-12): `consistency_memo` field deleted.
     // It memoized `cursor_committed_ops_consistent`, which is also
     // deleted — the B13d-R/Resolution-R consistency override is
@@ -1557,10 +1565,10 @@ impl<W: SemiringRef> BranchCursor<W> {
             // has not experienced any recovery, so depth 0 + empty
             // visited set.
             recovery_depth: 0,
-            visited_recovery: OrdSet::new(),
+            visited_recovery: FxHashSet::default(),
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
-            visited_dispatch: OrdSet::new(),
+            visited_dispatch: FxHashSet::default(),
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
             // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
             // The seed cursor's builder is independent of the walker's
@@ -2919,11 +2927,11 @@ where
                     // book-keeping — the resolved parse path doesn't
                     // carry its ancestors' recovery history.
                     recovery_depth: 0,
-                    visited_recovery: OrdSet::new(),
+                    visited_recovery: FxHashSet::default(),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-resolution singleton resets projection
                     // visited set.
-                    visited_dispatch: OrdSet::new(),
+                    visited_dispatch: FxHashSet::default(),
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -4575,10 +4583,10 @@ where
                     // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
                     // post-Drop reset resets recovery book-keeping.
                     recovery_depth: 0,
-                    visited_recovery: OrdSet::new(),
+                    visited_recovery: FxHashSet::default(),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
-                    visited_dispatch: OrdSet::new(),
+                    visited_dispatch: FxHashSet::default(),
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -9293,8 +9301,8 @@ where
         branch: ForkBranch<W>,
         pos_after: usize,
         child_recovery_depth: u8,
-        child_visited_recovery: OrdSet<(usize, u16, u8)>,
-        child_visited_dispatch: OrdSet<(usize, u16, u8)>,
+        child_visited_recovery: FxHashSet<(usize, u16, u8)>,
+        child_visited_dispatch: FxHashSet<(usize, u16, u8)>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache
