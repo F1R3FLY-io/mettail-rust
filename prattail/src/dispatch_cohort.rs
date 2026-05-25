@@ -362,6 +362,14 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // Memory cap: refuse further snapshots beyond cap.
                 // Pathological grammars with > 8 packings per Symbol
                 // fall through to per-cursor for the overflow workers.
+                //
+                // 2026-05-25: experimental bump to 64 caused chain_1000
+                // memory explosion to 4.5 GB RSS at 28 s wall-time
+                // (vs ~5 MB baseline). The cap is a hard memory bound
+                // that must be paired with the lazy CohortFrame
+                // representation (Stage L6 of
+                // `docs/design/plans/cohort-lazy-materialization.md`)
+                // before it can be safely raised. Reverted to 4.
                 const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 4;
                 if worker_snapshots.len() < MAX_WORKER_SNAPSHOTS_PER_KEY {
                     worker_snapshots.push(snap);
