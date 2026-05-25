@@ -160,10 +160,9 @@ fn test_right_assoc_chain_1000() {
 }
 
 #[test]
-#[ignore = "Architectural ceiling: same as test_left_assoc_chain_10000 \
-    above — still grows past 24 GB even with the full L1-L6 cohort \
-    lazy materialization stack (L6 cap=16). Re-enable when \
-    chain_10000 fits in 24 GB."]
+#[ignore = "Architectural ceiling: same root cause as \
+    test_left_assoc_chain_10000 above (BranchCursor::clone per-step \
+    churn dominates). Re-enable in same conditions."]
 fn test_right_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = right_assoc_chain(10_000);
@@ -177,17 +176,22 @@ fn test_right_assoc_chain_10000() {
 // Sprint 2 (AST Work-Stack) will make AST operations stack-safe too.
 
 #[test]
-#[ignore = "Architectural ceiling: chain_10000 still grows past 24 GB \
-    RSS even with the full L1-L6 cohort lazy materialization stack \
-    (~76 B per cohort member state, Arc-shared cycle defense, L6 \
-    cap=16). Growth rate ~500 MB/min over 10+ min — improvement vs \
-    pre-L3 baseline (~24 GB at <2 min) but not enough to fit in RAM. \
-    L3-L6 SHIPPED (see commits f30fb6a..1cc6445); next steps for \
-    full chain_10000 support: L4 deeper Arc-sharing of \
-    recovery_deltas+incoming_edge_stack (per-cursor allocations \
-    still dominate), L5.b hybrid absorption (Concrete→Cohort at \
-    merge), or fundamental restructuring beyond cohort lazy form. \
-    Re-enable when chain_10000 fits in 24 GB."]
+#[ignore = "Architectural ceiling: BranchCursor::clone is 49%+ of \
+    peak heap at chain_1000 (heaptrack). L1-L6 cohort lazy \
+    materialization SHIPPED (commits f5f9cac..7ead9da) — Arc-shares \
+    visited_dispatch/visited_recovery/recovery_deltas/incoming_edge_stack. \
+    Improved memory growth rate ~3× (4.5 GB at 9 min vs pre-L3 \
+    24 GB at <2 min) but didn't close the ceiling: cohort sharing \
+    triggers at H12 cross-cat-projection dispatch, NOT at \
+    same-category operator parsing (which is what left-assoc chain \
+    exercises). Per Arc::make_mut deep-clones-on-fork: when Fork \
+    creates 2+ siblings sharing an Arc, first mutation on any \
+    sibling deep-clones — H2 prior attempt at Arc-CoW visited_* \
+    rejected at chain_100 -6.9% p≈0.01. The remaining fix path is \
+    research-level: operator-precedence iterative parsing or \
+    walker-global per-cursor-state with CursorId keying \
+    (`~/.claude/projects/.../memory/2026-05-24-chain_10000-heaptrack-architectural-ceiling.md` \
+    item #4, ~3-5d refactor). Re-enable when one of those ships."]
 fn test_left_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(10_000);
