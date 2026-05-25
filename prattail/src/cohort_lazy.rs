@@ -300,6 +300,37 @@ impl<W: SemiringRef> Frame<W> {
     pub fn is_concrete(&self) -> bool {
         matches!(self, Frame::Concrete(_))
     }
+
+    /// Phase F.13 Stage L3.1 (2026-05-25): the canonical access pattern
+    /// for callers that statically know they are running before L3.4
+    /// (cohort frames are never constructed before L3.4 enables them).
+    /// Panics with a stage-tagged message if called on `Cohort`.
+    #[inline(always)]
+    pub fn as_concrete_expect(&self) -> &BranchCursor<W> {
+        self.as_concrete().expect(
+            "L3.1: branch_cursors entry must be Concrete (no cohort frames before L3.4)",
+        )
+    }
+
+    /// Phase F.13 Stage L3.1 (2026-05-25): mutable companion of
+    /// `as_concrete_expect`. Same L3.1 invariant: panics on `Cohort`.
+    #[inline(always)]
+    pub fn as_concrete_expect_mut(&mut self) -> &mut BranchCursor<W> {
+        self.as_concrete_mut().expect(
+            "L3.1: branch_cursors entry must be Concrete (no cohort frames before L3.4)",
+        )
+    }
+}
+
+/// Phase F.13 Stage L3.1 (2026-05-25): convenience iterator over a
+/// frame slice that yields only `Concrete` cursors. Yields `expect`-
+/// unwrapped concrete refs; panics on `Cohort` with the L3.1 message.
+/// Used by stats/snapshot read loops in the walker.
+#[inline]
+pub fn concrete_iter<W: SemiringRef>(
+    slice: &[Frame<W>],
+) -> impl Iterator<Item = &BranchCursor<W>> {
+    slice.iter().map(|f| f.as_concrete_expect())
 }
 
 impl<W: SemiringRef> From<BranchCursor<W>> for Frame<W> {

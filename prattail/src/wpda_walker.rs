@@ -517,7 +517,16 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// cursors in nondeterministic mode. The pre-Phase-4 "empty when not in
     /// AmbiguityFanout" invariant is replaced by the always-non-empty
     /// invariant.
-    branch_cursors: Vec<BranchCursor<W>>,
+    ///
+    /// Phase F.13 Stage L3.1 (2026-05-25): element type switched from
+    /// `BranchCursor<W>` to `Frame<W>` per the cohort lazy materialization
+    /// plan (`prattail/docs/design/plans/cohort-lazy-materialization.md`
+    /// §2.1). All sites currently construct `Frame::Concrete(cursor)`;
+    /// the `Cohort` variant is unreachable until L3.4 enables the
+    /// ObsInvariant fast path. Read sites use
+    /// `frame.as_concrete_expect()` (panics with L3.1-tagged message
+    /// if a Cohort frame slips through before L3.4).
+    branch_cursors: Vec<crate::cohort_lazy::Frame<W>>,
     /// Stage 6 G6+ (2026-05-02): monotonic counter incremented once per
     /// `process_event(Step)` invocation. Stamps `StepSnapshot.step_index`
     /// for trace consumers; resets to 0 on `reset()`.
@@ -2395,7 +2404,7 @@ where
             top_node: None,
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
             deterministic: true,
-            branch_cursors: vec![initial_cursor],
+            branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
             mutable_token_source: None,
@@ -2463,7 +2472,7 @@ where
             top_node: Some(top_id),
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
             deterministic: true,
-            branch_cursors: vec![initial_cursor],
+            branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
             mutable_token_source: None,
@@ -2526,7 +2535,7 @@ where
             top_node,
             bounding_mode: crate::wpda_runtime::CursorBoundingMode::Unbounded,
             deterministic: true,
-            branch_cursors: vec![initial_cursor],
+            branch_cursors: vec![crate::cohort_lazy::Frame::Concrete(initial_cursor)],
             step_counter: 0,
             recovery_events: Vec::new(),
             mutable_token_source: None,
@@ -2569,11 +2578,9 @@ where
         // SPPF state alone carries the parse derivation.
         self.deterministic = true;
         // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
-        self.branch_cursors = vec![BranchCursor::seed_from_live(
-            0,
-            0,
-            W::one_ref(),
-            initial_state,
+        // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
+        self.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(
+            BranchCursor::seed_from_live(0, 0, W::one_ref(), initial_state),
         )];
         // Stage 6 G6+ (2026-05-02): reset trace step counter.
         self.step_counter = 0;
@@ -2682,20 +2689,25 @@ where
     where
         W: 'static,
     {
+        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame to concrete via
+        // L3.1 invariant (no Cohort frames before L3.4).
         let cursors: Vec<CursorSnapshot<W>> = self
             .branch_cursors
             .iter()
             .enumerate()
-            .map(|(idx, c)| CursorSnapshot {
-                idx,
-                pos: c.pos,
-                state: c.inner_state.clone(),
-                gss_node_id: c.node,
-                weight: c.weight.clone(),
-                source_priority: c.source_priority,
-                pending_ops_len: c.recovery_deltas.len(),
-                // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
-                collection_depth: c.collection_stack_depth as usize,
+            .map(|(idx, frame)| {
+                let c = frame.as_concrete_expect();
+                CursorSnapshot {
+                    idx,
+                    pos: c.pos,
+                    state: c.inner_state.clone(),
+                    gss_node_id: c.node,
+                    weight: c.weight.clone(),
+                    source_priority: c.source_priority,
+                    pending_ops_len: c.recovery_deltas.len(),
+                    // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
+                    collection_depth: c.collection_stack_depth as usize,
+                }
             })
             .collect();
         StepSnapshot {
@@ -2807,9 +2819,19 @@ where
     /// Cumulative weight from start to current configuration.
     /// Test-only accessor for `branch_cursors`. Used by the `fork_*` tests
     /// to verify per-branch state propagation.
+    ///
+    /// Phase F.13 Stage L3.1 (2026-05-25): returns `Vec<&BranchCursor<W>>`
+    /// rather than `&[BranchCursor<W>]` because the underlying storage is
+    /// now `Vec<Frame<W>>`. L3.1 invariant: every frame is `Concrete`
+    /// (panics via `as_concrete_expect` otherwise). Existing test sites
+    /// (`cursors[0].field`, `cursors.iter().map(...)`) continue to work
+    /// via deref coercion since indexing `Vec<&T>` yields `&T`.
     #[cfg(test)]
-    pub fn branch_cursors_for_test(&self) -> &[BranchCursor<W>] {
-        &self.branch_cursors
+    pub fn branch_cursors_for_test(&self) -> Vec<&BranchCursor<W>> {
+        self.branch_cursors
+            .iter()
+            .map(|f| f.as_concrete_expect())
+            .collect()
     }
 
     /// Stage 3.4 (2026-04-30): set the beam-pruning bound in place.
@@ -2960,7 +2982,8 @@ where
                 // resolved post-fanout state. Pre-Phase-4 this called
                 // `branch_cursors.clear()` because empty was the live-mode
                 // signal; post-Phase-4, empty would violate L4.
-                self.branch_cursors = vec![BranchCursor {
+                // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
+                self.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(BranchCursor {
                     node: winner,
                     pos: self.pos,
                     weight: self.weight.clone(),
@@ -3017,7 +3040,7 @@ where
                     cohort_revive_depth: 0,
                     lex_fork_path: std::sync::Arc::new(Vec::new()),
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
-                        }];
+                        })];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
                     pos: self.pos,
@@ -3205,11 +3228,14 @@ where
                 // `sppf_stack.len()` added to the fingerprint to keep
                 // SPPF-interning progress detectable when state/node/pos
                 // stay the same but reduces fire.
+                // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete
+                // via L3.1 invariant (no Cohort frames before L3.4).
                 let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdaState, usize, usize)> =
                     self
                         .branch_cursors
                         .iter()
-                        .map(|c| {
+                        .map(|frame| {
+                            let c = frame.as_concrete_expect();
                             (
                                 c.node,
                                 c.pos,
@@ -3225,7 +3251,8 @@ where
                         .branch_cursors
                         .iter()
                         .zip(prev_fingerprint.iter())
-                        .any(|(c, (n, p, s, ops_len, sppf_len))| {
+                        .any(|(frame, (n, p, s, ops_len, sppf_len))| {
+                            let c = frame.as_concrete_expect();
                             c.node != *n
                                 || c.pos != *p
                                 || c.inner_state != *s
@@ -3368,10 +3395,11 @@ where
             // extract path below uses realize_root_to_terms over the
             // SPPF root captured from cursor.sppf_stack.last().
             // C6: extract the singleton cursor's SPPF root.
+            // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
             let det_sppf_root = self
                 .branch_cursors
                 .first()
-                .and_then(|c| c.sppf_stack.last().copied())
+                .and_then(|frame| frame.as_concrete().and_then(|c| c.sppf_stack.last().copied()))
                 .unwrap_or(crate::sppf::SPPF_ID_NONE);
             return match self.state.clone() {
                 WpdaState::Accepted => {
@@ -3468,7 +3496,9 @@ where
         {
             let eof = tokens.eof_node();
             let len_before = self.branch_cursors.len();
-            self.branch_cursors.retain(|c| {
+            // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+            self.branch_cursors.retain(|frame| {
+                let c = frame.as_concrete_expect();
                 !matches!(c.inner_state, WpdaState::Accepted) || c.pos >= eof
             });
             // No further work if all were premature.
@@ -3487,9 +3517,10 @@ where
         // past tokens.len() on real input (ConsumeAndPop is gated by
         // peek_kind), but synthetic test scripts can; treating "past
         // EOI" as "at EOI" makes resolution robust to either case.
+        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
         let accepting_indices: Vec<usize> = (0..self.branch_cursors.len())
             .filter(|&i| {
-                let c = &self.branch_cursors[i];
+                let c = self.branch_cursors[i].as_concrete_expect();
                 // Stage 3.12 fix (2026-05-02): use `is_logical_eoi` so a
                 // cursor parked at trailing `Token::Eof` (the natural
                 // rule-end exit) accepts. The pre-3.12 `pos >= tokens.len()`
@@ -3501,7 +3532,7 @@ where
         let max_dead_pos = self
             .branch_cursors
             .iter()
-            .map(|c| c.pos)
+            .map(|frame| frame.as_concrete_expect().pos)
             .max()
             .unwrap_or(self.pos);
         match accepting_indices.len() {
@@ -3517,8 +3548,10 @@ where
                 // recover the Vec<Cat>. The C7b cycle-fallback (Accepted
                 // with empty terms but valid root) is preserved.
                 let winner_idx = accepting_indices[0];
-                let winner_weight = self.branch_cursors[winner_idx].weight.clone();
-                let winner_sppf_root = self.branch_cursors[winner_idx]
+                // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+                let winner_cursor = self.branch_cursors[winner_idx].as_concrete_expect();
+                let winner_weight = winner_cursor.weight.clone();
+                let winner_sppf_root = winner_cursor
                     .sppf_stack
                     .last()
                     .copied()
@@ -3566,8 +3599,10 @@ where
                 let mut roots: Vec<crate::sppf::SppfId> =
                     Vec::with_capacity(accepting_indices.len());
                 for &idx in &accepting_indices {
-                    let cursor_weight = self.branch_cursors[idx].weight.clone();
-                    let cursor_root = self.branch_cursors[idx]
+                    // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+                    let cursor = self.branch_cursors[idx].as_concrete_expect();
+                    let cursor_weight = cursor.weight.clone();
+                    let cursor_root = cursor
                         .sppf_stack
                         .last()
                         .copied()
@@ -4611,7 +4646,9 @@ where
              entry (apply_action is the deterministic-mode entry; step_fanout \
              drives the multi-cursor nondeterministic mode directly)",
         );
-        let mut cursor = self.branch_cursors.swap_remove(0);
+        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete (L3.1
+        // invariant — apply_action runs in deterministic mode pre-cohort).
+        let mut cursor = self.branch_cursors.swap_remove(0).into_concrete();
         let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
         match outcome {
             CursorOutcome::Drop => {
@@ -4620,7 +4657,8 @@ where
                 // so the live walker reflects the failure. Restore a
                 // fresh singleton anchored at the current walker view to
                 // preserve L4 (always-non-empty branch_cursors).
-                self.branch_cursors.push(BranchCursor {
+                // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
+                self.branch_cursors.push(crate::cohort_lazy::Frame::Concrete(BranchCursor {
                     node: self.top_node.unwrap_or(0),
                     pos: self.pos,
                     weight: W::one_ref(),
@@ -4669,7 +4707,7 @@ where
                     cohort_revive_depth: 0,
                     lex_fork_path: std::sync::Arc::new(Vec::new()),
                     // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
-                        });
+                        }));
             }
             CursorOutcome::Alive | CursorOutcome::Resolved => {
                 // Phase 5.6-tail-B (2026-05-12): install the cursor's
@@ -4688,7 +4726,8 @@ where
                 // `self.builder = (*cursor.builder).clone()` is gone.
                 // self.builder is a stub (F.3c.5 deletes); downstream
                 // consumers use walker.resolve() / realize_root_to_terms.
-                self.branch_cursors.push(cursor);
+                // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
+                self.branch_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
             }
             CursorOutcome::ForkInto(children) => {
                 // The cursor-side Fork arm already flipped `self.deterministic`
@@ -4708,7 +4747,9 @@ where
                 }
                 let branch_ids: Vec<crate::gss::GssNodeId> =
                     children.iter().map(|c| c.node).collect();
-                self.branch_cursors = children;
+                // Phase F.13 Stage L3.1 (2026-05-25): wrap each child in Frame::Concrete.
+                self.branch_cursors =
+                    children.into_iter().map(crate::cohort_lazy::Frame::Concrete).collect();
                 self.state = WpdaState::AmbiguityFanout { branches: branch_ids };
                 self.maybe_prune_frontier();
             }
@@ -7041,11 +7082,17 @@ where
         // pre-step cursor count for avg-cursors-per-step derivation.
         crate::stats_inc!(self, step_fanout_calls);
         crate::stats_add!(self, branch_cursors_sum, self.branch_cursors.len() as u64);
-        let mut new_cursors: Vec<BranchCursor<W>> = Vec::with_capacity(self.branch_cursors.len());
+        // Phase F.13 Stage L3.1 (2026-05-25): containers now hold Frame<W>
+        // (Concrete-only before L3.4 enables cohort variants).
+        let mut new_cursors: Vec<crate::cohort_lazy::Frame<W>> =
+            Vec::with_capacity(self.branch_cursors.len());
         // Track which entries in `new_cursors` are Resolved.
         let mut resolved_indices: Vec<usize> = Vec::new();
-        let drained: Vec<BranchCursor<W>> = std::mem::take(&mut self.branch_cursors);
-        for cursor in drained {
+        let drained: Vec<crate::cohort_lazy::Frame<W>> =
+            std::mem::take(&mut self.branch_cursors);
+        for frame in drained {
+            // L3.1: every frame is Concrete (L3.4 introduces Cohort branch).
+            let cursor = frame.into_concrete();
             let frontier_top = self.gss.node(cursor.node).cloned();
             // M4 (2026-05-13): pass `tokens` directly. The CursorViewSource
             // wrap is deleted — alt identity now lives in the SHARED input
@@ -7074,7 +7121,7 @@ where
                         STRICT_PENDING_OPS_LIMIT,
                     ),
                 };
-                self.branch_cursors = vec![cursor];
+                self.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(cursor)];
                 return self.state.clone();
             }
             match outcome {
@@ -7083,7 +7130,9 @@ where
                     crate::stats_inc!(self, cursors_dropped_via_outcome_drop);
                     /* discard */
                 }
-                CursorOutcome::Alive => new_cursors.push(cursor),
+                CursorOutcome::Alive => {
+                    new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                }
                 // **Tiebreak chain link 4 (load-bearing).** `extend` preserves
                 // the source-order of `children` produced by Fork. Combined
                 // with: (1) `vec![take, skip]` codegen at binder.rs:973-980,
@@ -7093,10 +7142,12 @@ where
                 // this ordering yields right-associative dangling-else for
                 // Opt-Group Forks. Reordering or replacing with `insert`/`push`
                 // breaks the invariant.
-                CursorOutcome::ForkInto(children) => new_cursors.extend(children),
+                CursorOutcome::ForkInto(children) => new_cursors.extend(
+                    children.into_iter().map(crate::cohort_lazy::Frame::Concrete),
+                ),
                 CursorOutcome::Resolved => {
                     resolved_indices.push(new_cursors.len());
-                    new_cursors.push(cursor);
+                    new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
                 }
             }
         }
@@ -7130,7 +7181,10 @@ where
                                 key.inner_cur_bp,
                                 snap,
                             );
-                            new_cursors.push(revived);
+                            // Phase F.13 Stage L3.1 (2026-05-25): wrap revived
+                            // cursor in Frame::Concrete (cohorts not yet
+                            // re-absorbed at this point — L5 territory).
+                            new_cursors.push(crate::cohort_lazy::Frame::Concrete(revived));
                         }
                     }
                 }
@@ -7210,8 +7264,9 @@ where
         //
         // End-of-input resolution is handled by `resolve_at_end_of_input`
         // (called by the parse facade after `run_to_end_of_input`), not here.
+        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
         let frontier: Vec<crate::gss::GssNodeId> =
-            self.branch_cursors.iter().map(|c| c.node).collect();
+            self.branch_cursors.iter().map(|f| f.as_concrete_expect().node).collect();
         let s = WpdaState::AmbiguityFanout { branches: frontier };
         self.state = s.clone();
         s
@@ -7295,8 +7350,9 @@ where
         // cursors at ~30-50 distinct positions, this is small.
         use std::collections::HashMap;
         let mut by_pos: HashMap<usize, Vec<usize>> = HashMap::new();
-        for (idx, c) in self.branch_cursors.iter().enumerate() {
-            by_pos.entry(c.pos).or_default().push(idx);
+        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+        for (idx, frame) in self.branch_cursors.iter().enumerate() {
+            by_pos.entry(frame.as_concrete_expect().pos).or_default().push(idx);
         }
         // Take only the largest 10 buckets (sorted by size desc).
         let mut buckets: Vec<(usize, Vec<usize>)> = by_pos.into_iter().collect();
@@ -7312,8 +7368,9 @@ where
                     if pairs_remaining == 0 {
                         break 'outer;
                     }
-                    let a = &self.branch_cursors[idxs[i]];
-                    let b = &self.branch_cursors[idxs[j]];
+                    // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+                    let a = self.branch_cursors[idxs[i]].as_concrete_expect();
+                    let b = self.branch_cursors[idxs[j]].as_concrete_expect();
                     // ── Original 4 axes ────────────────────────────────
                     let state_diff = a.inner_state != b.inner_state;
                     let node_diff = a.node != b.node;
@@ -7490,7 +7547,14 @@ where
             std::collections::HashMap::with_capacity(self.branch_cursors.len());
         let mut merged: Vec<BranchCursor<W>> =
             Vec::with_capacity(self.branch_cursors.len());
-        let drained: Vec<BranchCursor<W>> = self.branch_cursors.drain(..).collect();
+        // Phase F.13 Stage L3.1 (2026-05-25): drain frames; L3.1 invariant
+        // says all are Concrete (no cohort frames before L3.4). L3.6 will
+        // add forced materialization at this entry point for cohort frames.
+        let drained: Vec<BranchCursor<W>> = self
+            .branch_cursors
+            .drain(..)
+            .map(|f| f.into_concrete())
+            .collect();
         for cursor in drained {
             let key = ConfigKey {
                 state: cursor.inner_state.clone(),
@@ -7638,7 +7702,10 @@ where
                 }
             }
         }
-        self.branch_cursors = merged;
+        // Phase F.13 Stage L3.1 (2026-05-25): wrap merged BranchCursors in
+        // Frame::Concrete.
+        self.branch_cursors =
+            merged.into_iter().map(crate::cohort_lazy::Frame::Concrete).collect();
     }
 
     // M7c (2026-05-13): `subsume_lex_dominated_cursors` DELETED.
@@ -7685,7 +7752,8 @@ where
     /// live builder). Pre-Phase-4 this method called `clear()`; that
     /// would now violate L4.
     fn commit_winner(&mut self, winner_idx: usize) {
-        let winner = self.branch_cursors.swap_remove(winner_idx);
+        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+        let winner = self.branch_cursors.swap_remove(winner_idx).into_concrete();
         self.branch_cursors.clear();
         // Phase 5.5 (2026-05-12): install winner.builder as the live
         // SemanticBuilder. The winner cursor's `Arc<SemanticBuilder>`
@@ -7945,7 +8013,8 @@ where
         // Stage 3.9 / ι Phase 4 (2026-05-01): write singleton back per L4.
         // Cleared recovery_deltas — already replayed onto live builder above.
         // `self.deterministic` stays false (monotone once flipped).
-        self.branch_cursors = vec![BranchCursor {
+        // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
+        self.branch_cursors = vec![crate::cohort_lazy::Frame::Concrete(BranchCursor {
             node: winner.node,
             pos: winner.pos,
             weight: self.weight.clone(),
@@ -8000,7 +8069,7 @@ where
             // Phase F.3c.2 (2026-05-20): preserve winner's memo so
             // post-commit symbol lookups continue to find their realized
             // payloads. Move (not clone) — single-cursor post-commit.
-        }];
+        })];
     }
 
     /// Stage 3.4 (2026-04-30): cursor-count bounding over `branch_cursors`.
@@ -8033,7 +8102,11 @@ where
                 // **MANDATE VIOLATION**: drops cursors below the top-K
                 // without evidence. Retained only for adversarial-input
                 // recovery; see [`CursorBoundingMode::BeamSize`] docs.
-                self.branch_cursors.sort_by(|a, b| {
+                // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete
+                // (cohorts cannot appear in beam-pruning input before L3.6).
+                self.branch_cursors.sort_by(|fa, fb| {
+                    let a = fa.as_concrete_expect();
+                    let b = fb.as_concrete_expect();
                     let merged = a.weight.plus_ref(&b.weight);
                     let a_wins = merged == a.weight;
                     let b_wins = merged == b.weight;
@@ -8518,8 +8591,10 @@ where
     /// `branch_cursors[0]`.
     #[inline]
     fn winner_collection_arena(&self) -> &[Vec<crate::sppf::SppfId>] {
+        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
         self.branch_cursors
             .first()
+            .and_then(|f| f.as_concrete())
             .map(|c| c.sppf_collection_arena.as_ref().as_slice())
             .unwrap_or(&[])
     }
