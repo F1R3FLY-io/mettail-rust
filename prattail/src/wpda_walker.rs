@@ -7042,6 +7042,70 @@ where
     /// `Accepted`, `Unwinding`. These are the states where a forked branch
     /// has rejoined the main parse trunk — safe to commit the winning
     /// branch's accumulated recovery_deltas and resume there.
+    /// Phase F.13 Stage L3.2 (2026-05-25): step a cohort frame for one
+    /// fanout iteration. L3.2 stub always materializes the cohort into
+    /// N concrete cursors, runs the same per-cursor step logic as the
+    /// existing Concrete arm, and returns a `Vec<Frame<W>>` of the
+    /// outcomes (Alive/ForkInto children/Resolved cursors wrapped in
+    /// `Frame::Concrete`; Drop'd cursors omitted).
+    ///
+    /// L3.4 will introduce the ObsInvariant fast path: instead of
+    /// materializing, classify the action via
+    /// `DivergenceClass::classify(&action)` and either bulk-apply to
+    /// the shell (returning a single `Frame::Cohort(cf_updated)`) or
+    /// fall through to materialize for ObsDivergent actions.
+    ///
+    /// L3.5 will introduce the DispatchResolved broadcast path that
+    /// short-circuits before classification when `cf.dispatch_result`
+    /// is populated by the H12 cache.
+    ///
+    /// L3.2 is a pure no-op behaviorally because no caller constructs
+    /// `Frame::Cohort` yet — the dispatch arm in `step_fanout`'s drain
+    /// loop is dead code that will become live in L3.4. This stage's
+    /// purpose is purely to wire the routing infrastructure so L3.4 is
+    /// a localized addition rather than a refactor.
+    fn step_cohort_frame(
+        &mut self,
+        cf: Box<crate::cohort_lazy::CohortFrame<W>>,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Vec<crate::cohort_lazy::Frame<W>> {
+        // L3.2 stub: always materialize the cohort into N concrete
+        // cursors, then run the same per-cursor step body as the
+        // `Concrete` arm of step_fanout.
+        let materialized: Vec<crate::cohort_lazy::Frame<W>> =
+            crate::cohort_lazy::materialize_cohort_to_frames(*cf);
+        let mut produced: Vec<crate::cohort_lazy::Frame<W>> =
+            Vec::with_capacity(materialized.len());
+        for frame in materialized {
+            let mut cursor = frame.into_concrete();
+            let frontier_top = self.gss.node(cursor.node).cloned();
+            let action = self.engine.step(
+                &cursor.inner_state,
+                &self.gss,
+                frontier_top.as_ref(),
+                cursor.pos,
+                tokens,
+            );
+            let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
+            match outcome {
+                CursorOutcome::Drop => {
+                    // discard
+                }
+                CursorOutcome::Alive | CursorOutcome::Resolved => {
+                    produced.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                }
+                CursorOutcome::ForkInto(children) => {
+                    produced.extend(
+                        children
+                            .into_iter()
+                            .map(crate::cohort_lazy::Frame::Concrete),
+                    );
+                }
+            }
+        }
+        produced
+    }
+
     fn cursor_resolution_check(&self, cursor: &BranchCursor<W>) -> CursorOutcome<W> {
         // Phase 5.5 (2026-05-12): cursors that hit Error state mid-step
         // (e.g., emit_fire_action's eager fire underflow) are Dropped so
@@ -7091,8 +7155,68 @@ where
         let drained: Vec<crate::cohort_lazy::Frame<W>> =
             std::mem::take(&mut self.branch_cursors);
         for frame in drained {
-            // L3.1: every frame is Concrete (L3.4 introduces Cohort branch).
-            let cursor = frame.into_concrete();
+            // Phase F.13 Stage L3.2 (2026-05-25): Frame::Cohort dispatch.
+            // L3.2 stub always materializes (step_cohort_frame returns N
+            // Concrete frames); L3.4 introduces the ObsInvariant fast
+            // path that returns a single Cohort frame for invariant
+            // actions. Resolved cursors among the produced frames are
+            // re-classified after step_cohort_frame returns.
+            let cursor = match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => c,
+                crate::cohort_lazy::Frame::Cohort(cf) => {
+                    let produced = self.step_cohort_frame(cf, tokens);
+                    // step_cohort_frame returns a Vec<Frame<W>>; route each
+                    // produced frame through outcome accounting. L3.2:
+                    // produced frames are always Concrete (cf materialized
+                    // and per-cursor-stepped internally). L3.4: produced
+                    // frames may include a single Cohort if ObsInvariant.
+                    for produced_frame in produced {
+                        // Re-route via same Alive/Drop/Resolved logic by
+                        // re-running cursor_resolution_check (no-op for the
+                        // already-stepped state — cheap). The classifier
+                        // determines whether the produced cursor is alive,
+                        // resolved, or terminal.
+                        match produced_frame {
+                            crate::cohort_lazy::Frame::Concrete(produced_cursor) => {
+                                let oc = self.cursor_resolution_check(&produced_cursor);
+                                match oc {
+                                    CursorOutcome::Drop => { /* discard */ }
+                                    CursorOutcome::Alive => {
+                                        new_cursors.push(
+                                            crate::cohort_lazy::Frame::Concrete(
+                                                produced_cursor,
+                                            ),
+                                        );
+                                    }
+                                    CursorOutcome::ForkInto(_) => {
+                                        // step_cohort_frame should never
+                                        // surface ForkInto to its caller —
+                                        // the per-cursor pass inside
+                                        // already expanded forks.
+                                        panic!(
+                                            "L3.2: step_cohort_frame returned a ForkInto-classified cursor; should have been expanded internally",
+                                        );
+                                    }
+                                    CursorOutcome::Resolved => {
+                                        resolved_indices.push(new_cursors.len());
+                                        new_cursors.push(
+                                            crate::cohort_lazy::Frame::Concrete(
+                                                produced_cursor,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                            cohort_frame @ crate::cohort_lazy::Frame::Cohort(_) => {
+                                // L3.4: ObsInvariant fast path — single
+                                // cohort frame returned, stays alive.
+                                new_cursors.push(cohort_frame);
+                            }
+                        }
+                    }
+                    continue;
+                }
+            };
             let frontier_top = self.gss.node(cursor.node).cloned();
             // M4 (2026-05-13): pass `tokens` directly. The CursorViewSource
             // wrap is deleted — alt identity now lives in the SHARED input

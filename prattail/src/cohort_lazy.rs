@@ -472,6 +472,27 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
     }
 }
 
+/// Phase F.13 Stage L3.2 (2026-05-25): hard cap on cohort frame member
+/// count. L6 raises this from the H12 cap of 4. Defense-in-depth — the
+/// lazy form should make 256 trivially affordable, but a runaway cohort
+/// formation bug is preferable to OOM.
+pub const MAX_COHORT_FRAME_MEMBERS: usize = 256;
+
+/// Phase F.13 Stage L3.2 (2026-05-25): consume a cohort frame and yield
+/// one `Frame::Concrete(BranchCursor)` per member via
+/// `materialize_branch_cursor`. This is the L3.2 step_cohort_frame
+/// stub's primary primitive — and also the L3.6 forced-materialization
+/// hook used at `merge_equivalent_cursors`, EOI, etc.
+pub fn materialize_cohort_to_frames<W: SemiringRef + Clone>(
+    cf: CohortFrame<W>,
+) -> Vec<Frame<W>> {
+    let shell = cf.shell;
+    cf.members
+        .into_iter()
+        .map(|state| Frame::Concrete(materialize_branch_cursor(&shell, &state)))
+        .collect()
+}
+
 impl<W: SemiringRef> CohortFrame<W> {
     /// Phase F.13 Stage L2 (2026-05-25): construct a fresh cohort
     /// frame at H12 first-member-register time. The shell is built
