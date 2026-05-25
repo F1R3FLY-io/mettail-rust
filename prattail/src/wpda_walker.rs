@@ -3367,6 +3367,11 @@ where
                 eprintln!("{}", CacheSummary(&self.dispatch_cohort_cache));
             }
         }
+        // Phase F.13 Stage L3.6 (2026-05-25): force-materialize all
+        // remaining cohort frames at EOI so resolution operates on
+        // concrete cursors. The full ambiguity multiset is preserved
+        // (each member becomes an independent concrete cursor).
+        self.force_materialize_cohort_frames();
         // Phase 5.6-tail-B (2026-05-12): the pre-tail deterministic-mode fast-path
         // returned directly using `self.builder.take_dyn_result()`. Under
         // always-eager Arc::make_mut (Phase 5.3+), all mutations land on
@@ -7116,6 +7121,33 @@ where
         }
     }
 
+    /// Phase F.13 Stage L3.6 (2026-05-25): force-materialize every
+    /// `Frame::Cohort` in `self.branch_cursors` into N `Frame::Concrete`
+    /// cursors via `cohort_lazy::materialize_cohort_to_frames`. Called
+    /// at safety-net entry points (merge, EOI, commit, prune) so
+    /// downstream code that assumes concrete cursors does not see
+    /// cohort frames.
+    ///
+    /// L3.6 invariant: after this call, every entry in
+    /// `self.branch_cursors` is `Frame::Concrete(_)`.
+    fn force_materialize_cohort_frames(&mut self) {
+        // Fast path: nothing to do if all frames are already concrete.
+        if self.branch_cursors.iter().all(|f| f.is_concrete()) {
+            return;
+        }
+        let mut materialized: Vec<crate::cohort_lazy::Frame<W>> =
+            Vec::with_capacity(self.branch_cursors.len());
+        for frame in std::mem::take(&mut self.branch_cursors) {
+            match frame {
+                crate::cohort_lazy::Frame::Concrete(_) => materialized.push(frame),
+                crate::cohort_lazy::Frame::Cohort(cf) => {
+                    materialized.extend(crate::cohort_lazy::materialize_cohort_to_frames(*cf));
+                }
+            }
+        }
+        self.branch_cursors = materialized;
+    }
+
     /// Phase F.13 Stage L3.4 (2026-05-25): materialize a cohort frame
     /// and run the per-cursor step body. Factored out of the L3.2 stub
     /// so the L3.4 ObsInvariant fast-path can share the fallback path
@@ -7717,6 +7749,11 @@ where
         if self.branch_cursors.len() < 2 {
             return;
         }
+        // Phase F.13 Stage L3.6 (2026-05-25): materialize any cohort
+        // frames before merge — ConfigKey discrimination requires
+        // per-cursor fields that aren't directly exposed by the lazy
+        // cohort shell/state split.
+        self.force_materialize_cohort_frames();
         // Phase F.13 walker-stats (2026-05-20): accumulate merge attempt
         // count (input cursors). Collapses counted per-cursor in the
         // Occupied arm below.
@@ -7930,6 +7967,11 @@ where
     /// live builder). Pre-Phase-4 this method called `clear()`; that
     /// would now violate L4.
     fn commit_winner(&mut self, winner_idx: usize) {
+        // Phase F.13 Stage L3.6 (2026-05-25): force-materialize cohort
+        // frames before commit. commit_winner picks one cursor as the
+        // winner; cohort frames must materialize so the winner is a
+        // concrete cursor that can be unwrapped via into_concrete.
+        self.force_materialize_cohort_frames();
         // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
         let winner = self.branch_cursors.swap_remove(winner_idx).into_concrete();
         self.branch_cursors.clear();
@@ -8267,6 +8309,15 @@ where
     /// pruned/checked frontier is the input to the next saturation
     /// iteration.
     fn maybe_prune_frontier(&mut self) {
+        // Phase F.13 Stage L3.6 (2026-05-25): force-materialize cohort
+        // frames before beam pruning. The BeamSize branch sorts by
+        // per-cursor weight, and AmbiguityBudget counts cursors —
+        // both require concrete frames. Unbounded mode is a no-op so
+        // the materialization is also a no-op (early-return on the
+        // already-concrete fast path inside the helper).
+        if !matches!(self.bounding_mode, crate::wpda_runtime::CursorBoundingMode::Unbounded) {
+            self.force_materialize_cohort_frames();
+        }
         match self.bounding_mode {
             crate::wpda_runtime::CursorBoundingMode::Unbounded => {}
             crate::wpda_runtime::CursorBoundingMode::BeamSize(k) => {
