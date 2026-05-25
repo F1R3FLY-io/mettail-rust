@@ -7822,25 +7822,31 @@ where
         if self.branch_cursors.len() < 2 {
             return;
         }
-        // Phase F.13 Stage L3.6 (2026-05-25): materialize any cohort
-        // frames before merge — ConfigKey discrimination requires
-        // per-cursor fields that aren't directly exposed by the lazy
-        // cohort shell/state split.
-        self.force_materialize_cohort_frames();
+        // Phase F.13 Stage L5.a (2026-05-25): let cohort frames pass
+        // through merge unchanged. Pre-L5.a, L3.6 force-materialized
+        // cohorts at this entry; L5.a defers materialization until
+        // step_cohort_frame's next iteration (or until EOI/commit/
+        // prune force-materialize). Cohort frames have a single
+        // shell-representative ConfigKey by ~_obs def; if a concrete
+        // cursor shares that ConfigKey, L5.b (future) absorbs it into
+        // the cohort. Until then, distinct cursors retain their own
+        // frames (no soundness regression — the merge below operates
+        // on the concrete-only subset, leaving cohorts unmerged).
+        let (cohort_frames, concrete_drain): (
+            Vec<crate::cohort_lazy::Frame<W>>,
+            Vec<crate::cohort_lazy::Frame<W>>,
+        ) = std::mem::take(&mut self.branch_cursors)
+            .into_iter()
+            .partition(|f| matches!(f, crate::cohort_lazy::Frame::Cohort(_)));
         // Phase F.13 walker-stats (2026-05-20): accumulate merge attempt
         // count (input cursors). Collapses counted per-cursor in the
         // Occupied arm below.
-        crate::stats_add!(self, merge_attempts_total, self.branch_cursors.len() as u64);
+        crate::stats_add!(self, merge_attempts_total, concrete_drain.len() as u64);
         let mut by_key: std::collections::HashMap<ConfigKey, usize> =
-            std::collections::HashMap::with_capacity(self.branch_cursors.len());
-        let mut merged: Vec<BranchCursor<W>> =
-            Vec::with_capacity(self.branch_cursors.len());
-        // Phase F.13 Stage L3.1 (2026-05-25): drain frames; L3.1 invariant
-        // says all are Concrete (no cohort frames before L3.4). L3.6 will
-        // add forced materialization at this entry point for cohort frames.
-        let drained: Vec<BranchCursor<W>> = self
-            .branch_cursors
-            .drain(..)
+            std::collections::HashMap::with_capacity(concrete_drain.len());
+        let mut merged: Vec<BranchCursor<W>> = Vec::with_capacity(concrete_drain.len());
+        let drained: Vec<BranchCursor<W>> = concrete_drain
+            .into_iter()
             .map(|f| f.into_concrete())
             .collect();
         for cursor in drained {
@@ -7992,8 +7998,12 @@ where
         }
         // Phase F.13 Stage L3.1 (2026-05-25): wrap merged BranchCursors in
         // Frame::Concrete.
+        // Phase F.13 Stage L5.a (2026-05-25): re-attach the cohort frames
+        // that were partitioned aside above. Cohorts survive merge and
+        // re-enter step_fanout next iteration (or hit a force-mat site).
         self.branch_cursors =
             merged.into_iter().map(crate::cohort_lazy::Frame::Concrete).collect();
+        self.branch_cursors.extend(cohort_frames);
     }
 
     // M7c (2026-05-13): `subsume_lex_dominated_cursors` DELETED.
