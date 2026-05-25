@@ -1,5 +1,5 @@
 use super::ValidationError;
-use crate::ast::{
+use crate::{
     grammar::{GrammarItem, GrammarRule},
     language::RewriteRule,
     language::{Equation, LanguageDef},

@@ -1,5 +1,5 @@
 [workspace]
-members = ["macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query",
+members = ["mettail-ast", "mettail-spec", "macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query",
     # "ascent/ascent",
     # "ascent/ascent_base",
     # "ascent/ascent_macro",

@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use crate::ast::grammar::{GrammarItem, TermParam};
-    use crate::ast::grammar::{PatternOp, SyntaxExpr};
-    use crate::ast::language::{CollectionCategory, LanguageDef};
-    use crate::ast::types::{CollectionType, TypeExpr};
+    use crate::grammar::{GrammarItem, TermParam};
+    use crate::grammar::{PatternOp, SyntaxExpr};
+    use crate::language::{CollectionCategory, LanguageDef};
+    use crate::types::{CollectionType, TypeExpr};
     use quote::quote;
     use syn::{parse2, Ident};
 

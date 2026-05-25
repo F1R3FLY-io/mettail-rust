@@ -17,10 +17,11 @@ pub enum AttributeValue {
     /// Floating-point value (e.g., `beam_width: 1.5`).
     Float(f64),
     /// Integer value.
-    #[expect(dead_code)] // Parsed from DSL, not yet consumed
+    /// Integer value (parsed from DSL; reserved for future use).
+    #[allow(dead_code)]
     Int(i64),
-    /// Boolean value.
-    #[expect(dead_code)] // Parsed from DSL, not yet consumed
+    /// Boolean value (parsed from DSL; reserved for future use).
+    #[allow(dead_code)]
     Bool(bool),
     /// String value (e.g., `log_semiring_model_path: "path/to/model.json"`).
     Str(String),
@@ -102,6 +103,7 @@ pub enum Premise {
 /// Equation in unified judgement syntax
 /// Syntax: Name . type_context | prop_context |- lhs = rhs ;
 /// Example: ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest})) ;
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct Equation {
     /// Rule name (required)
@@ -163,6 +165,7 @@ pub enum Condition {
 /// Rewrite rule in unified judgement syntax
 /// Syntax: Name . type_context | prop_context |- lhs ~> rhs ;
 /// Example: ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest}) ;
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct RewriteRule {
     /// Rule name (required)
@@ -303,6 +306,7 @@ pub struct LiteralBlock {
 
 /// Export: category name, optionally with native Rust type or collection kind
 /// types { Elem; Name; ![i32] as Int; List; Bag { open_parts: [...], close_parts: [...], sep: "..." }; }
+#[derive(Clone)]
 pub struct LangType {
     pub name: Ident,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
@@ -556,7 +560,7 @@ impl Parse for LanguageDef {
 }
 
 /// Parse `literals { TypeName { pattern: "..." ; eval: ![ ... ] } ... }`
-fn parse_literals(input: ParseStream) -> SynResult<LiteralBlock> {
+pub fn parse_literals(input: ParseStream) -> SynResult<LiteralBlock> {
     let literals_ident = input.parse::<Ident>()?;
     if literals_ident != "literals" {
         return Err(syn::Error::new(literals_ident.span(), "expected 'literals'"));
@@ -740,7 +744,7 @@ fn parse_collection_delimiters_dict(
     }
 }
 
-fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
+pub fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
     let types_ident = input.parse::<Ident>()?;
     if types_ident != "types" {
         return Err(syn::Error::new(types_ident.span(), "expected 'types'"));
@@ -1032,7 +1036,7 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
     Ok(options)
 }
 
-fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
+pub fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
     let eq_ident = input.parse::<Ident>()?;
     if eq_ident != "equations" {
         return Err(syn::Error::new(eq_ident.span(), "expected 'equations'"));
@@ -1579,7 +1583,7 @@ fn parse_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Pattern)> {
     Ok((params, body))
 }
 
-fn parse_rewrites(input: ParseStream) -> SynResult<Vec<RewriteRule>> {
+pub fn parse_rewrites(input: ParseStream) -> SynResult<Vec<RewriteRule>> {
     let rewrites_ident = input.parse::<Ident>()?;
     if rewrites_ident != "rewrites" {
         return Err(syn::Error::new(rewrites_ident.span(), "expected 'rewrites'"));
@@ -1652,7 +1656,7 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
 ///
 /// Extracts relation declarations for code generation while keeping
 /// the full content as verbatim TokenStream for Ascent.
-fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
+pub fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
     let logic_ident = input.parse::<Ident>()?;
     if logic_ident != "logic" {
         return Err(syn::Error::new(logic_ident.span(), "expected 'logic'"));

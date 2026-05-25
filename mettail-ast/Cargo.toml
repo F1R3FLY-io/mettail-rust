@@ -1,0 +1,19 @@
+[package]
+name = "mettail-ast"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "AST and validation for MeTTaIL language definitions"
+publish = false
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+ascent_syntax_export = { workspace = true }
+
+[dev-dependencies]
+syn = { workspace = true }

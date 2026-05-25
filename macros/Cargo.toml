@@ -19,6 +19,7 @@ wfst = ["mettail-prattail/wfst"]
 wfst-log = ["mettail-prattail/wfst-log"]
 
 [dependencies]
+mettail-ast = { path = "../mettail-ast" }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }

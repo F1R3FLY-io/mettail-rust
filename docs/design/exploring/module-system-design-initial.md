@@ -10,7 +10,22 @@ Design a language-agnostic module system supporting:
 - Language extension (adding `types`, `terms`, `literals`, `equations`, etc.).
 - Foreign language block integration and expansion.
 
-## 0.1 Syntax & Semantics Representation Options
+## 0.1 Pipeline: Parse and Dependency Graph
+
+The pipeline begins by parsing an input **`.rho`** file. The surface grammar for a file is:
+
+```ebnf
+BasicFile ::= [Import] Module ;
+```
+
+- **`[Import]`** — zero or more import declarations (may be empty).
+- **`Module`** — exactly one module definition.
+
+The parser produces a **surface AST** for that file. The resolver then walks all `import` paths, loads each referenced `.rho` file recursively, and builds a **directed acyclic graph (DAG)** of module dependencies. **Cycles are forbidden**; any import cycle is a build-time error.
+
+Subsequent phases (normalize, project) operate on the resolved graph and merged theories—not on raw import text alone.
+
+### Syntax & Semantics Representation Options
 ### ✅ Option A: GSLT (Global Syntax, Local Typing) + Macros
 Syntax is global (a unified structural tree), but typing/semantics are resolved locally based on the active `extender` scope.
 - **Pros:** Best support for polyglot/foreign blocks. You parse everything into a generic tree (like S-expressions or generic AST), then the `extender` assigns meaning.
@@ -55,8 +70,8 @@ The system operates in four distinct phases:
 
 | Phase | Responsibility | Artifact |
 | :--- | :--- | :--- |
-| **1. Parse** | Lexical analysis of `.mts` files; capture foreign blocks. | Surface AST |
-| **2. Resolve** | Import DAG construction; name qualification; visibility checks. | Resolved AST |
+| **1. Parse** | Parse each `.rho` file as `BasicFile` (`[Import] Module`); capture foreign blocks. | Surface AST |
+| **2. Resolve** | Build import DAG (acyclic; cycles = error); name qualification; visibility checks. | Resolved AST |
 | **3. Normalize** | Functor application; rename propagation; union merging. | **Normalized Theory IR** |
 | **4. Project** | Lowering to `LanguageDef` for existing `macros` crate. | Rust Source |
 
@@ -69,7 +84,7 @@ The NTIR is the "Source of Truth." It is content-addressed (hashed) for incremen
 
 ### 3.1. EBNF (Spine)
 ```ebnf
-File            ::= [Import] Module ;
+BasicFile       ::= [Import] Module ;
 Module          ::= "module" Ident "{" [ModifiedContent] "}" ;
 ModifiedContent ::= ["export"] (Extender | Language | Space | NestedModule) ;
 

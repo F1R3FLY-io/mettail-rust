@@ -13,7 +13,7 @@
 
 use super::TypeChecker;
 use super::ValidationError;
-use crate::ast::{
+use crate::{
     grammar::GrammarItem,
     language::RewriteRule,
     language::{Equation, FreshnessTarget, LanguageDef, Premise},

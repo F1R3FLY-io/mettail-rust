@@ -1,0 +1,13 @@
+import "numbers.rho" as N
+
+module Math {
+  export extender Complex(Base) {
+    { Base }
+    semantics Rust
+    types { ![mettail_runtime::Complex64] as Cmplx }
+    terms {
+      CmplxInj . x:Float |- x : Cmplx ;
+      CmplxAdd . a:Cmplx, b:Cmplx |- a "+" b : Cmplx ;
+    }
+  }
+}

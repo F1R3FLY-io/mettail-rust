@@ -1,0 +1,7 @@
+module Numbers {
+  export extender FloatBase() {
+    empty
+    semantics Rust
+    types { ![f64] as Float }
+  }
+}
