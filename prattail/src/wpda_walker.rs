@@ -9492,7 +9492,7 @@ where
                     // returns false; fall through to per-cursor sub-parse
                     // so the cursor is not lost.
                     let member = crate::dispatch_cohort::CohortMember {
-                        return_frame: std::sync::Arc::new(parent.clone()),
+                        return_frame: parent.clone(),
                         weight_at_dispatch: parent
                             .weight
                             .times_ref(&branch.weight),
@@ -9534,7 +9534,7 @@ where
                         }
                         let synthetic_member =
                             crate::dispatch_cohort::CohortMember {
-                                return_frame: std::sync::Arc::new(parent.clone()),
+                                return_frame: parent.clone(),
                                 weight_at_dispatch:
                                     synthetic_weight_at_dispatch.clone(),
                             };
@@ -9555,7 +9555,7 @@ where
                     // (dispatch_cohort.rs:412-432) and honors
                     // MAX_PENDING_COHORT_PER_KEY cap.
                     let future_member = crate::dispatch_cohort::CohortMember {
-                        return_frame: std::sync::Arc::new(parent.clone()),
+                        return_frame: parent.clone(),
                         weight_at_dispatch: synthetic_weight_at_dispatch,
                     };
                     let _ = self
@@ -9664,12 +9664,7 @@ where
         inner_cur_bp: u8,
         snap: &crate::dispatch_cohort::WorkerSnapshot<W>,
     ) -> BranchCursor<W> {
-        // Phase F.13 Stage 3.C (2026-05-24): `return_frame` is now
-        // Arc-shared. Cheap unwrap first (last reference); fall back to
-        // a one-shot deep clone if cache or another revive path still
-        // holds a reference.
-        let mut cursor = std::sync::Arc::try_unwrap(member.return_frame)
-            .unwrap_or_else(|arc| (*arc).clone());
+        let mut cursor = member.return_frame;
         // Stage 1.5.3R-b (2026-05-21): tag cursor with cohort_origin.
         // ConfigKey reads this so cohort revives bucket separately
         // from per-cursor cursors. Graduation rule G2 clears the tag

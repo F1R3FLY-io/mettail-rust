@@ -192,28 +192,15 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
 
 /// A cohort member is a cursor that reached a `DispatchKey` while it
 /// was `InFlight`.
-///
-/// Phase F.13 Stage 3.C (2026-05-24): `return_frame` is now
-/// `Arc<BranchCursor<W>>` instead of an inline `BranchCursor<W>`.
-/// The cohort cache's `pending_cohort: Vec<CohortMember<W>>` field
-/// (at `DispatchCacheEntry::InFlight.pending_cohort` and
-/// `Resolved.pending_cohort` above) is the dominant per-parse memory
-/// consumer at chain_10000 scale (per heaptrack on chain_1000:
-/// `cohort_cursors_emitted = 189640 × ~3.2 KB/clone ≈ 600 MB` matched
-/// 608 MB peak heap). Arc bumps the refcount on `Clone` for cache
-/// bookkeeping; the single `revive_cohort_member_with_snapshot` site
-/// (`wpda_walker.rs:9667`) needs ownership, which it gets via
-/// `Arc::try_unwrap` (fast-path) or a one-shot deep clone if the
-/// Arc is still shared by other cache entries.
 pub struct CohortMember<W: SemiringRef> {
-    pub return_frame: std::sync::Arc<crate::wpda_walker::BranchCursor<W>>,
+    pub return_frame: crate::wpda_walker::BranchCursor<W>,
     pub weight_at_dispatch: W,
 }
 
 impl<W: SemiringRef> Clone for CohortMember<W> {
     fn clone(&self) -> Self {
         CohortMember {
-            return_frame: std::sync::Arc::clone(&self.return_frame),
+            return_frame: self.return_frame.clone(),
             weight_at_dispatch: self.weight_at_dispatch.clone(),
         }
     }
