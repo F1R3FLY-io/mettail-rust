@@ -261,6 +261,108 @@ impl<W: SemiringRef> From<BranchCursor<W>> for Frame<W> {
     }
 }
 
+impl<W: SemiringRef> CohortShell<W> {
+    /// Phase F.13 Stage L2 (2026-05-25): construct a `CohortShell`
+    /// snapshot from a `BranchCursor` at cohort formation time. All
+    /// 15 `~_obs` axes are copied / Arc-bumped from `parent` into the
+    /// shared shell. Subsequent cohort members at the same dispatch
+    /// key reuse this shell verbatim via `Arc::clone`.
+    ///
+    /// `dispatch_key` is captured from the H12 cross-cat-projection
+    /// dispatch site (`source_src_idx`, `inner_cur_bp`, `pos`) at the
+    /// caller. `sppf_stack_baseline` is the parent's `sppf_stack`
+    /// at the moment before the cohort's CategoryEntry push — used
+    /// at fan_out time to derive each revived member's CoW post-
+    /// dispatch SPPF stack.
+    pub fn from_branch_cursor(
+        parent: &BranchCursor<W>,
+        dispatch_key: DispatchKey,
+    ) -> Self {
+        let visited_dispatch_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
+            std::sync::Arc::new(parent.visited_dispatch.clone());
+        let visited_recovery_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
+            std::sync::Arc::new(parent.visited_recovery.clone());
+        let optional_scope_marks_arc: std::sync::Arc<Vec<usize>> =
+            std::sync::Arc::new(parent.optional_scope_marks.clone());
+        let binder_scope_marks_arc: std::sync::Arc<Vec<(u16, Vec<String>)>> =
+            std::sync::Arc::new(parent.binder_scope_marks.clone());
+        let incoming_edge_stack_arc: std::sync::Arc<Vec<crate::gss::GssEdgeId>> =
+            std::sync::Arc::new(parent.incoming_edge_stack.clone());
+        Self {
+            node: parent.node,
+            incoming_edge_stack: incoming_edge_stack_arc,
+            collection_depth: parent.collection_stack_depth,
+            cohort_origin: parent.cohort_origin.clone(),
+            lex_alt_idx: 0,    // populated from parent.weight via LexProvenance trait (Stage L3 wiring)
+            weight_src_idx: 0, // ditto
+            weight_rule_idx: 0, // ditto
+            lex_fork_stamp: parent.lex_fork_path.last().copied(),
+            binder_scope_marks: binder_scope_marks_arc,
+            optional_scope_marks: optional_scope_marks_arc,
+            sppf_collection_arena: std::sync::Arc::clone(&parent.sppf_collection_arena),
+            visited_dispatch: visited_dispatch_arc,
+            visited_recovery: visited_recovery_arc,
+            recovery_depth: parent.recovery_depth as u8,
+            dispatch_key,
+            sppf_stack_baseline: std::sync::Arc::clone(&parent.sppf_stack),
+            _phantom_weight: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<W: SemiringRef + Clone> CohortMemberState<W> {
+    /// Phase F.13 Stage L2 (2026-05-25): construct a per-member state
+    /// from a `BranchCursor` at cohort formation time. Captures the
+    /// per-member divergence axes (weight × snapshot index × packing
+    /// weight × output cat × source priority) that the lazy
+    /// representation tracks distinctly per member while the shell
+    /// is Arc-shared.
+    ///
+    /// `weight_at_dispatch` is the cumulative weight at the H12
+    /// register site (= `parent.weight × branch.weight` per the
+    /// existing `CohortMember.weight_at_dispatch` convention).
+    /// `snapshot_idx` is `0` at formation; the L3 fan_out path
+    /// updates it per worker_snapshot during multi-packing fanout.
+    pub fn from_branch_cursor(
+        parent: &BranchCursor<W>,
+        weight_at_dispatch: W,
+    ) -> Self {
+        Self {
+            weight_at_dispatch,
+            snapshot_idx: 0,
+            pending_packing_weight: parent.pending_packing_weight.clone(),
+            last_action_output_cat: parent.last_action_output_cat,
+            source_priority: parent.source_priority,
+        }
+    }
+}
+
+impl<W: SemiringRef> CohortFrame<W> {
+    /// Phase F.13 Stage L2 (2026-05-25): construct a fresh cohort
+    /// frame at H12 first-member-register time. The shell is built
+    /// from `parent` and shared across all subsequent members.
+    pub fn new(shell: std::sync::Arc<CohortShell<W>>) -> Self {
+        Self {
+            shell,
+            members: Vec::new(),
+            dispatch_result: None,
+        }
+    }
+
+    /// Append a member to the cohort. L2 invariant: all members must
+    /// share the shell — caller is responsible for verifying
+    /// `~_obs`-equivalence at the call site (via the H12 dispatch
+    /// key equality).
+    pub fn push_member(&mut self, member: CohortMemberState<W>) {
+        self.members.push(member);
+    }
+
+    /// Member count.
+    pub fn member_count(&self) -> usize {
+        self.members.len()
+    }
+}
+
 impl<W: SemiringRef> std::fmt::Debug for Frame<W>
 where
     BranchCursor<W>: std::fmt::Debug,
