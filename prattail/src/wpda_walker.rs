@@ -2703,27 +2703,49 @@ where
     where
         W: 'static,
     {
-        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame to concrete via
-        // L3.1 invariant (no Cohort frames before L3.4).
-        let cursors: Vec<CursorSnapshot<W>> = self
-            .branch_cursors
-            .iter()
-            .enumerate()
-            .map(|(idx, frame)| {
-                let c = frame.as_concrete_expect();
-                CursorSnapshot {
-                    idx,
-                    pos: c.pos,
-                    state: c.inner_state.clone(),
-                    gss_node_id: c.node,
-                    weight: c.weight.clone(),
-                    source_priority: c.source_priority,
-                    pending_ops_len: c.recovery_deltas.len(),
-                    // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
-                    collection_depth: c.collection_stack_depth as usize,
+        // Phase F.13 Stage L3.5+ (2026-05-25): snapshot reads need to
+        // expand cohort frames into N per-member snapshots so debug
+        // consumers see the full logical cursor count. Uses
+        // `materialize_branch_cursor` for the conversion (cheap — Arc
+        // clones for the shell-shared big fields).
+        let mut cursors: Vec<CursorSnapshot<W>> = Vec::new();
+        let mut next_idx: usize = 0;
+        for frame in self.branch_cursors.iter() {
+            match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => {
+                    cursors.push(CursorSnapshot {
+                        idx: next_idx,
+                        pos: c.pos,
+                        state: c.inner_state.clone(),
+                        gss_node_id: c.node,
+                        weight: c.weight.clone(),
+                        source_priority: c.source_priority,
+                        pending_ops_len: c.recovery_deltas.len(),
+                        // Phase F.2 (2026-05-18): swap to SPPF-side mirror.
+                        collection_depth: c.collection_stack_depth as usize,
+                    });
+                    next_idx += 1;
                 }
-            })
-            .collect();
+                crate::cohort_lazy::Frame::Cohort(cf) => {
+                    for state in &cf.members {
+                        let c = crate::cohort_lazy::materialize_branch_cursor(
+                            &cf.shell, state,
+                        );
+                        cursors.push(CursorSnapshot {
+                            idx: next_idx,
+                            pos: c.pos,
+                            state: c.inner_state.clone(),
+                            gss_node_id: c.node,
+                            weight: c.weight.clone(),
+                            source_priority: c.source_priority,
+                            pending_ops_len: c.recovery_deltas.len(),
+                            collection_depth: c.collection_stack_depth as usize,
+                        });
+                        next_idx += 1;
+                    }
+                }
+            }
+        }
         StepSnapshot {
             step_index: self.step_counter,
             cursor_count: self.branch_cursors.len(),
@@ -3243,22 +3265,40 @@ where
                 // SPPF-interning progress detectable when state/node/pos
                 // stay the same but reduces fire.
                 // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete
-                // via L3.1 invariant (no Cohort frames before L3.4).
+                // Phase F.13 Stage L3.5+ (2026-05-25): cohort frames are
+                // live in branch_cursors. The fingerprint reads node/pos/
+                // inner_state from the shell when Frame::Cohort and from
+                // the cursor when Frame::Concrete; recovery_deltas.len
+                // reads from shell.recovery_deltas (Arc); sppf_stack.len
+                // reads from shell.sppf_stack_baseline (Arc). All
+                // shell-invariant by ~_obs def so the fingerprint is
+                // identical to the materialized-form fingerprint.
+                let fp_of = |frame: &crate::cohort_lazy::Frame<W>| -> (
+                    crate::gss::GssNodeId,
+                    usize,
+                    WpdaState,
+                    usize,
+                    usize,
+                ) {
+                    match frame {
+                        crate::cohort_lazy::Frame::Concrete(c) => (
+                            c.node,
+                            c.pos,
+                            c.inner_state.clone(),
+                            c.recovery_deltas.len(),
+                            c.sppf_stack.len(),
+                        ),
+                        crate::cohort_lazy::Frame::Cohort(cf) => (
+                            cf.shell.node,
+                            cf.shell.pos,
+                            cf.shell.inner_state.clone(),
+                            cf.shell.recovery_deltas.len(),
+                            cf.shell.sppf_stack_baseline.len(),
+                        ),
+                    }
+                };
                 let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdaState, usize, usize)> =
-                    self
-                        .branch_cursors
-                        .iter()
-                        .map(|frame| {
-                            let c = frame.as_concrete_expect();
-                            (
-                                c.node,
-                                c.pos,
-                                c.inner_state.clone(),
-                                c.recovery_deltas.len(),
-                                c.sppf_stack.len(),
-                            )
-                        })
-                        .collect();
+                    self.branch_cursors.iter().map(&fp_of).collect();
                 self.step_fanout(tokens);
                 let progress_made = self.branch_cursors.len() != prev_count
                     || self
@@ -3266,12 +3306,12 @@ where
                         .iter()
                         .zip(prev_fingerprint.iter())
                         .any(|(frame, (n, p, s, ops_len, sppf_len))| {
-                            let c = frame.as_concrete_expect();
-                            c.node != *n
-                                || c.pos != *p
-                                || c.inner_state != *s
-                                || c.recovery_deltas.len() != *ops_len
-                                || c.sppf_stack.len() != *sppf_len
+                            let cur = fp_of(frame);
+                            cur.0 != *n
+                                || cur.1 != *p
+                                || cur.2 != *s
+                                || cur.3 != *ops_len
+                                || cur.4 != *sppf_len
                         });
                 if !progress_made {
                     // True fixed point — every cursor's engine.step
@@ -7547,9 +7587,17 @@ where
         //
         // End-of-input resolution is handled by `resolve_at_end_of_input`
         // (called by the parse facade after `run_to_end_of_input`), not here.
-        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-        let frontier: Vec<crate::gss::GssNodeId> =
-            self.branch_cursors.iter().map(|f| f.as_concrete_expect().node).collect();
+        // Phase F.13 Stage L3.5+ (2026-05-25): cohort frames may be
+        // live in branch_cursors. Read `node` from shell when Cohort
+        // (shell-invariant by ~_obs def) or cursor when Concrete.
+        let frontier: Vec<crate::gss::GssNodeId> = self
+            .branch_cursors
+            .iter()
+            .map(|f| match f {
+                crate::cohort_lazy::Frame::Concrete(c) => c.node,
+                crate::cohort_lazy::Frame::Cohort(cf) => cf.shell.node,
+            })
+            .collect();
         let s = WpdaState::AmbiguityFanout { branches: frontier };
         self.state = s.clone();
         s

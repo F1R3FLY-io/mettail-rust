@@ -393,16 +393,17 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // before it can be safely raised. Reverted to 4.
                 //
                 // Phase F.13 Stage L6 (2026-05-25): cap raised from 4
-                // to MAX_COHORT_FRAME_MEMBERS (256) now that L3 lazy
-                // form + L4 Arc-shared cycle defense + L5.a cohort
-                // merge survival shrink per-member memory cost from
-                // ~3.2 KB to ~76 B + Arc bumps. The L2.0 4→64 bump
-                // failure mode (4 GB explosion) no longer applies
-                // because the dispatch cache stores
-                // CohortMemberState (small) not CohortMember (full
-                // BranchCursor).
-                const MAX_WORKER_SNAPSHOTS_PER_KEY: usize =
-                    crate::cohort_lazy::MAX_COHORT_FRAME_MEMBERS;
+                // to 16 (4× of original). Empirically the cap=256
+                // experiment caused chain_10000 to grow past 22 GB
+                // RSS at 2:54 (close to baseline 24 GB OOM ceiling).
+                // The L3+L4 per-cursor savings (~50× via lazy form +
+                // Arc-shared cycle defense) don't fully amortize a
+                // ~4096× cap-product increase (256²) — concrete
+                // revives still happen for ObsDivergent steps and
+                // pay the materialize cost. cap=16 (16²=256 cap
+                // product, 16× original) should fit in ~6× pre-L3
+                // baseline = ~150 MB at chain_1000.
+                const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 16;
                 if worker_snapshots.len() < MAX_WORKER_SNAPSHOTS_PER_KEY {
                     worker_snapshots.push(snap);
                     self.snapshot_appends_total += 1;
@@ -541,13 +542,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         key: DispatchKey,
         member: CohortMember<W>,
     ) -> bool {
-        // Phase F.13 Stage L6 (2026-05-25): cap raised from 4 to
-        // MAX_COHORT_FRAME_MEMBERS (256). Per-member cache cost
-        // shrunk to ~76 B by L3 lazy form, so 256 fits in ~20 KB
-        // per dispatch key (~50× lower than the pre-L3 per-member
-        // ~3.2 KB cost which made cap=64 catastrophic per L2.0).
-        const MAX_PENDING_COHORT_PER_KEY: usize =
-            crate::cohort_lazy::MAX_COHORT_FRAME_MEMBERS;
+        // Phase F.13 Stage L6 (2026-05-25): cap raised from 4 to 16
+        // (matching MAX_WORKER_SNAPSHOTS_PER_KEY). cap=256 empirically
+        // rejected — chain_10000 grew past 22 GB at 2:54 (near
+        // baseline 24 GB OOM). The L3+L4 per-cursor savings amortize
+        // partly but not enough to fully offset the cap-product blowup.
+        const MAX_PENDING_COHORT_PER_KEY: usize = 16;
         match self.entries.get_mut(&key) {
             Some(DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. })
                 if pending_members.len() < MAX_PENDING_COHORT_PER_KEY =>
