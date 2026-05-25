@@ -4852,14 +4852,14 @@ where
                 match trigger_mode {
                     TriggerMode::CaptureForBuilder => {
                         if let Some(kind) = tokens.peek_kind(cursor.pos) {
-                            let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
+                            let text = tokens.peek_text(cursor.pos).unwrap_or("");
                             let pos = cursor.pos;
                             self.emit_push_token(cursor, kind, text, pos);
                         }
                     }
                     TriggerMode::ConsumeAsTriggerOnly => {
                         if let Some(kind) = tokens.peek_kind(cursor.pos) {
-                            let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
+                            let text = tokens.peek_text(cursor.pos).unwrap_or("");
                             let pos = cursor.pos;
                             // Tag the trigger with its owning rule
                             // (cat_src_idx, rule_index_in_category) so
@@ -4913,9 +4913,9 @@ where
                 start_scope,
             } => {
                 if tokens.peek_kind(cursor.pos).is_some() {
-                    let text = tokens.peek_text(cursor.pos).unwrap_or("").to_string();
+                    let text = tokens.peek_text(cursor.pos).unwrap_or("");
                     if start_scope {
-                        self.emit_start_binder_scope(cursor, vec![text.clone()]);
+                        self.emit_start_binder_scope(cursor, vec![text.to_string()]);
                     }
                     let pos = cursor.pos;
                     self.emit_push_ident(cursor, text, pos);
@@ -5632,8 +5632,7 @@ where
                             // surviving cursors).
                             let text = tokens
                                 .peek_text(child.pos)
-                                .unwrap_or("")
-                                .to_string();
+                                .unwrap_or("");
                             // L12 follow-up (B1, 2026-05-07): emit_push_ident MUST
                             // run unconditionally — emit_start_binder_scope pushes
                             // BinderHandle to binder_scopes, but the action body's
@@ -5647,7 +5646,7 @@ where
                             if start_scope {
                                 self.emit_start_binder_scope(
                                     &mut child,
-                                    vec![text.clone()],
+                                    vec![text.to_string()],
                                 );
                             }
                             let pos_now = child.pos;
@@ -6005,7 +6004,7 @@ where
                             // advancing). Mirrors emit_push_token in
                             // ConsumeAndCaptureAndPush at line 3779-3786.
                             let pos_now = child.pos;
-                            self.emit_push_token(&mut child, kind, text, pos_now);
+                            self.emit_push_token(&mut child, kind, &text, pos_now);
                             self.emit_push_side_effects(&mut child, &mut sym);
                             let _ = self.cursor_gss_push_auto(
                                 &mut child,
@@ -6140,8 +6139,7 @@ where
                             if let Some(kind) = tokens.peek_kind(child.pos) {
                                 let text = tokens
                                     .peek_text(child.pos)
-                                    .unwrap_or("")
-                                    .to_string();
+                                    .unwrap_or("");
                                 let trigger_pos = child.pos;
                                 self.emit_push_trigger_terminal(
                                     &mut child,
@@ -6270,8 +6268,7 @@ where
                             if let Some(kind) = tokens.peek_kind(child.pos) {
                                 let text = tokens
                                     .peek_text(child.pos)
-                                    .unwrap_or("")
-                                    .to_string();
+                                    .unwrap_or("");
                                 let pos_now = child.pos;
                                 self.emit_push_token(&mut child, kind, text, pos_now);
                             }
@@ -6348,8 +6345,7 @@ where
                             );
                             let text = tokens
                                 .peek_text(child.pos)
-                                .unwrap_or("")
-                                .to_string();
+                                .unwrap_or("");
                             // L12 follow-up (B1, 2026-05-07): emit_push_ident MUST
                             // run unconditionally — see twin fix at line ~2920 in
                             // the in-Fork ConsumeIdentAndReplace arm. Mirrors
@@ -6358,7 +6354,7 @@ where
                             if start_scope {
                                 self.emit_start_binder_scope(
                                     &mut child,
-                                    vec![text.clone()],
+                                    vec![text.to_string()],
                                 );
                             }
                             let pos_now = child.pos;
@@ -8298,14 +8294,19 @@ where
         &mut self,
         cursor: &mut BranchCursor<W>,
         kind: TokenKind,
-        text: String,
+        text: &str,
         pos: usize,
     ) {
         // C3 dual-mode: intern a Terminal in the SPPF arena alongside the
         // existing builder push. Text is preserved if non-empty.
         // Bug E (Phase 3.1.3): pushed_via_push_ident=false signals
         // emit_push_token origin → realization produces ActionArg::Token.
-        let text_opt = if text.is_empty() { None } else { Some(text.as_str()) };
+        //
+        // Phase F.13 Stage 3.1a (2026-05-25): text param is &str instead
+        // of String. intern_terminal stores its own copy only on first-
+        // intern; the prior String allocation was discarded on every
+        // dedup-hit (≈ all hits at chain_10000) — pure waste.
+        let text_opt = if text.is_empty() { None } else { Some(text) };
         let sid = self.sppf.intern_terminal(
             kind.clone(),
             crate::sppf::PosOrSynth::Real(pos as u32),
@@ -8338,12 +8339,14 @@ where
         &mut self,
         cursor: &mut BranchCursor<W>,
         kind: TokenKind,
-        text: String,
+        text: &str,
         pos: usize,
         owner_cat: u16,
         owner_rule_idx: u16,
     ) {
-        let text_opt = if text.is_empty() { None } else { Some(text.as_str()) };
+        // Phase F.13 Stage 3.1a (2026-05-25): &str over String — see
+        // emit_push_token.
+        let text_opt = if text.is_empty() { None } else { Some(text) };
         let sid = self.sppf.intern_trigger_terminal(
             kind,
             crate::sppf::PosOrSynth::Real(pos as u32),
@@ -8355,14 +8358,16 @@ where
     }
 
     #[inline(always)]
-    fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: String, pos: usize) {
+    fn emit_push_ident(&mut self, cursor: &mut BranchCursor<W>, name: &str, pos: usize) {
         // C3 dual-mode: SPPF terminal with TokenKind::Ident + the name text.
         // Bug E (Phase 3.1.3): pushed_via_push_ident=true signals
         // emit_push_ident origin → realization produces ActionArg::Ident.
+        //
+        // Phase F.13 Stage 3.1a (2026-05-25): &str over String.
         let sid = self.sppf.intern_terminal(
             TokenKind::Ident,
             crate::sppf::PosOrSynth::Real(pos as u32),
-            Some(name.as_str()),
+            Some(name),
             true,
         );
         Arc::make_mut(&mut cursor.sppf_stack).push(sid);
