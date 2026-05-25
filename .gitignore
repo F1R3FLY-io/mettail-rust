@@ -106,3 +106,9 @@ perf-profiles/
 prattail-parser-*.rs
 
 *.proptest-regressions
+
+# Rustc internal compiler error reports (rustc panics; user-local)
+rustc-ice-*.txt
+
+# AMD uProf profile artifacts (binary config/output)
+.ri
