@@ -160,16 +160,6 @@ fn test_right_assoc_chain_1000() {
 }
 
 #[test]
-#[ignore = "Architectural ceiling: same 24 GB RSS OOM as \
-    test_left_assoc_chain_10000 above (per-cursor BranchCursor::clone \
-    storm). Empirically confirmed during Phase F.13 Stage L2c \
-    verification 2026-05-25: this test grows past 7 GB RSS at 56 s \
-    before the OOM cap. Per `prattail/docs/design/plans/chain-10000-ceiling-lift.md` \
-    + `~/.claude/projects/.../memory/2026-05-24-chain_10000-heaptrack-architectural-ceiling.md`, \
-    fix is cohort lazy materialization (L1-L6 plan; L2a/L2a.1/L2a.2/L2c \
-    shipped, L3-L6 pending). RE-ENABLE when L6 ships: L4 Arc-shared \
-    cycle defense + L6 cap removal collapse per-cursor memory from \
-    ~3.2 KB to ~76 B, which should fit chain_10000 in RAM."]
 fn test_right_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = right_assoc_chain(10_000);
@@ -183,16 +173,6 @@ fn test_right_assoc_chain_10000() {
 // Sprint 2 (AST Work-Stack) will make AST operations stack-safe too.
 
 #[test]
-#[ignore = "Architectural ceiling: 24 GB RSS OOM at peak. \
-    Per `prattail/docs/design/plans/chain-10000-ceiling-lift.md` + \
-    `~/.claude/projects/.../memory/2026-05-24-chain_10000-heaptrack-architectural-ceiling.md`, \
-    Stages 3.1a/3.1b/3.2 + L2.0 cap-bump all empirically rejected. \
-    BranchCursor::clone is 49% of peak heap at chain_1000 (heaptrack); \
-    the 6 per-cursor mutable fields defeat simple Arc-CoW. Long-term fix \
-    is cohort lazy materialization (L1-L6 plan at \
-    `prattail/docs/design/plans/cohort-lazy-materialization.md`; \
-    L1 type scaffold shipped, L2-L6 multi-week structural work). \
-    Re-enable when L6 ships."]
 fn test_left_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(10_000);

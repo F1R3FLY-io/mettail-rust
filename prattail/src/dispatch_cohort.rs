@@ -391,7 +391,18 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // representation (Stage L6 of
                 // `docs/design/plans/cohort-lazy-materialization.md`)
                 // before it can be safely raised. Reverted to 4.
-                const MAX_WORKER_SNAPSHOTS_PER_KEY: usize = 4;
+                //
+                // Phase F.13 Stage L6 (2026-05-25): cap raised from 4
+                // to MAX_COHORT_FRAME_MEMBERS (256) now that L3 lazy
+                // form + L4 Arc-shared cycle defense + L5.a cohort
+                // merge survival shrink per-member memory cost from
+                // ~3.2 KB to ~76 B + Arc bumps. The L2.0 4→64 bump
+                // failure mode (4 GB explosion) no longer applies
+                // because the dispatch cache stores
+                // CohortMemberState (small) not CohortMember (full
+                // BranchCursor).
+                const MAX_WORKER_SNAPSHOTS_PER_KEY: usize =
+                    crate::cohort_lazy::MAX_COHORT_FRAME_MEMBERS;
                 if worker_snapshots.len() < MAX_WORKER_SNAPSHOTS_PER_KEY {
                     worker_snapshots.push(snap);
                     self.snapshot_appends_total += 1;
@@ -530,7 +541,13 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         key: DispatchKey,
         member: CohortMember<W>,
     ) -> bool {
-        const MAX_PENDING_COHORT_PER_KEY: usize = 4;
+        // Phase F.13 Stage L6 (2026-05-25): cap raised from 4 to
+        // MAX_COHORT_FRAME_MEMBERS (256). Per-member cache cost
+        // shrunk to ~76 B by L3 lazy form, so 256 fits in ~20 KB
+        // per dispatch key (~50× lower than the pre-L3 per-member
+        // ~3.2 KB cost which made cap=64 catastrophic per L2.0).
+        const MAX_PENDING_COHORT_PER_KEY: usize =
+            crate::cohort_lazy::MAX_COHORT_FRAME_MEMBERS;
         match self.entries.get_mut(&key) {
             Some(DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. })
                 if pending_members.len() < MAX_PENDING_COHORT_PER_KEY =>
