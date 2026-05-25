@@ -440,10 +440,13 @@ impl<W: SemiringRef> CohortShell<W> {
             std::sync::Arc::new(parent.optional_scope_marks.clone());
         let binder_scope_marks_arc: std::sync::Arc<Vec<(u16, Vec<String>)>> =
             std::sync::Arc::new(parent.binder_scope_marks.clone());
+        // Phase F.13 Stage L4.2 (2026-05-25): Arc::clone (O(1)) — was
+        // `Arc::new(parent.field.clone())` deep-clone pre-L4.2. These
+        // fields are now Arc-wrapped in BranchCursor.
         let incoming_edge_stack_arc: std::sync::Arc<Vec<crate::gss::GssEdgeId>> =
-            std::sync::Arc::new(parent.incoming_edge_stack.clone());
+            std::sync::Arc::clone(&parent.incoming_edge_stack);
         let recovery_deltas_arc: std::sync::Arc<Vec<crate::wpda_walker::BuilderDelta>> =
-            std::sync::Arc::new(parent.recovery_deltas.clone());
+            std::sync::Arc::clone(&parent.recovery_deltas);
         Self {
             node: parent.node,
             incoming_edge_stack: incoming_edge_stack_arc,
@@ -528,9 +531,10 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         pos: shell.pos,
         weight: state.weight_at_dispatch.clone(),
         inner_state: shell.inner_state.clone(),
-        recovery_deltas: (*shell.recovery_deltas).clone(),
+        // Phase F.13 Stage L4.2 (2026-05-25): Arc::clone is O(1).
+        recovery_deltas: std::sync::Arc::clone(&shell.recovery_deltas),
         source_priority: state.source_priority,
-        incoming_edge_stack: (*shell.incoming_edge_stack).clone(),
+        incoming_edge_stack: std::sync::Arc::clone(&shell.incoming_edge_stack),
         recovery_depth: shell.recovery_depth,
         // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone (O(1)) — was
         // deep-clone pre-L4.1. The materialized cursor now shares the

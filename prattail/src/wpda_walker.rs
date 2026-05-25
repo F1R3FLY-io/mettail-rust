@@ -1106,7 +1106,11 @@ pub struct BranchCursor<W: SemiringRef> {
     /// of mutating the live `SemanticBuilder`. On `commit_winner` the
     /// surviving branch's deltas are replayed against the live builder in
     /// insertion order.
-    pub recovery_deltas: Vec<BuilderDelta>,
+    /// Phase F.13 Stage L4.2 (2026-05-25): Arc-wrapped per the same
+    /// cohort-share rationale as `visited_*` (L4.1). Mutation sites
+    /// use `Arc::make_mut` (CoW deep-clones only on first per-cursor
+    /// mutation; Fork-arm clones bump refcount in O(1)).
+    pub recovery_deltas: Arc<Vec<BuilderDelta>>,
     // Phase 5.6-tail-G (2026-05-12): `collection_stack` and
     // `collection_slots_allocated` fields DELETED. Pre-tail these were
     // mirrors of the live builder's collection state, maintained for
@@ -1156,7 +1160,9 @@ pub struct BranchCursor<W: SemiringRef> {
     /// Empty for the seed cursor (no push yet); empty after a pop has
     /// reached the GSS root sentinel (cursor.node == GSS_NODE_NONE).
     /// Bounded by recursion depth at parse time.
-    pub incoming_edge_stack: Vec<crate::gss::GssEdgeId>,
+    /// Phase F.13 Stage L4.2 (2026-05-25): Arc-wrapped per the same
+    /// cohort-share rationale as `visited_*` (L4.1) and recovery_deltas.
+    pub incoming_edge_stack: Arc<Vec<crate::gss::GssEdgeId>>,
     /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): per-cursor count
     /// of recovery dispatches this cursor (or any of its ancestors) has
     /// experienced. Capped at `RecoveryConfig.max_recovery_depth`. The
@@ -1487,9 +1493,10 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             pos: self.pos,
             weight: self.weight.clone(),
             inner_state: self.inner_state.clone(),
-            recovery_deltas: self.recovery_deltas.clone(),
+            // Phase F.13 Stage L4.2 (2026-05-25): Arc::clone is O(1).
+            recovery_deltas: Arc::clone(&self.recovery_deltas),
             source_priority: self.source_priority,
-            incoming_edge_stack: self.incoming_edge_stack.clone(),
+            incoming_edge_stack: Arc::clone(&self.incoming_edge_stack),
             recovery_depth: self.recovery_depth,
             // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone is O(1)
             // (was deep-clone of FxHashSet pre-L4.1). Mutation sites
@@ -1576,14 +1583,15 @@ impl<W: SemiringRef> BranchCursor<W> {
             pos,
             weight,
             inner_state,
-            recovery_deltas: Vec::new(),
+            // Phase F.13 Stage L4.2 (2026-05-25): Arc-wrapped.
+            recovery_deltas: Arc::new(Vec::new()),
             // Stage 3.12 Fix 2(ii) (2026-05-02): default 0 for non-Fork-
             // allocated cursors. Fork arm overwrites per-branch.
             source_priority: 0,
             // Stage 3.12.6 (2026-05-02): empty stack for seed cursor
             // (no push has been made). cursor_gss_push appends to this
             // stack on every push.
-            incoming_edge_stack: Vec::new(),
+            incoming_edge_stack: Arc::new(Vec::new()),
             // Bounded recovery (Stage 3.20 / L12, 2026-05-06): seed cursor
             // has not experienced any recovery, so depth 0 + empty
             // visited set.
@@ -3024,7 +3032,7 @@ where
                     pos: self.pos,
                     weight: self.weight.clone(),
                     inner_state: new_state.clone(),
-                    recovery_deltas: Vec::new(),
+                    recovery_deltas: Arc::new(Vec::new()),
                     // Stage 3.12 Fix 2(ii) (2026-05-02): post-resolved
                     // singleton inherits priority 0 (no further Fork
                     // tiebreaks expected post-resolution).
@@ -3032,7 +3040,7 @@ where
                     // Stage 3.12.6 (2026-05-02): post-resolution
                     // singleton has no recorded push history (the resolved
                     // GSS state is canonical for the surviving branch).
-                    incoming_edge_stack: Vec::new(),
+                    incoming_edge_stack: Arc::new(Vec::new()),
                     // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
                     // post-resolution singleton resets recovery
                     // book-keeping — the resolved parse path doesn't
@@ -4722,13 +4730,13 @@ where
                     pos: self.pos,
                     weight: W::one_ref(),
                     inner_state: self.state.clone(),
-                    recovery_deltas: Vec::new(),
+                    recovery_deltas: Arc::new(Vec::new()),
                     // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
                     // post-Drop has no Fork ancestor, so priority 0.
                     source_priority: 0,
                     // Stage 3.12.6 (2026-05-02): post-Drop reset starts
                     // with empty stack history.
-                    incoming_edge_stack: Vec::new(),
+                    incoming_edge_stack: Arc::new(Vec::new()),
                     // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
                     // post-Drop reset resets recovery book-keeping.
                     recovery_depth: 0,
@@ -4851,7 +4859,8 @@ where
                 // land in the journal — non-recovery effects are already
                 // applied to cursor.builder above.
                 if Self::is_recovery_delta(&effect) {
-                    cursor.recovery_deltas.push(effect);
+                    // Phase F.13 Stage L4.2 (2026-05-25): Arc::make_mut CoW.
+                    Arc::make_mut(&mut cursor.recovery_deltas).push(effect);
                 }
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -5980,7 +5989,7 @@ where
                             self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
-                                child.recovery_deltas.push(effect);
+                                Arc::make_mut(&mut child.recovery_deltas).push(effect);
                             }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top_auto(
@@ -6538,7 +6547,7 @@ where
                             self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
-                                child.recovery_deltas.push(effect);
+                                Arc::make_mut(&mut child.recovery_deltas).push(effect);
                             }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top_auto(
@@ -6710,7 +6719,7 @@ where
                             self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
-                                child.recovery_deltas.push(effect);
+                                Arc::make_mut(&mut child.recovery_deltas).push(effect);
                             }
                             let pos_now = child.pos;
                             let _ = self.cursor_gss_replace_top_auto(
@@ -6758,7 +6767,7 @@ where
                             self.apply_effect_to_cursor(&mut child, &effect);
                             // Phase 5.6-tail-D: recovery-only journal.
                             if Self::is_recovery_delta(&effect) {
-                                child.recovery_deltas.push(effect);
+                                Arc::make_mut(&mut child.recovery_deltas).push(effect);
                             }
                             // Capture popped_symbol before pop.
                             let popped_symbol = self.gss
@@ -6844,7 +6853,7 @@ where
                             for effect in effects {
                                 self.apply_effect_to_cursor(&mut child, &effect);
                                 if Self::is_recovery_delta(&effect) {
-                                    child.recovery_deltas.push(effect);
+                                    Arc::make_mut(&mut child.recovery_deltas).push(effect);
                                 }
                             }
                             let pos_now = child.pos;
@@ -8161,7 +8170,10 @@ where
         // StartCollection, PushCollectionId, SpliceIntoCollection) were
         // applied to cursor.builder via apply_effect_to_builder at emit
         // time; they're never journaled and thus never reach this loop.
-        for delta in winner.recovery_deltas {
+        // Phase F.13 Stage L4.2 (2026-05-25): unwrap Arc — winner is
+        // consumed; try_unwrap moves the Vec out if refcount is 1,
+        // else deep-clones via Arc::unwrap_or_clone.
+        for delta in std::sync::Arc::unwrap_or_clone(winner.recovery_deltas) {
             match delta {
                 // Non-recovery variants (StartBinderScope, EndBinderScope,
                 // StartCollection, PushCollectionId, SpliceIntoCollection):
@@ -8370,7 +8382,8 @@ where
             pos: winner.pos,
             weight: self.weight.clone(),
             inner_state: winner.inner_state,
-            recovery_deltas: Vec::new(),
+            // Phase F.13 Stage L4.2 (2026-05-25): Arc-wrapped.
+            recovery_deltas: Arc::new(Vec::new()),
             // Stage 3.12 Fix 2(ii) (2026-05-02): preserve winner's
             // priority. Subsequent Forks build on this priority chain.
             source_priority: winner.source_priority,
@@ -9877,7 +9890,8 @@ where
         let new_id = self.gss.get_or_create_node(WpdaGssNode { pos, symbol: sym });
         let edge_id = self.gss.add_edge_kind(new_id, predecessor, w, kind);
         cursor.node = new_id;
-        cursor.incoming_edge_stack.push(edge_id);
+        // Phase F.13 Stage L4.2 (2026-05-25): Arc::make_mut CoW.
+        Arc::make_mut(&mut cursor.incoming_edge_stack).push(edge_id);
         if self.deterministic {
             self.top_node = Some(new_id);
         }
@@ -10592,7 +10606,8 @@ where
         &mut self,
         cursor: &mut BranchCursor<W>,
     ) -> Option<crate::gss::GssNodeId> {
-        let edge_id = cursor.incoming_edge_stack.pop();
+        // Phase F.13 Stage L4.2 (2026-05-25): Arc::make_mut CoW.
+        let edge_id = Arc::make_mut(&mut cursor.incoming_edge_stack).pop();
         // Phase F.13 H12 Stage 1.2 (2026-05-21): if the popped edge
         // is a CrossCatProjection, the cursor just exited a cross-cat
         // sub-parse — record the result in the dispatch-cohort cache.
@@ -10736,10 +10751,15 @@ where
         let (new_id, edge_id) =
             self.gss.replace_top_with_edge_id_kind(target, sym, pos, w, cursor_top_edge, kind);
         cursor.node = new_id;
-        if !cursor.incoming_edge_stack.is_empty() {
-            cursor.incoming_edge_stack.pop();
+        // Phase F.13 Stage L4.2 (2026-05-25): single Arc::make_mut for
+        // the pair pop+push (one CoW deep-clone instead of two).
+        {
+            let edges = Arc::make_mut(&mut cursor.incoming_edge_stack);
+            if !edges.is_empty() {
+                edges.pop();
+            }
+            edges.push(edge_id);
         }
-        cursor.incoming_edge_stack.push(edge_id);
         if self.deterministic {
             self.top_node = Some(new_id);
         }
