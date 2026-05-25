@@ -7069,23 +7069,77 @@ where
         cf: Box<crate::cohort_lazy::CohortFrame<W>>,
         tokens: &dyn WpdaTokenSource,
     ) -> Vec<crate::cohort_lazy::Frame<W>> {
-        // L3.2 stub: always materialize the cohort into N concrete
-        // cursors, then run the same per-cursor step body as the
-        // `Concrete` arm of step_fanout.
+        // Phase F.13 Stage L3.4 (2026-05-25): classifier-driven dispatch.
+        // Compute a representative action by stepping the engine over the
+        // shell's `(inner_state, pos)` (shell-invariant by ~_obs def, so
+        // the result represents the action ALL members would take).
+        let frontier_top = self.gss.node(cf.shell.node).cloned();
+        let action = self.engine.step(
+            &cf.shell.inner_state,
+            &self.gss,
+            frontier_top.as_ref(),
+            cf.shell.pos,
+            tokens,
+        );
+        match crate::cohort_lazy::DivergenceClass::classify(&action) {
+            crate::cohort_lazy::DivergenceClass::ObsInvariant => {
+                // Try to apply to shell in-place. L3.4 supports `Advance`
+                // only; other invariant variants (Accept/Error/Idle) fall
+                // through to materialize (L3.4b expands this).
+                let mut cf = cf;
+                match crate::cohort_lazy::apply_obs_invariant_to_shell(&mut cf, action) {
+                    Ok(()) => {
+                        // Shell-only mutation succeeded; cohort survives as a
+                        // single Frame::Cohort. Members observe the shell
+                        // update through the shared Arc.
+                        return vec![crate::cohort_lazy::Frame::Cohort(cf)];
+                    }
+                    Err(action_back) => {
+                        // Variant not yet supported; fall through to
+                        // materialize using the recovered action.
+                        return self.cohort_materialize_and_step(cf, action_back, tokens);
+                    }
+                }
+            }
+            crate::cohort_lazy::DivergenceClass::ObsDivergent => {
+                return self.cohort_materialize_and_step(cf, action, tokens);
+            }
+            crate::cohort_lazy::DivergenceClass::DispatchResolved => {
+                // L3.5 will populate cf.dispatch_result before calling
+                // step_cohort_frame for the broadcast path; classify()
+                // itself never returns this variant.
+                unreachable!(
+                    "L3.4: DivergenceClass::classify never returns DispatchResolved \
+                     (caller short-circuits via cf.dispatch_result.is_some())"
+                );
+            }
+        }
+    }
+
+    /// Phase F.13 Stage L3.4 (2026-05-25): materialize a cohort frame
+    /// and run the per-cursor step body. Factored out of the L3.2 stub
+    /// so the L3.4 ObsInvariant fast-path can share the fallback path
+    /// when an invariant variant isn't yet supported.
+    ///
+    /// Skips re-running engine.step inside the per-cursor loop — the
+    /// representative action has already been computed by the caller
+    /// and is identical across members (shell-invariant). Each
+    /// materialized cursor applies the cloned action via
+    /// `apply_action_to_cursor`.
+    fn cohort_materialize_and_step(
+        &mut self,
+        cf: Box<crate::cohort_lazy::CohortFrame<W>>,
+        action: WpdaStepAction<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Vec<crate::cohort_lazy::Frame<W>> {
         let materialized: Vec<crate::cohort_lazy::Frame<W>> =
             crate::cohort_lazy::materialize_cohort_to_frames(*cf);
         let mut produced: Vec<crate::cohort_lazy::Frame<W>> =
             Vec::with_capacity(materialized.len());
+        let action_template = action;
         for frame in materialized {
             let mut cursor = frame.into_concrete();
-            let frontier_top = self.gss.node(cursor.node).cloned();
-            let action = self.engine.step(
-                &cursor.inner_state,
-                &self.gss,
-                frontier_top.as_ref(),
-                cursor.pos,
-                tokens,
-            );
+            let action = action_template.clone();
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
             match outcome {
                 CursorOutcome::Drop => {

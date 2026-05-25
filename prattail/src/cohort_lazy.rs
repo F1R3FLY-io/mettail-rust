@@ -104,6 +104,7 @@ pub struct CohortFrame<W: SemiringRef> {
 /// Per the lazy-materialization correctness criterion (L2): if any
 /// member's next step would mutate any of these fields per-member, the
 /// cohort MUST materialize before the step fires.
+#[derive(Clone)]
 pub struct CohortShell<W: SemiringRef> {
     /// GSS-tip shared by all members post-`CategoryEntry` push.
     pub node: crate::gss::GssNodeId,
@@ -547,6 +548,43 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
 /// lazy form should make 256 trivially affordable, but a runaway cohort
 /// formation bug is preferable to OOM.
 pub const MAX_COHORT_FRAME_MEMBERS: usize = 256;
+
+/// Phase F.13 Stage L3.4 (2026-05-25): apply an `ObsInvariant`-class
+/// action to a cohort frame's shell in-place. Returns `Ok(())` on
+/// success (the cohort frame's shell mutated; all members observe the
+/// change through the shared `Arc<CohortShell>`). Returns `Err(action)`
+/// if the variant is not yet supported in this stage — caller falls
+/// back to the L3.2 materialize-and-per-cursor-step path.
+///
+/// **L3.4 supported variants** (the conservative initial scope):
+/// - `Advance(new_state)`: updates `shell.inner_state` via
+///   `Arc::make_mut`. All members observe the new state without
+///   per-member mutation.
+///
+/// All other variants — even those classified ObsInvariant by
+/// `DivergenceClass::classify` (Accept/Error/Idle) — return `Err(action)`
+/// at this stage. L3.4b will add terminal-state handling
+/// (Accept/Error/Idle force materialization to surface cursor outcomes
+/// in step_fanout's accounting) and L4 will add additional invariant
+/// variants once Arc-shared cycle defense lets push/pop apply to shell
+/// without per-member mutation.
+pub fn apply_obs_invariant_to_shell<W: SemiringRef + Clone>(
+    cf: &mut CohortFrame<W>,
+    action: crate::wpda_walker::WpdaStepAction<W>,
+) -> Result<(), crate::wpda_walker::WpdaStepAction<W>> {
+    use crate::wpda_walker::WpdaStepAction;
+    match action {
+        WpdaStepAction::Advance(new_state) => {
+            // Mutate the shell in-place. Arc::make_mut deep-clones the
+            // shell if any other Arc holder exists; in the canonical
+            // single-cohort-frame-per-key case, the shell is uniquely
+            // referenced and Arc::make_mut is O(1).
+            std::sync::Arc::make_mut(&mut cf.shell).inner_state = new_state;
+            Ok(())
+        }
+        other => Err(other),
+    }
+}
 
 /// Phase F.13 Stage L3.2 (2026-05-25): consume a cohort frame and yield
 /// one `Frame::Concrete(BranchCursor)` per member via
