@@ -136,8 +136,30 @@ pub struct CohortShell<W: SemiringRef> {
     /// member that would mutate this triggers materialization.
     pub visited_dispatch: Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>>,
     pub visited_recovery: Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>>,
-    /// Recovery depth (Phase L12 / Stage 3.20).
+    /// Recovery depth (Phase L12 / Stage 3.20). Mirrors
+    /// `BranchCursor::recovery_depth` (u8); cohort formation captures
+    /// the parent's depth verbatim (all members share by ~_obs def).
     pub recovery_depth: u8,
+    /// Phase F.13 Stage L2a.1 (2026-05-25): recovery delta journal
+    /// at cohort formation, shared by all members by ~_obs (the
+    /// `~_obs` equivalence requires "same `recovery_deltas` journal
+    /// up to the dispatch point"). Materialization deep-clones this
+    /// Arc'd Vec into the revived cursor's owned `Vec<BuilderDelta>`.
+    /// Closes the L2b BLOCKER on `take_pending_for_drain` migration.
+    pub recovery_deltas: Arc<Vec<crate::wpda_walker::BuilderDelta>>,
+    /// Phase F.13 Stage L2a.1 (2026-05-25): shared `inner_state` at
+    /// dispatch site. All cohort members at the same dispatch key have
+    /// the same `WpdaState` (specifically a `CrossCatDelegate` variant
+    /// keyed on the dispatch's `(source_src_idx, inner_cur_bp)`).
+    /// Captured at cohort formation; materialization clones it into
+    /// each revived cursor's `inner_state` field.
+    pub inner_state: crate::wpda_runtime::WpdaState,
+    /// Phase F.13 Stage L2a.1 (2026-05-25): input position at the
+    /// dispatch site. Shared by all members (this is `pos` in the
+    /// `DispatchKey`). Materialization sets the revived cursor's
+    /// `pos` from this initially; revive then advances to `hi_pos`
+    /// after the sub-parse's symbol push.
+    pub pos: usize,
     /// The dispatch key that defines this cohort's `~_dispatch`
     /// equivalence class.
     pub dispatch_key: DispatchKey,
@@ -288,6 +310,8 @@ impl<W: SemiringRef> CohortShell<W> {
             std::sync::Arc::new(parent.binder_scope_marks.clone());
         let incoming_edge_stack_arc: std::sync::Arc<Vec<crate::gss::GssEdgeId>> =
             std::sync::Arc::new(parent.incoming_edge_stack.clone());
+        let recovery_deltas_arc: std::sync::Arc<Vec<crate::wpda_walker::BuilderDelta>> =
+            std::sync::Arc::new(parent.recovery_deltas.clone());
         Self {
             node: parent.node,
             incoming_edge_stack: incoming_edge_stack_arc,
@@ -302,7 +326,10 @@ impl<W: SemiringRef> CohortShell<W> {
             sppf_collection_arena: std::sync::Arc::clone(&parent.sppf_collection_arena),
             visited_dispatch: visited_dispatch_arc,
             visited_recovery: visited_recovery_arc,
-            recovery_depth: parent.recovery_depth as u8,
+            recovery_depth: parent.recovery_depth,
+            recovery_deltas: recovery_deltas_arc,
+            inner_state: parent.inner_state.clone(),
+            pos: parent.pos,
             dispatch_key,
             sppf_stack_baseline: std::sync::Arc::clone(&parent.sppf_stack),
             _phantom_weight: std::marker::PhantomData,
