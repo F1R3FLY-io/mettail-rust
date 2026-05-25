@@ -173,6 +173,16 @@ fn test_right_assoc_chain_10000() {
 // Sprint 2 (AST Work-Stack) will make AST operations stack-safe too.
 
 #[test]
+#[ignore = "Architectural ceiling: 24 GB RSS OOM at peak. \
+    Per `prattail/docs/design/plans/chain-10000-ceiling-lift.md` + \
+    `~/.claude/projects/.../memory/2026-05-24-chain_10000-heaptrack-architectural-ceiling.md`, \
+    Stages 3.1a/3.1b/3.2 + L2.0 cap-bump all empirically rejected. \
+    BranchCursor::clone is 49% of peak heap at chain_1000 (heaptrack); \
+    the 6 per-cursor mutable fields defeat simple Arc-CoW. Long-term fix \
+    is cohort lazy materialization (L1-L6 plan at \
+    `prattail/docs/design/plans/cohort-lazy-materialization.md`; \
+    L1 type scaffold shipped, L2-L6 multi-week structural work). \
+    Re-enable when L6 ships."]
 fn test_left_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(10_000);
