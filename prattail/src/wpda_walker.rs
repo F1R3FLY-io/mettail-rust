@@ -1167,7 +1167,7 @@ pub struct BranchCursor<W: SemiringRef> {
     /// Delete at pos=5 → Insert at pos=5 → ...). Bounded in size by
     /// `recovery_depth` (each insert here corresponds to a depth
     /// increment).
-    pub visited_recovery: FxHashSet<(usize, u16, u8)>,
+    pub visited_recovery: FxHashSet<PackedDispatchConfig>,
     /// B12 / Candidate E (2026-05-07): per-cursor configurations at
     /// which a CROSS-CAT-PROJECTION Fork has already fired on this
     /// cursor's path. Each entry is `(pos, state_cat_src_idx, cur_bp)`
@@ -1184,7 +1184,7 @@ pub struct BranchCursor<W: SemiringRef> {
     /// 2010). Mirrors `visited_recovery` propagation: cloned to each
     /// child on Fork, inserted with the parent's dispatch config
     /// after a projection Fork emission.
-    pub visited_dispatch: FxHashSet<(usize, u16, u8)>,
+    pub visited_dispatch: FxHashSet<PackedDispatchConfig>,
     // Phase 5.6-tail-A (2026-05-12): `consistency_memo` field deleted.
     // It memoized `cursor_committed_ops_consistent`, which is also
     // deleted — the B13d-R/Resolution-R consistency override is
@@ -2236,13 +2236,13 @@ fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: 
 fn extract_recovery_dispatch_config<W: SemiringRef>(
     cursor: &BranchCursor<W>,
     gss: &WpdaGss<W>,
-) -> Option<(usize, u16, u8)> {
+) -> Option<PackedDispatchConfig> {
     if let WpdaState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
         let cat_src = gss
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
             .unwrap_or(0);
-        Some((*pos, cat_src, *cur_bp))
+        Some(PackedDispatchConfig::pack(*pos, cat_src, *cur_bp))
     } else {
         None
     }
@@ -2295,16 +2295,68 @@ fn is_projection_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
 ///
 /// Identical body to `extract_recovery_dispatch_config` — kept separate
 /// so future refactors can vary one without affecting the other.
+/// Phase F.13 Stage 3.B (2026-05-24): packed cycle-defense key.
+///
+/// Replaces `(usize, u16, u8)` which Rust aligns to 16 B (usize is
+/// 8-aligned + tail padding). PackedDispatchConfig is a u64 (8 B) —
+/// half the per-entry footprint in `visited_dispatch` /
+/// `visited_recovery` FxHashSets. Layout:
+///   bits 0-39  : pos      (40 bits, max 1 TB input)
+///   bits 40-55 : cat_src  (16 bits)
+///   bits 56-63 : cur_bp   (8 bits)
+///
+/// Heaptrack on chain_1000 showed BranchCursor::clone as 49 % of
+/// peak heap (296 MB / 608 MB total). visited_* sets are 2 of the 6
+/// growing per-cursor fields; packing halves their footprint.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PackedDispatchConfig(u64);
+
+impl PackedDispatchConfig {
+    #[inline(always)]
+    pub fn pack(pos: usize, cat_src: u16, cur_bp: u8) -> Self {
+        debug_assert!(
+            (pos as u64) < (1u64 << 40),
+            "PackedDispatchConfig::pack: pos {} overflows 40 bits",
+            pos,
+        );
+        Self(
+            ((pos as u64) & 0xFF_FFFF_FFFF)
+                | ((cat_src as u64) << 40)
+                | ((cur_bp as u64) << 56),
+        )
+    }
+
+    #[inline(always)]
+    pub fn pos(self) -> usize {
+        (self.0 & 0xFF_FFFF_FFFF) as usize
+    }
+
+    #[inline(always)]
+    pub fn cat_src(self) -> u16 {
+        ((self.0 >> 40) & 0xFFFF) as u16
+    }
+
+    #[inline(always)]
+    pub fn cur_bp(self) -> u8 {
+        ((self.0 >> 56) & 0xFF) as u8
+    }
+
+    #[inline(always)]
+    pub fn unpack(self) -> (usize, u16, u8) {
+        (self.pos(), self.cat_src(), self.cur_bp())
+    }
+}
+
 fn extract_dispatch_config<W: SemiringRef>(
     cursor: &BranchCursor<W>,
     gss: &WpdaGss<W>,
-) -> Option<(usize, u16, u8)> {
+) -> Option<PackedDispatchConfig> {
     if let WpdaState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
         let cat_src = gss
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
             .unwrap_or(0);
-        Some((*pos, cat_src, *cur_bp))
+        Some(PackedDispatchConfig::pack(*pos, cat_src, *cur_bp))
     } else {
         None
     }
@@ -4721,12 +4773,13 @@ where
                 if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
                     if let Some(key) = extract_dispatch_config(cursor, &self.gss) {
                         if cursor.visited_dispatch.contains(&key) {
+                            let (pos, cat_src, cur_bp) = key.unpack();
                             let msg = format!(
                                 "cross-cat projection cycle detected at \
                                  (pos={}, cat_src={}, cur_bp={}) — refusing \
                                  to re-dispatch projection Push (B12 cycle \
                                  defense, singleton-bucket path)",
-                                key.0, key.1, key.2,
+                                pos, cat_src, cur_bp,
                             );
                             self.set_cursor_inner_state(
                                 cursor,
@@ -5038,7 +5091,7 @@ where
                 //
                 // dispatch_branch_seen field retained for any future
                 // diagnostic use; field is unused in this branch.
-                let recovery_dispatch_config: Option<(usize, u16, u8)> = if is_recovery {
+                let recovery_dispatch_config: Option<PackedDispatchConfig> = if is_recovery {
                     extract_recovery_dispatch_config(cursor, &self.gss)
                 } else {
                     None
@@ -5059,10 +5112,11 @@ where
                     }
                     if let Some(key) = recovery_dispatch_config {
                         if cursor.visited_recovery.contains(&key) {
+                            let (pos, cat_src, cur_bp) = key.unpack();
                             let msg = format!(
                                 "recovery already attempted at (pos={}, cat_src={}, cur_bp={}) — \
                                  refusing to re-dispatch (cursor cycle defense)",
-                                key.0, key.1, key.2,
+                                pos, cat_src, cur_bp,
                             );
                             self.set_cursor_inner_state(
                                 cursor,
@@ -5111,7 +5165,7 @@ where
                 // Fork pass through unchanged — atomic prefix, lex-alt,
                 // multi-rule, Opt-Group dispatches keep their lex-min
                 // ambiguity-resolution semantics.
-                let parent_dispatch_config: Option<(usize, u16, u8)> =
+                let parent_dispatch_config: Option<PackedDispatchConfig> =
                     if is_recovery {
                         None
                     } else {
@@ -5129,11 +5183,12 @@ where
                     !is_recovery && is_projection_fork(&branches);
                 if is_pure_projection_fork && parent_in_visited {
                     if let Some(key) = parent_dispatch_config {
+                        let (pos, cat_src, cur_bp) = key.unpack();
                         let msg = format!(
                             "cross-cat projection cycle detected at \
                              (pos={}, cat_src={}, cur_bp={}) — refusing \
                              to re-dispatch projection Fork (B14 C5 cycle defense)",
-                            key.0, key.1, key.2,
+                            pos, cat_src, cur_bp,
                         );
                         self.set_cursor_inner_state(
                             cursor,
@@ -9403,8 +9458,8 @@ where
         branch: ForkBranch<W>,
         pos_after: usize,
         child_recovery_depth: u8,
-        child_visited_recovery: FxHashSet<(usize, u16, u8)>,
-        child_visited_dispatch: FxHashSet<(usize, u16, u8)>,
+        child_visited_recovery: FxHashSet<PackedDispatchConfig>,
+        child_visited_dispatch: FxHashSet<PackedDispatchConfig>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache

@@ -471,6 +471,14 @@ mod tests {
             fork_branches_dropped_pre_emit: 0,
             fork_target_symbol_already_in_sppf: 0,
             merge_miss_pairs_edge_kind_equivalent: 0,
+            merge_miss_cohort_origin_diff_total: 0,
+            merge_miss_sppf_top_diff_total: 0,
+            merge_miss_lex_alt_idx_diff_total: 0,
+            merge_miss_weight_src_idx_diff_total: 0,
+            merge_miss_weight_rule_idx_diff_total: 0,
+            merge_miss_lex_fork_stamp_diff_total: 0,
+            merge_miss_pairs_pred_edge_class_equivalent: 0,
+            merge_miss_multi_participation: [0; 10],
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
