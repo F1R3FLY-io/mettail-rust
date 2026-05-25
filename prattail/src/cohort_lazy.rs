@@ -428,10 +428,14 @@ impl<W: SemiringRef> CohortShell<W> {
         parent: &BranchCursor<W>,
         dispatch_key: DispatchKey,
     ) -> Self {
+        // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone (O(1)) — was
+        // `Arc::new(parent.visited_*.clone())` pre-L4.1 which deep-
+        // cloned the HashSet. visited_* are now Arc-wrapped in
+        // BranchCursor; this site bumps the refcount.
         let visited_dispatch_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
-            std::sync::Arc::new(parent.visited_dispatch.clone());
+            std::sync::Arc::clone(&parent.visited_dispatch);
         let visited_recovery_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
-            std::sync::Arc::new(parent.visited_recovery.clone());
+            std::sync::Arc::clone(&parent.visited_recovery);
         let optional_scope_marks_arc: std::sync::Arc<Vec<usize>> =
             std::sync::Arc::new(parent.optional_scope_marks.clone());
         let binder_scope_marks_arc: std::sync::Arc<Vec<(u16, Vec<String>)>> =
@@ -528,8 +532,12 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         source_priority: state.source_priority,
         incoming_edge_stack: (*shell.incoming_edge_stack).clone(),
         recovery_depth: shell.recovery_depth,
-        visited_recovery: (*shell.visited_recovery).clone(),
-        visited_dispatch: (*shell.visited_dispatch).clone(),
+        // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone (O(1)) — was
+        // deep-clone pre-L4.1. The materialized cursor now shares the
+        // shell's Arc'd cycle-defense sets; first per-cursor mutation
+        // triggers Arc::make_mut copy-on-write.
+        visited_recovery: std::sync::Arc::clone(&shell.visited_recovery),
+        visited_dispatch: std::sync::Arc::clone(&shell.visited_dispatch),
         sppf_stack: std::sync::Arc::clone(&shell.sppf_stack_baseline),
         optional_scope_marks: (*shell.optional_scope_marks).clone(),
         binder_scope_marks: (*shell.binder_scope_marks).clone(),
