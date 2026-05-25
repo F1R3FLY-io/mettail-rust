@@ -243,7 +243,7 @@ pub struct CohortDispatchResult<W: SemiringRef> {
 ///
 /// See `docs/design/plans/cohort-lazy-materialization.md` §3.2 + the
 /// concrete rule delivered by Explore Agent 2.
-#[allow(dead_code)] // L1 scaffolding; consumed by L3
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DivergenceClass {
     /// Apply to the shell once; all members stay lazy.
     ObsInvariant,
@@ -252,8 +252,78 @@ pub enum DivergenceClass {
     ObsDivergent,
     /// The cohort's queued sub-parse just completed. Cache the result
     /// in `CohortFrame::dispatch_result` and fan out to all members in
-    /// one shot via `fan_out_cohort`.
+    /// one shot via `fan_out_cohort`. Detected by the caller
+    /// (`step_cohort_frame`) BEFORE classify runs — `classify` itself
+    /// only returns `ObsInvariant` or `ObsDivergent`.
     DispatchResolved,
+}
+
+impl DivergenceClass {
+    /// Phase F.13 Stage L3.3 (2026-05-25): classify a `WpdaStepAction`
+    /// for cohort step routing. Returns either `ObsInvariant` (the
+    /// action does not mutate any per-member-divergent BranchCursor
+    /// field, so it can be applied in bulk to the shell) or
+    /// `ObsDivergent` (the action mutates a per-member field, so the
+    /// cohort must materialize before the action fires).
+    ///
+    /// **L3.3 conservative classification** (per plan doc §L3.3): we
+    /// only treat actions that provably touch no per-member field as
+    /// ObsInvariant; everything that touches `weight`, `recovery_deltas`,
+    /// `last_action_output_cat`, or that forks into per-member-divergent
+    /// children falls back to ObsDivergent (the L3.2 stub path —
+    /// materialize → per-cursor step, identical to baseline).
+    ///
+    /// As confidence grows (L3.4b refinement, follow-on benchmarking),
+    /// individual variants graduate from ObsDivergent to ObsInvariant.
+    /// The graduation criterion is: "no per-member field in
+    /// `CohortMemberState` is mutated by this action's apply path."
+    ///
+    /// Decisions:
+    /// - **`Advance(_)`**: ObsInvariant — mutates only `cursor.inner_state`,
+    ///   which is shell-invariant (all cohort members at the same
+    ///   dispatch key share `inner_state` by ~_obs definition; the L4
+    ///   Arc-shared cycle defense doesn't apply here because we only
+    ///   write the field, not read its history).
+    /// - **`Accept`, `Error`, `Idle`**: ObsInvariant — terminal /
+    ///   no-op transitions that don't touch per-member fields.
+    /// - **Everything carrying `weight: W`** (`Push`, `Pop`,
+    ///   `Replace`, `Consume`, `ConsumeAndPush`, `ConsumeAndPop`,
+    ///   `ConsumeAndReplace`, `ConsumeIdentAndReplace`,
+    ///   `ReplaceAndPush`, `ParsePredicate`, `OptGroupAbsent`,
+    ///   `OptGroupFinalize`): ObsDivergent — multiplies into each
+    ///   member's weight, which is per-member by definition.
+    /// - **`AdvanceWithEffect`**: ObsDivergent — appends to
+    ///   `recovery_deltas`, which is per-member (L4 will Arc-share it
+    ///   in the shell and CoW per-member).
+    /// - **`Fork`**: ObsDivergent — Fork at a cohort site fans out
+    ///   per-member (one cohort × N branches → potentially N cohorts;
+    ///   L3.6 will route Fork through the materialize fallback so
+    ///   the existing Fork handler runs per-cursor).
+    pub fn classify<W: crate::automata::semiring::SemiringRef>(
+        action: &crate::wpda_walker::WpdaStepAction<W>,
+    ) -> DivergenceClass {
+        use crate::wpda_walker::WpdaStepAction;
+        match action {
+            WpdaStepAction::Advance(_)
+            | WpdaStepAction::Accept
+            | WpdaStepAction::Error(_)
+            | WpdaStepAction::Idle => DivergenceClass::ObsInvariant,
+            WpdaStepAction::AdvanceWithEffect { .. }
+            | WpdaStepAction::Push { .. }
+            | WpdaStepAction::Pop { .. }
+            | WpdaStepAction::Replace { .. }
+            | WpdaStepAction::Fork { .. }
+            | WpdaStepAction::ConsumeAndPush { .. }
+            | WpdaStepAction::ConsumeAndPop { .. }
+            | WpdaStepAction::Consume { .. }
+            | WpdaStepAction::ConsumeIdentAndReplace { .. }
+            | WpdaStepAction::ConsumeAndReplace { .. }
+            | WpdaStepAction::ReplaceAndPush { .. }
+            | WpdaStepAction::ParsePredicate { .. }
+            | WpdaStepAction::OptGroupAbsent { .. }
+            | WpdaStepAction::OptGroupFinalize { .. } => DivergenceClass::ObsDivergent,
+        }
+    }
 }
 
 impl<W: SemiringRef> Frame<W> {
@@ -528,5 +598,128 @@ where
             Frame::Concrete(c) => f.debug_tuple("Concrete").field(c).finish(),
             Frame::Cohort(_) => f.debug_struct("Cohort").finish(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::automata::lex_weight::LexicographicWeight;
+    use crate::automata::semiring::Semiring;
+    use crate::wpda_runtime::{StackSymbolV2, WpdaState};
+    use crate::wpda_walker::{TriggerMode, WpdaStepAction};
+
+    fn ready() -> WpdaState {
+        WpdaState::Ready { min_bp: 0 }
+    }
+
+    fn one() -> LexicographicWeight {
+        <LexicographicWeight as Semiring>::one()
+    }
+
+    fn ret_sym() -> StackSymbolV2 {
+        StackSymbolV2::return_symbol(0, 0)
+    }
+
+    #[test]
+    fn classify_advance_is_invariant() {
+        let action: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Advance(ready());
+        assert_eq!(DivergenceClass::classify(&action), DivergenceClass::ObsInvariant);
+    }
+
+    #[test]
+    fn classify_accept_error_idle_are_invariant() {
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Accept;
+        let e: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Error("x".into());
+        let i: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Idle;
+        assert_eq!(DivergenceClass::classify(&a), DivergenceClass::ObsInvariant);
+        assert_eq!(DivergenceClass::classify(&e), DivergenceClass::ObsInvariant);
+        assert_eq!(DivergenceClass::classify(&i), DivergenceClass::ObsInvariant);
+    }
+
+    #[test]
+    fn classify_push_is_divergent() {
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Push {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+        };
+        assert_eq!(DivergenceClass::classify(&a), DivergenceClass::ObsDivergent);
+    }
+
+    #[test]
+    fn classify_pop_is_divergent() {
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Pop {
+            weight: one(),
+            new_state: ready(),
+        };
+        assert_eq!(DivergenceClass::classify(&a), DivergenceClass::ObsDivergent);
+    }
+
+    #[test]
+    fn classify_replace_is_divergent() {
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Replace {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+        };
+        assert_eq!(DivergenceClass::classify(&a), DivergenceClass::ObsDivergent);
+    }
+
+    #[test]
+    fn classify_consume_family_is_divergent() {
+        let c: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Consume {
+            weight: one(),
+            new_state: ready(),
+        };
+        let cp: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeAndPush {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+            trigger_mode: TriggerMode::Discard,
+        };
+        let cpop: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeAndPop {
+            weight: one(),
+            new_state: ready(),
+        };
+        let cr: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeAndReplace {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+        };
+        let cir: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeIdentAndReplace {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+            start_scope: false,
+        };
+        for a in [&c, &cp, &cpop, &cr, &cir] {
+            assert_eq!(DivergenceClass::classify(a), DivergenceClass::ObsDivergent);
+        }
+    }
+
+    #[test]
+    fn classify_fork_is_divergent() {
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Fork {
+            branches: Vec::new(),
+            consume_trigger: false,
+        };
+        assert_eq!(DivergenceClass::classify(&a), DivergenceClass::ObsDivergent);
+    }
+
+    #[test]
+    fn classify_optgroup_family_is_divergent() {
+        let abs: WpdaStepAction<LexicographicWeight> = WpdaStepAction::OptGroupAbsent {
+            replace_symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+        };
+        let fin: WpdaStepAction<LexicographicWeight> = WpdaStepAction::OptGroupFinalize {
+            replace_symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+        };
+        assert_eq!(DivergenceClass::classify(&abs), DivergenceClass::ObsDivergent);
+        assert_eq!(DivergenceClass::classify(&fin), DivergenceClass::ObsDivergent);
     }
 }
