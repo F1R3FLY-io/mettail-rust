@@ -7373,28 +7373,85 @@ where
                 if let Some((symbol_id, hi_pos, pos_at_dispatch, snapshots, members)) =
                     self.dispatch_cohort_cache.take_pending_for_drain(&key)
                 {
-                    for member in members {
-                        for snap in &snapshots {
-                            // Filter terminal-state snapshots: workers
-                            // that ended in Error wouldn't have produced
-                            // a revivable cursor in the per-cursor
-                            // baseline either.
-                            if snap.worker_inner_state.is_terminal() {
-                                continue;
-                            }
-                            let revived = self.revive_cohort_member_with_snapshot(
-                                member.clone(),
-                                symbol_id,
-                                pos_at_dispatch,
-                                hi_pos,
-                                key.source_src_idx,
-                                key.inner_cur_bp,
-                                snap,
+                    // Phase F.13 Stage L3.5 (2026-05-25): DispatchResolved
+                    // broadcast — for each live snapshot, build ONE cohort
+                    // frame whose N members are the (snap-fixed) revives
+                    // of each paused cohort member. Today's inner double-
+                    // loop produced N×M concrete cursors; this restructures
+                    // to M cohort frames each containing N member states,
+                    // shrinking the per-cursor cache footprint from
+                    // M×N × ~3.2 KB to M × (~3.2 KB + N × ~76 B).
+                    //
+                    // Single-member groups (N=1) degrade to Frame::Concrete
+                    // — no shell sharing benefit, and avoids the
+                    // step_cohort_frame indirection.
+                    for snap in &snapshots {
+                        // Filter terminal-state snapshots: workers that
+                        // ended in Error wouldn't have produced a
+                        // revivable cursor in the per-cursor baseline.
+                        if snap.worker_inner_state.is_terminal() {
+                            continue;
+                        }
+                        if members.is_empty() {
+                            continue;
+                        }
+                        // Revive ALL members for this snap. Each revive
+                        // produces a fresh post-CategoryEntry-push
+                        // BranchCursor. The first becomes the shell
+                        // archetype; all become member states.
+                        let revived: Vec<BranchCursor<W>> = members
+                            .iter()
+                            .map(|m| {
+                                self.revive_cohort_member_with_snapshot(
+                                    m.clone(),
+                                    symbol_id,
+                                    pos_at_dispatch,
+                                    hi_pos,
+                                    key.source_src_idx,
+                                    key.inner_cur_bp,
+                                    snap,
+                                )
+                            })
+                            .collect();
+                        if revived.len() == 1 {
+                            // Single-member: degrade to concrete.
+                            let single =
+                                revived.into_iter().next().expect("len==1");
+                            new_cursors.push(
+                                crate::cohort_lazy::Frame::Concrete(single),
                             );
-                            // Phase F.13 Stage L3.1 (2026-05-25): wrap revived
-                            // cursor in Frame::Concrete (cohorts not yet
-                            // re-absorbed at this point — L5 territory).
-                            new_cursors.push(crate::cohort_lazy::Frame::Concrete(revived));
+                        } else {
+                            // Multi-member: build cohort frame. The
+                            // shell is constructed from the FIRST
+                            // revived cursor (~_obs-invariant axes); each
+                            // revived cursor contributes its per-member
+                            // divergent fields as a CohortMemberState.
+                            //
+                            // After this, the cohort frame holds the
+                            // shared shell + N small per-member states.
+                            // The N revived BranchCursors drop at end-
+                            // of-block, releasing their per-cursor
+                            // allocations. Net savings = (N-1) × per-
+                            // cursor deep-clone footprint per snap.
+                            let dispatch_key = key.clone();
+                            let shell = std::sync::Arc::new(
+                                crate::cohort_lazy::CohortShell::from_branch_cursor(
+                                    &revived[0],
+                                    dispatch_key,
+                                ),
+                            );
+                            let mut cf = crate::cohort_lazy::CohortFrame::new(shell);
+                            for r in &revived {
+                                cf.push_member(
+                                    crate::cohort_lazy::CohortMemberState::from_branch_cursor(
+                                        r,
+                                        r.weight.clone(),
+                                    ),
+                                );
+                            }
+                            new_cursors.push(crate::cohort_lazy::Frame::Cohort(
+                                Box::new(cf),
+                            ));
                         }
                     }
                 }
