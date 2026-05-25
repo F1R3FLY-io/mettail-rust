@@ -364,6 +364,57 @@ impl<W: SemiringRef + Clone> CohortMemberState<W> {
     }
 }
 
+/// Phase F.13 Stage L2b (2026-05-25): reconstruct a `BranchCursor`
+/// from a `CohortShell` + `CohortMemberState`. This is the
+/// materialization primitive that bridges the lazy cohort
+/// representation back to the existing per-cursor revive code path
+/// (`revive_cohort_member_with_snapshot`). L2b uses this at
+/// `take_pending_for_drain` to reconstruct legacy `CohortMember`s
+/// from the new fields. L2c removes the legacy path entirely.
+///
+/// All shell `Arc` fields are deep-cloned into owned `Vec`/`HashSet`
+/// since today's `BranchCursor` fields are not Arc-typed; this
+/// mirrors the heaptrack-documented per-cursor clone cost. L4 (the
+/// Arc-shared cycle defense stage) addresses this by Arc-typing
+/// `BranchCursor`'s `visited_*` fields directly.
+///
+/// Fields not present in shell/state are populated with the
+/// equivalent of `BranchCursor::seed_from_live` defaults:
+///   - `cohort_revive_depth`: 0 (revive's `CategoryEntry` push sets it).
+///   - `lex_fork_path`: rebuilt from `shell.lex_fork_stamp`. If the
+///     stamp is `Some(s)`, the path contains `[s]`; if `None`, empty.
+///     `ConfigKey` only reads `lex_fork_path.last()`, so the partial
+///     reconstruction is observationally adequate.
+pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
+    shell: &CohortShell<W>,
+    state: &CohortMemberState<W>,
+) -> BranchCursor<W> {
+    let lex_fork_path: std::sync::Arc<Vec<crate::wpda_walker::LexForkStamp>> =
+        std::sync::Arc::new(shell.lex_fork_stamp.iter().copied().collect());
+    BranchCursor {
+        node: shell.node,
+        pos: shell.pos,
+        weight: state.weight_at_dispatch.clone(),
+        inner_state: shell.inner_state.clone(),
+        recovery_deltas: (*shell.recovery_deltas).clone(),
+        source_priority: state.source_priority,
+        incoming_edge_stack: (*shell.incoming_edge_stack).clone(),
+        recovery_depth: shell.recovery_depth,
+        visited_recovery: (*shell.visited_recovery).clone(),
+        visited_dispatch: (*shell.visited_dispatch).clone(),
+        sppf_stack: std::sync::Arc::clone(&shell.sppf_stack_baseline),
+        optional_scope_marks: (*shell.optional_scope_marks).clone(),
+        binder_scope_marks: (*shell.binder_scope_marks).clone(),
+        pending_packing_weight: state.pending_packing_weight.clone(),
+        collection_stack_depth: shell.collection_depth,
+        sppf_collection_arena: std::sync::Arc::clone(&shell.sppf_collection_arena),
+        last_action_output_cat: state.last_action_output_cat,
+        cohort_origin: shell.cohort_origin.clone(),
+        cohort_revive_depth: 0,
+        lex_fork_path,
+    }
+}
+
 impl<W: SemiringRef> CohortFrame<W> {
     /// Phase F.13 Stage L2 (2026-05-25): construct a fresh cohort
     /// frame at H12 first-member-register time. The shell is built

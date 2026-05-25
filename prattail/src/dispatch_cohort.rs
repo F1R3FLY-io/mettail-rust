@@ -463,19 +463,33 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 cohort_shell: _,
                 pending_members: _,
             } => {
+                // Phase F.13 Stage L2b (2026-05-25): EXPERIMENT REJECTED.
+                // Switching drain reads to the lazy form
+                // (`cohort_shell` + `pending_members` via
+                // `materialize_branch_cursor`) caused chain_1000-class
+                // test to explode to 9 GB RSS at 14 s wall-time
+                // (baseline ~5 MB). The materialization at drain
+                // produces full BranchCursor clones whose memory
+                // footprint matches today's `pending_cohort`, but the
+                // existing L2a still populates `pending_members` in
+                // parallel, doubling the live cursor count visible
+                // during a drain window. Reverted to read from
+                // `pending_cohort` until L2c can fully drop the
+                // legacy field (the lazy form is then the sole
+                // representation, not a mirror).
+                //
+                // Lesson: the lazy form MUST replace the legacy form
+                // atomically (L2c), not run in parallel with it.
                 if pending_cohort.is_empty() {
                     return None;
                 }
                 if *snapshots_drained >= worker_snapshots.len() {
                     return None;
                 }
-                // Only NEW snapshots since last drain.
                 let new_snaps: Vec<WorkerSnapshot<W>> = worker_snapshots
                     [*snapshots_drained..]
                     .to_vec();
                 *snapshots_drained = worker_snapshots.len();
-                // Clone members for persistent fanout across steps.
-                // Bounded by MAX_PENDING_COHORT_PER_KEY cap at pause time.
                 let members_clone = pending_cohort.clone();
                 Some((
                     *symbol_id,
