@@ -196,6 +196,32 @@ pub struct CohortMemberState<W: SemiringRef> {
     pub last_action_output_cat: Option<u16>,
     /// Member-local `source_priority` for the Fork tiebreak chain.
     pub source_priority: u32,
+    /// Phase F.13 Stage L2a.2 (2026-05-25): per-member
+    /// `cohort_revive_depth` captured at pause time. Members of a
+    /// cohort can have distinct revive depths if they paused at
+    /// different recursion levels within a nested cohort-revive
+    /// chain. Materialization restores this value verbatim into the
+    /// revived cursor.
+    ///
+    /// L2c reject root cause #1: previously hardcoded to 0 in
+    /// `materialize_branch_cursor`, which caused revive to treat
+    /// every member as a fresh sub-parse and explode downstream.
+    pub cohort_revive_depth: u32,
+    /// Phase F.13 Stage L2a.2 (2026-05-25): per-member full
+    /// `lex_fork_path` captured at pause time. Cohort members that
+    /// hit the same dispatch key via different lex-disambiguation
+    /// paths have distinct paths; `ConfigKey` reads `.last()` but
+    /// downstream lex tracking and merge identity may read more of
+    /// the path. Stored as `Arc<Vec<LexForkStamp>>` (zero-cost
+    /// clone) so per-member storage is one pointer; materialization
+    /// is `Arc::clone`.
+    ///
+    /// L2c reject root cause #2: previously reconstructed from
+    /// `shell.lex_fork_stamp` (the single top stamp only), losing
+    /// path entries 0..n-1. Members whose original path had >1
+    /// stamp were observationally distinct from the reconstructed
+    /// form, causing identity-related cursor explosions.
+    pub lex_fork_path: std::sync::Arc<Vec<crate::wpda_walker::LexForkStamp>>,
 }
 
 /// Cached cohort dispatch outcome: one `sub_symbol_id` shared by all
@@ -360,6 +386,8 @@ impl<W: SemiringRef + Clone> CohortMemberState<W> {
             pending_packing_weight: parent.pending_packing_weight.clone(),
             last_action_output_cat: parent.last_action_output_cat,
             source_priority: parent.source_priority,
+            cohort_revive_depth: parent.cohort_revive_depth,
+            lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
         }
     }
 }
@@ -378,19 +406,17 @@ impl<W: SemiringRef + Clone> CohortMemberState<W> {
 /// Arc-shared cycle defense stage) addresses this by Arc-typing
 /// `BranchCursor`'s `visited_*` fields directly.
 ///
-/// Fields not present in shell/state are populated with the
-/// equivalent of `BranchCursor::seed_from_live` defaults:
-///   - `cohort_revive_depth`: 0 (revive's `CategoryEntry` push sets it).
-///   - `lex_fork_path`: rebuilt from `shell.lex_fork_stamp`. If the
-///     stamp is `Some(s)`, the path contains `[s]`; if `None`, empty.
-///     `ConfigKey` only reads `lex_fork_path.last()`, so the partial
-///     reconstruction is observationally adequate.
+/// Phase F.13 Stage L2a.2 (2026-05-25): `cohort_revive_depth` and
+/// `lex_fork_path` are now read verbatim from `state`. Pre-L2a.2 they
+/// were hardcoded to 0 and reconstructed from `shell.lex_fork_stamp`
+/// respectively; that caused L2c chain_1000 to explode to 10+ GB
+/// because revive saw the wrong depth (treated members as fresh and
+/// re-did the cohort sub-parse) and the wrong path (cursor identity
+/// drift triggered redundant fork allocations).
 pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
     shell: &CohortShell<W>,
     state: &CohortMemberState<W>,
 ) -> BranchCursor<W> {
-    let lex_fork_path: std::sync::Arc<Vec<crate::wpda_walker::LexForkStamp>> =
-        std::sync::Arc::new(shell.lex_fork_stamp.iter().copied().collect());
     BranchCursor {
         node: shell.node,
         pos: shell.pos,
@@ -410,8 +436,8 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         sppf_collection_arena: std::sync::Arc::clone(&shell.sppf_collection_arena),
         last_action_output_cat: state.last_action_output_cat,
         cohort_origin: shell.cohort_origin.clone(),
-        cohort_revive_depth: 0,
-        lex_fork_path,
+        cohort_revive_depth: state.cohort_revive_depth,
+        lex_fork_path: std::sync::Arc::clone(&state.lex_fork_path),
     }
 }
 

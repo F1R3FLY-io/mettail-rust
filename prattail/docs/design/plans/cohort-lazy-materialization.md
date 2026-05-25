@@ -370,6 +370,93 @@ Supporting references read but not primary surface:
 
 ---
 
+## Empirical lessons (2026-05-25 implementation session)
+
+This section captures lessons learned during the L1-L2 implementation
+attempts. They inform future-session implementation of L2c-L6.
+
+**L2.0 (cap bump shortcut) REJECTED**: Bumping
+`MAX_PENDING_COHORT_PER_KEY` and `MAX_WORKER_SNAPSHOTS_PER_KEY`
+from 4 to 64 caused chain_1000 to explode to 4.5 GB RSS at 28 s
+(commit `46f961b`). Each additional cohort member is a full
+BranchCursor::clone (~3.2 KB); cap=64 × 64 = 4096 cursors per
+dispatch site × all sites → GB-scale. **Cap removal MUST be paired
+with the lazy CohortFrame representation**. The L1-L6 plan ordering
+is correct; no shortcut available.
+
+**L2a (mirror-write scaffolding) — Caution**: Storing `cohort_shell`
++ `pending_members` ALONGSIDE the legacy `pending_cohort:
+Vec<CohortMember>` field doubled memory under any subsequent read
+that materialized from the new fields (L2b commit `0242b0d`:
+chain_1000 exploded to 9 GB RSS at 14 s). The mirror-write pattern
+is useful ONLY for constructing/validating the lazy form, NOT for
+running both representations live.
+
+**L2b (drain-only switch) REJECTED**: Switching
+`take_pending_for_drain` to materialize from the lazy form while
+keeping `pending_cohort` mirror-written was the failure mode of
+commit `0242b0d` above. Lesson: the lazy form MUST replace the
+legacy form ATOMICALLY in a single L2c commit that:
+1. Removes `pending_cohort` from `DispatchCacheEntry`.
+2. Removes the mirror-write in `pause_cohort_member`.
+3. Switches `take_pending_for_drain` to materialize from the lazy
+   form via `materialize_branch_cursor`.
+
+All three changes ship together; partial migration is unsafe.
+
+**Implementation note for L3**: The `materialize_branch_cursor`
+helper deep-clones the shell's Arc<FxHashSet>/Arc<Vec> fields into
+owned `Vec`/`HashSet` per materialized cursor. L4's Arc-shared
+cycle defense addresses this by Arc-typing `BranchCursor`'s
+`visited_dispatch` and `visited_recovery` fields directly (so the
+shell's Arc<FxHashSet> can be Arc::clone'd into the cursor instead
+of deep-cloned). Defer L4 to fix the per-materialization deep clone
+cost.
+
+**L2c (atomic switch) — FIRST ATTEMPT REJECTED 2026-05-25**: After
+L2a (mirror-write) shipped at `f5f9cac`, an atomic L2c attempt
+removed `pending_cohort`, switched drain to materialize, and
+removed pause's mirror-write. chain_1000 (`test_right_assoc_chain_1000`)
+exploded to 10+ GB RSS at 76 s, growing ~1.2 GB / 10 s. Killed
+before OOM. Saved as `/tmp/L2c-attempt-backup-2026-05-25.patch`
+and reverted via `git apply -R`.
+
+**Root cause**: `materialize_branch_cursor` (cohort_lazy.rs:388-416)
+used placeholder values for two BranchCursor fields:
+1. `cohort_revive_depth: 0` (hardcoded — comment claimed "revive's
+   CategoryEntry push sets it"), losing the parent's actual depth.
+   When members paused inside a nested cohort-revive chain were
+   reconstructed at depth 0, revive treated them as fresh sub-parses
+   and re-fanned out the entire cohort recursively.
+2. `lex_fork_path: Arc::new(shell.lex_fork_stamp.iter().copied().collect())`
+   — only contained shell's top stamp, losing path entries 0..n-1.
+   Two cursors with originally-identical paths reconstructed as
+   different paths (truncated vs full), causing identity-related
+   cursor explosions.
+
+**L2a.2 fix (shipped this session)**: `CohortMemberState` gains
+`cohort_revive_depth: u32` and `lex_fork_path: Arc<Vec<LexForkStamp>>`.
+`from_branch_cursor` captures both; `materialize_branch_cursor`
+restores both verbatim. Per-member overhead grows from ~64 B to
+~76 B (negligible). With L2a.2 in place, L2c can be re-attempted
+safely.
+
+**Mandatory L2c re-attempt protocol**:
+1. Confirm `cargo check -p mettail-prattail` passes.
+2. Confirm prattail-lib 4058/0 gauntlet passes (sanity).
+3. Apply L2c diff: `git apply /tmp/L2c-attempt-backup-2026-05-25.patch`.
+4. Run prattail-lib gauntlet.
+5. Run trampoline chain tests with RSS cap (`systemd-run --user
+   --scope -p MemoryMax=24G cargo test --release -p mettail-languages
+   --test trampoline_tests test_right_assoc_chain_50
+   test_right_assoc_chain_100 test_right_assoc_chain_200
+   test_right_assoc_chain_1000 -- --nocapture`).
+6. Monitor RSS during chain_1000 (`ps -o etime,pcpu,rss -p $PID`).
+   Threshold: 100 MB at 30 s = ACCEPT; >1 GB at 30 s = REJECT.
+7. If REJECT: another fidelity hypothesis is wrong; revert via
+   `git apply -R`; investigate additional missing BranchCursor
+   fields.
+
 ## Explore-agent validation of foundational assumptions (2026-05-25)
 
 Four parallel Explore agents validated the design's correctness foundations. Findings:
