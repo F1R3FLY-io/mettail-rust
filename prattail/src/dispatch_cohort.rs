@@ -125,6 +125,22 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// inherit this; ALL snapshots derived from this dispatch
         /// share the same worker_pre_dispatch_weight.
         worker_pre_dispatch_weight: W,
+        /// Phase F.13 Stage L2a (2026-05-25): shared `~_obs`-invariant
+        /// shell across all cohort members at this dispatch key.
+        /// Constructed at first pause_cohort_member call from the
+        /// pausing member's return_frame; subsequent pauses verify
+        /// shell equivalence implicitly (members at same dispatch key
+        /// are `~_obs`-equivalent by H12 construction).
+        ///
+        /// Stored ALONGSIDE the existing `pending_cohort: Vec<CohortMember>`
+        /// for L2a — both are populated. L2b switches drain reads to
+        /// use `pending_members` (the lazy form). L2c removes
+        /// `pending_cohort`. See plan doc §"Stage L2".
+        cohort_shell: Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
+        /// Phase F.13 Stage L2a (2026-05-25): per-member divergence
+        /// state, mirror of `pending_cohort`'s member list. Populated
+        /// alongside; same length and order as `pending_cohort`.
+        pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
     },
     /// Sub-parse complete. Subsequent cursors that hit this key
     /// synthesize a resumed child per snapshot (multi-packing case
@@ -152,6 +168,12 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// transition. Used by `read_worker_pre()` for cohort revive
         /// weight delta computation.
         worker_pre_dispatch_weight: W,
+        /// Phase F.13 Stage L2a (2026-05-25): see InFlight variant.
+        /// Transferred from InFlight when the entry transitions; preserves
+        /// the shell across the state change.
+        cohort_shell: Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
+        /// Phase F.13 Stage L2a (2026-05-25): see InFlight variant.
+        pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
     },
     Failed,
 }
@@ -164,6 +186,8 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 pending_cohort,
                 worker_snapshots,
                 worker_pre_dispatch_weight: _,
+                cohort_shell: _,
+                pending_members: _,
             } => f
                 .debug_struct("InFlight")
                 .field("cohort_size", cohort_size)
@@ -286,6 +310,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         pending_cohort: Vec::new(),
                         worker_snapshots: Vec::new(),
                         worker_pre_dispatch_weight: worker_pre_weight,
+                        cohort_shell: None,
+                        pending_members: Vec::new(),
                     },
                 );
                 RegisterOutcome::WorkerInserted
@@ -340,12 +366,19 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 pending_cohort,
                 worker_snapshots,
                 worker_pre_dispatch_weight,
+                cohort_shell,
+                pending_members,
                 ..
             } => {
                 let drained_pending = std::mem::take(pending_cohort);
                 let mut snapshots = std::mem::take(worker_snapshots);
                 snapshots.push(snap);
                 let preserved_pre = worker_pre_dispatch_weight.clone();
+                // Phase F.13 Stage L2a (2026-05-25): transfer L2a
+                // scaffold fields across the InFlight→Resolved
+                // transition.
+                let preserved_shell = cohort_shell.take();
+                let preserved_members = std::mem::take(pending_members);
                 *entry = DispatchCacheEntry::Resolved {
                     symbol_id,
                     hi_pos,
@@ -354,6 +387,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     pending_cohort: drained_pending,
                     snapshots_drained: 0,
                     worker_pre_dispatch_weight: preserved_pre,
+                    cohort_shell: preserved_shell,
+                    pending_members: preserved_members,
                 };
                 self.resolved_total += 1;
                 ResolveOutcome::FirstResolve
@@ -425,6 +460,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 pending_cohort,
                 snapshots_drained,
                 worker_pre_dispatch_weight: _,
+                cohort_shell: _,
+                pending_members: _,
             } => {
                 if pending_cohort.is_empty() {
                     return None;
@@ -486,15 +523,47 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     ) -> bool {
         const MAX_PENDING_COHORT_PER_KEY: usize = 4;
         match self.entries.get_mut(&key) {
-            Some(DispatchCacheEntry::InFlight { pending_cohort, .. })
+            Some(DispatchCacheEntry::InFlight { pending_cohort, cohort_shell, pending_members, .. })
                 if pending_cohort.len() < MAX_PENDING_COHORT_PER_KEY =>
             {
+                // Phase F.13 Stage L2a (2026-05-25): mirror-populate
+                // the lazy form alongside the existing return_frame
+                // representation. L2b will switch drain reads to use
+                // these fields; L2c removes the old `pending_cohort`.
+                if cohort_shell.is_none() {
+                    *cohort_shell = Some(std::sync::Arc::new(
+                        crate::cohort_lazy::CohortShell::from_branch_cursor(
+                            &member.return_frame,
+                            key.clone(),
+                        ),
+                    ));
+                }
+                pending_members.push(
+                    crate::cohort_lazy::CohortMemberState::from_branch_cursor(
+                        &member.return_frame,
+                        member.weight_at_dispatch.clone(),
+                    ),
+                );
                 pending_cohort.push(member);
                 true
             }
-            Some(DispatchCacheEntry::Resolved { pending_cohort, .. })
+            Some(DispatchCacheEntry::Resolved { pending_cohort, cohort_shell, pending_members, .. })
                 if pending_cohort.len() < MAX_PENDING_COHORT_PER_KEY =>
             {
+                if cohort_shell.is_none() {
+                    *cohort_shell = Some(std::sync::Arc::new(
+                        crate::cohort_lazy::CohortShell::from_branch_cursor(
+                            &member.return_frame,
+                            key.clone(),
+                        ),
+                    ));
+                }
+                pending_members.push(
+                    crate::cohort_lazy::CohortMemberState::from_branch_cursor(
+                        &member.return_frame,
+                        member.weight_at_dispatch.clone(),
+                    ),
+                );
                 pending_cohort.push(member);
                 true
             }
