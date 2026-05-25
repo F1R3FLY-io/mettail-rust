@@ -66,6 +66,12 @@ pub mod walker_stats;
 /// same `(pos, source_src_idx, inner_cur_bp)` key. Each cohort member
 /// retains its own return frame; only the sub-parse work is shared.
 pub mod dispatch_cohort;
+/// Phase F.13 Stage L1 (2026-05-25): cohort lazy materialization
+/// scaffolding. Adds `Frame<W>` (Concrete | Cohort) + `CohortFrame<W>`
+/// + `CohortShell<W>` + `CohortMemberState<W>` types. L2 wires the
+/// `InflightCollision` arm to construct cohorts; L3 implements the
+/// ObsInvariant fast path. See `docs/design/plans/cohort-lazy-materialization.md`.
+pub mod cohort_lazy;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
