@@ -22,7 +22,19 @@ pub struct Ntir {
     pub semantics: SemanticsTarget,
     pub context_template: Option<ContextTemplate>,
     pub lowered_context: Option<String>,
+    pub sources: TheorySources,
     pub hash: String,
+}
+
+/// Raw source text for each `language!` section (preserved for Rust projection).
+#[derive(Clone, Default)]
+pub struct TheorySources {
+    pub types: Option<String>,
+    pub literals: Option<String>,
+    pub terms: Option<String>,
+    pub equations: Option<String>,
+    pub rewrites: Option<String>,
+    pub logic: Option<String>,
 }
 
 /// Intermediate assembled presentation before naming/hashing.
@@ -36,6 +48,7 @@ pub struct Presentation {
     pub logic: Option<LogicBlock>,
     pub semantics: SemanticsTarget,
     pub context_template: Option<ContextTemplate>,
+    pub sources: TheorySources,
 }
 
 impl Presentation {
@@ -56,6 +69,7 @@ impl Presentation {
             semantics: self.semantics,
             context_template: self.context_template,
             lowered_context,
+            sources: self.sources,
             hash,
         }
     }

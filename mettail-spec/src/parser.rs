@@ -341,11 +341,16 @@ fn suffix_keyword(tok: &Token) -> Option<SuffixKind> {
 
 fn needs_space_before(last: char, tok: &Token) -> bool {
     match tok {
-        Token::Ident(_) => last.is_alphanumeric() || matches!(last, ']' | ')' | '>' | ';'),
+        Token::Ident(_) => {
+            last.is_alphanumeric() || matches!(last, ']' | ')' | '>' | ';' | '.' | ':' | ',' | '"')
+        },
         Token::StringLit(_) => !last.is_whitespace() && last != '"',
+        Token::Dot => last.is_alphanumeric(),
+        Token::Colon | Token::Comma => last.is_alphanumeric(),
         Token::Punct(c) => match c {
-            '.' | ':' => last.is_alphanumeric(),
-            '|' => last == '-',
+            ':' => last.is_alphanumeric() || last == '.',
+            '=' => last == ':',
+            '|' => last.is_alphanumeric() || last == ':',
             '-' => last.is_alphanumeric(),
             _ => false,
         },

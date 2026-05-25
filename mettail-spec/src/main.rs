@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use mettail_spec::{compile_entry, validate_ntir, SpecError};
+use mettail_spec::{
+    compile_entry, project_rust_file, project_rust_source, validate_ntir, SpecError,
+};
 
 #[derive(Parser)]
 #[command(
@@ -23,12 +25,22 @@ enum Command {
         #[arg(long, default_value = "debug")]
         emit: EmitFormat,
     },
+    /// Project a compiled language to Rust `language!` source
+    Project {
+        entry: PathBuf,
+        #[arg(long)]
+        language: Option<String>,
+        /// Output `.rs` path (default: stdout)
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, clap::ValueEnum)]
 enum EmitFormat {
     Debug,
     Json,
+    Rust,
 }
 
 fn main() {
@@ -52,6 +64,10 @@ fn run() -> Result<(), SpecError> {
                             .map_err(|e| { SpecError::Other(e.to_string()) })?
                     );
                 },
+                EmitFormat::Rust => {
+                    let src = project_rust_source(&ntir)?;
+                    print!("{src}");
+                },
                 EmitFormat::Debug => {
                     println!("language: {}", ntir.name);
                     println!("hash: {}", ntir.hash);
@@ -65,6 +81,16 @@ fn run() -> Result<(), SpecError> {
                     }
                 },
             }
+        },
+        Command::Project { entry, language, out } => match out {
+            Some(path) => {
+                project_rust_file(entry, language.as_deref(), path)?;
+            },
+            None => {
+                let ntir = compile_entry(entry, language.as_deref())?;
+                validate_ntir(&ntir)?;
+                print!("{}", project_rust_source(&ntir)?);
+            },
         },
     }
     Ok(())

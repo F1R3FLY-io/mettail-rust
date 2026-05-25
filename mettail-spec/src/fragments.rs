@@ -12,8 +12,10 @@ pub fn apply_suffix(
     pres: &mut Presentation,
     kind: SuffixKind,
     tokens: TokenStream,
+    raw: &str,
     module: &str,
 ) -> Result<()> {
+    merge_raw_source(pres, kind, raw);
     match kind {
         SuffixKind::Types => {
             let types = parse_types_fragment(tokens).map_err(|e| SpecError::Fragment {
@@ -65,6 +67,24 @@ pub fn apply_suffix(
         },
     }
     Ok(())
+}
+
+fn merge_raw_source(pres: &mut Presentation, kind: SuffixKind, raw: &str) {
+    let slot = match kind {
+        SuffixKind::Types => &mut pres.sources.types,
+        SuffixKind::Terms => &mut pres.sources.terms,
+        SuffixKind::Literals => &mut pres.sources.literals,
+        SuffixKind::Equations => &mut pres.sources.equations,
+        SuffixKind::Rewrites => &mut pres.sources.rewrites,
+        SuffixKind::Relations => &mut pres.sources.logic,
+    };
+    match slot {
+        Some(existing) => {
+            existing.push('\n');
+            existing.push_str(raw);
+        },
+        None => *slot = Some(raw.to_string()),
+    }
 }
 
 fn merge_types(pres: &mut Presentation, delta: Vec<mettail_ast::language::LangType>) -> Result<()> {
@@ -168,5 +188,27 @@ pub fn merge_presentations(mut base: Presentation, overlay: Presentation) -> Res
     if overlay.context_template.is_some() {
         base.context_template = overlay.context_template;
     }
+    merge_sources(&mut base.sources, &overlay.sources);
     Ok(base)
+}
+
+fn merge_sources(base: &mut crate::ntir::TheorySources, overlay: &crate::ntir::TheorySources) {
+    merge_source_opt(&mut base.types, &overlay.types);
+    merge_source_opt(&mut base.literals, &overlay.literals);
+    merge_source_opt(&mut base.terms, &overlay.terms);
+    merge_source_opt(&mut base.equations, &overlay.equations);
+    merge_source_opt(&mut base.rewrites, &overlay.rewrites);
+    merge_source_opt(&mut base.logic, &overlay.logic);
+}
+
+fn merge_source_opt(base: &mut Option<String>, overlay: &Option<String>) {
+    if let Some(o) = overlay {
+        match base {
+            Some(b) => {
+                b.push('\n');
+                b.push_str(o);
+            },
+            None => *base = Some(o.clone()),
+        }
+    }
 }

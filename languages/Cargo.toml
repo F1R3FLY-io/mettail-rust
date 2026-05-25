@@ -37,6 +37,7 @@ ascent-byods-rels = { workspace = true }
 pathmap = { workspace = true }
 
 [build-dependencies]
+mettail-spec = { path = "../mettail-spec" }
 prost-build = "0.13"
 protoc-bin-vendored = "3.2"
 

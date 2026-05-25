@@ -96,3 +96,5 @@ impl<T: std::fmt::Display> std::fmt::Display for DisplaySlice<'_, T> {
         Ok(())
     }
 }
+
+mod mettail_modules;

@@ -128,9 +128,9 @@ fn eval_extender_expr(
             message: "extender union (/\\) is not implemented in Phase 1".into(),
         }),
         ExtenderExpr::Group(inner) => eval_extender_expr(inner, params, module),
-        ExtenderExpr::Suffix { inner, kind, tokens, .. } => {
+        ExtenderExpr::Suffix { inner, kind, tokens, raw, .. } => {
             let mut pres = eval_extender_expr(inner, params, module)?;
-            apply_suffix(&mut pres, *kind, tokens.clone(), module)?;
+            apply_suffix(&mut pres, *kind, tokens.clone(), raw, module)?;
             Ok(pres)
         },
         ExtenderExpr::Semantics { inner, target } => {

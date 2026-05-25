@@ -7,6 +7,7 @@ pub mod fragments;
 pub mod lexer;
 pub mod ntir;
 pub mod parser;
+pub mod project;
 pub mod resolve;
 pub mod semantics;
 pub mod surface;
@@ -15,4 +16,8 @@ pub use assemble::{compile_entry, compile_language, validate_ntir};
 pub use error::{Result, SpecError};
 pub use ntir::Ntir;
 pub use parser::parse_file;
+pub use project::{
+    parse_projected_language_def, project_rust_file, project_rust_source,
+    verify_projection_sources, write_projected_rs,
+};
 pub use resolve::resolve_graph;

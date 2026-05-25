@@ -1,0 +1,7 @@
+import "complex.rho" as M
+import "numbers.rho" as N
+
+module App {
+  export language MyCalc = M.Complex(N.FloatBase())
+  export space s: MyCalc
+}

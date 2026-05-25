@@ -12,6 +12,7 @@
 pub mod ambient;
 pub mod calculator;
 pub mod lambda;
+pub mod mycalc;
 pub mod rhocalc;
 
 /// Proc → [`mettail_runtime::NumericInput`] adapters; lives beside `src/` on purpose.
