@@ -207,3 +207,68 @@ pub enum DivergenceClass {
     /// one shot via `fan_out_cohort`.
     DispatchResolved,
 }
+
+impl<W: SemiringRef> Frame<W> {
+    /// Get a shared reference to the underlying concrete cursor.
+    ///
+    /// **L1 invariant**: `Frame::Cohort` is never constructed; this
+    /// always returns `Some(...)` and the `expect`-based unwrap form
+    /// `as_concrete_expect` is the canonical L1 access pattern. From
+    /// L2 onward callers must explicitly handle the `Cohort` arm.
+    #[inline(always)]
+    pub fn as_concrete(&self) -> Option<&BranchCursor<W>> {
+        match self {
+            Frame::Concrete(c) => Some(c),
+            Frame::Cohort(_) => None,
+        }
+    }
+
+    /// Get a mutable reference to the underlying concrete cursor.
+    ///
+    /// See `as_concrete` invariant.
+    #[inline(always)]
+    pub fn as_concrete_mut(&mut self) -> Option<&mut BranchCursor<W>> {
+        match self {
+            Frame::Concrete(c) => Some(c),
+            Frame::Cohort(_) => None,
+        }
+    }
+
+    /// Consume the frame and return the concrete cursor.
+    ///
+    /// Panics if the frame is `Cohort` (L1 invariant: unreachable).
+    #[inline(always)]
+    pub fn into_concrete(self) -> BranchCursor<W> {
+        match self {
+            Frame::Concrete(c) => c,
+            Frame::Cohort(_) => {
+                panic!("Frame::into_concrete called on Cohort variant — L1 invariant violated")
+            }
+        }
+    }
+
+    /// True iff the frame is the `Concrete` variant.
+    #[inline(always)]
+    pub fn is_concrete(&self) -> bool {
+        matches!(self, Frame::Concrete(_))
+    }
+}
+
+impl<W: SemiringRef> From<BranchCursor<W>> for Frame<W> {
+    #[inline(always)]
+    fn from(c: BranchCursor<W>) -> Self {
+        Frame::Concrete(c)
+    }
+}
+
+impl<W: SemiringRef> std::fmt::Debug for Frame<W>
+where
+    BranchCursor<W>: std::fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Frame::Concrete(c) => f.debug_tuple("Concrete").field(c).finish(),
+            Frame::Cohort(_) => f.debug_struct("Cohort").finish(),
+        }
+    }
+}
