@@ -48,6 +48,14 @@
 | 9 S1.b | 2026-05-26 | Dual-write `CohortContinuation` at Sites A + B (`try_build_continuation` + `push_deferred_continuation`) | `5df1df8` ATTEMPT → reverted at `95576b9` | 4124/0 | NEUTRAL +1.34 % (re-run) | NEUTRAL | NEUTRAL | LOSS +2.30 % p<0.001 | n/a | **REVERT** (Welch chain_1000 LOSS p<0.05; per user mandate). |
 | 9 S1.c | 2026-05-26 | `install_cohort_continuations` at EOI (drain `deferred_continuations` into outer-rule Packings via `sppf.intern_packing` + `link_packing_to_symbol`; dedup'd with revive-produced packings) | `c97fcdc` ATTEMPT → reverted at `fea5fdc` | 4124/0 + tramp 15/0 | LOSS +3.14 % p=0.18 | LOSS +5.51 % p=0.004 | LOSS +3.25 % p<0.0001 | LOSS +4.79 % p<0.0001 | n/a | **REVERT** (dual-write + EOI install combined LOSS p<0.05 at chain_100/200/1000). |
 | 9 S1.d | 2026-05-26 | Switch: skip revive at Sites B + C when continuation built (cursor-population reduction) | `e86aaa9` ATTEMPT → reverted at `3f0361f` | 4124/0 + tramp 15/0 | LOSS +2.72 % p=0.044 | LOSS +2.90 % p<0.0001 | LOSS +1.24 % p=0.013 | LOSS +0.97 % p<0.0001 | OOM 24 GB at 6:38 wall (~3.6 GB/min vs Exp 7's 3.7 GB/min — only ~3 % improvement) | **REJECT** — all 4 sizes LOSS p<0.05; chain_10000 architectural ceiling NOT closed. Per user mandate: revert. |
+| 10 S0-bis | 2026-05-26 | Sole-diff outlier downstream-context classification | `c6eb865` | 4134/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT** (instrumentation; gate NOT FIRES — node_only 50/50, edge_only 100 % other; per-state ConfigKey relaxation NOT viable). |
+| 13 S0 | 2026-05-26 | chain_region_iterations counter | `c6eb865` | 4134/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT** (gate fires structurally for left-assoc chain). |
+| 13 S1.a | 2026-05-26 | Rewrite earley.rs as functional Earley + Leo recognizer with SPPF emission + 17 unit tests | `12b6d61` | 4134/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT, RETAINED** (additive module). |
+| 13 S1.b | 2026-05-26 | WpdaWalker::earley_outboard_chain unreachable method | `be9a2eb` | 4134/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT, RETAINED** (additive). |
+| 13 S1.c | 2026-05-26 | current_chain_streak + trigger gate at IterativeChainAbsorb | `1e2128b` ATTEMPT → reverted at `e29c79d` | 4134/0 + tramp 15/0 | NEUTRAL +0.79 % p=0.42 | LOSS +2.04 % p=0.0007 | NEUTRAL +0.12 % p=0.79 | LOSS +1.15 % p=0.0001 | OOM 24 GB at 6:35 wall (~3.65 GB/min) | **REJECT** — chain_100/1000 LOSS p<0.05; chain_10000 marginal. Per user mandate p<0.05: revert. |
+| 9-alt | 2026-05-26 | FOLLOW-K lookahead prune | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP-BEFORE-S0** — S0 requires FOLLOW-K codegen infra (S1-level). |
+| 14 | 2026-05-26 | Tomita per-arc GSS-cursor merging | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP** per laziness Plan agent — architectural rewrite ~3000+ LOC. |
+| 15 | 2026-05-26 | CPS / trampolined walker rewrite | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP** per laziness Plan agent — multi-week scope. |
 
 ---
 
@@ -539,3 +547,59 @@ Per Plan agent (`replicated-conjuring-turtle.md` + Exp 9 design): defer per-curs
 - chain_10000: still OOM at 24 GB ~6:26 (Exp 7's trajectory)
 
 **Architectural ceiling**: NOT closed. All path-tree-arena + per-cursor allocator reductions have been explored. Remaining strategies require either walker-architecture changes (Exp 13 Earley outboard) or SPPF-level memory reclamation (Streaming SPPF E4) — both multi-session efforts.
+
+---
+
+### Exp 13 (Earley + Leo outboard) — REJECTED at session end 2026-05-26
+
+Per design at `prattail/docs/design/plans/phase-f13-exp13-earley-outboard.md`.
+
+**Substages**:
+
+| Substage | Commit | Result | Verdict |
+|----------|--------|--------|---------|
+| 13 S0 | `c6eb865` | chain_region_iterations counter — gate fires structurally for left-assoc | **ACCEPT** (instrumentation) |
+| 13 S1.a | `12b6d61` | Rewrite earley.rs: RuleItem model + working scan/complete + emit_sppf_subforest. 17 unit tests pass; 4134/0 gauntlet. | **ACCEPT, RETAINED** (additive; useful for future Earley experiments) |
+| 13 S1.b | `be9a2eb` | WpdaWalker::earley_outboard_chain method (unreachable; #[allow(dead_code)]) | **ACCEPT, RETAINED** (additive) |
+| 13 S1.c | `1e2128b` ATTEMPT → reverted at `e29c79d` | current_chain_streak field + IterativeChainAbsorb trigger at THRESHOLD=1000 | **REJECT** — Welch chain_100 +2.04 % p=0.0007 LOSS, chain_1000 +1.15 % p=0.0001 LOSS; chain_10000 marginal (OOM at 6:35 vs Exp 7's 6:26 = ~1 % improvement). Per user mandate p<0.05: revert. |
+
+**Hypothesis fate**: FALSIFIED at the architectural-closure goal. The Earley handoff either didn't fire (streak resets at cohort/cross_cat boundaries that interrupt long chain regions), or fired but Earley's chart allocation + walker's pre-handoff cache state combined to retain the original memory pressure. Per Plan agent's "Risk register" point 1 ("bottleneck might not be cache growth alone"), the chain_10000 memory consumption is NOT dominated by per-iteration walker overhead alone — by the time the streak reaches 1000, the GSS / SPPF / cohort cache state has already allocated significantly.
+
+**Architectural implication**: chain_10000 closure requires either (a) lower-level walker rewrite (Tomita per-arc GSS-cursor merging — Exp 14 SKIPPED, or CPS — Exp 15 SKIPPED), (b) streaming SPPF realization (Plan D E4 — multi-week deferred), or (c) accepting the 24 GB OOM as an architectural ceiling that grows linearly with chain length but constant-factor-improved across the experiment series.
+
+**What S1.a + S1.b retain**:
+- `prattail/src/earley.rs` — functional Earley + Leo recognizer with SPPF emission, 17 unit tests, dedup-safe. Available for future experiments combining Earley with different trigger mechanisms (e.g., grammar-level chain analysis at codegen time, or per-state handoff bookkeeping).
+- `WpdaWalker::earley_outboard_chain(...)` — unreachable but compileable; future trigger designs can call it without redoing the chart-build logic.
+
+**Bench data saved**:
+- `bench-data/exp13_s1c_chain_{50,100,200,1000}.json`
+
+---
+
+## Final closure status (session end 2026-05-26)
+
+**Cumulative improvements (vs original baseline 4066/0)**:
+- chain_50: −15.06 % WIN (Exp 7)
+- chain_100: −15.03 % WIN (Exp 7)
+- chain_200: −12.41 % WIN (Exp 7)
+- chain_1000: −8.77 % WIN (Exp 7)
+- chain_10000: still OOM at 24 GB ~6:26 wall (Exp 7 trajectory)
+
+**Architectural ceiling**: NOT closed. All path-tree-arena + per-cursor allocator + cohort-revive deferral + Earley outboard experiments have been REJECTED at the chain_10000 acceptance gate.
+
+**Closure-path exhaustion**:
+- Per-cursor allocator reductions: Exp 3 (sppf arena), Exp 4-alt (edge arena) ✓ shipped; Exp 8 (visited_dispatch path-tree) ✗ rejected; H2 + Plan B previously rejected.
+- Operator-precedence iterative: Exp 6/7 ✓ shipped (constant-factor wins; chain_10000 ceiling unmoved).
+- ConfigKey reduction: Exp 10 S0 ✓ instrumentation; S1 ✗ rejected; S0-bis ✓ instrumentation (no actionable per-state relaxation).
+- Cohort revive deferral: Exp 9 / Approach P ✗ rejected (pause-side overhead not addressed).
+- Fork suspension: Exp 11 SuspendedFork ✗ skipped (avg_fanout 1.67 < 2.0 threshold).
+- Scope-mark arena: Exp 12 ✗ skipped (chain workload has zero scope marks).
+- Chain-region outboard: Exp 13 Earley ✗ rejected (handoff overhead exceeded savings; left-recursive Earley complete is O(n²)).
+- FOLLOW-K prune: Exp 9-alt ✗ skipped (S0 itself requires S1's FIRST/FOLLOW codegen infra).
+
+**Remaining viable closure attempts** (multi-session efforts):
+- **Streaming SPPF realization** (Plan D E4, task #231): `madvise(MADV_DONTNEED)` arena pages once min_referenced_pos advances. Highest impact if window small; highest implementation risk (changes the SPPF arena invariants).
+- **Tomita per-arc GSS-cursor merging** (Exp 14, SKIPPED): would redesign branch_cursors entirely. ~3000+ LOC walker rewrite.
+- **CPS / trampolined walker rewrite** (Exp 15, SKIPPED): architectural answer (c) from laziness analysis. ~5000+ LOC.
+
+**The chain_10000 ceiling stands as an architectural property of the current walker representation** with all REJECTED experiments empirically documented to inform future work.
