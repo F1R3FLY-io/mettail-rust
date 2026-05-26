@@ -637,3 +637,59 @@ Per Plan agent design: Streaming SPPF requires a non-trivial reclamation window 
 Each of these is a multi-week architectural rewrite with its own Plan-agent design cycle.
 
 **E4 closure**: SHIPPED as instrumentation only. S1.b-S1.e implementation BLOCKED by empirical gate failure. Closed per Plan-agent NO-GO recommendation with data backing the closure.
+
+---
+
+### Exp 16 (2026-05-26) — Walker memory attribution profiling + mimalloc allocator test
+
+**Motivation**: Plan D E4 S1.a confirmed SPPF is not the chain_10000 bottleneck. Exp 9 (cohort cache) and Exp 8 (visited_dispatch) also rejected. The 24 GB OOM has not been empirically attributed. Exp 16 instruments every walker-owned structure for byte-attribution + tests mimalloc allocator hypothesis (chain_10000 might be allocator high-water mark rather than live memory).
+
+**Implementation** (commit `504948e`): comprehensive walker-stats counters for branch_cursors, dispatch_cohort_cache + sub-fields, sppf_stack_arena, incoming_edge_stack_arena, sppf nodes/packings, gss nodes/edges, visited_dispatch Arc dedup + total entries, recovery_deltas Arcs, sppf_symbol_terms. Display impl prints byte-attributed breakdown with conservative per-element size estimates.
+
+**chain_1000 attribution** (peak):
+
+| Structure | Count | Size (B) | MB | % |
+|-----------|-------|----------|-----|---|
+| worker_snapshots | 73,048 | 96 | 6.69 | **43.2 %** |
+| pending_members | 23,979 | 96 | 2.20 | 14.2 % |
+| gss_edges | 25,992 | 64 | 1.59 | 10.3 % |
+| cohort cache base | 6,000 | 256 | 1.46 | 9.5 % |
+| gss_nodes | 17,996 | 64 | 1.10 | 7.1 % |
+| sppf_nodes | 15,005 | 56 | 0.80 | 5.2 % |
+| visited_dispatch (25 unique Arcs, 999× dedup) | 24,989 entries | 24 | 0.57 | 3.7 % |
+| edge_stack_arena | 35,976 | 16 | 0.55 | 3.5 % |
+| sppf_symbol_terms | 6,001 | 32 | 0.18 | 1.2 % |
+| branch_cursors | 338 | 512 | 0.17 | 1.1 % |
+| sppf_stack_arena | 7,001 | 16 | 0.11 | 0.7 % |
+| sppf_symbol_packings | 8,004 | 8 | 0.06 | 0.4 % |
+| recovery_deltas | 0 | — | 0.00 | 0.0 % |
+| **Total** | — | — | **15.47 MB** | — |
+
+**mimalloc test** (commit `504948e` + tramp built with `--features mimalloc,walker-stats`): OOM at 24 GB after **7:04 wall** (~3.4 GB/min).
+
+Comparison across allocators / experiments at chain_10000:
+
+| Experiment | Allocator | OOM wall | GB/min |
+|------------|-----------|----------|--------|
+| Exp 7 (current best baseline) | glibc | 6:26 | 3.7 |
+| Exp 9 S1.d (Approach P) | glibc | 6:38 | 3.6 |
+| Exp 13 S1.c (Earley outboard) | glibc | 6:35 | 3.65 |
+| Exp 16 mimalloc | mimalloc | **7:04** | **3.4** |
+
+mimalloc gave a marginal 8 % growth-rate improvement but did NOT close the architectural ceiling. The 24 GB is genuinely live walker state, not allocator high-water mark.
+
+**Critical empirical finding**: chain_1000 walker total = 15.47 MB. Linear projection to chain_10000 = 154 MB. Actual measured = 24,000 MB. **155× super-linear gap** unexplained by the structures counted in Exp 16. The gap must come from:
+
+1. **Vec/HashMap capacity overhead** (entry counts × element size don't include the allocator's per-allocation header + Vec capacity vs len + HashMap bucket vs entries).
+2. **Arc heap headers** (visited_dispatch Arc count is measured but the Arc allocation header isn't).
+3. **sppf_collection_arena per-cursor `Arc<Vec<Vec<SppfId>>>` arena** (NOT measured by Exp 16; Phase F.4 made this per-cursor; may accumulate splices).
+4. **SPPF dedup_packing HashMap with Vec<SppfId> keys** that grow per chain depth — dedup_packing has 8,004 entries at chain_1000 but key sizes may scale with chain depth.
+5. **WorkerSnapshot's internal Arc'd contents** (WorkerSnapshot contains worker_inner_state + worker_pending_packing_weight + Arc'd recovery_deltas — the 96 B size estimate only covers the struct, not its Arc'd heap).
+
+**Verdict**: Exp 16 ships as instrumentation + mimalloc hypothesis-test. SHIPPED as data-collection; the chain_10000 super-linear gap remains UN-ATTRIBUTED. Closing chain_10000 requires either:
+
+(a) **heaptrack profiling on chain_5000** (longest test that fits in 24 GB by extrapolation): would identify the actual dominant allocator. Multi-tool setup but produces definitive attribution.
+
+(b) **Further instrumentation**: per-step memory deltas, sppf_collection_arena size, dedup_packing key total bytes, WorkerSnapshot Arc-content sizing. Each ~50 LOC.
+
+Either of these is the prerequisite for any further closure attempt — the structural attribution gap is the load-bearing scientific gap.
