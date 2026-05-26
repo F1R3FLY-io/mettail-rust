@@ -733,6 +733,14 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
 /// that re-emits the same Fork) trip this guard immediately.
 pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
 
+/// Phase F.13 chain_10000 Exp 13 S1.c (2026-05-26): minimum
+/// `BranchCursor::current_chain_streak` value at which the Earley
+/// outboard chain-region handoff fires. Default 1000 per Plan agent's
+/// recommendation; below this the iterative walker path is faster
+/// (chart-build cost amortized across many iterations). S1.e tunes
+/// this empirically.
+pub const EARLEY_HANDOFF_THRESHOLD: u32 = 1000;
+
 /// One branch of a [`WpdaStepAction::Fork`] action. Codegen emits a
 /// `Vec<ForkBranch<W>>` when a parser-side ambiguity needs WPDS-driven
 /// disambiguation (binder multi-rule, cross-cat projection sharing a
@@ -1275,6 +1283,15 @@ pub struct BranchCursor<W: SemiringRef> {
     /// bumps, with `Arc::make_mut` only allocating on first per-cursor
     /// mutation.
     pub visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+    /// Phase F.13 chain_10000 Exp 13 S1.c (2026-05-26): consecutive
+    /// IterativeChainAbsorb iterations on the SAME chain region.
+    /// Increments per iteration when `already_chained == true`;
+    /// resets to 0 when `already_chained == false` (a new chain
+    /// starts). Used by the Earley outboard-chain trigger gate: when
+    /// the streak crosses `EARLEY_HANDOFF_THRESHOLD`, the remainder
+    /// of the chain is delegated to `earley_outboard_chain`.
+    /// `u32` is sufficient (chain_10000 = 10K iterations max).
+    pub current_chain_streak: u32,
     // Phase 5.6-tail-A (2026-05-12): `consistency_memo` field deleted.
     // It memoized `cursor_committed_ops_consistent`, which is also
     // deleted — the B13d-R/Resolution-R consistency override is
@@ -1583,6 +1600,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // use Arc::make_mut for copy-on-write semantics.
             visited_recovery: Arc::clone(&self.visited_recovery),
             visited_dispatch: Arc::clone(&self.visited_dispatch),
+            current_chain_streak: self.current_chain_streak,
             // Phase F.3c.4 (2026-05-20): builder field deleted; the
             // Arc::clone is no longer needed.
             // Phase F.11 (2026-05-20): Arc bump — clone is O(1); first
@@ -1687,6 +1705,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
             visited_dispatch: Arc::new(FxHashSet::default()),
+            current_chain_streak: 0,
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
             // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
             // The seed cursor's builder is independent of the walker's
@@ -1759,6 +1778,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // visited set; the Fork-arm post-allocation step inserts the
             // current dispatch config when this fork IS a projection Fork.
             visited_dispatch: parent.visited_dispatch.clone(),
+            current_chain_streak: parent.current_chain_streak,
             // B13d-R Step 2 (2026-05-08): inherit parent's memo (the child
             // shares parent's recovery_deltas at construction time;
             // any subsequent push invalidates the child's memo).
@@ -3179,6 +3199,7 @@ where
                     // post-resolution singleton resets projection
                     // visited set.
                     visited_dispatch: Arc::new(FxHashSet::default()),
+                    current_chain_streak: 0,
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -4910,6 +4931,7 @@ where
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
                     visited_dispatch: Arc::new(FxHashSet::default()),
+                    current_chain_streak: 0,
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -5213,6 +5235,50 @@ where
                     // additional chain element. Counters are scoped
                     // per parse and reset at WpdaWalker::reset.
                     crate::stats_inc!(self, chain_region_iterations);
+                    // Phase F.13 chain_10000 Exp 13 S1.c (2026-05-26):
+                    // per-cursor chain streak; resets on
+                    // already_chained=false branch below.
+                    cursor.current_chain_streak =
+                        cursor.current_chain_streak.saturating_add(1);
+                    if cursor.current_chain_streak == EARLEY_HANDOFF_THRESHOLD
+                        && cursor.lex_fork_path.is_empty()
+                        && cursor.cohort_origin.is_none()
+                        && (self.deterministic
+                            || self.branch_cursors.len() <= 1)
+                    {
+                        if let Some((root_sid, accumulated_weight, end_pos)) =
+                            self.earley_outboard_chain(
+                                cursor,
+                                tokens,
+                                &symbol,
+                                weight.clone(),
+                            )
+                        {
+                            // Reconcile: replace the just-emitted
+                            // per-iteration Packing with Earley's
+                            // chain root, advance pos, multiply
+                            // weight, drop to InfixLoop.
+                            let popped = self
+                                .sppf_stack_arena
+                                .intern_pop(cursor.sppf_stack_id);
+                            cursor.sppf_stack_id = self
+                                .sppf_stack_arena
+                                .intern_push(popped, root_sid);
+                            cursor.pos = end_pos;
+                            if self.deterministic {
+                                self.pos = end_pos;
+                            }
+                            self.multiply_cursor_weight(
+                                cursor,
+                                &accumulated_weight,
+                            );
+                            cursor.current_chain_streak = 0;
+                            self.set_cursor_inner_state(cursor, new_state);
+                            return self.cursor_resolution_check(cursor);
+                        }
+                    }
+                } else {
+                    cursor.current_chain_streak = 0;
                 }
                 self.emit_push_side_effects(cursor, &mut symbol);
                 if !already_chained {
@@ -5762,6 +5828,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5860,6 +5927,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5934,6 +6002,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6001,6 +6070,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6100,6 +6170,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6179,6 +6250,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6259,6 +6331,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6390,6 +6463,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 // Phase F.13 chain_10000 Plan D E3 Substage 2
                                 // (2026-05-26): arena-interned StackId (Copy u32).
@@ -6510,6 +6584,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 // Phase F.13 chain_10000 Plan D E3 Substage 2
                                 // (2026-05-26): arena-interned StackId (Copy u32).
@@ -6663,6 +6738,7 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                current_chain_streak: 0,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -8901,6 +8977,7 @@ where
             // visited set so post-commit projection cycle defense
             // continues to apply across the parse path.
             visited_dispatch: winner.visited_dispatch,
+            current_chain_streak: winner.current_chain_streak,
             // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
             // The post-commit singleton no longer carries a builder
             // Arc; the winner's SPPF-side state (sppf_stack,
@@ -10904,6 +10981,7 @@ where
             recovery_depth: child_recovery_depth,
             visited_recovery: child_visited_recovery,
             visited_dispatch: child_visited_dispatch,
+            current_chain_streak: 0,
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // arena-interned StackId (Copy u32).
             sppf_stack_id: parent.sppf_stack_id,
