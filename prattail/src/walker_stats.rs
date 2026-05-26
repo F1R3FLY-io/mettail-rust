@@ -245,6 +245,80 @@ pub struct WalkerStats {
     pub visited_recovery_len_histogram: [u64; 8],
     pub visited_recovery_len_max: u64,
     pub visited_recovery_len_samples: u64,
+    /// Phase F.13 chain_10000 Exp 10 Substage 0 (2026-05-26):
+    /// ConfigKey discriminator pairwise correlation matrix. The
+    /// 10-axis ConfigKey (state, node, edge, depth, cohort_origin,
+    /// sppf_top, lex_alt_idx, weight_src_idx, weight_rule_idx,
+    /// lex_fork_stamp) was accreted across regressions; some axes
+    /// likely correlate (e.g., lex_fork_stamp ↔ lex_alt_idx). For a
+    /// merge-miss pair that diverges on multiple axes, record which
+    /// PAIRS of axes both contribute. Stored as a flat
+    /// lower-triangular array indexed as `lower_triangle_index(i, j)`
+    /// where i < j ∈ 0..10. Per the Plan agent (Exp 10 design): a
+    /// pair (i, j) with co-occurrence rate > 0.95 on chain_1000 AND
+    /// axis-i sole-diff < 1% indicates axis i is dominated by axis j
+    /// and is a drop-candidate from ConfigKey.
+    pub merge_miss_pair_participation: PairCounts,
+    /// Phase F.13 chain_10000 Exp 12 Substage 0 (2026-05-26):
+    /// length histograms for `binder_scope_marks` and
+    /// `optional_scope_marks` — gate the path-tree-arena migration
+    /// per Plan agent Exp 12 design. If chain_1000 max ≤ 8 or
+    /// mean ≤ 2 (histogram mostly empty/single-element), SKIP the
+    /// arena migration; if max > 8 AND mean > 2, proceed to S1.
+    pub binder_scope_marks_len_histogram: [u64; 8],
+    pub binder_scope_marks_len_max: u64,
+    pub binder_scope_marks_len_samples: u64,
+    pub optional_scope_marks_len_histogram: [u64; 8],
+    pub optional_scope_marks_len_max: u64,
+    pub optional_scope_marks_len_samples: u64,
+    /// Phase F.13 chain_10000 Exp 12 Substage 0 (2026-05-26):
+    /// per-binder-scope inner `Vec<String>` (`names`) size histogram.
+    /// Path-tree-arena dedups the OUTER Vec<(u16, Vec<String>)>;
+    /// the inner Vec<String> per frame is still per-cursor allocated.
+    /// If median inner-Vec size > 4, the arena win is diminished —
+    /// inner Vec dominates per-frame cost.
+    pub binder_scope_names_len_histogram: [u64; 8],
+    pub binder_scope_names_len_max: u64,
+    pub binder_scope_names_len_samples: u64,
+}
+
+/// Phase F.13 chain_10000 Exp 10 Substage 0 (2026-05-26): wrapper
+/// over `[u64; 45]` for the ConfigKey pairwise correlation matrix.
+/// Newtype required because `[T; N]` only implements `Default` for
+/// N ≤ 32 in stable Rust; 45 = C(10, 2) for the 10 ConfigKey axes.
+#[derive(Debug, Clone)]
+pub struct PairCounts(pub [u64; 45]);
+
+impl Default for PairCounts {
+    fn default() -> Self {
+        PairCounts([0; 45])
+    }
+}
+
+impl std::ops::Index<usize> for PairCounts {
+    type Output = u64;
+    fn index(&self, i: usize) -> &u64 {
+        &self.0[i]
+    }
+}
+
+impl std::ops::IndexMut<usize> for PairCounts {
+    fn index_mut(&mut self, i: usize) -> &mut u64 {
+        &mut self.0[i]
+    }
+}
+
+/// Phase F.13 chain_10000 Exp 10 Substage 0 (2026-05-26): map
+/// `(i, j)` with `i < j ∈ 0..10` to a flat index in `0..45`. The
+/// inverse `merge_miss_pair_participation[lower_triangle_index(i, j)]`
+/// is the co-divergence count for axis pair (i, j).
+pub fn lower_triangle_index(i: usize, j: usize) -> usize {
+    debug_assert!(i < j && j < 10, "expected i<j<10, got ({}, {})", i, j);
+    // Number of pairs with smaller first index, plus offset within row.
+    // Row i has (9 - i) entries: (i, i+1), (i, i+2), ..., (i, 9).
+    // Cumulative before row i: sum_{k=0}^{i-1} (9 - k) = 9i - i(i-1)/2.
+    let row_start = 9 * i - i * (i.saturating_sub(1)) / 2;
+    row_start + (j - i - 1)
 }
 
 /// Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26): histogram
@@ -493,6 +567,89 @@ impl fmt::Display for WalkerStats {
             }
             writeln!(f)?;
         }
+        // Phase F.13 chain_10000 Exp 12 Substage 0 (2026-05-26).
+        if self.binder_scope_marks_len_samples > 0 {
+            let labels = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64+"];
+            let total = self.binder_scope_marks_len_samples as f64;
+            write!(
+                f,
+                "  binder_scope_marks_len_histogram (n={}, max={}):",
+                self.binder_scope_marks_len_samples,
+                self.binder_scope_marks_len_max,
+            )?;
+            for (i, lbl) in labels.iter().enumerate() {
+                let c = self.binder_scope_marks_len_histogram[i];
+                write!(f, " {}={} ({:.1}%)", lbl, c, 100.0 * c as f64 / total)?;
+            }
+            writeln!(f)?;
+        }
+        if self.optional_scope_marks_len_samples > 0 {
+            let labels = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64+"];
+            let total = self.optional_scope_marks_len_samples as f64;
+            write!(
+                f,
+                "  optional_scope_marks_len_histogram (n={}, max={}):",
+                self.optional_scope_marks_len_samples,
+                self.optional_scope_marks_len_max,
+            )?;
+            for (i, lbl) in labels.iter().enumerate() {
+                let c = self.optional_scope_marks_len_histogram[i];
+                write!(f, " {}={} ({:.1}%)", lbl, c, 100.0 * c as f64 / total)?;
+            }
+            writeln!(f)?;
+        }
+        if self.binder_scope_names_len_samples > 0 {
+            let labels = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64+"];
+            let total = self.binder_scope_names_len_samples as f64;
+            write!(
+                f,
+                "  binder_scope_names_len_histogram (n={}, max={}):",
+                self.binder_scope_names_len_samples,
+                self.binder_scope_names_len_max,
+            )?;
+            for (i, lbl) in labels.iter().enumerate() {
+                let c = self.binder_scope_names_len_histogram[i];
+                write!(f, " {}={} ({:.1}%)", lbl, c, 100.0 * c as f64 / total)?;
+            }
+            writeln!(f)?;
+        }
+        // Phase F.13 chain_10000 Exp 10 Substage 0 (2026-05-26):
+        // ConfigKey pairwise correlation. Print as lower-triangular
+        // matrix (10x10 → 45 entries) for axis pairs (i, j) with i<j.
+        // Axis names match merge_miss_multi_participation (line ~393).
+        let axis_names = [
+            "state", "node", "edge", "depth", "cohort_origin", "sppf_top",
+            "lex_alt_idx", "weight_src_idx", "weight_rule_idx", "lex_fork_stamp",
+        ];
+        let mut has_any = false;
+        for &c in self.merge_miss_pair_participation.0.iter() {
+            if c > 0 {
+                has_any = true;
+                break;
+            }
+        }
+        if has_any && self.merge_miss_multi_diff_total > 0 {
+            let denom = self.merge_miss_multi_diff_total as f64;
+            writeln!(
+                f,
+                "  merge_miss_pair_participation (axis i ∧ j both differ; denom = multi_diff_total = {}):",
+                self.merge_miss_multi_diff_total,
+            )?;
+            for i in 0..10 {
+                for j in (i + 1)..10 {
+                    let idx = lower_triangle_index(i, j);
+                    let c = self.merge_miss_pair_participation[idx];
+                    if c > 0 {
+                        let pct = 100.0 * c as f64 / denom;
+                        writeln!(
+                            f,
+                            "    ({}, {}) = {} ({:.1}%)",
+                            axis_names[i], axis_names[j], c, pct,
+                        )?;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -642,6 +799,17 @@ mod tests {
             visited_recovery_len_histogram: [0; 8],
             visited_recovery_len_max: 0,
             visited_recovery_len_samples: 0,
+            // Phase F.13 chain_10000 Exp 10 + Exp 12 Substage 0 (2026-05-26).
+            merge_miss_pair_participation: PairCounts([0; 45]),
+            binder_scope_marks_len_histogram: [0; 8],
+            binder_scope_marks_len_max: 0,
+            binder_scope_marks_len_samples: 0,
+            optional_scope_marks_len_histogram: [0; 8],
+            optional_scope_marks_len_max: 0,
+            optional_scope_marks_len_samples: 0,
+            binder_scope_names_len_histogram: [0; 8],
+            binder_scope_names_len_max: 0,
+            binder_scope_names_len_samples: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

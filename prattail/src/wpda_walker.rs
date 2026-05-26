@@ -7683,6 +7683,39 @@ where
                 visited_recovery_len_samples,
                 cursor.visited_recovery.len()
             );
+            // Phase F.13 chain_10000 Exp 12 Substage 0 (2026-05-26):
+            // gate histograms for path-tree-arena migration of the
+            // remaining per-cursor scope-mark Vecs. Per Plan agent:
+            // if max ≤ 8 or histogram mostly-empty, skip the arena
+            // migration; if max > 8 AND mean > 2, proceed to S1.
+            crate::stats_histogram_sample!(
+                self,
+                binder_scope_marks_len_histogram,
+                binder_scope_marks_len_max,
+                binder_scope_marks_len_samples,
+                cursor.binder_scope_marks.len()
+            );
+            crate::stats_histogram_sample!(
+                self,
+                optional_scope_marks_len_histogram,
+                optional_scope_marks_len_max,
+                optional_scope_marks_len_samples,
+                cursor.optional_scope_marks.len()
+            );
+            // Sample the inner Vec<String> sizes too (per Plan agent
+            // diminished-return caveat): the path-tree arena dedups
+            // only the OUTER Vec; if inner Vec is large the win is
+            // partial.
+            #[cfg(feature = "walker-stats")]
+            for (_, names) in cursor.binder_scope_marks.iter() {
+                crate::stats_histogram_sample!(
+                    self,
+                    binder_scope_names_len_histogram,
+                    binder_scope_names_len_max,
+                    binder_scope_names_len_samples,
+                    names.len()
+                );
+            }
             let mut cursor = cursor;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
             // Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard. Any
@@ -8082,6 +8115,29 @@ where
                                 self.stats.merge_miss_multi_participation[k] =
                                     self.stats.merge_miss_multi_participation[k]
                                         .saturating_add(1);
+                            }
+                        }
+                        // Phase F.13 chain_10000 Exp 10 Substage 0
+                        // (2026-05-26): pairwise correlation matrix.
+                        // For each (i, j) where i < j AND both differ,
+                        // increment the pair counter. Per Plan agent
+                        // gate: a pair with co-occurrence > 0.95 of
+                        // multi_diff_total + axis-i sole-diff < 1% =
+                        // axis i is dominated by axis j → drop-candidate.
+                        for i in 0..10 {
+                            if !bools[i] {
+                                continue;
+                            }
+                            for j in (i + 1)..10 {
+                                if !bools[j] {
+                                    continue;
+                                }
+                                let idx =
+                                    crate::walker_stats::lower_triangle_index(i, j);
+                                self.stats.merge_miss_pair_participation[idx] = self
+                                    .stats
+                                    .merge_miss_pair_participation[idx]
+                                    .saturating_add(1);
                             }
                         }
                     } else if state_diff {
