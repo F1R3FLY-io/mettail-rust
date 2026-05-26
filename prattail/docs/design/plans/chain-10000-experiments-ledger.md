@@ -29,7 +29,7 @@
 | BASE | 2026-05-26 | Baseline (post L1-L6 + L4.2 + L6) | `5708950` | 4066/0 | — | — | — | — | OOM 24 GB at ~9 min | — |
 | 1 | 2026-05-26 | Plan C Substage 0 — read-only length histogram for `incoming_edge_stack` + `recovery_deltas` (under `walker-stats` feature) | `7e82cb6` | 4081/0 | n/a (feature-off zero-cost) | n/a | n/a | n/a | n/a (data-collection next) | **ACCEPT** (pure instrumentation; zero behavior change when feature off) |
 | 2 | 2026-05-26 | Plan D E3 Substage 1 — standalone `SppfStackArena` data structure + unit/property tests | `8056b9a` | 4081/0 | n/a (no integration) | n/a | n/a | n/a | n/a | **ACCEPT** (15/15 unit+property tests pass; no behavior change) |
-| 3 | TBD | Plan D E3 Substage 2 — wire `SppfStackArena` into `BranchCursor::sppf_stack_id` | — | — | — | — | — | — | — | — |
+| 3 | 2026-05-26 | Plan D E3 Substage 2 — wire `SppfStackArena` into `BranchCursor::sppf_stack_id` | `f18a847` | 4081/0 + tramp 15/0/2 | **WIN** −5.02 % (t=−8.20, df=26) | **WIN** −3.95 % (t=−8.64, df=27) | **WIN** −1.22 % (t=−2.33, df=27) | NEUTRAL −0.91 % (t=−1.75, df=26) | 8 GB at 21 min (~24 % growth-rate improvement vs L4.2 baseline; still won't fit 24 GB unaided) | **ACCEPT** (3 sizes WIN, 1 NEUTRAL; no regression; representation change unlocks future substages) |
 | 4 | TBD | Plan C Substage 1 — `Arc<Vec<GssEdgeId>>` → `Arc<SmallVec<[GssEdgeId; N]>>` (N from Substage 0) | — | — | — | — | — | — | — | — |
 | 5 | TBD | Plan B Substage 1 — CursorId-keyed walker-global pilot on `visited_dispatch` | — | — | — | — | — | — | — | — |
 | 6 | TBD | Plan A First Substage — operator-precedence iterative for Calculator-Int's `AddInt` | — | — | — | — | — | — | — | — |
