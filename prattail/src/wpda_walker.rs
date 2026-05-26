@@ -636,6 +636,17 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// See `prattail/src/edge_stack_arena.rs` for the data structure
     /// + 7 unit/property tests.
     pub incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena,
+    /// Phase F.13 chain_10000 Exp 8 Substage 2 (2026-05-26): walker-
+    /// global canonical-order path-tree interning arena for the
+    /// per-cursor cycle-defense set `visited_dispatch`. Each
+    /// `BranchCursor` holds a `VisitedSetStackId` (Copy `u32`) into
+    /// this arena; insert/contains go through the arena's LRU cache
+    /// (K=64 default). Replaces the prior per-cursor
+    /// `Arc<FxHashSet<PackedDispatchConfig>>` field (Exp 5 S0: max=1003
+    /// on chain_1000, 94.8% > 64 bucket, linearly scaling). Memory:
+    /// ~16 KB total instead of ~7 GB at chain_10000.
+    pub visited_dispatch_arena:
+        crate::visited_set_arena::VisitedSetArena<PackedDispatchConfig, 128>,
     /// Phase F.13 H1 (2026-05-20): walker-global memo of realized AST
     /// payloads keyed by SPPF Symbol id. Promoted from per-cursor
     /// `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global HashMap to
@@ -1274,7 +1285,15 @@ pub struct BranchCursor<W: SemiringRef> {
     /// allocation cost; Arc-sharing replaces N deep clones with N Arc
     /// bumps, with `Arc::make_mut` only allocating on first per-cursor
     /// mutation.
-    pub visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+    /// Phase F.13 chain_10000 Exp 8 Substage 2 (2026-05-26): swapped
+    /// from `Arc<FxHashSet<PackedDispatchConfig>>` to
+    /// `VisitedSetStackId` (Copy `u32`). The walker's
+    /// `visited_dispatch_arena` is the authoritative storage; this
+    /// field is a handle into that arena's canonical-order path-tree.
+    /// `contains` / `insert` go through the arena (with LRU cache for
+    /// O(1) contains() on hit). Replaces ~7 GB live peak at
+    /// chain_10000 with ~16 KB total arena + ~1.8 MB LRU.
+    pub visited_dispatch_id: crate::visited_set_arena::VisitedSetStackId,
     // Phase 5.6-tail-A (2026-05-12): `consistency_memo` field deleted.
     // It memoized `cursor_committed_ops_consistent`, which is also
     // deleted — the B13d-R/Resolution-R consistency override is
@@ -1582,7 +1601,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // (was deep-clone of FxHashSet pre-L4.1). Mutation sites
             // use Arc::make_mut for copy-on-write semantics.
             visited_recovery: Arc::clone(&self.visited_recovery),
-            visited_dispatch: Arc::clone(&self.visited_dispatch),
+            visited_dispatch_id: self.visited_dispatch_id,
             // Phase F.3c.4 (2026-05-20): builder field deleted; the
             // Arc::clone is no longer needed.
             // Phase F.11 (2026-05-20): Arc bump — clone is O(1); first
@@ -1686,7 +1705,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             visited_recovery: Arc::new(FxHashSet::default()),
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
-            visited_dispatch: Arc::new(FxHashSet::default()),
+            visited_dispatch_id: crate::visited_set_arena::VISITED_SET_ROOT,
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
             // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
             // The seed cursor's builder is independent of the walker's
@@ -1758,7 +1777,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // B12 / Candidate E (2026-05-07): inherit parent's projection
             // visited set; the Fork-arm post-allocation step inserts the
             // current dispatch config when this fork IS a projection Fork.
-            visited_dispatch: parent.visited_dispatch.clone(),
+            visited_dispatch_id: parent.visited_dispatch_id,
             // B13d-R Step 2 (2026-05-08): inherit parent's memo (the child
             // shares parent's recovery_deltas at construction time;
             // any subsequent push invalidates the child's memo).
@@ -2554,6 +2573,7 @@ where
             // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
+            visited_dispatch_arena: crate::visited_set_arena::VisitedSetArena::new(),
         }
     }
 
@@ -2628,6 +2648,7 @@ where
             // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
+            visited_dispatch_arena: crate::visited_set_arena::VisitedSetArena::new(),
         }
     }
 
@@ -2697,6 +2718,7 @@ where
             // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
             // walker-global GSS edge-stack interning arena. Fresh = empty.
             incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
+            visited_dispatch_arena: crate::visited_set_arena::VisitedSetArena::new(),
         }
     }
 
@@ -2743,6 +2765,12 @@ where
         // Chain nodes reference GssEdgeIds that are per-parse; stale
         // entries would alias new parses' edge IDs incorrectly.
         self.incoming_edge_stack_arena.clear();
+        // Phase F.13 chain_10000 Exp 8 Substage 2 (2026-05-26): clear
+        // the visited_dispatch interning arena + its LRU cache at
+        // parse boundary. PackedDispatchConfig payloads (pos, cat_src,
+        // cur_bp) are per-parse; stale arena nodes OR stale LRU sets
+        // would alias new parses' configs incorrectly.
+        self.visited_dispatch_arena.clear();
         // Phase F.13 walker-stats (2026-05-20): zero counters at parse boundary
         // and increment seed (matches the constructor's `cursors_created_via_seed = 1`).
         #[cfg(feature = "walker-stats")]
@@ -3178,7 +3206,7 @@ where
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-resolution singleton resets projection
                     // visited set.
-                    visited_dispatch: Arc::new(FxHashSet::default()),
+                    visited_dispatch_id: crate::visited_set_arena::VISITED_SET_ROOT,
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -4909,7 +4937,7 @@ where
                     visited_recovery: Arc::new(FxHashSet::default()),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
-                    visited_dispatch: Arc::new(FxHashSet::default()),
+                    visited_dispatch_id: crate::visited_set_arena::VISITED_SET_ROOT,
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -5049,7 +5077,13 @@ where
                 // configuration on this cursor's path is caught.
                 if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
                     if let Some(key) = extract_dispatch_config(cursor, &self.gss) {
-                        if cursor.visited_dispatch.contains(&key) {
+                        // Phase F.13 chain_10000 Exp 8 S2 (2026-05-26):
+                        // arena contains() (LRU O(1) hit / O(chain) miss
+                        // + cache-insert).
+                        if self
+                            .visited_dispatch_arena
+                            .contains(cursor.visited_dispatch_id, key)
+                        {
                             let (pos, cat_src, cur_bp) = key.unpack();
                             let msg = format!(
                                 "cross-cat projection cycle detected at \
@@ -5064,8 +5098,11 @@ where
                             );
                             return CursorOutcome::Drop;
                         }
-                        // Phase F.13 Stage L4.1 (2026-05-25): Arc::make_mut CoW.
-                        Arc::make_mut(&mut cursor.visited_dispatch).insert(key);
+                        // Phase F.13 chain_10000 Exp 8 S2 (2026-05-26):
+                        // arena insert (idempotent, canonical-order).
+                        cursor.visited_dispatch_id = self
+                            .visited_dispatch_arena
+                            .insert(cursor.visited_dispatch_id, key);
                     }
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01): symbol-kind-driven
@@ -5559,7 +5596,12 @@ where
                         extract_dispatch_config(cursor, &self.gss)
                     };
                 let parent_in_visited: bool = parent_dispatch_config
-                    .map(|k| cursor.visited_dispatch.contains(&k))
+                    .map(|k| {
+                        // Phase F.13 chain_10000 Exp 8 S2 (2026-05-26):
+                        // arena contains() (LRU-cached after first hit).
+                        self.visited_dispatch_arena
+                            .contains(cursor.visited_dispatch_id, k)
+                    })
                     .unwrap_or(false);
                 // Fast-path retained: pure-projection Fork already-visited
                 // would have every branch skipped by the per-branch gate
@@ -5645,15 +5687,20 @@ where
                 } else {
                     (Arc::clone(&cursor.visited_recovery), cursor.recovery_depth)
                 };
-                let child_visited_dispatch = if !is_recovery {
-                    let mut set: Arc<FxHashSet<_>> =
-                        Arc::clone(&cursor.visited_dispatch);
+                // Phase F.13 chain_10000 Exp 8 S2 (2026-05-26):
+                // child_visited_dispatch is now a VisitedSetStackId
+                // (Copy u32) — no per-Fork Arc clone needed; the arena's
+                // canonical-order intern + LRU does the dedup work
+                // walker-globally instead of per-cursor.
+                let child_visited_dispatch_id = if !is_recovery {
                     if let Some(key) = parent_dispatch_config {
-                        Arc::make_mut(&mut set).insert(key);
+                        self.visited_dispatch_arena
+                            .insert(cursor.visited_dispatch_id, key)
+                    } else {
+                        cursor.visited_dispatch_id
                     }
-                    set
                 } else {
-                    Arc::clone(&cursor.visited_dispatch)
+                    cursor.visited_dispatch_id
                 };
                 let mut children = Vec::with_capacity(branches.len());
                 // B14 C5: parallel tracker — for each child pushed below,
@@ -5709,7 +5756,7 @@ where
                                 pos_after,
                                 child_recovery_depth,
                                 child_visited_recovery.clone(),
-                                child_visited_dispatch.clone(),
+                                child_visited_dispatch_id,
                                 child_source_priority,
                             );
                             for child in new_children {
@@ -5755,7 +5802,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5853,7 +5900,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5927,7 +5974,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -5994,7 +6041,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6093,7 +6140,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6172,7 +6219,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6252,7 +6299,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6383,7 +6430,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 // Phase F.13 chain_10000 Plan D E3 Substage 2
                                 // (2026-05-26): arena-interned StackId (Copy u32).
@@ -6503,7 +6550,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 // Phase F.13 chain_10000 Plan D E3 Substage 2
                                 // (2026-05-26): arena-interned StackId (Copy u32).
@@ -6656,7 +6703,7 @@ where
                                 // spine clone.
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
-                                visited_dispatch: child_visited_dispatch.clone(),
+                                visited_dispatch_id: child_visited_dispatch_id,
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -7725,7 +7772,8 @@ where
                 visited_dispatch_len_histogram,
                 visited_dispatch_len_max,
                 visited_dispatch_len_samples,
-                cursor.visited_dispatch.len()
+                self.visited_dispatch_arena
+                    .len(cursor.visited_dispatch_id)
             );
             crate::stats_histogram_sample!(
                 self,
@@ -8849,7 +8897,7 @@ where
             // B12 / Candidate E (2026-05-07): preserve winner's projection
             // visited set so post-commit projection cycle defense
             // continues to apply across the parse path.
-            visited_dispatch: winner.visited_dispatch,
+            visited_dispatch_id: winner.visited_dispatch_id,
             // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
             // The post-commit singleton no longer carries a builder
             // Arc; the winner's SPPF-side state (sppf_stack,
@@ -10469,7 +10517,7 @@ where
         // optional Arc::make_mut(...).insert(...) for CoW. The Arc
         // bumps to the cursor's field via Arc::clone are O(1).
         child_visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
-        child_visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+        child_visited_dispatch_id: crate::visited_set_arena::VisitedSetStackId,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache
@@ -10594,7 +10642,7 @@ where
             incoming_edge_stack_id: parent.incoming_edge_stack_id,
             recovery_depth: child_recovery_depth,
             visited_recovery: child_visited_recovery,
-            visited_dispatch: child_visited_dispatch,
+            visited_dispatch_id: child_visited_dispatch_id,
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // arena-interned StackId (Copy u32).
             sppf_stack_id: parent.sppf_stack_id,
