@@ -36,6 +36,18 @@
 | 5 | 2026-05-26 | Plan B Substage 1 — CursorId-keyed walker-global pilot on `visited_dispatch` | n/a (SKIP-AFTER-DATA) | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP-AFTER-DATA** — see below |
 | 6a | 2026-05-26 | Plan A First Substage 6a — types + walker scaffold (`WpdaState::InfixChainIterative`, `WpdaStepAction::IterativeChainAbsorb`, walker arm, `is_iterative_candidate` with PILOT-ONLY `label=="AddInt"` gate) | `a033a97` | 4102/0 | n/a (unreachable — no codegen emission) | n/a | n/a | n/a | n/a | **ACCEPT** (scaffold-only, behavior-equivalent) |
 | 6b | 2026-05-26 | Plan A First Substage 6b — codegen activation: `emit_iter_eligible_fn`, modify InfixLoop singleton arm, engine `InfixChainIterative` dispatch arm | `969f3d5` | 4102/0 + tramp 15/0/2 + parity 16/0 | **WIN vs base** −15.32 % (t=−23.08); vs E6 WIN −8.28 % | **WIN vs base** −14.74 %; vs E6 WIN −7.91 % | **WIN vs base** −13.16 %; vs E6 WIN −2.44 % | **WIN vs base** −8.76 %; vs E6 NEUTRAL −1.05 % | OOM 24 GB at 6:14 wall (FASTER OOM than E6-only's 15:44 — ~4 GB/min vs 1.6 GB/min) | **ACCEPT-WITH-CAVEAT** (Welch ACCEPT all 4 chain sizes per user keep-criterion; chain_10000 trajectory regressed — chain-extension elision changes memory pattern, kept GSS frame alive longer accumulates more state). |
+| 7 | 2026-05-26 | Restore per-iteration `emit_fire_action` in `IterativeChainAbsorb` arm | `6da30a5` | 4102/0 + tramp 15/0/2 + parity 16/0 | **WIN** −15.06 % (p<0.0001) | **WIN** −15.03 % (p<0.0001) | **WIN** −12.41 % (p<0.0001) | **WIN** −8.77 % (p<0.0001) | OOM 24 GB at 6:26 wall (~3.7 GB/min; marginal vs 6b but Welch wins preserved) | **KEEP** (user explicit "keep all that pass Welch's T-test"; chain_10000 still OOMs but revert would sacrifice the smaller-chain wins for no closure). |
+| 10 S0 | 2026-05-26 | ConfigKey pairwise correlation matrix + scope-mark histograms (`PairCounts` newtype + 10×10 lower-triangular tally) | `67d4a3e` | 4102/0 | n/a (feature-off zero-cost) | n/a | n/a | n/a | n/a | **ACCEPT** — gate FIRES: `(node, edge) = 100.0 %` co-divergence with sole-diffs 0.002 %. Drop one of {node, edge}. |
+| 10 S1 | 2026-05-26 | Drop `incoming_edge` axis from `ConfigKey` | `beab904` (revert) | 4102/0 | NEUTRAL −3.6 % p=0.10 | WIN −3.7 % p<0.0001 | NEUTRAL −0.6 % p=0.33 | **LOSS +7.4 %** p<0.0001 | n/a | **REJECT** — Welch chain_1000 LOSS. 14 sole-diff outliers (0.002 %) carry load-bearing distinctions. Reverted in-tree. |
+| 11 S0 | 2026-05-26 | Per-class Fork breakdown gate (`fork_total_by_class: [u64; 4]` + classification in `WpdaStepAction::Fork` arm) | `32f331b` | 4102/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT + SKIP-AFTER-DATA** — `lex_fork=0 (0.0%)`, `cross_cat=100 %`, `avg_fanout=1.67` (below 2.0 threshold). Per Plan agent: SKIP. Substages 11-S1.a/b/c/d/e CANCELLED. |
+| 12 S0 | 2026-05-26 | `binder_scope_marks` + `optional_scope_marks` length histograms | `67d4a3e` (shared with 10 S0) | 4102/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT + SKIP-BEFORE-ATTEMPT** — all 3 histograms 100 % at length 0 on chain workload (max=0). |
+| 8 S1 | 2026-05-26 | `VisitedSetArena<T>` + walker-global LRU cache (canonical-order path-tree, K=64 default) — STANDALONE module + 18 tests | `db6a4c8` | 4120/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT** (standalone module; 18/18 tests; retained). |
+| 8 S2 | 2026-05-26 | Wire `BranchCursor::visited_dispatch_id` end-to-end (30+ sites) | `57152e3` ATTEMPT → reverted at `a36d348` | 4120/0 | LOSS +3.91 % p=0.0013 (K=64) / +3.91 % p=0.0001 (K=128) | **LOSS +7.57 %** p<0.0001 (K=64) / **+8.39 %** p<0.0001 (K=128) | LOSS +7.41 % / +9.78 % | LOSS +16.36 % / +13.55 % | n/a | **REJECT** — chain_100 LOSS > 5 % at K=64 AND K=128 (Plan agent prespecified falsifier). Arena `contains()` overhead exceeds memory savings vs `Arc<FxHashSet>`. |
+| 9 S0 | 2026-05-26 | Cohort revive share confirmation (re-using Exp 11 S0 data) | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **ACCEPT** — `cohort_cursors_emitted = 335,808` vs `branch_cursors_sum = 193,102` = **174 %** (threshold ≥ 50 %). Proceed to S1. |
+| 9 S1.a | 2026-05-26 | `CohortContinuation<W>` type + new module `cohort_continuation.rs` + `deferred_continuations` field on `DispatchCacheEntry` (additive) | `1f26cfa` | 4124/0 (4120 + 4 new tests) | n/a | n/a | n/a | n/a | n/a | **ACCEPT** (types-only, additive; module retained for future reuse). |
+| 9 S1.b | 2026-05-26 | Dual-write `CohortContinuation` at Sites A + B (`try_build_continuation` + `push_deferred_continuation`) | `5df1df8` ATTEMPT → reverted at `95576b9` | 4124/0 | NEUTRAL +1.34 % (re-run) | NEUTRAL | NEUTRAL | LOSS +2.30 % p<0.001 | n/a | **REVERT** (Welch chain_1000 LOSS p<0.05; per user mandate). |
+| 9 S1.c | 2026-05-26 | `install_cohort_continuations` at EOI (drain `deferred_continuations` into outer-rule Packings via `sppf.intern_packing` + `link_packing_to_symbol`; dedup'd with revive-produced packings) | `c97fcdc` ATTEMPT → reverted at `fea5fdc` | 4124/0 + tramp 15/0 | LOSS +3.14 % p=0.18 | LOSS +5.51 % p=0.004 | LOSS +3.25 % p<0.0001 | LOSS +4.79 % p<0.0001 | n/a | **REVERT** (dual-write + EOI install combined LOSS p<0.05 at chain_100/200/1000). |
+| 9 S1.d | 2026-05-26 | Switch: skip revive at Sites B + C when continuation built (cursor-population reduction) | `e86aaa9` ATTEMPT → reverted at `3f0361f` | 4124/0 + tramp 15/0 | LOSS +2.72 % p=0.044 | LOSS +2.90 % p<0.0001 | LOSS +1.24 % p=0.013 | LOSS +0.97 % p<0.0001 | OOM 24 GB at 6:38 wall (~3.6 GB/min vs Exp 7's 3.7 GB/min — only ~3 % improvement) | **REJECT** — all 4 sizes LOSS p<0.05; chain_10000 architectural ceiling NOT closed. Per user mandate: revert. |
 
 ---
 
@@ -465,3 +477,65 @@ upstream candidates with non-skip gates).
 `visited_set_arena.rs` module retained for potential future reuse
 (different workload could justify the tradeoff; the 18 standalone
 tests + property tests serve as a reference implementation).
+
+---
+
+### Exp 9 (Approach P) — realize-time cohort fanout: ALL SUBSTAGES REJECTED at 2026-05-26
+
+Per Plan agent (`replicated-conjuring-turtle.md` + Exp 9 design): defer per-cursor cohort revives into `CohortContinuation` records interned as outer-rule SPPF Packings at end-of-input. Target: 174 % cohort-revive share on chain_1000 (335,808 revives vs 193,102 branch_cursors_sum) — projected ~3.4 M revived cursors at chain_10000.
+
+**Substage outcomes**:
+
+| Substage | Commit | Result | Verdict |
+|----------|--------|--------|---------|
+| 9 S1.a (types-only) | `1f26cfa` | 4124/0 + 4 new continuation tests | **ACCEPT, RETAINED** |
+| 9 S1.b (dual-write Sites A+B) | `5df1df8` ATTEMPT | Welch chain_1000 LOSS +2.30 % p<0.001 vs Exp 7 (chain_50/100/200 clean re-runs NEUTRAL) | **REVERT** at `95576b9` |
+| 9 S1.c (EOI install) | `c97fcdc` ATTEMPT | Welch LOSS chain_100 +5.51 %, chain_200 +3.25 %, chain_1000 +4.79 % p<0.05 | **REVERT** at `fea5fdc` |
+| 9 S1.d (switch — skip revive) | `e86aaa9` ATTEMPT | Welch LOSS chain_50/100/200/1000 +2.72/+2.90/+1.24/+0.97 % p<0.05; **chain_10000 OOM 24 GB at 6:38 wall = 3.6 GB/min** (vs Exp 7's 3.7 GB/min — only ~3 % memory improvement) | **REVERT** at `3f0361f` |
+
+**Hypothesis fate**: FALSIFIED at the architectural-closure goal. The cohort revives ARE the dominant cursor-population source (174 % share confirmed by S0 data), but deferring them to EOI doesn't reduce the per-step memory pressure — `pending_members` and `cohort_shell` continue accumulating in the cache at the same rate. Approach P targets the cursor-EMISSION layer (revive → concrete cursor) but not the cursor-PAUSE layer (member state stored in cache).
+
+**Per user mandate** ("keep all that pass Welch's T-test, revert all that do not" with p<0.05): all 3 implementation substages (S1.b/c/d) showed LOSS at p<0.05 at one or more chain sizes → REVERT.
+
+**What S1.a retains**: `prattail/src/cohort_continuation.rs` module + `CohortContinuation<W>` type + `deferred_continuations: Vec<CohortContinuation<W>>` field on `DispatchCacheEntry::{InFlight, Resolved}` + `push_deferred_continuation` helper (wait — that's S1.b's helper; **CORRECTION**: the push_deferred_continuation helper was reverted along with S1.b. Only the type + field + 4 unit tests + Vec initialization survive). Future experiments combining deferred fanout with a different cursor-population-reduction mechanism can build atop this scaffold.
+
+**Bench data saved**:
+- `bench-data/exp9_s1b_chain_{50,100,200,1000}.json` (dual-write attempt; deleted by revert but recoverable via `git show 5df1df8`)
+- `bench-data/exp9_s1c_chain_{50,100,200,1000}.json` (dual-write + install attempt; via `git show c97fcdc`)
+- `bench-data/exp9_s1d_chain_{50,100,200,1000}.json` (switch attempt; via `git show e86aaa9`)
+
+**chain_10000 closure path narrows further**: with Exp 8 + Exp 9 + Exp 10 S1 + Exp 11 all REJECTED, only Exp 13 (Earley + Leo outboard chain-region delegation), Exp 10 S0-bis (downstream sole-diff investigation), and Exp 9-alt (FOLLOW-K lookahead prune) remain as viable closure attempts. Streaming SPPF realization (Plan D E4, task #231) is the deferred high-effort fallback.
+
+---
+
+## Summary at session end 2026-05-26
+
+| Experiment | Status |
+|------------|--------|
+| Exp 0 → 6b (E3, E6, A iterative) | SHIPPED, cumulative WIN |
+| Exp 7 (fire-action restore) | KEEP per Welch (chain_10000 marginal) |
+| Exp 8 S1 (VisitedSetArena standalone) | ACCEPT |
+| Exp 8 S2 (wire) | REJECT (Welch chain_100 LOSS > 5 %) |
+| Exp 10 S0 (ConfigKey corr matrix) | ACCEPT (instrumentation; gate fires) |
+| Exp 10 S1 (drop edge axis) | REJECT (Welch chain_1000 LOSS +7.4 %) |
+| Exp 10 S0-bis (sole-diff outlier downstream effect) | **PENDING** |
+| Exp 11 S0 (Fork-class gate) | ACCEPT + SKIP-AFTER-DATA (avg_fanout < 2.0) |
+| Exp 11 S1.a-e (SuspendedFork) | CANCELLED per gate |
+| Exp 12 S0 (scope-marks histograms) | ACCEPT + SKIP-BEFORE-ATTEMPT (chain workload empty) |
+| Exp 9 S1.a (CohortContinuation types) | ACCEPT, RETAINED |
+| Exp 9 S1.b-d (Approach P switch) | REJECT (Welch LOSS p<0.05 + chain_10000 ceiling unmoved) |
+| Exp 9-alt (FOLLOW-K) | **PENDING** (task #227) |
+| Exp 13 S0 (chain-region detection) | **PENDING** (task #228) |
+| Exp 13 S1 (Earley + Leo outboard) | **BLOCKED** on S0 (task #217) |
+| Exp 14 (Tomita per-arc) | SKIP per Plan agent |
+| Exp 15 (CPS rewrite) | SKIP per Plan agent |
+| Streaming SPPF (Plan D E4) | DEFERRED (task #231) |
+
+**Cumulative WINs preserved at session-end tip** (vs original baseline, post all REJECT reverts):
+- chain_50: -15.06 % (Exp 7 contribution)
+- chain_100: -15.03 % (Exp 7)
+- chain_200: -12.41 % (Exp 7)
+- chain_1000: -8.77 % (Exp 7)
+- chain_10000: still OOM at 24 GB ~6:26 (Exp 7's trajectory)
+
+**Architectural ceiling**: NOT closed. All path-tree-arena + per-cursor allocator reductions have been explored. Remaining strategies require either walker-architecture changes (Exp 13 Earley outboard) or SPPF-level memory reclamation (Streaming SPPF E4) — both multi-session efforts.
