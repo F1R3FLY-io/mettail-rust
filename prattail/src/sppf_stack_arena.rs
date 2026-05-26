@@ -1,252 +1,40 @@
 //! Phase F.13 chain_10000 Plan D E3 Substage 1 (2026-05-25): SPPF-stack
 //! interning arena.
 //!
-//! # Background
+//! # Refactor (2026-05-26)
 //!
-//! The chain_10000 architectural ceiling persists after the L1-L6 cohort
-//! lazy materialization stack + L4.2 Arc-wrapping of `recovery_deltas`
-//! and `incoming_edge_stack`. Heaptrack on chain_1000 attributes 62.6 %
-//! of peak heap to `BranchCursor::clone`. Plan D Explore agent
-//! identified per-cursor `Arc<Vec<SppfId>> sppf_stack` (and its sibling
-//! per-cursor history fields) as the residual consumer that Arc-CoW
-//! does not amortize.
+//! This module is now a thin specialization over the generic
+//! [`crate::path_tree_arena::PathTreeArena<T>`] (introduced by
+//! Plan D E6 — see `path_tree_arena.rs`). The original
+//! `SppfStackArena` algorithm (15/15 unit + property tests, shipped
+//! at commit `8056b9a`, wired into BranchCursor at commit `f18a847`)
+//! generalizes element-wise to any `Copy + Eq + Hash` type. The
+//! same path-tree shape now backs both
+//! `SppfStackArena = PathTreeArena<SppfId>` and
+//! `EdgeStackArena = PathTreeArena<GssEdgeId>` per the user mandate:
+//! "Do not overfit for any particular use cases but ensure the
+//! implementations fully generalize over their respective domains."
 //!
-//! When two cursors share `sppf_top` AND have just pushed the same
-//! `SppfId` (Symbol-dedup at `sppf.rs:511` guarantees this), their
-//! `sppf_stack` Vecs structurally coincide up to that point — yet each
-//! cursor holds its OWN `Arc<Vec<SppfId>>` from a divergent Fork
-//! ancestor.
-//!
-//! # The fix: GSS-style path-tree interning
-//!
-//! This file introduces `SppfStackArena`: a walker-global path-tree
-//! that interns chains of pushed `SppfId`s. Each chain node has a
-//! parent pointer + a pushed `SppfId`; the chain reconstructs the
-//! cursor's `sppf_stack` via parent-walk. Two cursors that pushed
-//! identical sequences from a common ancestor share the entire chain
-//! prefix via dedup.
-//!
-//! The data structure mirrors `crate::gss::WpdaGss` — itself a Tomita
-//! GSS (Scott & Johnstone 2010) implementing the same shape for the
-//! parser's call stack. Extending the pattern to the SPPF stack is
-//! the symmetric architectural move; the GSS proof of soundness
-//! carries over.
-//!
-//! # API
-//!
-//! - `StackId(u32)` — index into the chain-node arena. `STACK_ID_ROOT`
-//!   denotes an empty stack.
-//! - `intern_push(parent, sid) -> StackId` — append `sid` to the
-//!   chain rooted at `parent`. Interns via `(parent, sid) -> StackId`
-//!   dedup map; equal-prefix cursors share the result.
-//! - `intern_pop(parent) -> StackId` — drop the top of the chain.
-//!   Returns `STACK_ID_ROOT` if `parent` was already at the root.
-//! - `top(stack) -> Option<SppfId>` — peek the top `SppfId`. O(1).
-//! - `len(stack) -> usize` — chain length (cached on the node).
-//! - `slice_at(stack, scratch) -> &[SppfId]` — materialize the chain
-//!   as a contiguous slice via a caller-provided `scratch: &mut Vec<SppfId>`.
-//!   The slice lives as long as `scratch`. This is the bridge for
-//!   call sites that need `&[SppfId]` semantics.
-//!
-//! # Substage scope
-//!
-//! THIS SUBSTAGE IS STANDALONE. No walker integration — no `BranchCursor`
-//! field type change. The walker's `Arc<Vec<SppfId>>` representation is
-//! UNCHANGED at this commit. E3 Substage 2 (separate commit) wires the
-//! arena into `BranchCursor::sppf_stack_id` and migrates the ~14 walker
-//! mutation sites. Unit + property tests in this file validate the
-//! arena in isolation BEFORE any integration risk.
-//!
-//! # Why no walker integration here
-//!
-//! Per the chain_10000 Plan agent + the user's "don't wing complex
-//! changes" mandate: validate the data structure first. If the slice
-//! materialization cost (O(chain_length) per call) is unacceptable,
-//! the design pivots to add an LRU cache (E3 Substage 3) BEFORE
-//! integration — saving a wasted walker refactor.
-//!
-//! # Memory
-//!
-//! Each chain node is 12 bytes: `(parent: u32, sid: u32, len: u32)`.
-//! Walker-global arena grows monotonically per parse; `WpdaWalker::reset`
-//! clears it. At chain_10000 with peak ~225 cursors × avg chain
-//! length ~50: <12 KB per cursor avg, 2.7 MB total — versus today's
-//! per-cursor Arc<Vec<SppfId>> with the same average depth: 225 × 50 ×
-//! 4 B + Arc overhead = 45+ KB per cursor at peak = 10 MB total. The
-//! dedup factor depends on workload; for left-assoc chain we expect
-//! >90 % sharing → ~1 MB total.
+//! Public API is unchanged from the pre-refactor module — `StackId`,
+//! `STACK_ID_ROOT`, and `SppfStackArena`'s methods are re-exported
+//! verbatim, so all walker + cohort_lazy call sites compile
+//! unchanged. The 15 prior unit + property tests are preserved below.
 
-use rustc_hash::FxHashMap;
+// Re-export the generic arena's StackId + STACK_ID_ROOT so existing
+// `use crate::sppf_stack_arena::{StackId, STACK_ID_ROOT, ...}` call
+// sites keep working. The arena type is a type alias —
+// monomorphization yields a concrete type byte-equivalent to the
+// pre-refactor implementation.
+pub use crate::path_tree_arena::{StackId, STACK_ID_ROOT};
 
-use crate::sppf::SppfId;
-
-/// Index into the [`SppfStackArena`] chain-node arena.
-///
-/// `STACK_ID_ROOT` denotes the empty stack (chain length 0).
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct StackId(pub u32);
-
-/// Sentinel `StackId` for the empty stack. Matches the `gss.rs` /
-/// `sppf.rs` convention of using `u32::MAX` as the "no node" sentinel.
-pub const STACK_ID_ROOT: StackId = StackId(u32::MAX);
-
-/// One node in the path-tree. Mirrors `crate::gss::WpdaGssNode`:
-/// `parent` is the predecessor `StackId` (or `STACK_ID_ROOT` for a
-/// chain of length 1); `sid` is the `SppfId` this node pushed onto
-/// the chain; `len` is the cached chain length (1 + parent's len).
-#[derive(Copy, Clone, Debug)]
-struct ChainNode {
-    parent: StackId,
-    sid: SppfId,
-    len: u32,
-}
-
-/// Walker-global SPPF-stack interning arena.
-///
-/// `dedup` keys are `(parent: StackId, sid: SppfId)`; two cursors
-/// reaching the same `(parent, sid)` push share the same `StackId`,
-/// collapsing memory linearly with workload share-factor.
-pub struct SppfStackArena {
-    nodes: Vec<ChainNode>,
-    dedup: FxHashMap<(StackId, SppfId), StackId>,
-}
-
-impl Default for SppfStackArena {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SppfStackArena {
-    /// Construct an empty arena.
-    pub fn new() -> Self {
-        SppfStackArena {
-            nodes: Vec::new(),
-            dedup: FxHashMap::default(),
-        }
-    }
-
-    /// Reset the arena to empty. Called from `WpdaWalker::reset`
-    /// per-parse to release the prior parse's chain nodes.
-    pub fn clear(&mut self) {
-        self.nodes.clear();
-        self.dedup.clear();
-    }
-
-    /// Intern `(parent, sid)` as a chain node and return its
-    /// `StackId`. If `(parent, sid)` already exists, returns the
-    /// existing `StackId` — this is the dedup-share point.
-    ///
-    /// Semantically equivalent to `vec.push(sid)` followed by
-    /// returning a handle to the new stack.
-    pub fn intern_push(&mut self, parent: StackId, sid: SppfId) -> StackId {
-        if let Some(&existing) = self.dedup.get(&(parent, sid)) {
-            return existing;
-        }
-        let parent_len = self.node_len(parent);
-        let id = StackId(
-            u32::try_from(self.nodes.len())
-                .expect("SppfStackArena: node count exceeds u32::MAX"),
-        );
-        self.nodes.push(ChainNode {
-            parent,
-            sid,
-            len: parent_len + 1,
-        });
-        self.dedup.insert((parent, sid), id);
-        id
-    }
-
-    /// Return the predecessor `StackId` (the chain with the top
-    /// removed). For `STACK_ID_ROOT` returns `STACK_ID_ROOT`.
-    pub fn intern_pop(&self, stack: StackId) -> StackId {
-        if stack == STACK_ID_ROOT {
-            STACK_ID_ROOT
-        } else {
-            self.nodes[stack.0 as usize].parent
-        }
-    }
-
-    /// Peek the top `SppfId`. Returns `None` for the empty stack.
-    pub fn top(&self, stack: StackId) -> Option<SppfId> {
-        if stack == STACK_ID_ROOT {
-            None
-        } else {
-            Some(self.nodes[stack.0 as usize].sid)
-        }
-    }
-
-    /// Chain length. O(1) (cached on node).
-    pub fn len(&self, stack: StackId) -> usize {
-        self.node_len(stack) as usize
-    }
-
-    /// True iff stack is the root sentinel.
-    pub fn is_empty(&self, stack: StackId) -> bool {
-        stack == STACK_ID_ROOT
-    }
-
-    /// Materialize the chain as a contiguous slice via the caller's
-    /// `scratch` buffer. The returned slice lives as long as the
-    /// scratch borrow. Use this at sites that need `&[SppfId]`
-    /// semantics during E3 Substage 2 wiring.
-    ///
-    /// O(chain_length). For hot read sites, E3 Substage 3 may add an
-    /// LRU cache; until then, prefer `top` / `len` / `intern_pop`
-    /// over `slice_at` for single-element queries.
-    pub fn slice_at<'a>(
-        &self,
-        stack: StackId,
-        scratch: &'a mut Vec<SppfId>,
-    ) -> &'a [SppfId] {
-        scratch.clear();
-        let n = self.len(stack);
-        scratch.reserve(n);
-        // Walk parent chain from top → root, then reverse.
-        let mut cur = stack;
-        while cur != STACK_ID_ROOT {
-            let node = self.nodes[cur.0 as usize];
-            scratch.push(node.sid);
-            cur = node.parent;
-        }
-        scratch.reverse();
-        &scratch[..]
-    }
-
-    /// Materialize as an owned `Vec<SppfId>` (allocation per call).
-    /// Used by call sites that need ownership rather than a borrow.
-    /// Prefer `slice_at` when the slice borrow suffices.
-    pub fn to_vec(&self, stack: StackId) -> Vec<SppfId> {
-        let mut v = Vec::new();
-        self.slice_at(stack, &mut v);
-        v
-    }
-
-    /// Diagnostic: number of chain nodes in the arena. Used by
-    /// walker-stats and E3 sizing analysis.
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
-
-    /// Diagnostic: number of distinct `(parent, sid)` keys in the
-    /// dedup map. Always equal to `node_count()` post-insert; tracked
-    /// separately to detect dedup-map drift bugs.
-    pub fn dedup_count(&self) -> usize {
-        self.dedup.len()
-    }
-
-    fn node_len(&self, stack: StackId) -> u32 {
-        if stack == STACK_ID_ROOT {
-            0
-        } else {
-            self.nodes[stack.0 as usize].len
-        }
-    }
-}
+/// SPPF-stack interning arena: walker-global path-tree of pushed
+/// `SppfId`s. Type alias over the generic [`crate::path_tree_arena::PathTreeArena`].
+pub type SppfStackArena = crate::path_tree_arena::PathTreeArena<crate::sppf::SppfId>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sppf::SppfId;
 
     #[test]
     fn root_is_empty() {

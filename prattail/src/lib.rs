@@ -72,12 +72,22 @@ pub mod dispatch_cohort;
 /// `InflightCollision` arm to construct cohorts; L3 implements the
 /// ObsInvariant fast path. See `docs/design/plans/cohort-lazy-materialization.md`.
 pub mod cohort_lazy;
-/// Phase F.13 chain_10000 Plan D E3 Substage 1 (2026-05-25):
-/// SPPF-stack interning arena. Standalone data structure with unit +
-/// property tests; no walker integration yet. E3 Substage 2 will wire
-/// `BranchCursor::sppf_stack_id` to use this arena. See
-/// `docs/design/plans/chain-10000-alternative-approaches.md` (E3).
+/// Phase F.13 chain_10000 Plan D E6 (2026-05-26): generic path-tree
+/// interning arena. Both `SppfStackArena` and `EdgeStackArena` are
+/// type aliases over `PathTreeArena<T>`. See module docs.
+pub mod path_tree_arena;
+/// Phase F.13 chain_10000 Plan D E3 (2026-05-25 / refactored 2026-05-26):
+/// SPPF-stack interning arena. Thin specialization over
+/// `path_tree_arena::PathTreeArena<SppfId>`. Wired into BranchCursor
+/// at commit `f18a847`. See module docs + ledger row 3.
 pub mod sppf_stack_arena;
+/// Phase F.13 chain_10000 Plan D E6 Substage 1 (2026-05-26):
+/// GSS edge-stack interning arena. Thin specialization over
+/// `path_tree_arena::PathTreeArena<GssEdgeId>`. Standalone (no
+/// walker integration yet); E6 Substage 2 will wire
+/// `BranchCursor::incoming_edge_stack_id`. See module docs +
+/// ledger row 4-alt.
+pub mod edge_stack_arena;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
