@@ -32,7 +32,8 @@
 | 3 | 2026-05-26 | Plan D E3 Substage 2 — wire `SppfStackArena` into `BranchCursor::sppf_stack_id` | `f18a847` | 4081/0 + tramp 15/0/2 | **WIN** −5.02 % (t=−8.20, df=26) | **WIN** −3.95 % (t=−8.64, df=27) | **WIN** −1.22 % (t=−2.33, df=27) | NEUTRAL −0.91 % (t=−1.75, df=26) | 8 GB at 21 min (~24 % growth-rate improvement vs L4.2 baseline; still won't fit 24 GB unaided) | **ACCEPT** (3 sizes WIN, 1 NEUTRAL; no regression; representation change unlocks future substages) |
 | 4 | 2026-05-26 | Plan C Substage 1 — `Arc<Vec<GssEdgeId>>` → `Arc<SmallVec<[GssEdgeId; N]>>` (N from Substage 0) | n/a (REJECTED pre-attempt) | n/a | n/a | n/a | n/a | n/a | n/a | **REJECT-BEFORE-ATTEMPT** — Substage 0 histograms (chain_50/100/200/1000) show `incoming_edge_stack.max` scales linearly with chain depth: chain_50 max=56, chain_100 max=106, chain_200 max=206, chain_1000 max=1006. p99 well above 32 at every size. Per Plan C decision tree: "p99 > 32 → SmallVec is wrong tool." For chain workloads SmallVec inline would spill on ≥ 94 % of chain_1000+ samples → inline storage pure overhead. `recovery_deltas` 100 % empty for chain workloads (max=0 at every chain size). Pivot to Exp 4-alt: extend E3 path-tree arena to `incoming_edge_stack` (Plan D §E6). |
 | 4-alt | 2026-05-26 | Plan D E6 applied to `incoming_edge_stack` — generic `PathTreeArena<T>` + `EdgeStackArena = PathTreeArena<GssEdgeId>` (sub1 `48ebcff` standalone; sub2 `54cfff9` wired) | `54cfff9` | 4102/0 + tramp 15/0/2 | **WIN vs base** −7.69 % (t=−4.24); vs E3 NEUTRAL | **WIN vs base** −7.42 %; vs E3 WIN −3.61 % | **WIN vs base** −10.99 %; vs E3 WIN −9.89 % | **WIN vs base** −7.79 %; vs E3 WIN −6.94 % | OOM 24 GB at 15:44 wall (vs pre-E3 ~9 min — 70 % slower) | **ACCEPT** (3 sizes WIN vs E3, 1 NEUTRAL; 4 sizes WIN vs cumulative baseline; per-cursor `incoming_edge_stack` allocation eliminated via path-tree dedup) |
-| 5 | TBD | Plan B Substage 1 — CursorId-keyed walker-global pilot on `visited_dispatch` | — | — | — | — | — | — | — | — |
+| 5-S0 | 2026-05-26 | Exp 5 Substage 0 — `visited_dispatch` + `visited_recovery` length histograms | `41d0d22` | 4102/0 | n/a (feature-off zero-cost) | n/a | n/a | n/a | n/a | **ACCEPT** (instrumentation) |
+| 5 | 2026-05-26 | Plan B Substage 1 — CursorId-keyed walker-global pilot on `visited_dispatch` | n/a (SKIP-AFTER-DATA) | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP-AFTER-DATA** — see below |
 | 6 | TBD | Plan A First Substage — operator-precedence iterative for Calculator-Int's `AddInt` | — | — | — | — | — | — | — | — |
 
 ---
@@ -124,3 +125,40 @@ REJECT-BEFORE-ATTEMPT per the Exp 0.5 histograms above. Per Plan C decision tree
 ### Exp 4-alt (planned) — Plan D E6: `IncomingEdgeStackArena`
 
 Extend the E3 SppfStackArena pattern to `BranchCursor::incoming_edge_stack`. Substage 1 = standalone arena + unit tests (mirroring E3 Substage 1). Substage 2 = wire into BranchCursor (mirroring E3 Substage 2).
+
+---
+
+### Exp 5 Substage 0 (2026-05-26) — visited_dispatch + visited_recovery length data
+
+Histograms via `PRATTAIL_WALKER_STATS=1 ./trampoline_tests --exact test_right_assoc_chain_<N>`:
+
+**`visited_dispatch_len_histogram`**:
+
+| Chain | N samples | max | 64+ % | ≤ 31 % |
+|-------|-----------|-----|-------|--------|
+| 50  | 7,304   | 53   | 0.0 %  | 49.4 % |
+| 100 | 14,554  | 103  | 47.7 % | 24.7 % |
+| 200 | 29,054  | 203  | 73.8 % | 12.4 % |
+| 1000 | 145,054 | 1003 | 94.8 % | 2.5 % |
+
+Same linear-scaling pattern as `incoming_edge_stack` (Exp 0.5). Gate criterion (max > 16 → proceed) triggers.
+
+**`visited_recovery_len_histogram`**: 100 % empty (max=0) on chain workloads. Useless to optimize for chain; matters only for recovery tests / rhocalc.
+
+### Exp 5 SKIP-AFTER-DATA (2026-05-26)
+
+Per-Plan-B-agent gate criterion (max > 16 → proceed) is triggered by the visited_dispatch data, BUT a deeper post-data analysis recommends SKIP for Plan B's *specific design* (walker-global `FxHashMap<CursorId, Arc<FxHashSet<…>>>`):
+
+1. **Plan B's HashMap-keyed design has the same deep-clone cost as today's Arc-CoW.** Each Fork-arm child copies the parent's FxHashSet eagerly (per Plan B: "Fork-arm clone becomes 'allocate new CursorId, copy entries'"). Today's Arc-CoW does the SAME deep clone on first per-cursor mutation post-fork. Plan B doesn't eliminate the deep clone — it just shifts the bookkeeping from `Arc::make_mut` to `walker.cursor_visited_dispatch.entry().or_default()`. Net allocation cost: identical. Plus Plan B adds a HashMap lookup per access (lines 5025, 5426).
+
+2. **H2 precedent.** Arc-CoW on this exact field was rejected at chain_100 -6.9 % p≈0.01 (recorded in `chain-10000-ceiling-lift.md`). Plan B's design has the same per-mutation overhead PLUS the HashMap lookup penalty.
+
+3. **`visited_recovery` is useless to optimize for chain workloads** (100 % empty). The pilot's small theoretical upside applies to chain only via `visited_dispatch`, and even there the design choice doesn't match the dedup pattern that succeeded for E3/E6.
+
+4. **The dedup pattern that succeeded for E3/E6 (path-tree interning) cannot directly apply to a SET.** FxHashSet semantics require contains() in O(1) but path-tree's contains() is O(chain_length). A path-tree-arena-for-sets design would need an LRU cache for the materialized FxHashSet — substantial added complexity that the Plan B agent did not propose.
+
+5. **The cumulative E3 + E6 + L4.1 + L4.2 wins already addressed the major per-cursor allocators.** Exp 4-alt ACCEPT: chain_1000 −7.79 % vs baseline. Further per-cursor field optimizations would need a fundamentally different design (path-tree-arena-for-sets with LRU, or Plan A operator-precedence iterative which reduces cursor_count rather than per-cursor cost).
+
+**Recommendation per ledger row 5**: SKIP Plan B Substage 1; proceed to Exp 6 (Plan A operator-precedence iterative) which targets `cursor_count` (the multiplier in `cursor_count × per-cursor-state = O(N²)` memory) rather than the per-cursor factor that E3 + E6 already addressed.
+
+A future "Exp 5-alt" (path-tree-for-sets with LRU cache for contains()) is documented for follow-up consideration but not in scope at tip `41d0d22`.
