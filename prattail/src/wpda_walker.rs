@@ -5207,6 +5207,12 @@ where
                     // rule_index_in_category); it is `Copy` so passing
                     // by value here doesn't disturb downstream use.
                     self.emit_fire_action(cursor, symbol);
+                    // Phase F.13 chain_10000 Exp 13 Substage 0
+                    // (2026-05-26): track iterative chain-region
+                    // length. Each `already_chained` iteration is one
+                    // additional chain element. Counters are scoped
+                    // per parse and reset at WpdaWalker::reset.
+                    crate::stats_inc!(self, chain_region_iterations);
                 }
                 self.emit_push_side_effects(cursor, &mut symbol);
                 if !already_chained {
@@ -8197,9 +8203,54 @@ where
                     } else if node_diff {
                         self.stats.merge_miss_node_diff_total =
                             self.stats.merge_miss_node_diff_total.saturating_add(1);
+                        // Phase F.13 chain_10000 Exp 10 S0-bis
+                        // (2026-05-26): classify the node_only outlier
+                        // by cursor context. First-match rule: cohort
+                        // → InfixLoop → recovery → other.
+                        let ctx_idx: usize = if a.cohort_origin.is_some()
+                            || b.cohort_origin.is_some()
+                        {
+                            0
+                        } else if matches!(
+                            &a.inner_state,
+                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                        ) || matches!(
+                            &b.inner_state,
+                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                        ) {
+                            1
+                        } else if a.recovery_depth > 0 || b.recovery_depth > 0 {
+                            2
+                        } else {
+                            3
+                        };
+                        self.stats.merge_miss_node_only_by_context[ctx_idx] =
+                            self.stats.merge_miss_node_only_by_context[ctx_idx]
+                                .saturating_add(1);
                     } else if edge_diff {
                         self.stats.merge_miss_edge_diff_total =
                             self.stats.merge_miss_edge_diff_total.saturating_add(1);
+                        // Same context classification, edge_only path.
+                        let ctx_idx: usize = if a.cohort_origin.is_some()
+                            || b.cohort_origin.is_some()
+                        {
+                            0
+                        } else if matches!(
+                            &a.inner_state,
+                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                        ) || matches!(
+                            &b.inner_state,
+                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                        ) {
+                            1
+                        } else if a.recovery_depth > 0 || b.recovery_depth > 0 {
+                            2
+                        } else {
+                            3
+                        };
+                        self.stats.merge_miss_edge_only_by_context[ctx_idx] =
+                            self.stats.merge_miss_edge_only_by_context[ctx_idx]
+                                .saturating_add(1);
                     } else if depth_diff {
                         self.stats.merge_miss_depth_diff_total =
                             self.stats.merge_miss_depth_diff_total.saturating_add(1);

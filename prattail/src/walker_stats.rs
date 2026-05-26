@@ -134,6 +134,34 @@ pub struct WalkerStats {
     /// Confirms cross-cat projection as the dominant Fork-branch source.
     pub fork_cross_cat_projection_branches: u64,
 
+    // ── Phase F.13 chain_10000 Exp 10 Substage 0-bis (2026-05-26):
+    //     sole-diff outlier downstream-context classification ─────
+    /// Per-context breakdown of `node_only` sole-diff cases (cursor A
+    /// and B differ ONLY in `node`, edge same, etc.). Indices:
+    /// 0=cohort_origin.is_some(), 1=InfixLoop state, 2=recovery_depth>0,
+    /// 3=other. Sum across indices ≤ `merge_miss_node_diff_total`
+    /// (multi-context overlap is double-counted under first-match
+    /// rule: classify cohort first, then InfixLoop, then recovery,
+    /// else other). Per Exp 10 S0-bis: if a single context dominates
+    /// (≥ 80 % of node_only outliers), Exp 10 S1-bis could drop the
+    /// edge axis ONLY for that context (per-state ConfigKey).
+    pub merge_miss_node_only_by_context: [u64; 4],
+    /// Same shape as `merge_miss_node_only_by_context`, for the
+    /// symmetric `edge_only` sole-diff case (edge differs but node
+    /// matches — the inverse outlier).
+    pub merge_miss_edge_only_by_context: [u64; 4],
+
+    // ── Phase F.13 chain_10000 Exp 13 Substage 0 (2026-05-26):
+    //     iterative chain-region length tracker ─────────────────────
+    /// Total iterations of the `IterativeChainAbsorb` arm where
+    /// `already_chained == true`. Per Plan agent: gate fires iff
+    /// `chain_region_iterations` is large enough on chain_1000 that
+    /// the iterative path covers > 100 elements (≥ 100 iterations).
+    /// Used by Exp 13 S0 to decide whether Earley + Leo outboard
+    /// chain-region delegation would add value vs the existing
+    /// iterative path that already captures the per-iteration win.
+    pub chain_region_iterations: u64,
+
     // ── Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26):
     //     per-class Fork breakdown gate ──────────────────────────────
     /// Per-class Fork firing count. Indices: 0=lex_fork (any LexAlt*
@@ -432,6 +460,51 @@ impl fmt::Display for WalkerStats {
             self.fork_kind_consume_family,
             self.fork_kind_other,
         )?;
+        // Phase F.13 chain_10000 Exp 10 S0-bis (2026-05-26).
+        let node_only_total: u64 =
+            self.merge_miss_node_only_by_context.iter().sum();
+        if node_only_total > 0 {
+            let d = node_only_total as f64;
+            writeln!(
+                f,
+                "  merge_miss_node_only_by_context: cohort_revive={} ({:.1}%) infix_loop={} ({:.1}%) recovery={} ({:.1}%) other={} ({:.1}%)",
+                self.merge_miss_node_only_by_context[0],
+                100.0 * self.merge_miss_node_only_by_context[0] as f64 / d,
+                self.merge_miss_node_only_by_context[1],
+                100.0 * self.merge_miss_node_only_by_context[1] as f64 / d,
+                self.merge_miss_node_only_by_context[2],
+                100.0 * self.merge_miss_node_only_by_context[2] as f64 / d,
+                self.merge_miss_node_only_by_context[3],
+                100.0 * self.merge_miss_node_only_by_context[3] as f64 / d,
+            )?;
+        }
+        let edge_only_total: u64 =
+            self.merge_miss_edge_only_by_context.iter().sum();
+        if edge_only_total > 0 {
+            let d = edge_only_total as f64;
+            writeln!(
+                f,
+                "  merge_miss_edge_only_by_context: cohort_revive={} ({:.1}%) infix_loop={} ({:.1}%) recovery={} ({:.1}%) other={} ({:.1}%)",
+                self.merge_miss_edge_only_by_context[0],
+                100.0 * self.merge_miss_edge_only_by_context[0] as f64 / d,
+                self.merge_miss_edge_only_by_context[1],
+                100.0 * self.merge_miss_edge_only_by_context[1] as f64 / d,
+                self.merge_miss_edge_only_by_context[2],
+                100.0 * self.merge_miss_edge_only_by_context[2] as f64 / d,
+                self.merge_miss_edge_only_by_context[3],
+                100.0 * self.merge_miss_edge_only_by_context[3] as f64 / d,
+            )?;
+        }
+        // Phase F.13 chain_10000 Exp 13 Substage 0 (2026-05-26).
+        if self.chain_region_iterations > 0 {
+            writeln!(
+                f,
+                "  chain_region_iterations={} (Exp 13 S0 gate: ≥ 100 \
+                 = chain-region of size ≥ 100 elements; Earley+Leo \
+                 outboard candidate when ≥ 9000)",
+                self.chain_region_iterations,
+            )?;
+        }
         // Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26).
         if self.fork_total > 0 {
             let denom = self.fork_total as f64;
@@ -808,6 +881,11 @@ mod tests {
             fork_kind_other: 12,
             fork_recovery_dispatches: 0,
             fork_cross_cat_projection_branches: 5_904,
+            // Phase F.13 chain_10000 Exp 10 S0-bis (2026-05-26).
+            merge_miss_node_only_by_context: [0; 4],
+            merge_miss_edge_only_by_context: [0; 4],
+            // Phase F.13 chain_10000 Exp 13 Substage 0 (2026-05-26).
+            chain_region_iterations: 0,
             // Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26).
             fork_total_by_class: [0; 4],
             fork_branches_by_class: [0; 4],
