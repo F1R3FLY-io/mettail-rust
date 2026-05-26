@@ -139,6 +139,16 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// `crate::cohort_lazy::materialize_branch_cursor` at drain
         /// time.
         pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
+        /// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.a
+        /// (2026-05-26): realize-time cohort fanout. Eligible cohort
+        /// pauses push a `CohortContinuation` here AND (S1.b dual-write)
+        /// also build a `CohortMemberState` above. S1.d makes this
+        /// the sole representation for eligible sites — `pending_members`
+        /// keeps the path for ineligible cohort sites. Drained at EOI
+        /// by `install_cohort_continuations` (S1.c) and interned as
+        /// outer-rule packings via `sppf.intern_packing`. Hard-capped
+        /// at `MAX_DEFERRED_PER_KEY = 64` (S1.e raises to 256).
+        deferred_continuations: Vec<crate::cohort_continuation::CohortContinuation<W>>,
     },
     /// Sub-parse complete. Subsequent cursors that hit this key
     /// synthesize a resumed child per snapshot (multi-packing case
@@ -168,6 +178,12 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
         /// state. Sole representation. PERSISTENT across drains for
         /// multi-packing fanout.
         pending_members: Vec<crate::cohort_lazy::CohortMemberState<W>>,
+        /// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.a
+        /// (2026-05-26): deferred continuations transferred verbatim
+        /// from `InFlight` at resolve time. PERSISTENT across drains
+        /// for multi-packing fanout. Drained at EOI by
+        /// `install_cohort_continuations` (S1.c).
+        deferred_continuations: Vec<crate::cohort_continuation::CohortContinuation<W>>,
     },
     Failed,
 }
@@ -181,11 +197,16 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 worker_pre_dispatch_weight: _,
                 cohort_shell: _,
                 pending_members,
+                deferred_continuations,
             } => f
                 .debug_struct("InFlight")
                 .field("cohort_size", cohort_size)
                 .field("pending_members_len", &pending_members.len())
                 .field("worker_snapshots_len", &worker_snapshots.len())
+                .field(
+                    "deferred_continuations_len",
+                    &deferred_continuations.len(),
+                )
                 .finish(),
             DispatchCacheEntry::Resolved {
                 symbol_id,
@@ -304,6 +325,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         worker_pre_dispatch_weight: worker_pre_weight,
                         cohort_shell: None,
                         pending_members: Vec::new(),
+                        // Phase F.13 chain_10000 Exp 9 S1.a (2026-05-26).
+                        deferred_continuations: Vec::new(),
                     },
                 );
                 RegisterOutcome::WorkerInserted
@@ -359,6 +382,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 worker_pre_dispatch_weight,
                 cohort_shell,
                 pending_members,
+                deferred_continuations,
                 ..
             } => {
                 let mut snapshots = std::mem::take(worker_snapshots);
@@ -366,6 +390,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 let preserved_pre = worker_pre_dispatch_weight.clone();
                 let preserved_shell = cohort_shell.take();
                 let preserved_members = std::mem::take(pending_members);
+                // Phase F.13 chain_10000 Exp 9 S1.a (2026-05-26):
+                // transfer deferred continuations through the
+                // InFlight → Resolved transition verbatim.
+                let preserved_continuations =
+                    std::mem::take(deferred_continuations);
                 *entry = DispatchCacheEntry::Resolved {
                     symbol_id,
                     hi_pos,
@@ -375,6 +404,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     worker_pre_dispatch_weight: preserved_pre,
                     cohort_shell: preserved_shell,
                     pending_members: preserved_members,
+                    deferred_continuations: preserved_continuations,
                 };
                 self.resolved_total += 1;
                 ResolveOutcome::FirstResolve
@@ -459,6 +489,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 worker_pre_dispatch_weight: _,
                 cohort_shell,
                 pending_members,
+                deferred_continuations: _,
             } => {
                 // Phase F.13 Stage L2c (2026-05-25): drain reads from
                 // the lazy form (`cohort_shell` + `pending_members`).

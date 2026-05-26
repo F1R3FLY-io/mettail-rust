@@ -97,7 +97,16 @@ pub mod edge_stack_arena;
 /// concrete type alias `VisitedDispatchArena = VisitedSetArena<
 /// PackedDispatchConfig>` will be shared between `visited_dispatch_id`
 /// and `visited_recovery_id` field swaps in Substage 2 + 3. See ledger.
+/// Substage 2 REJECTED per Welch falsifier (commit 365039e); standalone
+/// module retained for reference / future workloads.
 pub mod visited_set_arena;
+/// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.a (2026-05-26):
+/// realize-time cohort fanout. `CohortContinuation<W>` defers cohort
+/// revives into outer-rule-wrap records interned as SPPF packings at
+/// EOI. Targets `cohort_cursors_emitted=335,808` on chain_1000
+/// (projected ~3.4 M revived cursors at chain_10000). See ledger +
+/// `phase-f13-stage-1-5-4-approach-p-realize-time-fanout.md`.
+pub mod cohort_continuation;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
