@@ -107,6 +107,43 @@ impl InfixOperator {
             Associativity::Right
         }
     }
+
+    /// Phase F.13 chain_10000 Exp 6 (Plan A first substage, 2026-05-26):
+    /// `true` iff this operator can be parsed by a single per-chain
+    /// `WpdaState::InfixChainIterative` GSS RuleAt push followed by
+    /// repeated RHS sub-parses at `right_bp`, instead of one Return
+    /// RuleAt push per `+` (today's `ConsumeAndPush` per token).
+    ///
+    /// Conservative gate (all must hold):
+    ///   1. `!self.is_cross_category` — same-category result. Cross-
+    ///      cat dispatch has separate semantics that the iterative
+    ///      shape doesn't preserve.
+    ///   2. `!self.is_postfix` — postfix has no RHS chain.
+    ///   3. `!self.is_mixfix` — mixfix has inner-operand state the
+    ///      iterative shape doesn't model.
+    ///   4. `self.left_bp < self.right_bp` — left-associative. The
+    ///      Plan A first substage scope. Right-assoc analog is
+    ///      symmetric but deferred to a later substage.
+    ///
+    /// Category/rule uniqueness at the `(terminal, l_bp >= outer_bp)`
+    /// pair (Plan A invariant I1, singleton InfixLoop dispatch) is
+    /// NOT checked here — it requires a `BindingPowerTable` scan and
+    /// belongs in the codegen emit site (`emit_iter_eligible_fn` in
+    /// `macros/src/gen/runtime/wpda_codegen/infix.rs`, Substage 6b).
+    ///
+    /// **PILOT-ONLY GATE** (Exp 6 first-substage scope): in addition
+    /// to the conservative checks above, also requires
+    /// `self.label == "AddInt"` so only Calculator's `AddInt` rule
+    /// participates in the iterative path. Removed for Exp 7
+    /// broadening to all qualifying operators across grammars.
+    pub fn is_iterative_candidate(&self) -> bool {
+        !self.is_cross_category
+            && !self.is_postfix
+            && !self.is_mixfix
+            && self.left_bp < self.right_bp
+            // PILOT-ONLY GATE — remove for Exp 7 broadening.
+            && self.label == "AddInt"
+    }
 }
 
 /// A binding power table for a language.

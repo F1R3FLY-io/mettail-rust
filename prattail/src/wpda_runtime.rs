@@ -336,6 +336,35 @@ pub enum WpdaState {
     PrefixDispatch { pos: usize, cur_bp: u8 },
     /// Looking for an infix/postfix operator with binding power > `cur_bp`.
     InfixLoop { cur_bp: u8 },
+    /// Phase F.13 chain_10000 Exp 6 (Plan A first substage, 2026-05-26):
+    /// iterative absorption of an iterative-eligible infix operator's
+    /// RHS. Entered after `WpdaStepAction::IterativeChainAbsorb`
+    /// consumes the operator token; the engine dispatches the RHS
+    /// prefix and immediately re-enters `InfixChainIterative` on
+    /// RHS-return rather than re-pushing a per-iteration Return RuleAt
+    /// onto the GSS. Witness for chain continuation:
+    /// `frontier_top.kind == Return` AND
+    /// `frontier_top.label == (result_src_idx, rule_idx)`. See
+    /// `prattail/docs/design/plans/chain-10000-experiments-ledger.md`
+    /// row 6 and the Plan A design doc.
+    ///
+    /// Substage 6a scope: enum variant + walker action variant +
+    /// walker arm shipped. Engine codegen does NOT yet emit this
+    /// state (Substage 6b). Unreachable at this commit; gauntlet
+    /// invariant: never observed during a parse.
+    InfixChainIterative {
+        /// Result category index — same as the original `InfixLoop`'s
+        /// `state_cat_src_idx` since iterative-eligible operators are
+        /// same-category (`!is_cross_category`).
+        result_src_idx: u16,
+        /// Operator rule index within the result category.
+        rule_idx: u16,
+        /// `cur_bp` at chain entry. Restored on chain exit.
+        outer_bp: u8,
+        /// Right binding power of the operator. RHS sub-parses dispatch
+        /// at `cur_bp: rhs_bp` per Plan A invariant (I3).
+        rhs_bp: u8,
+    },
     /// Phase 4: mid-collection-literal. After parsing each element, the
     /// engine peeks the next token to decide between consuming a
     /// separator (parse another element) or consuming the close

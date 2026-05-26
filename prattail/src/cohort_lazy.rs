@@ -332,7 +332,16 @@ impl DivergenceClass {
             | WpdaStepAction::ReplaceAndPush { .. }
             | WpdaStepAction::ParsePredicate { .. }
             | WpdaStepAction::OptGroupAbsent { .. }
-            | WpdaStepAction::OptGroupFinalize { .. } => DivergenceClass::ObsDivergent,
+            | WpdaStepAction::OptGroupFinalize { .. }
+            // Phase F.13 chain_10000 Exp 6 Substage 6a (2026-05-26):
+            // `IterativeChainAbsorb` mutates per-cursor `weight` +
+            // `inner_state` + GSS top (idempotent push) — same per-
+            // member divergence pattern as `ConsumeAndPush`, so
+            // classified ObsDivergent. Unreachable at this commit
+            // (engine codegen does not yet emit; Substage 6b).
+            | WpdaStepAction::IterativeChainAbsorb { .. } => {
+                DivergenceClass::ObsDivergent
+            }
         }
     }
 }

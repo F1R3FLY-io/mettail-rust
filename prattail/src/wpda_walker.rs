@@ -342,6 +342,33 @@ pub enum WpdaStepAction<W: SemiringRef> {
         new_state: WpdaState,
         trigger_mode: TriggerMode,
     },
+    /// Phase F.13 chain_10000 Exp 6 (Plan A first substage, 2026-05-26):
+    /// single per-chain GSS push for an iterative-eligible infix
+    /// operator. Walker semantics:
+    ///   1. Consume the operator token (`pos += 1`).
+    ///   2. If the GSS-top is already a Return-kind RuleAt(rs, ri)
+    ///      matching this operator (chain extension case, witness per
+    ///      Plan A invariant I2), SKIP the GSS push entirely — the
+    ///      per-iteration alloc elision. Else (first iteration),
+    ///      perform the standard `cursor_gss_push_auto`.
+    ///   3. Multiply cursor weight by `weight`.
+    ///   4. Set cursor `inner_state` to `new_state` (typically
+    ///      `WpdaState::PrefixDispatch{cur_bp: rhs_bp}` for the next RHS).
+    ///
+    /// Cycle defense + SPPF + `incoming_edge_stack` for the elided
+    /// path: unchanged for first-iteration push; the elision relies
+    /// on the same RuleAt edge being reused (the chain shares one
+    /// Return frame); on chain terminate the standard Unwinding-Return
+    /// pop fires the action once with all accumulated RHS SPPF nodes.
+    ///
+    /// Substage 6a scope: walker arm shipped. Engine codegen does
+    /// NOT yet emit this action (Substage 6b). Unreachable at this
+    /// commit; gauntlet invariant: never observed during a parse.
+    IterativeChainAbsorb {
+        symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdaState,
+    },
     /// Phase 4: consume the current token (advance `pos` by 1), pop the
     /// stack top (firing the action attached to it if it's a `Return` or
     /// `CollectionMarker`), and transition to `new_state`. Used by the
@@ -5132,6 +5159,41 @@ where
                 // side effects (CollectionMarker + OptionalGroupAt(1)).
                 self.emit_push_side_effects(cursor, &mut symbol);
                 let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
+                self.advance_cursor_pos(cursor, tokens, 1);
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
+                self.cursor_resolution_check(cursor)
+            }
+            WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state } => {
+                // Phase F.13 chain_10000 Exp 6 Substage 6a (Plan A first
+                // substage, 2026-05-26): idempotent GSS push for an
+                // iterative-eligible infix operator. Skip the push if
+                // the frontier_top is already this exact
+                // (category_src_idx, rule_index_in_category) Return
+                // symbol — chain extension witness (Plan A invariant I2).
+                //
+                // Substage 6a: walker arm exists; engine codegen does
+                // NOT emit this action (Substage 6b). Unreachable at
+                // this commit unless a future codegen path emits.
+                let already_chained = self
+                    .gss
+                    .node(cursor.node)
+                    .map(|n| {
+                        n.symbol.kind == crate::wpda_runtime::SymbolKind::Return
+                            && n.symbol.category_src_idx == symbol.category_src_idx
+                            && n.symbol.rule_index_in_category
+                                == symbol.rule_index_in_category
+                    })
+                    .unwrap_or(false);
+                self.emit_push_side_effects(cursor, &mut symbol);
+                if !already_chained {
+                    let _ = self.cursor_gss_push_auto(
+                        cursor,
+                        symbol,
+                        cursor.pos,
+                        weight.clone(),
+                    );
+                }
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
