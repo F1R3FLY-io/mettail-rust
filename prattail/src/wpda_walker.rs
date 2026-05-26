@@ -5356,6 +5356,57 @@ where
                                 self.stats.fork_cross_cat_projection_branches.saturating_add(1);
                         }
                     }
+                    // Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26):
+                    // per-Fork-firing classification. Dominant class wins
+                    // (lowest class index seen). Branches.len() accumulated
+                    // under each class for avg-fanout denominator.
+                    //
+                    // Classes (3-axis, generic-W compatible — cannot peek
+                    // into `b.weight.primary.0` without specializing on
+                    // LexicographicWeight): 0=lex_fork, 1=cross_cat_total
+                    // (implicit_cast + h12 collapsed; the gate criterion
+                    // `(lex_fork + implicit_cast)/total > 0.30` is
+                    // over-approximated as `(lex_fork + cross_cat)/total
+                    // > 0.30`, which is a SAFE over-approximation — if the
+                    // gate doesn't fire on this looser criterion, it
+                    // certainly doesn't fire on the stricter one), 2=other.
+                    // Class index 3 reserved unused (size kept for
+                    // forward-compat with a future LexicographicWeight
+                    // specialization).
+                    let mut dominant_class: usize = 2;
+                    let mut counts_per_class: [u64; 4] = [0; 4];
+                    for b in &branches {
+                        let class: usize = match &b.action_kind {
+                            ForkActionKind::LexAlt { .. }
+                            | ForkActionKind::LexAltPrefixOp { .. }
+                            | ForkActionKind::LexAltPostfixOp { .. }
+                            | ForkActionKind::LexAltInfixOp { .. }
+                            | ForkActionKind::LexAltMixfixOp { .. } => 0,
+                            _ if matches!(
+                                &b.new_state,
+                                WpdaState::CrossCatDelegate { .. }
+                            ) =>
+                            {
+                                1
+                            }
+                            _ => 2,
+                        };
+                        counts_per_class[class] =
+                            counts_per_class[class].saturating_add(1);
+                        if class < dominant_class {
+                            dominant_class = class;
+                        }
+                    }
+                    self.stats.fork_total_by_class[dominant_class] = self
+                        .stats
+                        .fork_total_by_class[dominant_class]
+                        .saturating_add(1);
+                    for c in 0..4 {
+                        self.stats.fork_branches_by_class[c] = self
+                            .stats
+                            .fork_branches_by_class[c]
+                            .saturating_add(counts_per_class[c]);
+                    }
                 }
                 // Phase 5.6-tail-C (2026-05-12): Hack #7 prologue + Phase 5.5
                 // cursor.builder refresh DELETED.

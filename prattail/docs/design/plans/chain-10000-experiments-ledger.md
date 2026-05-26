@@ -333,3 +333,34 @@ Read-only instrumentation (3 new `WalkerStats` fields: `binder_scope_marks_len_*
 
 **Bench data saved**:
 - `prattail/docs/design/plans/bench-data/exp10_s1_chain_{50,100,200,1000}.json`
+
+---
+
+### Exp 11 Substage 0 (2026-05-26) — per-class Fork breakdown gate
+
+Read-only instrumentation. Added `fork_total_by_class: [u64; 4]` + `fork_branches_by_class: [u64; 4]` to `WalkerStats` + classification loop in `WpdaStepAction::Fork` arm (`wpda_walker.rs:5360-5410`). Three classes (walker generic over W, can't peek at LexicographicWeight.primary to distinguish pass-2c from h12): 0=lex_fork, 1=cross_cat_total (over-approximates implicit_cast + h12), 2=other. Display impl prints class breakdown + avg-fanout-by-class.
+
+**Build**: 4102/0 prattail-lib under `--features walker-stats` (and feature-off).
+
+**Run** (chain_1000): see `prattail/docs/design/plans/bench-data/exp11_s0_chain_1000_stats.txt`.
+
+**Headline numbers**:
+
+| Class | Firings | % | Avg fanout |
+|-------|---------|---|------------|
+| lex_fork (LexAlt* family) | 0 | 0.0 % | 0.00 |
+| cross_cat_total (CrossCatDelegate) | 17,981 | 100.0 % | 1.67 |
+| other | 0 | 0.0 % | n/a |
+
+**Gate analysis** (Plan agent's criterion: PROCEED iff `(lex_fork + implicit_cast) / total > 0.30` AND `avg_fanout(lex) + avg_fanout(cast) > 2.0`):
+
+- Percentage criterion: PASS (cross_cat_total = 100 % which is the over-approximation of `lex_fork + implicit_cast + h12`)
+- avg_fanout criterion: **FAIL** (1.67 < 2.0)
+
+Per Plan agent's prespecified decision table: "Combined % > 30 % but `avg_fanout ≤ 2.0` → **SKIP** — suspension bookkeeping cost exceeds savings (only 2 specs per frame; the L3.4 H12 path already covers ≥3-way)."
+
+**Independent finding** (chain workload-specific): `lex_fork=0` confirms the chain test has **no lexical ambiguity** (single-character `+` tokens). The Plan agent's hypothesis that lex-Fork is the upstream source of cursor population was wrong for chain workloads (correct for rhocalc binders, edge_case grammars, calculator cast suites). For chain_10000 specifically, lex-Fork suspension would save zero work.
+
+**Verdict**: **ACCEPT** (instrumentation) + **SKIP-AFTER-DATA** for Exp 11 Substages 1.a-1.e. The L3.4 H12 cohort path already handles ≥ 3-way cases; SuspendedFork would only save half a cursor per Fork on average — not worth the 600-800 LOC investment. Pivot to **Exp 8** (path-tree arena for `visited_dispatch` with LRU cache) next, per Plan agent's second-priority recommendation.
+
+**Risk implication**: chain_10000 closure path now narrows to (Exp 8, Exp 10 S0-bis, Exp 9/Approach P, Exp 9-alt/FOLLOW-K, Exp 13/Earley). Exp 11 is closed without implementation.

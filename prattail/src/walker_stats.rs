@@ -134,6 +134,22 @@ pub struct WalkerStats {
     /// Confirms cross-cat projection as the dominant Fork-branch source.
     pub fork_cross_cat_projection_branches: u64,
 
+    // ── Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26):
+    //     per-class Fork breakdown gate ──────────────────────────────
+    /// Per-class Fork firing count. Indices: 0=lex_fork (any LexAlt*
+    /// family branch present), 1=implicit_cast (CrossCatDelegate with
+    /// `BP_TIER_PASS2C_SYNTHESIZED` weight), 2=h12_cross_cat
+    /// (CrossCatDelegate non-pass-2c), 3=other. A Fork firing
+    /// increments the class of its dominant branch (first-encountered
+    /// class wins). Used by the Exp 11 Substage 0 gate:
+    /// proceed iff `(lex_fork + implicit_cast) / fork_total > 0.30`
+    /// AND `avg_fanout(lex) + avg_fanout(cast) > 2.0`.
+    pub fork_total_by_class: [u64; 4],
+    /// Sum of branches.len() across Fork firings classified into each
+    /// class. Average fanout-cardinality per class = entry /
+    /// `fork_total_by_class[c]`.
+    pub fork_branches_by_class: [u64; 4],
+
     // ── F.13 H11a diagnostic: merge-miss pair sampling ─────────────────
     /// Total intra-`pos` pairs sampled by the diagnostic pass (denominator
     /// for the merge-miss breakdown ratios).
@@ -416,6 +432,30 @@ impl fmt::Display for WalkerStats {
             self.fork_kind_consume_family,
             self.fork_kind_other,
         )?;
+        // Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26).
+        if self.fork_total > 0 {
+            let denom = self.fork_total as f64;
+            writeln!(
+                f,
+                "  fork_class: lex_fork={} ({:.1}%) cross_cat_total={} ({:.1}%) other={} ({:.1}%)",
+                self.fork_total_by_class[0],
+                100.0 * self.fork_total_by_class[0] as f64 / denom,
+                self.fork_total_by_class[1],
+                100.0 * self.fork_total_by_class[1] as f64 / denom,
+                self.fork_total_by_class[2],
+                100.0 * self.fork_total_by_class[2] as f64 / denom,
+            )?;
+            writeln!(
+                f,
+                "  fork_avg_fanout_by_class: lex={:.2} cross_cat={:.2} other={:.2}",
+                self.fork_branches_by_class[0] as f64
+                    / self.fork_total_by_class[0].max(1) as f64,
+                self.fork_branches_by_class[1] as f64
+                    / self.fork_total_by_class[1].max(1) as f64,
+                self.fork_branches_by_class[2] as f64
+                    / self.fork_total_by_class[2].max(1) as f64,
+            )?;
+        }
         // F.13 H11a diagnostic
         if self.merge_miss_pairs_considered_total > 0 {
             let denom = self.merge_miss_pairs_considered_total as f64;
@@ -768,6 +808,9 @@ mod tests {
             fork_kind_other: 12,
             fork_recovery_dispatches: 0,
             fork_cross_cat_projection_branches: 5_904,
+            // Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26).
+            fork_total_by_class: [0; 4],
+            fork_branches_by_class: [0; 4],
             merge_miss_pairs_considered_total: 0,
             merge_miss_state_diff_total: 0,
             merge_miss_node_diff_total: 0,
