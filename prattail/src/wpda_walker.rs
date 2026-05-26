@@ -7817,9 +7817,14 @@ where
         // cursors at ~30-50 distinct positions, this is small.
         use std::collections::HashMap;
         let mut by_pos: HashMap<usize, Vec<usize>> = HashMap::new();
-        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+        // Phase F.13 Stage L3.5+ (2026-05-26): cohort frames are live in
+        // branch_cursors; this diagnostic samples concrete-cursor pairs
+        // only (cohort frames contribute their shell internally as a
+        // single logical cursor, not as multiple sampleable pairs).
         for (idx, frame) in self.branch_cursors.iter().enumerate() {
-            by_pos.entry(frame.as_concrete_expect().pos).or_default().push(idx);
+            if let Some(c) = frame.as_concrete() {
+                by_pos.entry(c.pos).or_default().push(idx);
+            }
         }
         // Take only the largest 10 buckets (sorted by size desc).
         let mut buckets: Vec<(usize, Vec<usize>)> = by_pos.into_iter().collect();
