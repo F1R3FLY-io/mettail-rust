@@ -3585,13 +3585,6 @@ where
                 eprintln!("{}", CacheSummary(&self.dispatch_cohort_cache));
             }
         }
-        // Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.c
-        // (2026-05-26): drain deferred CohortContinuations into the
-        // SPPF as outer-rule packings BEFORE force_materialize so
-        // continuation-derived packings are visible to realize.
-        // Dedup'd with revive-produced packings via sppf.dedup_packing;
-        // S1.b dual-write makes this equivalence the correctness check.
-        self.install_cohort_continuations();
         // Phase F.13 Stage L3.6 (2026-05-25): force-materialize all
         // remaining cohort frames at EOI so resolution operates on
         // concrete cursors. The full ambiguity multiset is preserved
@@ -7512,105 +7505,6 @@ where
 
     /// Phase F.13 Stage L3.6 (2026-05-25): force-materialize every
     /// `Frame::Cohort` in `self.branch_cursors` into N `Frame::Concrete`
-    /// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.c
-    /// (2026-05-26): drain `deferred_continuations` from every
-    /// `DispatchCacheEntry::Resolved` entry and intern each as an
-    /// outer-rule Packing in the SPPF.
-    ///
-    /// For each continuation (outer_rule_idx, outer_cat_src_idx,
-    /// outer_lo_pos, other_children, substitution_slot,
-    /// weight_at_dispatch):
-    ///   1. Substitute the worker's resolved `symbol_id` into
-    ///      `other_children` at `substitution_slot`.
-    ///   2. Intern the outer Symbol via `sppf.intern_symbol(
-    ///      outer_cat_src_idx as u32, outer_lo_pos, entry.hi_pos)`.
-    ///   3. Intern the Packing via `sppf.intern_packing(
-    ///      outer_rule_idx as u32, children, weight_at_dispatch)`.
-    ///   4. Link the Packing to the Symbol via
-    ///      `sppf.link_packing_to_symbol`.
-    ///
-    /// Idempotent + dedup'd by `sppf.dedup_packing` — calling twice
-    /// (e.g. multi-EOI-site dispatch) produces no extra packings.
-    /// During S1.b dual-write, continuation-installed packings dedup
-    /// with revive-produced packings; S1.d drops the revive once
-    /// equivalence is empirically verified.
-    ///
-    /// Borrow discipline: takes `&mut self.dispatch_cohort_cache.entries`
-    /// AND `&mut self.sppf` — both are disjoint fields on `WpdaWalker`,
-    /// no overlap.
-    fn install_cohort_continuations(&mut self) {
-        // Snapshot keys to avoid borrowing the cache while we
-        // immutably read and mutate sppf. The cache is a small map
-        // (entry count = distinct dispatch keys ≤ ~10K at chain_10000).
-        let keys: Vec<crate::dispatch_cohort::DispatchKey> = self
-            .dispatch_cohort_cache
-            .entries
-            .keys()
-            .cloned()
-            .collect();
-        for key in keys {
-            // Drain the entry's continuations + read symbol_id/hi_pos.
-            let (symbol_id, hi_pos, continuations) = match self
-                .dispatch_cohort_cache
-                .entries
-                .get_mut(&key)
-            {
-                Some(crate::dispatch_cohort::DispatchCacheEntry::Resolved {
-                    symbol_id,
-                    hi_pos,
-                    deferred_continuations,
-                    ..
-                }) => (
-                    *symbol_id,
-                    *hi_pos,
-                    std::mem::take(deferred_continuations),
-                ),
-                // Unresolved (InFlight or Failed): no continuations to
-                // install. InFlight continuations transferred to
-                // Resolved at sub-parse completion (S1.a); if the
-                // sub-parse never resolved by EOI the continuations
-                // are dropped — same semantics as today's pending_members
-                // dropping when a sub-parse never resolves.
-                _ => continue,
-            };
-            if continuations.is_empty() {
-                continue;
-            }
-            for cont in continuations {
-                let crate::cohort_continuation::CohortContinuation {
-                    outer_rule_idx,
-                    outer_cat_src_idx,
-                    outer_lo_pos,
-                    other_children,
-                    substitution_slot,
-                    weight_at_dispatch,
-                } = cont;
-                // Substitute worker symbol_id at slot.
-                let mut children = other_children;
-                let slot = substitution_slot as usize;
-                if slot > children.len() {
-                    // Out-of-range slot indicates a malformed
-                    // continuation (eligibility gate should prevent
-                    // this) — skip rather than panic.
-                    continue;
-                }
-                children.insert(slot, symbol_id);
-                let outer_symbol = self.sppf.intern_symbol(
-                    outer_cat_src_idx as u32,
-                    outer_lo_pos,
-                    hi_pos,
-                );
-                let outer_packing = self.sppf.intern_packing(
-                    outer_rule_idx as u32,
-                    children,
-                    weight_at_dispatch,
-                );
-                self.sppf
-                    .link_packing_to_symbol(outer_symbol, outer_packing);
-            }
-        }
-    }
-
     /// cursors via `cohort_lazy::materialize_cohort_to_frames`. Called
     /// at safety-net entry points (merge, EOI, commit, prune) so
     /// downstream code that assumes concrete cursors does not see
