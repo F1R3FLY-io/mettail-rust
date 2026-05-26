@@ -10458,73 +10458,6 @@ where
     ///     ResolvedHit.
     ///   - N cursors: multi-packing ResolvedHit — one revived cursor
     ///     per worker snapshot. Caller `children.extend(...)`.
-
-    /// Phase F.13 chain_10000 Exp 9 Substage 1.b (2026-05-26):
-    /// attempt to build a `CohortContinuation` from a pausing cursor.
-    /// Returns `None` if the cohort site is ineligible: the parent's
-    /// GSS-top frame must be `RuleAt` or `InfixContinuation` (so we
-    /// can read the outer rule) AND the worker's dispatch must be at
-    /// the last child slot of the outer rule (so the SPPF stack
-    /// captures all other_children exactly).
-    ///
-    /// For chain workloads (InfixOp `lhs op rhs`): universally
-    /// eligible — `arity=2`, `substitution_slot=1`,
-    /// `other_children=[lhs_id]`.
-    ///
-    /// For mixfix rules with post-dispatch children: ineligible —
-    /// falls back to per-cursor revive (the dual-write design keeps
-    /// that path live).
-    fn try_build_continuation(
-        &self,
-        parent: &BranchCursor<W>,
-        branch_weight: &W,
-    ) -> Option<crate::cohort_continuation::CohortContinuation<W>> {
-        let gss_node = self.gss.node(parent.node)?;
-        let symbol = &gss_node.symbol;
-        // Eligibility check #1: only RuleAt + InfixContinuation
-        // carry the outer rule's (cat_src_idx, rule_index).
-        let (outer_cat_src_idx, outer_rule_idx) = match &symbol.kind {
-            crate::wpda_runtime::SymbolKind::RuleAt(_)
-            | crate::wpda_runtime::SymbolKind::InfixContinuation => (
-                symbol.category_src_idx,
-                symbol.rule_index_in_category,
-            ),
-            _ => return None,
-        };
-        // Look up the outer rule's action arity.
-        let action = self
-            .engine
-            .action_for(outer_cat_src_idx, outer_rule_idx)?;
-        let arity = action.arity as usize;
-        if arity == 0 {
-            return None;
-        }
-        // Read pre-dispatched children from the SPPF stack arena.
-        let other_children =
-            self.sppf_stack_arena.to_vec(parent.sppf_stack_id);
-        // Eligibility check #2: substitution slot must be the LAST
-        // child slot, AND the SPPF stack must already hold exactly
-        // arity-1 pre-dispatched children. For chain workloads:
-        // arity=2 (lhs, rhs), substitution_slot=1, SPPF stack
-        // has [lhs_id]. For mixfix with post-dispatch children:
-        // SPPF stack has FEWER than arity-1 entries → return None.
-        let substitution_slot = match arity.checked_sub(1) {
-            Some(n) if n <= u8::MAX as usize => n as u8,
-            _ => return None,
-        };
-        if other_children.len() != substitution_slot as usize {
-            return None;
-        }
-        Some(crate::cohort_continuation::CohortContinuation {
-            outer_rule_idx,
-            outer_cat_src_idx,
-            outer_lo_pos: parent.pos as u32,
-            other_children,
-            substitution_slot,
-            weight_at_dispatch: parent.weight.times_ref(branch_weight),
-        })
-    }
-
     fn allocate_fork_push_child(
         &mut self,
         parent: &BranchCursor<W>,
@@ -10574,24 +10507,10 @@ where
                             .weight
                             .times_ref(&branch.weight),
                     };
-                    // Phase F.13 chain_10000 Exp 9 S1.b (2026-05-26):
-                    // dual-write — build a CohortContinuation
-                    // alongside the cohort pause for eligible sites.
-                    // Construction must precede the &mut self borrow
-                    // for pause_cohort_member. None = ineligible
-                    // (mixfix with post-dispatch children); per-cursor
-                    // revive path remains live.
-                    let continuation =
-                        self.try_build_continuation(parent, &branch.weight);
                     if self
                         .dispatch_cohort_cache
-                        .pause_cohort_member(key.clone(), member)
+                        .pause_cohort_member(key, member)
                     {
-                        if let Some(cont) = continuation {
-                            let _ = self
-                                .dispatch_cohort_cache
-                                .push_deferred_continuation(&key, cont);
-                        }
                         return Vec::new();
                     }
                     // Cap exceeded — fall through to allocate as worker.
@@ -10616,13 +10535,6 @@ where
                     // packing cross-step case (the `-3!` failure).
                     let synthetic_weight_at_dispatch =
                         parent.weight.times_ref(&branch.weight);
-                    // Phase F.13 chain_10000 Exp 9 S1.b (2026-05-26):
-                    // dual-write — build a CohortContinuation per
-                    // snapshot for eligible sites. None = ineligible
-                    // (mixfix with post-dispatch children); per-cursor
-                    // revive loop below remains live.
-                    let continuation_template =
-                        self.try_build_continuation(parent, &branch.weight);
                     let mut revived_cursors = Vec::with_capacity(
                         worker_snapshots.len(),
                     );
@@ -10656,24 +10568,6 @@ where
                         return_frame: parent.clone(),
                         weight_at_dispatch: synthetic_weight_at_dispatch,
                     };
-                    // Phase F.13 chain_10000 Exp 9 S1.b (2026-05-26):
-                    // dual-write — push one continuation per
-                    // already-revived snapshot. S1.c installs
-                    // continuations as outer-rule packings at EOI,
-                    // dedup'd with the revived cursors' packings via
-                    // sppf.intern_packing.
-                    if let Some(template) = continuation_template.as_ref() {
-                        let snap_count = worker_snapshots
-                            .iter()
-                            .filter(|s| !s.worker_inner_state.is_terminal())
-                            .count();
-                        for _ in 0..snap_count {
-                            let cont = template.clone();
-                            let _ = self
-                                .dispatch_cohort_cache
-                                .push_deferred_continuation(&key, cont);
-                        }
-                    }
                     let _ = self
                         .dispatch_cohort_cache
                         .pause_cohort_member(key, future_member);
