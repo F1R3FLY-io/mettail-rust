@@ -34,7 +34,8 @@
 | 4-alt | 2026-05-26 | Plan D E6 applied to `incoming_edge_stack` — generic `PathTreeArena<T>` + `EdgeStackArena = PathTreeArena<GssEdgeId>` (sub1 `48ebcff` standalone; sub2 `54cfff9` wired) | `54cfff9` | 4102/0 + tramp 15/0/2 | **WIN vs base** −7.69 % (t=−4.24); vs E3 NEUTRAL | **WIN vs base** −7.42 %; vs E3 WIN −3.61 % | **WIN vs base** −10.99 %; vs E3 WIN −9.89 % | **WIN vs base** −7.79 %; vs E3 WIN −6.94 % | OOM 24 GB at 15:44 wall (vs pre-E3 ~9 min — 70 % slower) | **ACCEPT** (3 sizes WIN vs E3, 1 NEUTRAL; 4 sizes WIN vs cumulative baseline; per-cursor `incoming_edge_stack` allocation eliminated via path-tree dedup) |
 | 5-S0 | 2026-05-26 | Exp 5 Substage 0 — `visited_dispatch` + `visited_recovery` length histograms | `41d0d22` | 4102/0 | n/a (feature-off zero-cost) | n/a | n/a | n/a | n/a | **ACCEPT** (instrumentation) |
 | 5 | 2026-05-26 | Plan B Substage 1 — CursorId-keyed walker-global pilot on `visited_dispatch` | n/a (SKIP-AFTER-DATA) | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP-AFTER-DATA** — see below |
-| 6 | TBD | Plan A First Substage — operator-precedence iterative for Calculator-Int's `AddInt` | — | — | — | — | — | — | — | — |
+| 6a | 2026-05-26 | Plan A First Substage 6a — types + walker scaffold (`WpdaState::InfixChainIterative`, `WpdaStepAction::IterativeChainAbsorb`, walker arm, `is_iterative_candidate` with PILOT-ONLY `label=="AddInt"` gate) | `a033a97` | 4102/0 | n/a (unreachable — no codegen emission) | n/a | n/a | n/a | n/a | **ACCEPT** (scaffold-only, behavior-equivalent) |
+| 6b | DEFERRED | Plan A First Substage 6b — codegen activation: `emit_iter_eligible_fn`, modify InfixLoop singleton arm, engine `InfixChainIterative` dispatch arm | — | — | — | — | — | — | — | DEFERRED to next session (~4h scope per Plan A agent estimate) |
 
 ---
 
