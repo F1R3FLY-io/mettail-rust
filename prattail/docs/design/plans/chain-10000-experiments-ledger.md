@@ -364,3 +364,104 @@ Per Plan agent's prespecified decision table: "Combined % > 30 % but `avg_fanout
 **Verdict**: **ACCEPT** (instrumentation) + **SKIP-AFTER-DATA** for Exp 11 Substages 1.a-1.e. The L3.4 H12 cohort path already handles ≥ 3-way cases; SuspendedFork would only save half a cursor per Fork on average — not worth the 600-800 LOC investment. Pivot to **Exp 8** (path-tree arena for `visited_dispatch` with LRU cache) next, per Plan agent's second-priority recommendation.
 
 **Risk implication**: chain_10000 closure path now narrows to (Exp 8, Exp 10 S0-bis, Exp 9/Approach P, Exp 9-alt/FOLLOW-K, Exp 13/Earley). Exp 11 is closed without implementation.
+
+---
+
+### Exp 8 Substage 1 (2026-05-26, tip `db6a4c8`) — VisitedSetArena<T> + LRU cache (standalone)
+
+Standalone implementation per Plan agent design. New module
+`prattail/src/visited_set_arena.rs` with canonical-order path-tree
+arena + walker-global LRU cache for O(1) `contains()`.
+
+Design:
+- Canonical-order intern: elements sorted by `T: Ord`; two cursors
+  visiting the same SET (in any insertion order) arrive at the same
+  `VisitedSetStackId` via dedup on `(parent, elem)`.
+- Idempotent `insert`: returns `stack` unchanged if `elem ∈ stack`.
+- Fast path (monotonic): `elem > top → intern_push`. Chain workloads
+  visit configs in monotonic-position order, hitting this 100 % of
+  the time.
+- Slow path (out-of-order): rebuild in canonical order + splice at
+  rank.
+- LRU cache: walker-global `FxHashMap<StackId, Arc<FxHashSet<T>>>` +
+  `VecDeque<StackId>` for eviction. K=64 default (~1.8 MB at
+  chain_1000).
+
+18/18 standalone tests pass. Full prattail-lib gauntlet: 4120/0.
+
+**Verdict**: **ACCEPT** (standalone module, no integration regression).
+
+---
+
+### Exp 8 Substage 2 (2026-05-26, tip `57152e3` ATTEMPT) — wire into BranchCursor
+
+Wired across 30+ sites in `wpda_walker.rs` + `cohort_lazy.rs`:
+- `WpdaWalker::visited_dispatch_arena` field + 3 ctor inits + `reset`
+- `BranchCursor::visited_dispatch_id: VisitedSetStackId` (Copy u32)
+- `CohortShell::visited_dispatch_id` field swap
+- `BranchCursor::clone` (Copy u32)
+- `materialize_branch_cursor` + `CohortShell::from_branch_cursor`
+- 3 empty-init sites + parent.clone propagation
+- Push-arm singleton bucket cycle defense (contains + insert)
+- B14/C5 per-branch `parent_in_visited`
+- Fork-arm `child_visited_dispatch_id` pre-compute
+- `allocate_fork_push_child` signature
+- `commit_winner` winner.visited_dispatch_id
+- walker-stats histogram `.len()` accessor
+
+Build clean. prattail-lib 4120/0. Trampoline 15/0/2 ignored.
+
+**Welch results** (treatment = Exp 8 S2, baseline = Exp 7 at `6da30a5`):
+
+| Chain | K=64 Δ | K=64 p | K=128 Δ | K=128 p | Verdict |
+|-------|--------|--------|---------|---------|---------|
+| 50 | +3.91 % | 0.0013 | +3.91 % | 0.0001 | LOSS |
+| 100 | **+7.57 %** | <0.0001 | **+8.39 %** | <0.0001 | **LOSS** |
+| 200 | +7.41 % | <0.0001 | +9.78 % | <0.0001 | LOSS |
+| 1000 | +16.36 % | <0.0001 | +13.55 % | <0.0001 | LOSS |
+
+**Hypothesis fate**: FALSIFIED. Per Plan agent's prespecified
+falsifier: chain_100 LOSS > 5 % at BOTH K=64 AND K=128 → REVERT
+(Plan agent's "tune K=64 → K=128 once, re-run; if still LOSS →
+REVERT and document as Exp 8 SKIP-AFTER-DATA").
+
+**Verdict**: **REJECT** — reverted via `git revert HEAD` (tip
+returns to `db6a4c8`, the Substage 1 standalone arena retained).
+
+**Diagnosis** (post-hoc): the path-tree-arena + LRU pattern that
+worked for `sppf_stack` (E3) and `incoming_edge_stack` (E6) does
+NOT translate to set semantics. The arena's `contains()` — even on
+cache hit — costs:
+1. `FxHashMap::get` (cache lookup)
+2. `VecDeque` linear scan (LRU touch)
+3. `FxHashSet::contains` on cached set
+
+vs the baseline `Arc<FxHashSet>::contains()` = just step 3.
+
+The cumulative overhead (2 extra HashMap probes + linear scan per
+hot-path access) exceeds memory savings on chain workloads where
+most cursors share the same monotonic chain prefix and the Arc-CoW
+pattern was already optimal. The H2 precedent (Arc-CoW on this
+field rejected at chain_100 -6.9 %) was the same failure mode at
+the other end of the spectrum.
+
+**Implication**: per-cursor `visited_dispatch` is NOT a productive
+optimization target via the path-tree-arena pattern. Other patterns
+worth trying: (a) walker-global memoization keyed by
+`(dispatch_config, sub_parse_id)` — Plan B design that was already
+SKIP-AFTER-DATA; (b) profile-guided sparse-set encoding (Briggs +
+Torczon 1993) — out of current scope. For chain_10000 closure
+specifically, the per-cursor `visited_dispatch` is now confirmed
+NOT a tractable target. The remaining experiments target either
+the walker control-flow (Exp 9 / Approach P realize-time cohort
+fanout, Exp 9-alt FOLLOW-K prune, Exp 13 Earley + Leo outboard) or
+the upstream cursor population (Exp 11 SKIPPED, no remaining
+upstream candidates with non-skip gates).
+
+**Bench data saved**:
+- `bench-data/exp8_s2_chain_{50,100,200,1000}.json` (K=64)
+- `bench-data/exp8_s2_k128_chain_{50,100,200,1000}.json` (K=128)
+
+`visited_set_arena.rs` module retained for potential future reuse
+(different workload could justify the tradeoff; the 18 standalone
+tests + property tests serve as a reference implementation).
