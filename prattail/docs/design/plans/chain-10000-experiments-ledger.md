@@ -301,3 +301,35 @@ Read-only instrumentation (3 new `WalkerStats` fields: `binder_scope_marks_len_*
 **Pending user decision** (Exp 7 verdict):
 - Keep 6b + 7 (chain_50-1000 WIN, chain_10000 LOSS) AND ship Exp 10 next
 - Revert 6b + 7 per Plan-agent's prespecified falsifier AND ship Exp 10 on E6 baseline
+
+---
+
+### Exp 10 Substage 1 REJECTED (2026-05-26) — drop `incoming_edge` from ConfigKey
+
+**Hypothesis**: drop `incoming_edge` from ConfigKey (per Exp 10 S0 gate firing: (node, edge) 100.0 % co-divergent with sole-diffs 0.002 % each) to unlock 383,429 currently-blocked merges. Expected: NEUTRAL or WIN at all 4 chain sizes; possibly help chain_10000 RSS.
+
+**Implementation**: removed `incoming_edge: Option<GssEdgeId>` from `ConfigKey` struct (`wpda_walker.rs:1847`) and from the construction in `merge_equivalent_cursors` (`wpda_walker.rs:8288-8290`). ~25 LOC.
+
+**Build**: 4102/0 prattail-lib + 15/0/2 tramp ignored.
+
+**Welch results** (treatment = Exp 10 S1, baseline = Exp 7 at tip `6da30a5`):
+
+| Chain | Exp 7 μ±σ | Exp 10 S1 μ±σ | Δ | p | Verdict |
+|-------|----------|---------------|---|---|---------|
+| 50 | 25.62 ms ± 0.72 | 24.69 ms ± 1.94 | -3.6 % | 0.098 | NEUTRAL |
+| 100 | 62.07 ms ± 0.97 | 59.77 ms ± 0.89 | -3.7 % | <0.0001 | WIN |
+| 200 | 176.69 ms ± 2.79 | 175.58 ms ± 3.24 | -0.6 % | 0.326 | NEUTRAL |
+| **1000** | 3025 ms ± 14.7 | 3248 ms ± 62.6 | **+7.4 %** | **<0.0001** | **LOSS** |
+
+**chain_10000 RSS**: test killed at 5:13 CPU time (could not complete in window). Inconclusive measurement; the chain_1000 LOSS is decisive.
+
+**Hypothesis fate**: FALSIFIED at chain_1000. Per user mandate ("keep all that pass Welch's T-test, revert all that do not"), chain_1000 +7.4 % LOSS p<0.0001 is a clean REJECT.
+
+**Verdict**: **REJECT** — reverted both edits.
+
+**Diagnosis** (post-hoc reasoning): the 8 + 6 = 14 cases (out of 383,566 multi-diff) where node ≠ but edge =, or edge ≠ but node =, are load-bearing at chain_1000. The 100 % co-divergence rate is necessary but not sufficient — the small absolute sole-diff counts represent decisions where edge carries unique information that node does not. The Exp 10 S0 gate threshold ("co-occurrence > 0.95 AND sole-diff < 1 %") was met, but the actual sole-diff cases are concentrated at chain_1000 hot paths where ConfigKey collisions cascade into duplicated work. Dropping `edge` causes cursors to attempt merge → fail downstream re-discriminator (sppf_top or weight components) → carry extra work per cursor.
+
+**Implication for Exp 10**: the (node, edge) pair-correlation alone is insufficient evidence to drop either axis. A stronger S0-bis would need to identify the *downstream effect* of the 14 outlier sole-diff cases — e.g., are they on the cohort-revive path? Are they at the InfixLoop boundary? Without that, the Plan agent's recommendation is to leave ConfigKey unchanged.
+
+**Bench data saved**:
+- `prattail/docs/design/plans/bench-data/exp10_s1_chain_{50,100,200,1000}.json`
