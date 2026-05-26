@@ -598,6 +598,17 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// `prattail/docs/design/plans/chain-10000-experiments-ledger.md`
     /// row 3 for the empirical Welch verification.
     pub sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena,
+    /// Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+    /// walker-global GSS edge-stack path-tree arena. Each
+    /// `BranchCursor` holds an `EdgeStackId` (Copy `u32`) into this
+    /// arena; push/pop are interning operations that dedup equal-prefix
+    /// chains across cursors. Replaces the prior per-cursor
+    /// `Arc<Vec<GssEdgeId>>` field. Mirrors the E3 Substage 2 wiring
+    /// pattern; same dedup story for chain-deep operator parses (Exp
+    /// 0.5 histogram: chain_1000 max=1006, p99 well above 64).
+    /// See `prattail/src/edge_stack_arena.rs` for the data structure
+    /// + 7 unit/property tests.
+    pub incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena,
     /// Phase F.13 H1 (2026-05-20): walker-global memo of realized AST
     /// payloads keyed by SPPF Symbol id. Promoted from per-cursor
     /// `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global HashMap to
@@ -1172,7 +1183,23 @@ pub struct BranchCursor<W: SemiringRef> {
     /// Bounded by recursion depth at parse time.
     /// Phase F.13 Stage L4.2 (2026-05-25): Arc-wrapped per the same
     /// cohort-share rationale as `visited_*` (L4.1) and recovery_deltas.
-    pub incoming_edge_stack: Arc<Vec<crate::gss::GssEdgeId>>,
+    ///
+    /// Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+    /// changed from `Arc<Vec<GssEdgeId>>` to walker-global-arena-
+    /// interned `EdgeStackId` (a `Copy u32`). Each
+    /// `cursor.incoming_edge_stack_id` is a handle into
+    /// `WpdaWalker::incoming_edge_stack_arena` (a GSS-style path-tree
+    /// per `prattail/src/edge_stack_arena.rs`). Two cursors that
+    /// pushed identical edge sequences from a common ancestor share
+    /// the entire chain via dedup; per-step `BranchCursor::clone`
+    /// cost for this field drops from `Arc::clone` (atomic refcount
+    /// bump) to a `u32` copy. Walker mutation sites use
+    /// `arena.intern_push(cursor.incoming_edge_stack_id, edge_id)` and
+    /// `arena.intern_pop(cursor.incoming_edge_stack_id)`; reads use
+    /// `arena.top` / `arena.len`; full-slice access (rare; debug-
+    /// assert sweeps + drain sites) uses
+    /// `arena.slice_at(id, &mut scratch)`.
+    pub incoming_edge_stack_id: crate::edge_stack_arena::EdgeStackId,
     /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): per-cursor count
     /// of recovery dispatches this cursor (or any of its ancestors) has
     /// experienced. Capped at `RecoveryConfig.max_recovery_depth`. The
@@ -1520,7 +1547,9 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // Phase F.13 Stage L4.2 (2026-05-25): Arc::clone is O(1).
             recovery_deltas: Arc::clone(&self.recovery_deltas),
             source_priority: self.source_priority,
-            incoming_edge_stack: Arc::clone(&self.incoming_edge_stack),
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // arena-interned EdgeStackId (Copy u32) — clone is a u32 move.
+            incoming_edge_stack_id: self.incoming_edge_stack_id,
             recovery_depth: self.recovery_depth,
             // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone is O(1)
             // (was deep-clone of FxHashSet pre-L4.1). Mutation sites
@@ -1619,7 +1648,10 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Stage 3.12.6 (2026-05-02): empty stack for seed cursor
             // (no push has been made). cursor_gss_push appends to this
             // stack on every push.
-            incoming_edge_stack: Arc::new(Vec::new()),
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // walker-global-arena interned id; EDGE_STACK_ID_ROOT sentinel
+            // means empty stack (no chain node allocated).
+            incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
             // Bounded recovery (Stage 3.20 / L12, 2026-05-06): seed cursor
             // has not experienced any recovery, so depth 0 + empty
             // visited set.
@@ -1691,7 +1723,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             inner_state: new_state,
             recovery_deltas: parent.recovery_deltas.clone(),
             source_priority,
-            incoming_edge_stack: parent.incoming_edge_stack.clone(),
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // arena-interned EdgeStackId (Copy u32).
+            incoming_edge_stack_id: parent.incoming_edge_stack_id,
             recovery_depth: parent.recovery_depth,
             visited_recovery: parent.visited_recovery.clone(),
             // B12 / Candidate E (2026-05-07): inherit parent's projection
@@ -2490,6 +2524,9 @@ where
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // walker-global GSS edge-stack interning arena. Fresh = empty.
+            incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
         }
     }
 
@@ -2561,6 +2598,9 @@ where
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // walker-global GSS edge-stack interning arena. Fresh = empty.
+            incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
         }
     }
 
@@ -2627,6 +2667,9 @@ where
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // walker-global GSS edge-stack interning arena. Fresh = empty.
+            incoming_edge_stack_arena: crate::edge_stack_arena::EdgeStackArena::new(),
         }
     }
 
@@ -2668,6 +2711,11 @@ where
         // nodes reference SppfIds that are per-parse; stale entries
         // would alias new parses' SppfIds incorrectly.
         self.sppf_stack_arena.clear();
+        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+        // clear the GSS edge-stack interning arena at parse boundary.
+        // Chain nodes reference GssEdgeIds that are per-parse; stale
+        // entries would alias new parses' edge IDs incorrectly.
+        self.incoming_edge_stack_arena.clear();
         // Phase F.13 walker-stats (2026-05-20): zero counters at parse boundary
         // and increment seed (matches the constructor's `cursors_created_via_seed = 1`).
         #[cfg(feature = "walker-stats")]
@@ -3091,7 +3139,9 @@ where
                     // Stage 3.12.6 (2026-05-02): post-resolution
                     // singleton has no recorded push history (the resolved
                     // GSS state is canonical for the surviving branch).
-                    incoming_edge_stack: Arc::new(Vec::new()),
+                    // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                    // arena-interned EdgeStackId; ROOT = empty.
+                    incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
                     // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
                     // post-resolution singleton resets recovery
                     // book-keeping — the resolved parse path doesn't
@@ -4823,7 +4873,9 @@ where
                     source_priority: 0,
                     // Stage 3.12.6 (2026-05-02): post-Drop reset starts
                     // with empty stack history.
-                    incoming_edge_stack: Arc::new(Vec::new()),
+                    // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                    // arena-interned EdgeStackId; ROOT = empty.
+                    incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
                     // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
                     // post-Drop reset resets recovery book-keeping.
                     recovery_depth: 0,
@@ -5548,7 +5600,9 @@ where
                                 source_priority: child_source_priority,
                                 // Stage 3.12.6 (2026-05-02): inherit parent's
                                 // stack-suffix history.
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -5644,7 +5698,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -5716,7 +5772,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -5781,7 +5839,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -5878,7 +5938,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -5955,7 +6017,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -6033,7 +6097,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -6171,7 +6237,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Phase F.11 R7 hoist (2026-05-19): read
                                 // the pre-loop snapshot computed above.
                                 // Each sibling pays O(1) Arc refcount-bump
@@ -6289,7 +6357,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Phase F.11 R7 hoist (2026-05-19): read
                                 // the pre-loop snapshot computed above.
                                 // Each sibling pays O(1) Arc refcount-bump
@@ -6431,7 +6501,9 @@ where
                                 inner_state: branch.new_state.clone(),
                                 recovery_deltas: cursor.recovery_deltas.clone(),
                                 source_priority: child_source_priority,
-                                incoming_edge_stack: cursor.incoming_edge_stack.clone(),
+                                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                                // arena-interned EdgeStackId (Copy u32).
+                                incoming_edge_stack_id: cursor.incoming_edge_stack_id,
                                 // Bounded recovery (Stage 3.20 / L12,
                                 // 2026-05-06): inherit parent's recovery
                                 // book-keeping. The Fork-arm prologue
@@ -7498,7 +7570,8 @@ where
                 incoming_edge_stack_len_histogram,
                 incoming_edge_stack_len_max,
                 incoming_edge_stack_len_samples,
-                cursor.incoming_edge_stack.len()
+                self.incoming_edge_stack_arena
+                    .len(cursor.incoming_edge_stack_id)
             );
             crate::stats_histogram_sample!(
                 self,
@@ -7846,8 +7919,10 @@ where
                     // ── Original 4 axes ────────────────────────────────
                     let state_diff = a.inner_state != b.inner_state;
                     let node_diff = a.node != b.node;
-                    let a_edge = a.incoming_edge_stack.last().copied();
-                    let b_edge = b.incoming_edge_stack.last().copied();
+                    // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                    // arena.top replaces incoming_edge_stack.last().
+                    let a_edge = self.incoming_edge_stack_arena.top(a.incoming_edge_stack_id);
+                    let b_edge = self.incoming_edge_stack_arena.top(b.incoming_edge_stack_id);
                     let edge_diff = a_edge != b_edge;
                     let depth_diff = a.collection_stack_depth != b.collection_stack_depth;
                     // ── Phase F.13 Stage 3.A: 6 newer axes ─────────────
@@ -8049,7 +8124,11 @@ where
                 // current stack-suffix top edge id, so cursors with
                 // different stack histories at the same (state, node,
                 // pos) do NOT merge.
-                incoming_edge: cursor.incoming_edge_stack.last().copied(),
+                // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                // arena.top replaces incoming_edge_stack.last().
+                incoming_edge: self
+                    .incoming_edge_stack_arena
+                    .top(cursor.incoming_edge_stack_id),
                 // Phase 4 #5b (2026-05-12): include collection_stack
                 // depth so cursors with different operational shapes
                 // (e.g. one mid-binder-internal-collection, the other
@@ -8549,7 +8628,9 @@ where
             source_priority: winner.source_priority,
             // Stage 3.12.6 (2026-05-02): preserve winner's stack-suffix
             // history so subsequent pops follow the winner's path.
-            incoming_edge_stack: winner.incoming_edge_stack,
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // arena-interned EdgeStackId (Copy u32) — preserve winner's id.
+            incoming_edge_stack_id: winner.incoming_edge_stack_id,
             // Bounded recovery (Stage 3.20 / L12, 2026-05-06): preserve
             // winner's recovery state — subsequent recovery dispatches
             // continue counting against the same depth budget.
@@ -10148,8 +10229,11 @@ where
         let new_id = self.gss.get_or_create_node(WpdaGssNode { pos, symbol: sym });
         let edge_id = self.gss.add_edge_kind(new_id, predecessor, w, kind);
         cursor.node = new_id;
-        // Phase F.13 Stage L4.2 (2026-05-25): Arc::make_mut CoW.
-        Arc::make_mut(&mut cursor.incoming_edge_stack).push(edge_id);
+        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut incoming_edge_stack).push.
+        cursor.incoming_edge_stack_id = self
+            .incoming_edge_stack_arena
+            .intern_push(cursor.incoming_edge_stack_id, edge_id);
         if self.deterministic {
             self.top_node = Some(new_id);
         }
@@ -10295,7 +10379,9 @@ where
             inner_state: branch.new_state.clone(),
             recovery_deltas: parent.recovery_deltas.clone(),
             source_priority: child_source_priority,
-            incoming_edge_stack: parent.incoming_edge_stack.clone(),
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // arena-interned EdgeStackId (Copy u32).
+            incoming_edge_stack_id: parent.incoming_edge_stack_id,
             recovery_depth: child_recovery_depth,
             visited_recovery: child_visited_recovery,
             visited_dispatch: child_visited_dispatch,
@@ -10429,7 +10515,9 @@ where
         // Graduation rule G2: cohort_origin clears when depth drops
         // below this value (the cohort cursor has exited its dispatch's
         // return frame).
-        cursor.cohort_revive_depth = cursor.incoming_edge_stack.len() as u32;
+        cursor.cohort_revive_depth = self
+            .incoming_edge_stack_arena
+            .len(cursor.incoming_edge_stack_id) as u32;
         cursor.inner_state = snap.worker_inner_state.clone();
         // Stage 1.5.3R-d: observability counter.
         self.dispatch_cohort_cache.cohort_cursors_emitted_total += 1;
@@ -10870,8 +10958,13 @@ where
         &mut self,
         cursor: &mut BranchCursor<W>,
     ) -> Option<crate::gss::GssNodeId> {
-        // Phase F.13 Stage L4.2 (2026-05-25): Arc::make_mut CoW.
-        let edge_id = Arc::make_mut(&mut cursor.incoming_edge_stack).pop();
+        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+        // arena.top peeks pre-pop value; arena.intern_pop updates the
+        // cursor's StackId to the predecessor chain (or ROOT for empty).
+        let edge_id = self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id);
+        cursor.incoming_edge_stack_id = self
+            .incoming_edge_stack_arena
+            .intern_pop(cursor.incoming_edge_stack_id);
         // Phase F.13 H12 Stage 1.2 (2026-05-21): if the popped edge
         // is a CrossCatProjection, the cursor just exited a cross-cat
         // sub-parse — record the result in the dispatch-cohort cache.
@@ -10956,7 +11049,10 @@ where
         // tag so it merges freely with per-cursor cursors at the
         // outer level.
         if cursor.cohort_origin.is_some()
-            && (cursor.incoming_edge_stack.len() as u32) < cursor.cohort_revive_depth
+            && (self
+                .incoming_edge_stack_arena
+                .len(cursor.incoming_edge_stack_id) as u32)
+                < cursor.cohort_revive_depth
         {
             cursor.cohort_origin = None;
             cursor.cohort_revive_depth = 0;
@@ -11013,19 +11109,25 @@ where
         } else {
             cursor.node
         };
-        let cursor_top_edge = cursor.incoming_edge_stack.last().copied();
+        let cursor_top_edge = self
+            .incoming_edge_stack_arena
+            .top(cursor.incoming_edge_stack_id);
         let (new_id, edge_id) =
             self.gss.replace_top_with_edge_id_kind(target, sym, pos, w, cursor_top_edge, kind);
         cursor.node = new_id;
-        // Phase F.13 Stage L4.2 (2026-05-25): single Arc::make_mut for
-        // the pair pop+push (one CoW deep-clone instead of two).
+        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+        // arena.intern_pop + intern_push replace Arc::make_mut + pop + push.
+        if !self
+            .incoming_edge_stack_arena
+            .is_empty(cursor.incoming_edge_stack_id)
         {
-            let edges = Arc::make_mut(&mut cursor.incoming_edge_stack);
-            if !edges.is_empty() {
-                edges.pop();
-            }
-            edges.push(edge_id);
+            cursor.incoming_edge_stack_id = self
+                .incoming_edge_stack_arena
+                .intern_pop(cursor.incoming_edge_stack_id);
         }
+        cursor.incoming_edge_stack_id = self
+            .incoming_edge_stack_arena
+            .intern_push(cursor.incoming_edge_stack_id, edge_id);
         if self.deterministic {
             self.top_node = Some(new_id);
         }

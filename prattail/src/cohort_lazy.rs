@@ -108,9 +108,11 @@ pub struct CohortFrame<W: SemiringRef> {
 pub struct CohortShell<W: SemiringRef> {
     /// GSS-tip shared by all members post-`CategoryEntry` push.
     pub node: crate::gss::GssNodeId,
-    /// Top-of-stack of return frame edges. Shared Arc; `Arc::make_mut`
-    /// on mutation triggers cohort materialization.
-    pub incoming_edge_stack: Arc<Vec<crate::gss::GssEdgeId>>,
+    /// Top-of-stack of return frame edges. Phase F.13 chain_10000 Plan
+    /// D E6 Substage 2 (2026-05-26): arena-interned `EdgeStackId` (Copy
+    /// u32) replaces `Arc<Vec<GssEdgeId>>`. Walker mutation goes
+    /// through `walker.incoming_edge_stack_arena.intern_push/pop`.
+    pub incoming_edge_stack_id: crate::edge_stack_arena::EdgeStackId,
     /// Operational depth indicator (post Phase F.1).
     pub collection_depth: u8,
     /// Cohort-revival discriminator (Phase F.13 Stage 1.5.3R-b). All
@@ -451,13 +453,13 @@ impl<W: SemiringRef> CohortShell<W> {
         // Phase F.13 Stage L4.2 (2026-05-25): Arc::clone (O(1)) — was
         // `Arc::new(parent.field.clone())` deep-clone pre-L4.2. These
         // fields are now Arc-wrapped in BranchCursor.
-        let incoming_edge_stack_arc: std::sync::Arc<Vec<crate::gss::GssEdgeId>> =
-            std::sync::Arc::clone(&parent.incoming_edge_stack);
         let recovery_deltas_arc: std::sync::Arc<Vec<crate::wpda_walker::BuilderDelta>> =
             std::sync::Arc::clone(&parent.recovery_deltas);
         Self {
             node: parent.node,
-            incoming_edge_stack: incoming_edge_stack_arc,
+            // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+            // arena-interned EdgeStackId (Copy u32) replaces Arc<Vec<GssEdgeId>>.
+            incoming_edge_stack_id: parent.incoming_edge_stack_id,
             collection_depth: parent.collection_stack_depth,
             cohort_origin: parent.cohort_origin.clone(),
             lex_alt_idx: 0,    // populated from parent.weight via LexProvenance trait (Stage L3 wiring)
@@ -544,7 +546,9 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // Phase F.13 Stage L4.2 (2026-05-25): Arc::clone is O(1).
         recovery_deltas: std::sync::Arc::clone(&shell.recovery_deltas),
         source_priority: state.source_priority,
-        incoming_edge_stack: std::sync::Arc::clone(&shell.incoming_edge_stack),
+        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+        // arena-interned EdgeStackId (Copy u32) replaces Arc<Vec<GssEdgeId>>.
+        incoming_edge_stack_id: shell.incoming_edge_stack_id,
         recovery_depth: shell.recovery_depth,
         // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone (O(1)) — was
         // deep-clone pre-L4.1. The materialized cursor now shares the
