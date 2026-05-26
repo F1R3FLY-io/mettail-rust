@@ -72,6 +72,12 @@ pub mod dispatch_cohort;
 /// `InflightCollision` arm to construct cohorts; L3 implements the
 /// ObsInvariant fast path. See `docs/design/plans/cohort-lazy-materialization.md`.
 pub mod cohort_lazy;
+/// Phase F.13 chain_10000 Plan D E3 Substage 1 (2026-05-25):
+/// SPPF-stack interning arena. Standalone data structure with unit +
+/// property tests; no walker integration yet. E3 Substage 2 will wire
+/// `BranchCursor::sppf_stack_id` to use this arena. See
+/// `docs/design/plans/chain-10000-alternative-approaches.md` (E3).
+pub mod sppf_stack_arena;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
