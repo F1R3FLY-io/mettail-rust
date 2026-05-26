@@ -135,13 +135,9 @@ pub struct CohortShell<W: SemiringRef> {
     pub optional_scope_marks: Arc<Vec<usize>>,
     /// SPPF collection arena shared by all members (Phase F.4).
     pub sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
-    /// Shared cycle-defense at the moment the cohort formed.
-    /// Phase F.13 chain_10000 Exp 8 Substage 2 (2026-05-26):
-    /// `visited_dispatch_id` replaces the prior `Arc<FxHashSet>`; the
-    /// walker's `visited_dispatch_arena` is the authoritative storage.
-    /// Materialization carries the StackId verbatim into the revived
-    /// cursor (Copy `u32`).
-    pub visited_dispatch_id: crate::visited_set_arena::VisitedSetStackId,
+    /// Shared cycle-defense at the moment the cohort formed. Any
+    /// member that would mutate this triggers materialization.
+    pub visited_dispatch: Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>>,
     pub visited_recovery: Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>>,
     /// Recovery depth (Phase L12 / Stage 3.20). Mirrors
     /// `BranchCursor::recovery_depth` (u8); cohort formation captures
@@ -455,9 +451,8 @@ impl<W: SemiringRef> CohortShell<W> {
         // `Arc::new(parent.visited_*.clone())` pre-L4.1 which deep-
         // cloned the HashSet. visited_* are now Arc-wrapped in
         // BranchCursor; this site bumps the refcount.
-        // Phase F.13 chain_10000 Exp 8 S2 (2026-05-26):
-        // visited_dispatch is now a VisitedSetStackId (Copy u32); no
-        // Arc::clone needed.
+        let visited_dispatch_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
+            std::sync::Arc::clone(&parent.visited_dispatch);
         let visited_recovery_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
             std::sync::Arc::clone(&parent.visited_recovery);
         let optional_scope_marks_arc: std::sync::Arc<Vec<usize>> =
@@ -483,7 +478,7 @@ impl<W: SemiringRef> CohortShell<W> {
             binder_scope_marks: binder_scope_marks_arc,
             optional_scope_marks: optional_scope_marks_arc,
             sppf_collection_arena: std::sync::Arc::clone(&parent.sppf_collection_arena),
-            visited_dispatch_id: parent.visited_dispatch_id,
+            visited_dispatch: visited_dispatch_arc,
             visited_recovery: visited_recovery_arc,
             recovery_depth: parent.recovery_depth,
             recovery_deltas: recovery_deltas_arc,
@@ -569,9 +564,7 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // shell's Arc'd cycle-defense sets; first per-cursor mutation
         // triggers Arc::make_mut copy-on-write.
         visited_recovery: std::sync::Arc::clone(&shell.visited_recovery),
-        // Phase F.13 chain_10000 Exp 8 S2 (2026-05-26): arena
-        // StackId is Copy `u32`.
-        visited_dispatch_id: shell.visited_dispatch_id,
+        visited_dispatch: std::sync::Arc::clone(&shell.visited_dispatch),
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena-interned StackId (Copy u32) replaces Arc<Vec<SppfId>>.
         sppf_stack_id: shell.sppf_stack_baseline_id,
