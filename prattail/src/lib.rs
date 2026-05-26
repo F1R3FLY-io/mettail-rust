@@ -88,6 +88,16 @@ pub mod sppf_stack_arena;
 /// `BranchCursor::incoming_edge_stack_id`. See module docs +
 /// ledger row 4-alt.
 pub mod edge_stack_arena;
+/// Phase F.13 chain_10000 Exp 8 Substage 1 (2026-05-26): canonical-order
+/// path-tree interning arena for SET semantics + walker-global LRU cache
+/// for O(1) `contains()`. Designed to replace
+/// `BranchCursor::visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>`
+/// (the dominant remaining per-cursor allocator post-E3/E6, projected
+/// ~7 GB live peak at chain_10000). Generic over `T: Copy + Ord + Hash`;
+/// concrete type alias `VisitedDispatchArena = VisitedSetArena<
+/// PackedDispatchConfig>` will be shared between `visited_dispatch_id`
+/// and `visited_recovery_id` field swaps in Substage 2 + 3. See ledger.
+pub mod visited_set_arena;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
