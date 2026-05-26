@@ -565,7 +565,6 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // triggers Arc::make_mut copy-on-write.
         visited_recovery: std::sync::Arc::clone(&shell.visited_recovery),
         visited_dispatch: std::sync::Arc::clone(&shell.visited_dispatch),
-        current_chain_streak: 0,
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena-interned StackId (Copy u32) replaces Arc<Vec<SppfId>>.
         sppf_stack_id: shell.sppf_stack_baseline_id,
