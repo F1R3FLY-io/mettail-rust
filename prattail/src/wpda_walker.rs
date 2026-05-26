@@ -7945,6 +7945,8 @@ where
         self.sample_merge_misses();
         #[cfg(feature = "walker-stats")]
         self.sample_sppf_reclaim_window();
+        #[cfg(feature = "walker-stats")]
+        self.sample_walker_memory_attribution();
         self.merge_equivalent_cursors();
         // Phase F.13 walker-stats (2026-05-20): capture post-merge peak.
         crate::stats_max!(self, branch_cursors_peak_post_merge, self.branch_cursors.len() as u64);
@@ -8093,6 +8095,131 @@ where
     /// chain_1000. If gate FAILS, close E4 as DATA-CONCLUDED
     /// (Streaming SPPF futile because cohort cache pins low
     /// positions).
+    /// Phase F.13 chain_10000 Exp 16 (2026-05-26): walker memory
+    /// attribution profiling. Samples MAX sizes of every walker-owned
+    /// structure for post-parse byte attribution. Per E4 S1.a data
+    /// (Streaming SPPF gate failure) and Exp 9 + Exp 13 + Exp 8
+    /// REJECT diagnoses, the chain_10000 24 GB OOM is not in the
+    /// SPPF arena, not in cohort revives, and not in visited_dispatch.
+    /// This counter set identifies the actual dominant consumer.
+    #[cfg(feature = "walker-stats")]
+    fn sample_walker_memory_attribution(&mut self) {
+        let n_branch = self.branch_cursors.len() as u64;
+        if n_branch > self.stats.mem_attr_branch_cursors_max {
+            self.stats.mem_attr_branch_cursors_max = n_branch;
+        }
+        let n_entries = self.dispatch_cohort_cache.entries.len() as u64;
+        if n_entries > self.stats.mem_attr_cache_entries_max {
+            self.stats.mem_attr_cache_entries_max = n_entries;
+        }
+        let mut pending_sum: u64 = 0;
+        let mut snap_sum: u64 = 0;
+        let mut cont_sum: u64 = 0;
+        for entry in self.dispatch_cohort_cache.entries.values() {
+            match entry {
+                crate::dispatch_cohort::DispatchCacheEntry::InFlight {
+                    worker_snapshots,
+                    pending_members,
+                    deferred_continuations,
+                    ..
+                }
+                | crate::dispatch_cohort::DispatchCacheEntry::Resolved {
+                    worker_snapshots,
+                    pending_members,
+                    deferred_continuations,
+                    ..
+                } => {
+                    pending_sum =
+                        pending_sum.saturating_add(pending_members.len() as u64);
+                    snap_sum =
+                        snap_sum.saturating_add(worker_snapshots.len() as u64);
+                    cont_sum = cont_sum
+                        .saturating_add(deferred_continuations.len() as u64);
+                }
+                crate::dispatch_cohort::DispatchCacheEntry::Failed => {}
+            }
+        }
+        if pending_sum > self.stats.mem_attr_cache_pending_members_sum_max {
+            self.stats.mem_attr_cache_pending_members_sum_max = pending_sum;
+        }
+        if snap_sum > self.stats.mem_attr_cache_worker_snapshots_sum_max {
+            self.stats.mem_attr_cache_worker_snapshots_sum_max = snap_sum;
+        }
+        if cont_sum
+            > self.stats.mem_attr_cache_deferred_continuations_sum_max
+        {
+            self.stats.mem_attr_cache_deferred_continuations_sum_max = cont_sum;
+        }
+        let sppf_stack_nodes = self.sppf_stack_arena.node_count() as u64;
+        if sppf_stack_nodes > self.stats.mem_attr_sppf_stack_arena_nodes_max {
+            self.stats.mem_attr_sppf_stack_arena_nodes_max = sppf_stack_nodes;
+        }
+        let edge_stack_nodes = self.incoming_edge_stack_arena.node_count() as u64;
+        if edge_stack_nodes
+            > self.stats.mem_attr_incoming_edge_stack_arena_nodes_max
+        {
+            self.stats.mem_attr_incoming_edge_stack_arena_nodes_max =
+                edge_stack_nodes;
+        }
+        let sppf_nodes = self.sppf.node_count_diag() as u64;
+        if sppf_nodes > self.stats.mem_attr_sppf_nodes_max {
+            self.stats.mem_attr_sppf_nodes_max = sppf_nodes;
+        }
+        let sppf_links = self.sppf.symbol_packings_count_diag() as u64;
+        if sppf_links > self.stats.mem_attr_sppf_symbol_packings_max {
+            self.stats.mem_attr_sppf_symbol_packings_max = sppf_links;
+        }
+        // Exp 16 round 2: GSS arena + visited_dispatch Arc dedup +
+        // recovery_deltas Arc dedup + sppf_symbol_terms.
+        let gss_nodes = self.gss.node_count() as u64;
+        if gss_nodes > self.stats.mem_attr_gss_nodes_max {
+            self.stats.mem_attr_gss_nodes_max = gss_nodes;
+        }
+        let gss_edges = self.gss.edge_count() as u64;
+        if gss_edges > self.stats.mem_attr_gss_edges_max {
+            self.stats.mem_attr_gss_edges_max = gss_edges;
+        }
+        // visited_dispatch is per-cursor Arc<FxHashSet>. Count unique
+        // Arc allocations + total entries across all cursors. Uses
+        // Arc::as_ptr identity for dedup.
+        let mut vd_unique: std::collections::HashSet<*const _> =
+            std::collections::HashSet::new();
+        let mut vd_total_entries: u64 = 0;
+        let mut rd_unique: std::collections::HashSet<*const _> =
+            std::collections::HashSet::new();
+        for frame in &self.branch_cursors {
+            if let crate::cohort_lazy::Frame::Concrete(c) = frame {
+                let vd_ptr = std::sync::Arc::as_ptr(&c.visited_dispatch)
+                    as *const _;
+                if vd_unique.insert(vd_ptr) {
+                    vd_total_entries = vd_total_entries
+                        .saturating_add(c.visited_dispatch.len() as u64);
+                }
+                let rd_ptr = std::sync::Arc::as_ptr(&c.recovery_deltas)
+                    as *const _;
+                rd_unique.insert(rd_ptr);
+            }
+        }
+        let vd_unique_count = vd_unique.len() as u64;
+        let rd_unique_count = rd_unique.len() as u64;
+        if vd_unique_count > self.stats.mem_attr_visited_dispatch_unique_arcs_max {
+            self.stats.mem_attr_visited_dispatch_unique_arcs_max = vd_unique_count;
+        }
+        if vd_total_entries
+            > self.stats.mem_attr_visited_dispatch_total_entries_max
+        {
+            self.stats.mem_attr_visited_dispatch_total_entries_max =
+                vd_total_entries;
+        }
+        if rd_unique_count > self.stats.mem_attr_recovery_deltas_unique_arcs_max {
+            self.stats.mem_attr_recovery_deltas_unique_arcs_max = rd_unique_count;
+        }
+        let sppf_terms = self.sppf_symbol_terms.len() as u64;
+        if sppf_terms > self.stats.mem_attr_sppf_symbol_terms_max {
+            self.stats.mem_attr_sppf_symbol_terms_max = sppf_terms;
+        }
+    }
+
     #[cfg(feature = "walker-stats")]
     fn sample_sppf_reclaim_window(&mut self) {
         if self.branch_cursors.is_empty() {

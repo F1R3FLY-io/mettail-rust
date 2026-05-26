@@ -151,6 +151,30 @@ pub struct WalkerStats {
     /// matches — the inverse outlier).
     pub merge_miss_edge_only_by_context: [u64; 4],
 
+    // ── Phase F.13 chain_10000 Exp 16 (2026-05-26): walker memory
+    //     attribution profiling. Per E4 S1.a data the SPPF arena is
+    //     NOT the chain_10000 bottleneck; per Exp 9 the cohort cache
+    //     pause-side state is bigger than the revive-side; per Exp 8
+    //     the visited_dispatch Arc<FxHashSet> is the wrong target.
+    //     This counter set captures the MAX size of every walker-
+    //     owned structure across the parse so the post-parse byte
+    //     attribution identifies the actual dominant consumer.
+    pub mem_attr_branch_cursors_max: u64,
+    pub mem_attr_cache_entries_max: u64,
+    pub mem_attr_cache_pending_members_sum_max: u64,
+    pub mem_attr_cache_worker_snapshots_sum_max: u64,
+    pub mem_attr_cache_deferred_continuations_sum_max: u64,
+    pub mem_attr_sppf_stack_arena_nodes_max: u64,
+    pub mem_attr_incoming_edge_stack_arena_nodes_max: u64,
+    pub mem_attr_sppf_nodes_max: u64,
+    pub mem_attr_sppf_symbol_packings_max: u64,
+    pub mem_attr_gss_nodes_max: u64,
+    pub mem_attr_gss_edges_max: u64,
+    pub mem_attr_visited_dispatch_unique_arcs_max: u64,
+    pub mem_attr_visited_dispatch_total_entries_max: u64,
+    pub mem_attr_recovery_deltas_unique_arcs_max: u64,
+    pub mem_attr_sppf_symbol_terms_max: u64,
+
     // ── Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26):
     //     Streaming SPPF reclamation-window measurement ──────────────
     /// Number of step_fanout iterations at which the reclamation
@@ -525,6 +549,198 @@ impl fmt::Display for WalkerStats {
                 100.0 * self.merge_miss_edge_only_by_context[2] as f64 / d,
                 self.merge_miss_edge_only_by_context[3],
                 100.0 * self.merge_miss_edge_only_by_context[3] as f64 / d,
+            )?;
+        }
+        // Phase F.13 chain_10000 Exp 16 (2026-05-26): walker memory
+        // attribution with byte-estimated breakdown.
+        if self.mem_attr_branch_cursors_max
+            + self.mem_attr_cache_entries_max
+            + self.mem_attr_sppf_nodes_max
+            > 0
+        {
+            // Per-element size estimates (bytes). Conservative — actual
+            // sizes include Arc'd heap allocations not counted here.
+            const SZ_BRANCH_CURSOR: u64 = 512; // BranchCursor (post path-tree arenas)
+            const SZ_CACHE_ENTRY_BASE: u64 = 256;
+            const SZ_COHORT_MEMBER_STATE: u64 = 96; // CohortMemberState
+            const SZ_WORKER_SNAPSHOT: u64 = 96;     // WorkerSnapshot
+            const SZ_COHORT_CONTINUATION: u64 = 64; // CohortContinuation (Exp 9 S1.a)
+            const SZ_PATH_TREE_NODE: u64 = 16;
+            const SZ_SPPF_NODE: u64 = 56;          // largest variant ~48-56 B
+            const SZ_SPPF_LINK: u64 = 8;
+            let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
+            let branch_b = self.mem_attr_branch_cursors_max * SZ_BRANCH_CURSOR;
+            let cache_base_b = self.mem_attr_cache_entries_max * SZ_CACHE_ENTRY_BASE;
+            let pending_b =
+                self.mem_attr_cache_pending_members_sum_max * SZ_COHORT_MEMBER_STATE;
+            let snap_b =
+                self.mem_attr_cache_worker_snapshots_sum_max * SZ_WORKER_SNAPSHOT;
+            let cont_b = self.mem_attr_cache_deferred_continuations_sum_max
+                * SZ_COHORT_CONTINUATION;
+            let sppf_stack_b =
+                self.mem_attr_sppf_stack_arena_nodes_max * SZ_PATH_TREE_NODE;
+            let edge_stack_b =
+                self.mem_attr_incoming_edge_stack_arena_nodes_max * SZ_PATH_TREE_NODE;
+            let sppf_nodes_b = self.mem_attr_sppf_nodes_max * SZ_SPPF_NODE;
+            let sppf_links_b = self.mem_attr_sppf_symbol_packings_max * SZ_SPPF_LINK;
+            const SZ_GSS_NODE: u64 = 64;  // WpdaGssNode {pos, symbol, ...}
+            const SZ_GSS_EDGE: u64 = 64;  // WpdaGssEdge {from, to, weight, ...}
+            const SZ_FXHASHSET_ENTRY: u64 = 24;
+            const SZ_RECOVERY_DELTA: u64 = 64;
+            const SZ_SPPF_TERM_ENTRY: u64 = 32;
+            let gss_nodes_b = self.mem_attr_gss_nodes_max * SZ_GSS_NODE;
+            let gss_edges_b = self.mem_attr_gss_edges_max * SZ_GSS_EDGE;
+            let vd_arcs_b = self.mem_attr_visited_dispatch_unique_arcs_max
+                * SZ_FXHASHSET_ENTRY;
+            let vd_entries_b =
+                self.mem_attr_visited_dispatch_total_entries_max * SZ_FXHASHSET_ENTRY;
+            let rd_arcs_b =
+                self.mem_attr_recovery_deltas_unique_arcs_max * SZ_RECOVERY_DELTA;
+            let sppf_terms_b = self.mem_attr_sppf_symbol_terms_max * SZ_SPPF_TERM_ENTRY;
+            let total_b = branch_b
+                + cache_base_b
+                + pending_b
+                + snap_b
+                + cont_b
+                + sppf_stack_b
+                + edge_stack_b
+                + sppf_nodes_b
+                + sppf_links_b
+                + gss_nodes_b
+                + gss_edges_b
+                + vd_entries_b
+                + rd_arcs_b
+                + sppf_terms_b;
+            writeln!(
+                f,
+                "  mem_attr (peak; conservative — Arc'd heap not counted): total={:.2} MB",
+                mb(total_b),
+            )?;
+            let pct = |b: u64| {
+                if total_b == 0 {
+                    0.0
+                } else {
+                    100.0 * b as f64 / total_b as f64
+                }
+            };
+            writeln!(
+                f,
+                "    branch_cursors      = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_branch_cursors_max,
+                SZ_BRANCH_CURSOR,
+                mb(branch_b),
+                pct(branch_b),
+            )?;
+            writeln!(
+                f,
+                "    cohort cache base   = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_cache_entries_max,
+                SZ_CACHE_ENTRY_BASE,
+                mb(cache_base_b),
+                pct(cache_base_b),
+            )?;
+            writeln!(
+                f,
+                "    pending_members     = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_cache_pending_members_sum_max,
+                SZ_COHORT_MEMBER_STATE,
+                mb(pending_b),
+                pct(pending_b),
+            )?;
+            writeln!(
+                f,
+                "    worker_snapshots    = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_cache_worker_snapshots_sum_max,
+                SZ_WORKER_SNAPSHOT,
+                mb(snap_b),
+                pct(snap_b),
+            )?;
+            writeln!(
+                f,
+                "    deferred_continuations = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_cache_deferred_continuations_sum_max,
+                SZ_COHORT_CONTINUATION,
+                mb(cont_b),
+                pct(cont_b),
+            )?;
+            writeln!(
+                f,
+                "    sppf_stack_arena    = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_sppf_stack_arena_nodes_max,
+                SZ_PATH_TREE_NODE,
+                mb(sppf_stack_b),
+                pct(sppf_stack_b),
+            )?;
+            writeln!(
+                f,
+                "    edge_stack_arena    = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_incoming_edge_stack_arena_nodes_max,
+                SZ_PATH_TREE_NODE,
+                mb(edge_stack_b),
+                pct(edge_stack_b),
+            )?;
+            writeln!(
+                f,
+                "    sppf_nodes          = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_sppf_nodes_max,
+                SZ_SPPF_NODE,
+                mb(sppf_nodes_b),
+                pct(sppf_nodes_b),
+            )?;
+            writeln!(
+                f,
+                "    sppf_symbol_packings = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_sppf_symbol_packings_max,
+                SZ_SPPF_LINK,
+                mb(sppf_links_b),
+                pct(sppf_links_b),
+            )?;
+            writeln!(
+                f,
+                "    gss_nodes           = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_gss_nodes_max,
+                SZ_GSS_NODE,
+                mb(gss_nodes_b),
+                pct(gss_nodes_b),
+            )?;
+            writeln!(
+                f,
+                "    gss_edges           = {} × {:>4} B = {:>8.2} MB ({:>5.1}%)",
+                self.mem_attr_gss_edges_max,
+                SZ_GSS_EDGE,
+                mb(gss_edges_b),
+                pct(gss_edges_b),
+            )?;
+            writeln!(
+                f,
+                "    visited_dispatch (unique Arcs / total entries) = {} / {} ({} dedup ratio); entries × {} B = {:.2} MB ({:.1}%)",
+                self.mem_attr_visited_dispatch_unique_arcs_max,
+                self.mem_attr_visited_dispatch_total_entries_max,
+                if self.mem_attr_visited_dispatch_unique_arcs_max > 0 {
+                    self.mem_attr_visited_dispatch_total_entries_max as f64
+                        / self.mem_attr_visited_dispatch_unique_arcs_max as f64
+                } else {
+                    0.0
+                },
+                SZ_FXHASHSET_ENTRY,
+                mb(vd_entries_b),
+                pct(vd_entries_b),
+            )?;
+            writeln!(
+                f,
+                "    recovery_deltas (unique Arcs) = {} × {} B = {:.2} MB ({:.1}%)",
+                self.mem_attr_recovery_deltas_unique_arcs_max,
+                SZ_RECOVERY_DELTA,
+                mb(rd_arcs_b),
+                pct(rd_arcs_b),
+            )?;
+            writeln!(
+                f,
+                "    sppf_symbol_terms (walker memo) = {} × {} B = {:.2} MB ({:.1}%)",
+                self.mem_attr_sppf_symbol_terms_max,
+                SZ_SPPF_TERM_ENTRY,
+                mb(sppf_terms_b),
+                pct(sppf_terms_b),
             )?;
         }
         // Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26).
@@ -977,6 +1193,22 @@ mod tests {
             // Phase F.13 chain_10000 Exp 10 S0-bis (2026-05-26).
             merge_miss_node_only_by_context: [0; 4],
             merge_miss_edge_only_by_context: [0; 4],
+            // Phase F.13 chain_10000 Exp 16 (2026-05-26).
+            mem_attr_branch_cursors_max: 0,
+            mem_attr_cache_entries_max: 0,
+            mem_attr_cache_pending_members_sum_max: 0,
+            mem_attr_cache_worker_snapshots_sum_max: 0,
+            mem_attr_cache_deferred_continuations_sum_max: 0,
+            mem_attr_sppf_stack_arena_nodes_max: 0,
+            mem_attr_incoming_edge_stack_arena_nodes_max: 0,
+            mem_attr_sppf_nodes_max: 0,
+            mem_attr_sppf_symbol_packings_max: 0,
+            mem_attr_gss_nodes_max: 0,
+            mem_attr_gss_edges_max: 0,
+            mem_attr_visited_dispatch_unique_arcs_max: 0,
+            mem_attr_visited_dispatch_total_entries_max: 0,
+            mem_attr_recovery_deltas_unique_arcs_max: 0,
+            mem_attr_sppf_symbol_terms_max: 0,
             // Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26).
             sppf_reclaim_window_samples: 0,
             sppf_reclaim_cache_pinned_samples: 0,

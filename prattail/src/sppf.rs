@@ -727,6 +727,20 @@ impl<W: SemiringRef> Sppf<W> {
     /// Recurses through Packings to their leftmost child until it hits a
     /// Terminal / Symbol / Epsilon (whose `lo_pos` is intrinsic). Returns
     /// `None` if `id` is out-of-range or the node has no determinable
+    /// Phase F.13 chain_10000 Exp 16 (2026-05-26): node arena size
+    /// diagnostic (total node count, all variants). Used by walker
+    /// memory-attribution sampling.
+    pub fn node_count_diag(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Phase F.13 chain_10000 Exp 16 (2026-05-26): symbol_packings
+    /// link-table size diagnostic. Used by walker memory-attribution
+    /// sampling.
+    pub fn symbol_packings_count_diag(&self) -> usize {
+        self.symbol_packings.len()
+    }
+
     /// Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26):
     /// diagnostic accessor for the Streaming SPPF reclamation-window
     /// instrumentation. Returns `(symbols_below, total_symbols)`
