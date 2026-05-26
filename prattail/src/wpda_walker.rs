@@ -5172,9 +5172,21 @@ where
                 // (category_src_idx, rule_index_in_category) Return
                 // symbol — chain extension witness (Plan A invariant I2).
                 //
-                // Substage 6a: walker arm exists; engine codegen does
-                // NOT emit this action (Substage 6b). Unreachable at
-                // this commit unless a future codegen path emits.
+                // Exp 7 fix (2026-05-26 — fixes Exp 6b regression):
+                // when chain-extending, ALSO fire the per-iteration
+                // action that the elided Unwinding-Return-Pop would
+                // have fired. Without this fire, the cursor's SPPF
+                // chain grows monotonically by 1 per `+` iteration
+                // (RHS operand pushed but never folded), causing
+                // sppf_top to diverge per iteration and defeating
+                // merge_equivalent_cursors. Empirically: 6b OOM'd
+                // chain_10000 at 4 GB/min (vs E6's 1.6 GB/min) because
+                // cursors that should have merged stayed apart for
+                // the full chain length. Restoring the per-iteration
+                // fire-action keeps the chain length bounded (arity-1
+                // shrink per iteration, 1 grow per RHS push, net 0)
+                // and preserves Plan A's win: one shared GSS Return
+                // frame for the whole chain.
                 let already_chained = self
                     .gss
                     .node(cursor.node)
@@ -5185,6 +5197,17 @@ where
                                 == symbol.rule_index_in_category
                     })
                     .unwrap_or(false);
+                if already_chained {
+                    // Exp 7: per-iteration relief — fold the most
+                    // recent `arity` children on `cursor.sppf_stack_id`
+                    // into a Packing Symbol, exactly as the elided
+                    // Pop's `apply_pop_body_to_cursor` would have via
+                    // `emit_fire_action`. `symbol` already carries
+                    // the Return RuleAt's (category_src_idx,
+                    // rule_index_in_category); it is `Copy` so passing
+                    // by value here doesn't disturb downstream use.
+                    self.emit_fire_action(cursor, symbol);
+                }
                 self.emit_push_side_effects(cursor, &mut symbol);
                 if !already_chained {
                     let _ = self.cursor_gss_push_auto(
