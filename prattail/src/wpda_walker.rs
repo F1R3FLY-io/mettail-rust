@@ -7580,6 +7580,24 @@ where
                 recovery_deltas_len_samples,
                 cursor.recovery_deltas.len()
             );
+            // Phase F.13 chain_10000 Exp 5 Substage 0 (2026-05-26):
+            // gate histograms for Plan B CursorId pilot. If chain max
+            // ≤ 4 on these fields, Exp 5 SKIPPED (no allocation to
+            // save); if max > 16, pilot proceeds. Per Plan B agent.
+            crate::stats_histogram_sample!(
+                self,
+                visited_dispatch_len_histogram,
+                visited_dispatch_len_max,
+                visited_dispatch_len_samples,
+                cursor.visited_dispatch.len()
+            );
+            crate::stats_histogram_sample!(
+                self,
+                visited_recovery_len_histogram,
+                visited_recovery_len_max,
+                visited_recovery_len_samples,
+                cursor.visited_recovery.len()
+            );
             let mut cursor = cursor;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
             // Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard. Any

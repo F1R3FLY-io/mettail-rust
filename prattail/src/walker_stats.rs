@@ -232,6 +232,19 @@ pub struct WalkerStats {
     pub recovery_deltas_len_histogram: [u64; 8],
     pub recovery_deltas_len_max: u64,
     pub recovery_deltas_len_samples: u64,
+    /// Phase F.13 chain_10000 Exp 5 Substage 0 (2026-05-26):
+    /// histogram gate for the Plan B CursorId-keyed pilot on
+    /// `visited_dispatch`. Plan B agent recommended this gate
+    /// (mirroring Plan C Substage 0) to empirically confirm whether
+    /// the field's typical size justifies the walker-global HashMap
+    /// refactor cost. If chain max ≤ 4, pilot SKIPPED — no
+    /// allocation to save. If max > 16, pilot proceeds.
+    pub visited_dispatch_len_histogram: [u64; 8],
+    pub visited_dispatch_len_max: u64,
+    pub visited_dispatch_len_samples: u64,
+    pub visited_recovery_len_histogram: [u64; 8],
+    pub visited_recovery_len_max: u64,
+    pub visited_recovery_len_samples: u64,
 }
 
 /// Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26): histogram
@@ -449,6 +462,37 @@ impl fmt::Display for WalkerStats {
             }
             writeln!(f)?;
         }
+        // Phase F.13 chain_10000 Exp 5 Substage 0 (2026-05-26).
+        if self.visited_dispatch_len_samples > 0 {
+            let labels = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64+"];
+            let total = self.visited_dispatch_len_samples as f64;
+            write!(
+                f,
+                "  visited_dispatch_len_histogram (n={}, max={}):",
+                self.visited_dispatch_len_samples,
+                self.visited_dispatch_len_max,
+            )?;
+            for (i, lbl) in labels.iter().enumerate() {
+                let c = self.visited_dispatch_len_histogram[i];
+                write!(f, " {}={} ({:.1}%)", lbl, c, 100.0 * c as f64 / total)?;
+            }
+            writeln!(f)?;
+        }
+        if self.visited_recovery_len_samples > 0 {
+            let labels = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64+"];
+            let total = self.visited_recovery_len_samples as f64;
+            write!(
+                f,
+                "  visited_recovery_len_histogram (n={}, max={}):",
+                self.visited_recovery_len_samples,
+                self.visited_recovery_len_max,
+            )?;
+            for (i, lbl) in labels.iter().enumerate() {
+                let c = self.visited_recovery_len_histogram[i];
+                write!(f, " {}={} ({:.1}%)", lbl, c, 100.0 * c as f64 / total)?;
+            }
+            writeln!(f)?;
+        }
         Ok(())
     }
 }
@@ -591,6 +635,13 @@ mod tests {
             recovery_deltas_len_histogram: [0; 8],
             recovery_deltas_len_max: 0,
             recovery_deltas_len_samples: 0,
+            // Phase F.13 chain_10000 Exp 5 Substage 0 (2026-05-26).
+            visited_dispatch_len_histogram: [0; 8],
+            visited_dispatch_len_max: 0,
+            visited_dispatch_len_samples: 0,
+            visited_recovery_len_histogram: [0; 8],
+            visited_recovery_len_max: 0,
+            visited_recovery_len_samples: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
