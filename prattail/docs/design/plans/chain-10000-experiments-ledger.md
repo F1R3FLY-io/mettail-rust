@@ -35,7 +35,7 @@
 | 5-S0 | 2026-05-26 | Exp 5 Substage 0 — `visited_dispatch` + `visited_recovery` length histograms | `41d0d22` | 4102/0 | n/a (feature-off zero-cost) | n/a | n/a | n/a | n/a | **ACCEPT** (instrumentation) |
 | 5 | 2026-05-26 | Plan B Substage 1 — CursorId-keyed walker-global pilot on `visited_dispatch` | n/a (SKIP-AFTER-DATA) | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP-AFTER-DATA** — see below |
 | 6a | 2026-05-26 | Plan A First Substage 6a — types + walker scaffold (`WpdaState::InfixChainIterative`, `WpdaStepAction::IterativeChainAbsorb`, walker arm, `is_iterative_candidate` with PILOT-ONLY `label=="AddInt"` gate) | `a033a97` | 4102/0 | n/a (unreachable — no codegen emission) | n/a | n/a | n/a | n/a | **ACCEPT** (scaffold-only, behavior-equivalent) |
-| 6b | DEFERRED | Plan A First Substage 6b — codegen activation: `emit_iter_eligible_fn`, modify InfixLoop singleton arm, engine `InfixChainIterative` dispatch arm | — | — | — | — | — | — | — | DEFERRED to next session (~4h scope per Plan A agent estimate) |
+| 6b | 2026-05-26 | Plan A First Substage 6b — codegen activation: `emit_iter_eligible_fn`, modify InfixLoop singleton arm, engine `InfixChainIterative` dispatch arm | `969f3d5` | 4102/0 + tramp 15/0/2 + parity 16/0 | **WIN vs base** −15.32 % (t=−23.08); vs E6 WIN −8.28 % | **WIN vs base** −14.74 %; vs E6 WIN −7.91 % | **WIN vs base** −13.16 %; vs E6 WIN −2.44 % | **WIN vs base** −8.76 %; vs E6 NEUTRAL −1.05 % | OOM 24 GB at 6:14 wall (FASTER OOM than E6-only's 15:44 — ~4 GB/min vs 1.6 GB/min) | **ACCEPT-WITH-CAVEAT** (Welch ACCEPT all 4 chain sizes per user keep-criterion; chain_10000 trajectory regressed — chain-extension elision changes memory pattern, kept GSS frame alive longer accumulates more state). |
 
 ---
 
