@@ -588,6 +588,16 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// Append-only.
     #[allow(dead_code)]
     sppf_predicate_arena: Vec<Arc<dyn Any + Send + Sync>>,
+    /// Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+    /// walker-global SPPF-stack path-tree arena. Each `BranchCursor`
+    /// holds a `StackId` (Copy `u32`) into this arena; push/pop are
+    /// interning operations that dedup equal-prefix chains across
+    /// cursors. Replaces the prior per-cursor `Arc<Vec<SppfId>>` field.
+    /// See `prattail/src/sppf_stack_arena.rs` for the data structure
+    /// + 15 unit/property tests, and the ledger
+    /// `prattail/docs/design/plans/chain-10000-experiments-ledger.md`
+    /// row 3 for the empirical Welch verification.
+    pub sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena,
     /// Phase F.13 H1 (2026-05-20): walker-global memo of realized AST
     /// payloads keyed by SPPF Symbol id. Promoted from per-cursor
     /// `Arc<Vec<(SppfId, Arc<dyn Any>)>>` to walker-global HashMap to
@@ -1257,7 +1267,21 @@ pub struct BranchCursor<W: SemiringRef> {
     ///
     /// See `~/.claude/plans/option-c-sppf-on-wpda.md` §2.1 (original C2)
     /// and `~/.claude/plans/replicated-conjuring-turtle.md` (F.11 design).
-    pub sppf_stack: Arc<Vec<crate::sppf::SppfId>>,
+    ///
+    /// Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+    /// changed from `Arc<Vec<SppfId>>` to walker-global-arena-
+    /// interned `StackId` (a `Copy u32`). Each `cursor.sppf_stack_id`
+    /// is a handle into `WpdaWalker::sppf_stack_arena` (a GSS-style
+    /// path-tree per `prattail/src/sppf_stack_arena.rs`). Two cursors
+    /// that pushed identical SppfId sequences from a common ancestor
+    /// share the entire chain via dedup; per-step `BranchCursor::clone`
+    /// cost for this field drops from `Arc::clone` (atomic refcount
+    /// bump) to a `u32` copy. Walker mutation sites use
+    /// `arena.intern_push(cursor.sppf_stack_id, sid)` and
+    /// `arena.intern_pop(cursor.sppf_stack_id)`; reads use
+    /// `arena.top` / `arena.len`; full-slice access (rare; debug-
+    /// assert sweeps + 2 drain sites) uses `arena.slice_at(id, &mut scratch)`.
+    pub sppf_stack_id: crate::sppf_stack_arena::StackId,
     /// Option C / C3: per-cursor record of `sppf_stack` length snapshots
     /// at each `emit_start_optional_scope` call. On
     /// `emit_finalize_optional_scope_present`, the topmost mark is popped
@@ -1507,7 +1531,11 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // Arc::clone is no longer needed.
             // Phase F.11 (2026-05-20): Arc bump — clone is O(1); first
             // mutation in the cloned cursor triggers Arc::make_mut CoW.
-            sppf_stack: Arc::clone(&self.sppf_stack),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // `sppf_stack: Arc<Vec<SppfId>>` superseded by walker-global
+            // arena-interned `sppf_stack_id: StackId`. The clone here is
+            // now a Copy u32 move into the cloned cursor.
+            sppf_stack_id: self.sppf_stack_id,
             optional_scope_marks: self.optional_scope_marks.clone(),
             binder_scope_marks: self.binder_scope_marks.clone(),
             // Phase C.2/C.3 (2026-05-17): clone the pending weight too.
@@ -1612,7 +1640,10 @@ impl<W: SemiringRef> BranchCursor<W> {
             // Option C / C2: seed cursor's SPPF stack is empty (no reduces yet).
             // Phase F.11 (2026-05-20): fresh empty Arc; mutators will
             // Arc::make_mut on first push (cheap when refcount == 1).
-            sppf_stack: Arc::new(Vec::new()),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // walker-global-arena interned id; STACK_ID_ROOT sentinel
+            // means empty stack (no chain node allocated).
+            sppf_stack_id: crate::sppf_stack_arena::STACK_ID_ROOT,
             optional_scope_marks: Vec::new(),
             binder_scope_marks: Vec::new(),
             // Phase C.2 (2026-05-17): seed cursor has not entered any Fork-
@@ -1680,7 +1711,13 @@ impl<W: SemiringRef> BranchCursor<W> {
             // construction history. Clone is O(depth-of-current-rule),
             // which is bounded by a small constant; cheaper than the
             // Arc::clone above on the builder Arc bump cost basis.
-            sppf_stack: Arc::clone(&parent.sppf_stack),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // arena-interned `StackId` (Copy u32). Child inherits parent's
+            // sppf_stack_id directly; first push allocates a new chain
+            // node via `arena.intern_push(child.sppf_stack_id, sid)`
+            // (the arena dedups by `(parent, sid)` so equal sequences
+            // share chain nodes across cursors).
+            sppf_stack_id: parent.sppf_stack_id,
             optional_scope_marks: parent.optional_scope_marks.clone(),
             binder_scope_marks: parent.binder_scope_marks.clone(),
             // Phase C.3 (2026-05-17): per-Q1.A+, Fork-arm child cursors
@@ -2450,6 +2487,9 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // walker-global SPPF stack interning arena. Fresh = empty.
+            sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
         }
     }
 
@@ -2518,6 +2558,9 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // walker-global SPPF stack interning arena. Fresh = empty.
+            sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
         }
     }
 
@@ -2581,6 +2624,9 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // walker-global SPPF stack interning arena. Fresh = empty.
+            sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
         }
     }
 
@@ -2617,6 +2663,11 @@ where
         // the engine's input change); stale memo entries would leak Arc
         // payloads across parses.
         self.sppf_symbol_terms.clear();
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // clear the SPPF-stack interning arena at parse boundary. Chain
+        // nodes reference SppfIds that are per-parse; stale entries
+        // would alias new parses' SppfIds incorrectly.
+        self.sppf_stack_arena.clear();
         // Phase F.13 walker-stats (2026-05-20): zero counters at parse boundary
         // and increment seed (matches the constructor's `cursors_created_via_seed = 1`).
         #[cfg(feature = "walker-stats")]
@@ -3064,7 +3115,10 @@ where
                     // SppfId from `self.committed_sppf_root` (added in C6),
                     // not from a cursor's stack.
                     // Phase F.11 (2026-05-20): Arc-wrapped (CoW).
-                    sppf_stack: Arc::new(Vec::new()),
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2
+                    // (2026-05-26): walker-global arena-interned StackId
+                    // (Copy u32). STACK_ID_ROOT = empty.
+                    sppf_stack_id: crate::sppf_stack_arena::STACK_ID_ROOT,
                     optional_scope_marks: Vec::new(),
                     binder_scope_marks: Vec::new(),
                     // Phase C.2 (2026-05-17): post-resolution singleton
@@ -3281,46 +3335,71 @@ where
                 // reads from shell.sppf_stack_baseline (Arc). All
                 // shell-invariant by ~_obs def so the fingerprint is
                 // identical to the materialized-form fingerprint.
-                let fp_of = |frame: &crate::cohort_lazy::Frame<W>| -> (
+                // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                // sppf_stack length now reads through the walker-global
+                // arena via `arena.len(id)`. The arena reference must NOT
+                // outlive `step_fanout(&mut self)` — re-bind the closure
+                // both before AND after that call so each pre/post borrow
+                // is independent and the &mut self call sits between
+                // their lifetimes.
+                let prev_fingerprint: Vec<(
                     crate::gss::GssNodeId,
                     usize,
                     WpdaState,
                     usize,
                     usize,
-                ) {
-                    match frame {
-                        crate::cohort_lazy::Frame::Concrete(c) => (
-                            c.node,
-                            c.pos,
-                            c.inner_state.clone(),
-                            c.recovery_deltas.len(),
-                            c.sppf_stack.len(),
-                        ),
-                        crate::cohort_lazy::Frame::Cohort(cf) => (
-                            cf.shell.node,
-                            cf.shell.pos,
-                            cf.shell.inner_state.clone(),
-                            cf.shell.recovery_deltas.len(),
-                            cf.shell.sppf_stack_baseline.len(),
-                        ),
-                    }
+                )> = {
+                    let arena = &self.sppf_stack_arena;
+                    self.branch_cursors
+                        .iter()
+                        .map(|frame| match frame {
+                            crate::cohort_lazy::Frame::Concrete(c) => (
+                                c.node,
+                                c.pos,
+                                c.inner_state.clone(),
+                                c.recovery_deltas.len(),
+                                arena.len(c.sppf_stack_id),
+                            ),
+                            crate::cohort_lazy::Frame::Cohort(cf) => (
+                                cf.shell.node,
+                                cf.shell.pos,
+                                cf.shell.inner_state.clone(),
+                                cf.shell.recovery_deltas.len(),
+                                arena.len(cf.shell.sppf_stack_baseline_id),
+                            ),
+                        })
+                        .collect()
                 };
-                let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdaState, usize, usize)> =
-                    self.branch_cursors.iter().map(&fp_of).collect();
                 self.step_fanout(tokens);
-                let progress_made = self.branch_cursors.len() != prev_count
-                    || self
-                        .branch_cursors
+                let progress_made = self.branch_cursors.len() != prev_count || {
+                    let arena = &self.sppf_stack_arena;
+                    self.branch_cursors
                         .iter()
                         .zip(prev_fingerprint.iter())
                         .any(|(frame, (n, p, s, ops_len, sppf_len))| {
-                            let cur = fp_of(frame);
+                            let cur = match frame {
+                                crate::cohort_lazy::Frame::Concrete(c) => (
+                                    c.node,
+                                    c.pos,
+                                    c.inner_state.clone(),
+                                    c.recovery_deltas.len(),
+                                    arena.len(c.sppf_stack_id),
+                                ),
+                                crate::cohort_lazy::Frame::Cohort(cf) => (
+                                    cf.shell.node,
+                                    cf.shell.pos,
+                                    cf.shell.inner_state.clone(),
+                                    cf.shell.recovery_deltas.len(),
+                                    arena.len(cf.shell.sppf_stack_baseline_id),
+                                ),
+                            };
                             cur.0 != *n
                                 || cur.1 != *p
                                 || cur.2 != *s
                                 || cur.3 != *ops_len
                                 || cur.4 != *sppf_len
-                        });
+                        })
+                };
                 if !progress_made {
                     // True fixed point — every cursor's engine.step
                     // returned Idle (or transitioned to itself), so no
@@ -3463,10 +3542,16 @@ where
             // SPPF root captured from cursor.sppf_stack.last().
             // C6: extract the singleton cursor's SPPF root.
             // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // sppf_stack.last().copied() superseded by arena.top(id).
             let det_sppf_root = self
                 .branch_cursors
                 .first()
-                .and_then(|frame| frame.as_concrete().and_then(|c| c.sppf_stack.last().copied()))
+                .and_then(|frame| {
+                    frame
+                        .as_concrete()
+                        .and_then(|c| self.sppf_stack_arena.top(c.sppf_stack_id))
+                })
                 .unwrap_or(crate::sppf::SPPF_ID_NONE);
             return match self.state.clone() {
                 WpdaState::Accepted => {
@@ -3618,10 +3703,11 @@ where
                 // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
                 let winner_cursor = self.branch_cursors[winner_idx].as_concrete_expect();
                 let winner_weight = winner_cursor.weight.clone();
-                let winner_sppf_root = winner_cursor
-                    .sppf_stack
-                    .last()
-                    .copied()
+                // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                // sppf_stack.last() superseded by arena.top(id).
+                let winner_sppf_root = self
+                    .sppf_stack_arena
+                    .top(winner_cursor.sppf_stack_id)
                     .unwrap_or(crate::sppf::SPPF_ID_NONE);
                 self.commit_winner_at_eoi(winner_idx);
                 // Phase F.0 (2026-05-17): replace self.builder.take_dyn_result
@@ -3669,10 +3755,11 @@ where
                     // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
                     let cursor = self.branch_cursors[idx].as_concrete_expect();
                     let cursor_weight = cursor.weight.clone();
-                    let cursor_root = cursor
-                        .sppf_stack
-                        .last()
-                        .copied()
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                    // sppf_stack.last() superseded by arena.top(id).
+                    let cursor_root = self
+                        .sppf_stack_arena
+                        .top(cursor.sppf_stack_id)
                         .unwrap_or(crate::sppf::SPPF_ID_NONE);
                     // Phase F.0 (2026-05-17): extract via SPPF realize
                     // instead of cloning cursor.builder. cursor.builder
@@ -4755,7 +4842,9 @@ where
                     // stack. The drop discards the failed cursor's tree
                     // construction; the deterministic-mode singleton resets.
                     // Phase F.11 (2026-05-20): Arc-wrapped (CoW).
-                    sppf_stack: Arc::new(Vec::new()),
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                    // walker-global arena-interned StackId. ROOT = empty.
+                    sppf_stack_id: crate::sppf_stack_arena::STACK_ID_ROOT,
                     optional_scope_marks: Vec::new(),
                     binder_scope_marks: Vec::new(),
                     // Phase C.2 (2026-05-17): post-Drop reset clears the
@@ -5482,7 +5571,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5576,7 +5667,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5646,7 +5739,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5709,7 +5804,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5804,7 +5901,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5879,7 +5978,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -5955,7 +6056,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -6078,7 +6181,9 @@ where
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -6194,7 +6299,9 @@ where
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -6347,7 +6454,9 @@ where
                                 // until a 5.3+ mutator triggers
                                 // `Arc::make_mut` copy-on-write.
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
-                                sppf_stack: Arc::clone(&cursor.sppf_stack),
+                                // Phase F.13 chain_10000 Plan D E3 Substage 2
+                                // (2026-05-26): arena-interned StackId (Copy u32).
+                                sppf_stack_id: cursor.sppf_stack_id,
                                 optional_scope_marks: cursor.optional_scope_marks.clone(),
                                 binder_scope_marks: cursor.binder_scope_marks.clone(),
                                 // Phase C.3 (2026-05-17): Fork-arm child
@@ -7738,8 +7847,10 @@ where
                     let depth_diff = a.collection_stack_depth != b.collection_stack_depth;
                     // ── Phase F.13 Stage 3.A: 6 newer axes ─────────────
                     let cohort_origin_diff = a.cohort_origin != b.cohort_origin;
-                    let a_sppf_top = a.sppf_stack.last().copied();
-                    let b_sppf_top = b.sppf_stack.last().copied();
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2
+                    // (2026-05-26): arena.top replaces sppf_stack.last().
+                    let a_sppf_top = self.sppf_stack_arena.top(a.sppf_stack_id);
+                    let b_sppf_top = self.sppf_stack_arena.top(b.sppf_stack_id);
                     let sppf_top_diff = a_sppf_top != b_sppf_top;
                     // LexProvenance trait methods (default impl returns 0
                     // for non-Lex weights). Inherited via the walker's
@@ -7954,7 +8065,9 @@ where
                 // derivations and MUST NOT merge — even when their
                 // (state, node, pos, edge, depth, cohort_origin)
                 // would otherwise match.
-                sppf_top: cursor.sppf_stack.last().copied(),
+                // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                // sppf_stack.last() superseded by arena.top(id).
+                sppf_top: self.sppf_stack_arena.top(cursor.sppf_stack_id),
                 // Phase F.13 Stage 2.0b (2026-05-22): lex-Fork
                 // provenance via LexProvenance trait. LexicographicWeight's
                 // `times` left-projects these fields, so the first
@@ -8039,10 +8152,22 @@ where
                         // (intern_* methods return valid ids) but guards
                         // against future emit-helper bugs that mishandle
                         // sentinel ids.
+                        // Phase F.13 chain_10000 Plan D E3 Substage 2
+                        // (2026-05-26): materialize via arena.slice_at +
+                        // caller scratch (the arena's path-tree does not
+                        // expose a contiguous slice without one).
                         #[cfg(debug_assertions)]
                         {
                             let sppf_len = self.sppf.len() as u32;
-                            for &sid in cursor.sppf_stack.iter() {
+                            let mut scratch_cursor: Vec<crate::sppf::SppfId> =
+                                Vec::with_capacity(
+                                    self.sppf_stack_arena.len(cursor.sppf_stack_id),
+                                );
+                            for &sid in self
+                                .sppf_stack_arena
+                                .slice_at(cursor.sppf_stack_id, &mut scratch_cursor)
+                                .iter()
+                            {
                                 debug_assert!(
                                     sid < sppf_len,
                                     "merge_equivalent_cursors: cursor.sppf_stack \
@@ -8050,7 +8175,19 @@ where
                                     sid, sppf_len
                                 );
                             }
-                            for &sid in merged[idx].sppf_stack.iter() {
+                            let mut scratch_winner: Vec<crate::sppf::SppfId> =
+                                Vec::with_capacity(
+                                    self.sppf_stack_arena
+                                        .len(merged[idx].sppf_stack_id),
+                                );
+                            for &sid in self
+                                .sppf_stack_arena
+                                .slice_at(
+                                    merged[idx].sppf_stack_id,
+                                    &mut scratch_winner,
+                                )
+                                .iter()
+                            {
                                 debug_assert!(
                                     sid < sppf_len,
                                     "merge_equivalent_cursors: winner.sppf_stack \
@@ -8424,7 +8561,9 @@ where
             // is the authoritative per-cursor state.
             // Option C / C2: preserve winner's SPPF stack so subsequent
             // reduces continue building on top of the committed history.
-            sppf_stack: winner.sppf_stack,
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // arena-interned StackId (Copy u32) — move (was Arc move).
+            sppf_stack_id: winner.sppf_stack_id,
             optional_scope_marks: winner.optional_scope_marks,
             binder_scope_marks: winner.binder_scope_marks,
             // Phase C.2 (2026-05-17): preserve the winner's pending weight
@@ -8620,7 +8759,11 @@ where
             BuilderDelta::EndBinderScope => {
                 if let Some((depth, names)) = cursor.binder_scope_marks.pop() {
                     let sid = self.sppf.intern_binder_scope(&names, depth);
-                    Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2
+                    // (2026-05-26): arena.intern_push replaces
+                    // Arc::make_mut(&mut sppf_stack).push.
+                    cursor.sppf_stack_id =
+                        self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
                 }
             }
             BuilderDelta::StartCollection => {
@@ -8647,7 +8790,10 @@ where
                 // side and pushing the SppfId onto sppf_stack so the
                 // subsequent emit_fire_action's arity check passes.
                 let sid = self.sppf.intern_collection_id(*id as u32);
-                Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+                // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+                cursor.sppf_stack_id =
+                    self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
             }
             BuilderDelta::SpliceIntoCollection { id } => {
                 // Phase F.9 (2026-05-19): mirror `emit_splice_into_collection`'s
@@ -8672,7 +8818,13 @@ where
                 // arena slot. Bounds-check on `id` matches the helper's
                 // defensive guard at `emit_splice_into_collection`.
                 if (*id as usize) < cursor.sppf_collection_arena.len() {
-                    if let Some(top) = Arc::make_mut(&mut cursor.sppf_stack).pop() {
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2
+                    // (2026-05-26): arena.top + intern_pop replaces
+                    // Arc::make_mut(&mut sppf_stack).pop. Read top first
+                    // (since intern_pop drops it), then pop.
+                    if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
+                        cursor.sppf_stack_id =
+                            self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                         Arc::make_mut(&mut cursor.sppf_collection_arena)
                             [*id as usize]
                             .push(top);
@@ -8777,7 +8929,10 @@ where
             text_opt,
             false,
         );
-        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+        cursor.sppf_stack_id =
+            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
         // intern_terminal + sppf_stack.push above carries the structural
         // state; emit_fire_action's reconstruct_action_arg reads the
@@ -8818,7 +8973,10 @@ where
             owner_cat,
             owner_rule_idx,
         );
-        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+        cursor.sppf_stack_id =
+            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
     }
 
     #[inline(always)]
@@ -8834,7 +8992,10 @@ where
             Some(name),
             true,
         );
-        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+        cursor.sppf_stack_id =
+            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Terminal
         // node carries the Ident state. Mirror clears (Ident is non-Term).
         self.clear_action_output_mirror(cursor);
@@ -8851,7 +9012,10 @@ where
         let handle = self.sppf_predicate_arena.len() as u32;
         self.sppf_predicate_arena.push(Arc::clone(&pred));
         let sid = self.sppf.intern_predicate(handle);
-        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+        cursor.sppf_stack_id =
+            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Predicate
         // node + sppf_predicate_arena carry the payload. Mirror clears.
         self.clear_action_output_mirror(cursor);
@@ -8906,12 +9070,21 @@ where
         if !cursor.optional_scope_marks.is_empty() {
             return false;
         }
-        match cursor.sppf_stack.as_slice() {
-            [] => true,
-            [sid] => matches!(
-                self.sppf.node(*sid),
-                Some(crate::sppf::SppfNode::Symbol { .. })
-            ),
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // pattern-match on length + arena.top for the [sid] case;
+        // arena does not expose a contiguous slice without scratch.
+        match self.sppf_stack_arena.len(cursor.sppf_stack_id) {
+            0 => true,
+            1 => {
+                let sid = self
+                    .sppf_stack_arena
+                    .top(cursor.sppf_stack_id)
+                    .expect("E3 Substage 2: len==1 implies top() is Some");
+                matches!(
+                    self.sppf.node(sid),
+                    Some(crate::sppf::SppfNode::Symbol { .. })
+                )
+            }
             _ => false,
         }
     }
@@ -8934,12 +9107,16 @@ where
     /// Mapping (caveat added 2026-05-18 during F.2 verification).
     #[inline]
     pub fn cursor_top_non_terminal_tag(&self, cursor: &BranchCursor<W>) -> Option<u32> {
-        cursor.sppf_stack.last().and_then(|&sid| match self.sppf.node(sid) {
-            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
-                Some(*non_terminal_tag)
-            }
-            _ => None,
-        })
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.top replaces sppf_stack.last().
+        self.sppf_stack_arena
+            .top(cursor.sppf_stack_id)
+            .and_then(|sid| match self.sppf.node(sid) {
+                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                    Some(*non_terminal_tag)
+                }
+                _ => None,
+            })
     }
 
     /// Phase F.1 (2026-05-18): SPPF-derived equivalent of
@@ -9316,7 +9493,10 @@ where
         // is a runtime error (test
         // `commit_winner_state_overwrite_on_action_arity_underflow`),
         // NOT an internal SPPF-mirror corruption.
-        if cursor.sppf_stack.len() < arity
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.len replaces sppf_stack.len.
+        let sppf_stack_len = self.sppf_stack_arena.len(cursor.sppf_stack_id);
+        if sppf_stack_len < arity
             && self
                 .engine
                 .action_for(cat_src_idx, local_rule_idx)
@@ -9328,7 +9508,7 @@ where
                 cat_src_idx,
                 local_rule_idx,
                 arity,
-                cursor.sppf_stack.len(),
+                sppf_stack_len,
             );
             let err = WpdaState::Error { message };
             cursor.inner_state = err.clone();
@@ -9336,7 +9516,7 @@ where
             cursor.last_action_output_cat = None;
             return;
         }
-        if cursor.sppf_stack.len() >= arity {
+        if sppf_stack_len >= arity {
             // Phase F.8 (2026-05-18): walk back from the arity-slice top
             // to include consecutive TriggerTerminal frames that belong to
             // THIS reduce. Unary-prefix rules push a TriggerTerminal for
@@ -9367,9 +9547,19 @@ where
             // same.
             // Non-prefix rules push NO TriggerTerminal, so the walk-back
             // exits immediately and behavior is byte-identical to pre-fix.
-            let mut split_at = cursor.sppf_stack.len() - arity;
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // arena slice + pop loop replaces sppf_stack drain. The
+            // arena does not expose a contiguous slice; materialize one
+            // into caller scratch, perform the walk-back claim logic on
+            // the slice, then `to_vec()` the suffix into `children` and
+            // pop `pop_count` entries from the cursor's chain id.
+            let mut scratch: Vec<crate::sppf::SppfId> = Vec::with_capacity(sppf_stack_len);
+            let slice = self
+                .sppf_stack_arena
+                .slice_at(cursor.sppf_stack_id, &mut scratch);
+            let mut split_at = sppf_stack_len - arity;
             while split_at > 0 {
-                let prev = cursor.sppf_stack[split_at - 1];
+                let prev = slice[split_at - 1];
                 let claim = match self.sppf.node(prev) {
                     Some(crate::sppf::SppfNode::TriggerTerminal {
                         owner_cat,
@@ -9384,8 +9574,13 @@ where
                     break;
                 }
             }
-            let children: Vec<crate::sppf::SppfId> =
-                Arc::make_mut(&mut cursor.sppf_stack).drain(split_at..).collect();
+            let children: Vec<crate::sppf::SppfId> = slice[split_at..].to_vec();
+            let pop_count = sppf_stack_len - split_at;
+            drop(scratch);
+            for _ in 0..pop_count {
+                cursor.sppf_stack_id =
+                    self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+            }
             // lo_pos: leftmost child's span_lo, or fall back to hi_pos if
             // arity == 0 (epsilon-like reduce). With Phase F.8 the
             // leftmost child for a unary-prefix rule is the TriggerTerminal
@@ -9458,7 +9653,11 @@ where
                     let symbol_id =
                         self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
                     self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-                    Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                    // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+                    cursor.sppf_stack_id = self
+                        .sppf_stack_arena
+                        .intern_push(cursor.sppf_stack_id, symbol_id);
                     // Phase F.13 H1 (2026-05-20): write to walker-global
                     // memo. Insert is idempotent — same SymbolId from a
                     // different cursor yields an equivalent result_arc.
@@ -9483,7 +9682,11 @@ where
                 .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
-            Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+            cursor.sppf_stack_id = self
+                .sppf_stack_arena
+                .intern_push(cursor.sppf_stack_id, symbol_id);
         }
     }
 
@@ -9552,7 +9755,10 @@ where
         // C3 dual-mode: push a CollectionId placeholder onto sppf_stack so
         // the fire_action arity check matches builder.stack arity.
         let sid = self.sppf.intern_collection_id(id as u32);
-        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+        cursor.sppf_stack_id =
+            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF
         // CollectionId node above mirrors the structural state.
         self.clear_action_output_mirror(cursor);
@@ -9567,7 +9773,12 @@ where
         // length check first to avoid spurious CoW when sppf_stack is
         // empty.
         if (id as usize) < cursor.sppf_collection_arena.len() {
-            if let Some(top) = Arc::make_mut(&mut cursor.sppf_stack).pop() {
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // arena.top + intern_pop replaces Arc::make_mut(&mut sppf_stack).pop.
+            // Read top first (since intern_pop discards it), then pop.
+            if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
+                cursor.sppf_stack_id =
+                    self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                 Arc::make_mut(&mut cursor.sppf_collection_arena)[id as usize].push(top);
             }
         }
@@ -9584,7 +9795,11 @@ where
         // C3 dual-mode: record the sppf_stack length at scope-open so
         // emit_finalize_optional_scope_present can collect everything
         // pushed since this point.
-        cursor.optional_scope_marks.push(cursor.sppf_stack.len());
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.len replaces sppf_stack.len.
+        cursor
+            .optional_scope_marks
+            .push(self.sppf_stack_arena.len(cursor.sppf_stack_id));
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
         // `cursor.optional_scope_marks.push(cursor.sppf_stack.len())`
         // above mirrors the open-scope state.
@@ -9701,9 +9916,24 @@ where
         // sppf_stack contents pushed since the mark into a Packing tagged
         // with OPTIONAL_PRESENT_RULE_IDX, push the resulting Packing id.
         if let Some(mark) = cursor.optional_scope_marks.pop() {
-            if mark <= cursor.sppf_stack.len() {
-                let stack = Arc::make_mut(&mut cursor.sppf_stack);
-                let children: Vec<crate::sppf::SppfId> = stack.drain(mark..).collect();
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // materialize the chain via arena.slice_at + scratch, take
+            // children from [mark..] as Vec, pop `pop_count` chain
+            // entries off cursor.sppf_stack_id, then push the synthetic
+            // Packing sid via arena.intern_push.
+            let cur_len = self.sppf_stack_arena.len(cursor.sppf_stack_id);
+            if mark <= cur_len {
+                let mut scratch: Vec<crate::sppf::SppfId> = Vec::with_capacity(cur_len);
+                let slice = self
+                    .sppf_stack_arena
+                    .slice_at(cursor.sppf_stack_id, &mut scratch);
+                let children: Vec<crate::sppf::SppfId> = slice[mark..].to_vec();
+                let pop_count = cur_len - mark;
+                drop(scratch);
+                for _ in 0..pop_count {
+                    cursor.sppf_stack_id =
+                        self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                }
                 // Phase C.1 (2026-05-17): synthetic OPTIONAL_PRESENT always
                 // interns with `W::one_ref()` per the weight semantics table
                 // in `~/.claude/plans/phase-c-sppf-w-resolved.md` §2.5.
@@ -9712,7 +9942,9 @@ where
                     children,
                     W::one_ref(),
                 );
-                stack.push(packing_id);
+                cursor.sppf_stack_id = self
+                    .sppf_stack_arena
+                    .intern_push(cursor.sppf_stack_id, packing_id);
             }
         }
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
@@ -9728,7 +9960,10 @@ where
     fn emit_push_optional_absent(&mut self, cursor: &mut BranchCursor<W>) {
         // C3 dual-mode: push an OptAbsent leaf onto sppf_stack.
         let sid = self.sppf.intern_opt_absent(cursor.pos as u32);
-        Arc::make_mut(&mut cursor.sppf_stack).push(sid);
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+        cursor.sppf_stack_id =
+            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF OptAbsent
         // node above mirrors the structural state.
         self.clear_action_output_mirror(cursor);
@@ -10059,7 +10294,9 @@ where
             recovery_depth: child_recovery_depth,
             visited_recovery: child_visited_recovery,
             visited_dispatch: child_visited_dispatch,
-            sppf_stack: Arc::clone(&parent.sppf_stack),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // arena-interned StackId (Copy u32).
+            sppf_stack_id: parent.sppf_stack_id,
             optional_scope_marks: parent.optional_scope_marks.clone(),
             binder_scope_marks: parent.binder_scope_marks.clone(),
             pending_packing_weight: parent
@@ -10165,7 +10402,11 @@ where
         cursor.pending_packing_weight =
             snap.worker_pending_packing_weight.clone();
         cursor.last_action_output_cat = snap.worker_last_action_output_cat;
-        Arc::make_mut(&mut cursor.sppf_stack).push(symbol_id);
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
+        cursor.sppf_stack_id = self
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, symbol_id);
         cursor.pos = hi_pos as usize;
         let cat_sym = StackSymbolV2::category_entry(source_src_idx);
         let kind = crate::gss::EdgeKind::CrossCatProjection {
@@ -10646,7 +10887,9 @@ where
                 if let Some(node) = self.gss.node(cursor.node) {
                     let dispatch_pos_usize = node.pos;
                     let dispatch_pos = dispatch_pos_usize as u32;
-                    let symbol_id_opt = cursor.sppf_stack.last().copied();
+                    // Phase F.13 chain_10000 Plan D E3 Substage 2
+                    // (2026-05-26): arena.top replaces sppf_stack.last().
+                    let symbol_id_opt = self.sppf_stack_arena.top(cursor.sppf_stack_id);
                     if let Some(symbol_id) = symbol_id_opt {
                         let key = crate::dispatch_cohort::DispatchKey::new(
                             dispatch_pos_usize,

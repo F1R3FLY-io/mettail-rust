@@ -20,6 +20,12 @@ strategies = ["proptest"]
 ## Enable with `cargo test --features mimalloc ...` to apply mimalloc
 ## to the trampoline_tests binary; otherwise the system allocator is used.
 mimalloc = ["dep:mimalloc"]
+## Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26): passthrough
+## to enable `mettail-prattail/walker-stats` from this crate's tests
+## (so trampoline_tests can run with histograms collected). Off by
+## default (zero overhead); enable with
+## `cargo test --features walker-stats ...`.
+walker-stats = ["mettail-prattail/walker-stats"]
 
 [dependencies]
 mettail-macros = { path = "../macros" }

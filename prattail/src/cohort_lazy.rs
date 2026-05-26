@@ -165,9 +165,17 @@ pub struct CohortShell<W: SemiringRef> {
     /// equivalence class.
     pub dispatch_key: DispatchKey,
     /// SPPF stack baseline before the cohort's dispatch fires. After
-    /// resolution, each member pushes its `sub_symbol_id` onto a
-    /// CoW-derived stack.
-    pub sppf_stack_baseline: Arc<Vec<SppfId>>,
+    /// resolution, each member pushes its `sub_symbol_id` onto the
+    /// arena-extended chain.
+    ///
+    /// Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+    /// changed from `Arc<Vec<SppfId>>` to walker-global-arena-
+    /// interned `StackId` (a `Copy u32`). Cohort formation captures
+    /// `parent.sppf_stack_id` directly (no Arc bump); materialization
+    /// initializes the revived cursor's `sppf_stack_id` to this
+    /// baseline. Post-revive push of `sub_symbol_id` becomes
+    /// `walker.sppf_stack_arena.intern_push(baseline_id, sid)`.
+    pub sppf_stack_baseline_id: crate::sppf_stack_arena::StackId,
     /// Phantom for unused weight type parameter (the shell itself
     /// carries no weight — weights live in `CohortMemberState`).
     #[allow(dead_code)]
@@ -466,7 +474,9 @@ impl<W: SemiringRef> CohortShell<W> {
             inner_state: parent.inner_state.clone(),
             pos: parent.pos,
             dispatch_key,
-            sppf_stack_baseline: std::sync::Arc::clone(&parent.sppf_stack),
+            // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+            // arena-interned StackId (Copy u32) replaces Arc<Vec<SppfId>>.
+            sppf_stack_baseline_id: parent.sppf_stack_id,
             _phantom_weight: std::marker::PhantomData,
         }
     }
@@ -542,7 +552,9 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // triggers Arc::make_mut copy-on-write.
         visited_recovery: std::sync::Arc::clone(&shell.visited_recovery),
         visited_dispatch: std::sync::Arc::clone(&shell.visited_dispatch),
-        sppf_stack: std::sync::Arc::clone(&shell.sppf_stack_baseline),
+        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+        // arena-interned StackId (Copy u32) replaces Arc<Vec<SppfId>>.
+        sppf_stack_id: shell.sppf_stack_baseline_id,
         optional_scope_marks: (*shell.optional_scope_marks).clone(),
         binder_scope_marks: (*shell.binder_scope_marks).clone(),
         pending_packing_weight: state.pending_packing_weight.clone(),
