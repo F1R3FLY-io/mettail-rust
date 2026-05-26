@@ -55,15 +55,24 @@ For N=15+15 the critical t (two-tailed, α=0.05) is approximately 2.05.
 
 ## Experiment entries
 
-### BASELINE (2026-05-26, tip `5708950`)
+### BASELINE (2026-05-26, tip `4723bee`)
 
 State of repo at session start of experiment workstream:
-- Branch: `feature/wfst-architecture`, tip `5708950`.
+- Branch: `feature/wfst-architecture`, tip `4723bee` (post-Substage-0 instrumentation, no behavior change vs `5708950`).
 - L1-L6 cohort lazy materialization stack shipped.
 - L4.2 Arc-wrapping of `recovery_deltas` and `incoming_edge_stack`.
 - Both chain_10000 tests `#[ignore]`'d with empirical attribution to per-cursor mutate-every-step pattern defeating Arc-CoW.
 
-Quiet-bench baseline measurements to be recorded here once the bench harness runs.
+**Quiet-bench measurements** (hyperfine N=15, `systemd-run --user --scope -p MemoryMax=24G`, single chain test in isolation, binary direct-invocation no cargo overhead):
+
+| Chain | Mean | σ | σ/μ | Range (min…max) |
+|-------|------|---|-----|-----------------|
+| `test_right_assoc_chain_50` | 30.2 ms | 0.4 ms | 1.3 % | 29.6 ms … 31.4 ms |
+| `test_right_assoc_chain_100` | 73.0 ms | 0.8 ms | 1.1 % | 71.3 ms … 74.4 ms |
+| `test_right_assoc_chain_200` | 201.7 ms | 2.6 ms | 1.3 % | 198.8 ms … 209.1 ms |
+| `test_right_assoc_chain_1000` | 3.316 s | 0.053 s | 1.6 % | 3.278 s … 3.497 s |
+
+σ/μ all under 2 % — quiet conditions confirmed. JSON exports saved at `/tmp/baseline_chain_*.json` (note: tmp; will not survive reboot — for the per-experiment Welch we'll save per-experiment treatment JSON next to it).
 
 ---
 
