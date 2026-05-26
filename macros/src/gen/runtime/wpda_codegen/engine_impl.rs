@@ -152,6 +152,12 @@ pub(crate) fn emit_engine_impl_full(
     let infix_loop_dispatch = emit_infix_loop_dispatch(categories);
     let postfix_dispatch = emit_postfix_dispatch(categories);
     let mixfix_dispatch = emit_mixfix_dispatch(categories);
+    // Phase F.13 chain_10000 Exp 6 Substage 6b (2026-05-26): per-category
+    // iter-eligible dispatch consumed by the singleton InfixLoop fast
+    // path and the `InfixChainIterative` arm. Routes iterative-eligible
+    // operators through `IterativeChainAbsorb` (per-chain GSS push
+    // elision) instead of per-iteration `ConsumeAndPush`.
+    let iter_eligible_dispatch = emit_iter_eligible_dispatch(categories);
     // Plan A (paren+postfix redesign, 2026-05-11): per-category
     // recognize-token lookup for the Unwinding-CategoryEntry's
     // lookahead-conditional GroupingClosePreservingInner branch.
@@ -1122,7 +1128,37 @@ pub(crate) fn emit_engine_impl_full(
                                 // zero-overhead dispatch for shipped grammars
                                 // (typical case — only one operator at any
                                 // given (token, l_bp >= cur_bp) pair).
+                                //
+                                // Phase F.13 chain_10000 Exp 6 Substage 6b
+                                // (2026-05-26): if the singleton candidate
+                                // refers to an iterative-eligible operator
+                                // AND its (terminal, l_bp) is unique in the
+                                // dispatched category (per Plan A invariant
+                                // I1, codegen-checked in `iter_eligible_<cat>`),
+                                // route through `IterativeChainAbsorb`
+                                // instead so the per-chain Return RuleAt
+                                // push is shared across all `+` iterations.
+                                // First iteration pushes; subsequent
+                                // iterations skip the push via the walker
+                                // arm's chain-extension witness (Plan A
+                                // invariant I2). RHS sub-parse is dispatched
+                                // by the `InfixChainIterative` engine arm.
                                 let b = __cands.into_iter().next().unwrap();
+                                let symbol_rs = b.symbol.category_src_idx;
+                                let symbol_ri = b.symbol.rule_index_in_category;
+                                let iter_lookup: Option<(u8, u8)> = #iter_eligible_dispatch;
+                                if let Some((_l_bp, r_bp)) = iter_lookup {
+                                    return WpdaStepAction::IterativeChainAbsorb {
+                                        symbol: b.symbol,
+                                        weight: b.weight,
+                                        new_state: WpdaState::InfixChainIterative {
+                                            result_src_idx: symbol_rs,
+                                            rule_idx: symbol_ri,
+                                            outer_bp: *cur_bp,
+                                            rhs_bp: r_bp,
+                                        },
+                                    };
+                                }
                                 WpdaStepAction::ConsumeAndPush {
                                     symbol: b.symbol,
                                     weight: b.weight,
@@ -1145,6 +1181,58 @@ pub(crate) fn emit_engine_impl_full(
                                 }
                             }
                         }
+                    }
+                    WpdaState::InfixChainIterative {
+                        result_src_idx: _result_src_idx,
+                        rule_idx: _rule_idx,
+                        outer_bp: _outer_bp,
+                        rhs_bp,
+                    } => {
+                        // Phase F.13 chain_10000 Exp 6 Substage 6b
+                        // (2026-05-26): dispatch the RHS sub-parse at
+                        // `cur_bp: rhs_bp` per Plan A invariant I3.
+                        //
+                        // STRUCTURAL NOTE (Substage 6b implementation
+                        // judgment): the user's plan suggested a
+                        // chain-continuation probe here that peeks the
+                        // NEXT token for another iterative-eligible
+                        // operator. That probe would fire BEFORE the
+                        // RHS is parsed (the next token after `+` is
+                        // the RHS literal `2`, not another `+`), so
+                        // the probe always yields zero candidates and
+                        // the RHS would never be dispatched — the
+                        // chain would terminate after the first
+                        // iteration. The structurally-correct flow is:
+                        //
+                        //   1. InfixLoop singleton emits
+                        //      `IterativeChainAbsorb` (this commit's
+                        //      step 2 change).
+                        //   2. Walker consumes `+`, pushes Return
+                        //      RuleAt on first iteration (elides on
+                        //      subsequent iterations per invariant I2),
+                        //      sets state = `InfixChainIterative`.
+                        //   3. THIS ARM dispatches RHS sub-parse via
+                        //      `PrefixDispatch { cur_bp: rhs_bp }`.
+                        //   4. RHS completes; Unwinding-Return pops
+                        //      the Return symbol → InfixLoop {
+                        //      cur_bp: outer_bp } via the standard
+                        //      Return-pop path (engine_impl.rs:457-464).
+                        //   5. InfixLoop re-enters; singleton
+                        //      fast-path re-detects iterative-
+                        //      eligible operator and emits
+                        //      IterativeChainAbsorb — walker's chain-
+                        //      extension elision (invariant I2)
+                        //      avoids the second push.
+                        //
+                        // Per-chain GSS-push elision is the entire
+                        // win: O(N) chain steps → O(1) Return frames.
+                        // Action fires once on chain terminate via the
+                        // standard Unwinding-Return → Pop path with
+                        // all accumulated RHS SPPF nodes attached.
+                        WpdaStepAction::Advance(WpdaState::PrefixDispatch {
+                            pos: _pos,
+                            cur_bp: *rhs_bp,
+                        })
                     }
                     WpdaState::CollectionLoop {
                         result_src_idx,
@@ -1628,6 +1716,30 @@ fn emit_infix_loop_dispatch(categories: &[String]) -> TokenStream {
             match state_cat_src_idx {
                 #(#arms)*
                 _ => None,
+            }
+        }
+    }
+}
+
+/// Phase F.13 chain_10000 Exp 6 Substage 6b (2026-05-26): per-category
+/// iter-eligible dispatch. Emits a `match state_cat_src_idx` calling
+/// the per-category `iter_eligible_<cat>(symbol_rs, symbol_ri)` lookup.
+/// Evaluates to `Option<(u8, u8)>` (left_bp, right_bp). Reads two free
+/// vars from the surrounding scope:
+/// - `state_cat_src_idx: u16` — same as in the InfixLoop dispatch.
+/// - `symbol_rs: u16`, `symbol_ri: u16` — the candidate operator's
+///   (result_src_idx, rule_index_in_category).
+fn emit_iter_eligible_dispatch(categories: &[String]) -> TokenStream {
+    let arms = categories.iter().enumerate().map(|(i, cat)| {
+        let i_u16 = i as u16;
+        let fn_ident = quote::format_ident!("iter_eligible_{}", cat.to_lowercase());
+        quote! { #i_u16 => #fn_ident(symbol_rs, symbol_ri), }
+    });
+    quote! {
+        {
+            match state_cat_src_idx {
+                #(#arms)*
+                _ => None::<(u8, u8)>,
             }
         }
     }

@@ -16,7 +16,8 @@ use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
 use mettail_prattail::binding_power::{
-    analyze_binding_powers, Associativity, BindingPowerTable, InfixRuleInfo, MixfixPart,
+    analyze_binding_powers, Associativity, BindingPowerTable, InfixOperator, InfixRuleInfo,
+    MixfixPart,
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -383,9 +384,17 @@ pub(crate) fn emit_bp_tables(
         let infix_ident = format_ident!("infix_bp_{}", cat_lower);
         let postfix_ident = format_ident!("postfix_bp_{}", cat_lower);
         let mixfix_ident = format_ident!("mixfix_bp_{}", cat_lower);
+        // Phase F.13 chain_10000 Exp 6 Substage 6b (2026-05-26): per-cat
+        // iter-eligible lookup. Returns `Some((left_bp, right_bp))` when
+        // the (rs, ri) tuple refers to an iterative-eligible operator
+        // AND no other operator in the same category shares the same
+        // (terminal, left_bp) pair (Plan A invariant I1 — singleton
+        // InfixLoop dispatch).
+        let iter_ident = format_ident!("iter_eligible_{}", cat_lower);
         per_cat_tables.push(emit_infix_bp_fn(&bp_table, cat, &infix_ident, &label_to_indices));
         per_cat_tables.push(emit_postfix_bp_fn(&bp_table, cat, &postfix_ident, &label_to_indices));
         per_cat_tables.push(emit_mixfix_bp_fn(&bp_table, cat, &mixfix_ident, &label_to_indices));
+        per_cat_tables.push(emit_iter_eligible_fn(&bp_table, cat, &iter_ident, &label_to_indices));
     }
     // B7 Pattern 1: per-rule mixfix-parts metadata. Used by the engine's
     // Unwinding-MixfixMarker / MixfixContinuation arms to look up each
@@ -442,6 +451,69 @@ fn emit_infix_bp_fn(
         #[allow(non_snake_case, dead_code)]
         fn #fn_ident(terminal: &str) -> Option<(u8, u8, u16, u16)> {
             match terminal {
+                #(#arms)*
+                _ => None,
+            }
+        }
+    }
+}
+
+/// Phase F.13 chain_10000 Exp 6 Substage 6b (2026-05-26): emit
+/// `iter_eligible_<cat>(rs, ri) -> Option<(u8, u8)>` returning
+/// `Some((left_bp, right_bp))` when (rs, ri) refers to an
+/// iterative-eligible operator AND no other operator in the same
+/// category shares the same `(terminal, left_bp)` pair (Plan A
+/// invariant I1 — singleton InfixLoop dispatch). The codegen-time
+/// uniqueness check is required because `InfixOperator::is_iterative_candidate`
+/// can only inspect a single operator at a time; the I1 invariant
+/// requires a per-category scan.
+///
+/// At codegen time, also filters by `op.result_category == category`
+/// to ensure the rule is in the dispatched category's table. Same-
+/// category invariant guaranteed by `is_iterative_candidate`'s
+/// `!is_cross_category` gate.
+fn emit_iter_eligible_fn(
+    bp_table: &BindingPowerTable,
+    category: &str,
+    fn_ident: &proc_macro2::Ident,
+    label_index: &std::collections::HashMap<(String, String), (u16, u16)>,
+) -> TokenStream {
+    let cat_ops: Vec<&InfixOperator> = bp_table
+        .operators
+        .iter()
+        .filter(|op| op.category == category)
+        .collect();
+    let arms: Vec<TokenStream> = cat_ops
+        .iter()
+        .filter(|op| op.is_iterative_candidate())
+        .filter_map(|op| {
+            // Plan A invariant I1: no other operator in this category
+            // shares the same (terminal, left_bp) pair. If such a
+            // conflict exists, the singleton InfixLoop dispatch would
+            // pick the wrong rule, so we exclude the iterative path
+            // entirely.
+            let conflict = cat_ops.iter().any(|other| {
+                !std::ptr::eq(*other as *const _, *op as *const _)
+                    && other.terminal == op.terminal
+                    && other.left_bp == op.left_bp
+            });
+            if conflict {
+                return None;
+            }
+            let (rs, ri) = *label_index.get(&(op.result_category.clone(), op.label.clone()))?;
+            let l = op.left_bp;
+            let r = op.right_bp;
+            Some(quote! { (#rs, #ri) => Some((#l, #r)), })
+        })
+        .collect();
+    quote! {
+        /// Phase F.13 chain_10000 Exp 6 Substage 6b: iterative-eligible
+        /// operator lookup. Returns `Some((left_bp, right_bp))` when
+        /// `(rs, ri)` is an iterative candidate with no `(terminal, l_bp)`
+        /// conflict in this category.
+        #[allow(non_snake_case, dead_code)]
+        fn #fn_ident(rs: u16, ri: u16) -> Option<(u8, u8)> {
+            match (rs, ri) {
                 #(#arms)*
                 _ => None,
             }
