@@ -215,30 +215,12 @@ impl<'a> Lexer<'a> {
                 return Err(self.error("unterminated island"));
             };
             if c == '\\' {
+                body.push('\\');
                 self.next_char();
-                match self.peek() {
-                    Some('`') => {
-                        self.next_char();
-                        body.push('`');
-                    },
-                    Some('$') => {
-                        self.next_char();
-                        if self.peek() == Some('{') {
-                            self.next_char();
-                            body.push_str("${");
-                        } else {
-                            body.push('$');
-                        }
-                    },
-                    Some('\\') => {
-                        self.next_char();
-                        body.push('\\');
-                    },
-                    Some(x) => {
-                        body.push(self.next_char().unwrap());
-                        let _ = x;
-                    },
-                    None => return Err(self.error("unterminated escape in island")),
+                if let Some(esc) = self.next_char() {
+                    body.push(esc);
+                } else {
+                    return Err(self.error("unterminated escape in island"));
                 }
                 continue;
             }

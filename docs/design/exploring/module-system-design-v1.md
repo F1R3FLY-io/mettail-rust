@@ -340,16 +340,16 @@ module App {
 
 ### Phase 2: Rust projection
 
-- [ ] NTIR → `language!`-shaped Rust (calculator/rhocalc style).
-- [ ] Parser and query-engine generation from projected macro.
-- [ ] Rename/replacement parity tests vs monolithic specs.
+- [x] NTIR → `language!`-shaped Rust (calculator/rhocalc style).
+- [x] Parser and query-engine generation from projected macro.
+- [x] Rename/replacement parity tests vs monolithic specs (MyCalc + export rename; replacement suffix implemented).
 
 ### Phase 3: Polyglot islands
 
-- [ ] Single- and triple-backtick lexing.
-- [ ] Escapes `` \` ``, `` \${ ``, `` \\ ``.
-- [ ] Typed-hole `${}` via language parser (safe templating).
-- [ ] First non-trivial island plugin (e.g. Rholang process fragment).
+- [x] Single- and triple-backtick lexing.
+- [x] Escapes `` \` ``, `` \${ ``, `` \\ ``.
+- [x] Typed-hole `${}` via language parser (safe templating).
+- [x] First non-trivial island plugin (e.g. Rholang process fragment).
 
 ---
 

@@ -1,3 +1,4 @@
+use crate::island::plugin::ProcGst;
 use crate::surface::ContextTemplate;
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::{
@@ -11,6 +12,13 @@ pub enum SemanticsTarget {
     Unknown,
 }
 
+/// Rholang (or other) process island lowered to GST (Phase 3).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ProcArtifact {
+    pub lang: String,
+    pub gst: ProcGst,
+}
+
 pub struct Ntir {
     pub name: String,
     pub types: Vec<LangType>,
@@ -22,6 +30,8 @@ pub struct Ntir {
     pub semantics: SemanticsTarget,
     pub context_template: Option<ContextTemplate>,
     pub lowered_context: Option<String>,
+    pub rust_island_snippets: Vec<String>,
+    pub proc_artifacts: Vec<ProcArtifact>,
     pub sources: TheorySources,
     pub hash: String,
 }
@@ -48,6 +58,8 @@ pub struct Presentation {
     pub logic: Option<LogicBlock>,
     pub semantics: SemanticsTarget,
     pub context_template: Option<ContextTemplate>,
+    pub rust_island_snippets: Vec<String>,
+    pub proc_artifacts: Vec<ProcArtifact>,
     pub sources: TheorySources,
 }
 
@@ -69,6 +81,8 @@ impl Presentation {
             semantics: self.semantics,
             context_template: self.context_template,
             lowered_context,
+            rust_island_snippets: self.rust_island_snippets,
+            proc_artifacts: self.proc_artifacts,
             sources: self.sources,
             hash,
         }

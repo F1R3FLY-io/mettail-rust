@@ -1,0 +1,10 @@
+module MonoidBase {
+  export extender Monoid() {
+    empty
+    semantics Rust
+    types { Elem }
+    terms {
+      Zero . Elem ::= "0" ;
+    }
+  }
+}

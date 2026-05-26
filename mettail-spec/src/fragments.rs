@@ -2,7 +2,9 @@ use mettail_ast::fragments::{
     parse_equations_fragment, parse_literals_fragment, parse_relations_fragment,
     parse_rewrites_fragment, parse_terms_fragment, parse_types_fragment,
 };
+use mettail_ast::grammar::GrammarRule;
 use proc_macro2::TokenStream;
+use syn::Ident;
 
 use crate::error::{Result, SpecError};
 use crate::ntir::Presentation;
@@ -65,6 +67,138 @@ pub fn apply_suffix(
             })?;
             merge_logic(pres, logic)?;
         },
+        SuffixKind::Exports => {
+            let map = parse_exports_map(raw)?;
+            apply_exports(pres, &map)?;
+        },
+        SuffixKind::Replacements => {
+            let rules = parse_replacement_rules(tokens, raw, module)?;
+            apply_replacements(pres, rules)?;
+        },
+    }
+    Ok(())
+}
+
+/// Parse `exports { Elem => Proc , ... }` body (without outer braces).
+pub fn parse_exports_map(raw: &str) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    for part in raw.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (from, to) = part.split_once("=>").ok_or_else(|| SpecError::Assemble {
+            message: format!("invalid export mapping '{part}' (expected 'From => To')"),
+        })?;
+        out.push((from.trim().to_string(), to.trim().to_string()));
+    }
+    Ok(out)
+}
+
+fn apply_exports(pres: &mut Presentation, map: &[(String, String)]) -> Result<()> {
+    for (from, to) in map {
+        rename_category(pres, from, to)?;
+    }
+    Ok(())
+}
+
+fn rename_category(pres: &mut Presentation, from: &str, to: &str) -> Result<()> {
+    if from == to {
+        return Ok(());
+    }
+    let to_ident = Ident::new(to, proc_macro2::Span::call_site());
+    let from_ident = Ident::new(from, proc_macro2::Span::call_site());
+
+    for ty in &mut pres.types {
+        if ty.name == from {
+            ty.name = to_ident.clone();
+        }
+    }
+    for rule in &mut pres.terms {
+        if rule.category == from_ident {
+            rule.category = to_ident.clone();
+        }
+        for item in &mut rule.items {
+            if let mettail_ast::grammar::GrammarItem::NonTerminal(nt) = item {
+                if *nt == from_ident {
+                    *nt = to_ident.clone();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_replacement_rules(
+    _tokens: TokenStream,
+    raw: &str,
+    module: &str,
+) -> Result<Vec<(String, GrammarRule)>> {
+    let mut rules = Vec::new();
+    for segment in raw.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        let (label, rhs) = segment
+            .split_once("=>")
+            .ok_or_else(|| SpecError::Assemble {
+                message: format!("invalid replacement '{segment}'"),
+            })?;
+        let label = label.trim().trim_start_matches("[]").trim();
+        let rhs = rhs.trim().trim_end_matches(';').trim();
+        let mut parsed = parse_terms_from_rho_snippet(rhs, module)?;
+        if parsed.len() != 1 {
+            return Err(SpecError::Assemble {
+                message: format!("replacement for '{label}' must be exactly one term rule"),
+            });
+        }
+        let rule = parsed.remove(0);
+        rules.push((label.to_string(), rule));
+    }
+    Ok(rules)
+}
+
+/// Parse BNFC term rules using the `.rho` lexer/parser (same path as `terms { … }` suffixes).
+fn parse_terms_from_rho_snippet(rhs: &str, module: &str) -> Result<Vec<GrammarRule>> {
+    let synthetic = format!(
+        "module InlineReplacements {{
+  export extender E() {{
+    empty
+    terms {{ {} }}
+  }}
+}}
+",
+        rhs
+    );
+    let path = std::path::PathBuf::from(module);
+    let file = crate::parser::parse_file(path, &synthetic).map_err(|e| SpecError::Assemble {
+        message: format!("replacement snippet parse failed: {e}"),
+    })?;
+    let extender = file
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            crate::surface::ContentItem::Extender(e) => Some(e),
+            _ => None,
+        })
+        .ok_or_else(|| SpecError::Assemble {
+            message: "replacement snippet missing extender".into(),
+        })?;
+    let pres = crate::assemble::eval_extender_expr(
+        &extender.body,
+        &std::collections::HashMap::new(),
+        module,
+    )?;
+    Ok(pres.terms)
+}
+
+fn apply_replacements(pres: &mut Presentation, rules: Vec<(String, GrammarRule)>) -> Result<()> {
+    for (label, new_rule) in rules {
+        if let Some(idx) = pres.terms.iter().position(|r| r.label == label) {
+            pres.terms[idx] = new_rule;
+        } else {
+            return Err(SpecError::Assemble {
+                message: format!("replacement target term '{label}' not found"),
+            });
+        }
     }
     Ok(())
 }
@@ -77,6 +211,7 @@ fn merge_raw_source(pres: &mut Presentation, kind: SuffixKind, raw: &str) {
         SuffixKind::Equations => &mut pres.sources.equations,
         SuffixKind::Rewrites => &mut pres.sources.rewrites,
         SuffixKind::Relations => &mut pres.sources.logic,
+        SuffixKind::Exports | SuffixKind::Replacements => return,
     };
     match slot {
         Some(existing) => {
@@ -188,6 +323,9 @@ pub fn merge_presentations(mut base: Presentation, overlay: Presentation) -> Res
     if overlay.context_template.is_some() {
         base.context_template = overlay.context_template;
     }
+    base.rust_island_snippets
+        .extend(overlay.rust_island_snippets);
+    base.proc_artifacts.extend(overlay.proc_artifacts);
     merge_sources(&mut base.sources, &overlay.sources);
     Ok(base)
 }

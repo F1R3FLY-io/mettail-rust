@@ -45,6 +45,9 @@ pub enum SpecError {
     #[error("validation error: {0}")]
     Validation(String),
 
+    #[error("island error ({lang}): {message}")]
+    Island { lang: String, message: String },
+
     #[error("{0}")]
     Other(String),
 }

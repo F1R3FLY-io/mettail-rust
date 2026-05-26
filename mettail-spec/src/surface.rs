@@ -92,6 +92,8 @@ pub enum SuffixKind {
     Equations,
     Relations,
     Rewrites,
+    Exports,
+    Replacements,
 }
 
 #[derive(Debug, Clone)]

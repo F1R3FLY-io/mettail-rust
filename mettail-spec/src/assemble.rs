@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use crate::error::{Result, SpecError};
 use crate::eval::{evaluate_graph, resolve_language_path, EvaluatedGraph};
 use crate::fragments::{apply_suffix, merge_presentations};
+use crate::island::{process_island, IslandArtifact};
+use crate::ntir::ProcArtifact;
 use crate::ntir::{Ntir, Presentation, SemanticsTarget};
 use crate::resolve::ResolvedGraph;
 use crate::semantics::lower_context_stub;
+use crate::surface::IslandToken;
 use crate::surface::{ContentItem, ExtenderExpr, LanguageExpr};
 
 pub fn compile_language(
@@ -117,7 +120,7 @@ fn apply_extender(
     eval_extender_expr(body, &param_map, module_label)
 }
 
-fn eval_extender_expr(
+pub(crate) fn eval_extender_expr(
     expr: &ExtenderExpr,
     params: &HashMap<String, Presentation>,
     module: &str,
@@ -167,10 +170,23 @@ fn eval_extender_expr(
             }
             Ok(pres)
         },
-        ExtenderExpr::Island(_) => Err(SpecError::Assemble {
-            message: "island in extender body cannot be assembled in Phase 1".into(),
-        }),
+        ExtenderExpr::Island(token) => presentation_from_island(token),
     }
+}
+
+fn presentation_from_island(token: &IslandToken) -> Result<Presentation> {
+    let artifact = process_island(token)?;
+    let mut pres = Presentation::empty();
+    match artifact {
+        IslandArtifact::RustContext { snippet } => {
+            pres.rust_island_snippets.push(snippet);
+        },
+        IslandArtifact::RholangProc { gst } => {
+            pres.proc_artifacts
+                .push(ProcArtifact { lang: token.lang.clone(), gst });
+        },
+    }
+    Ok(pres)
 }
 
 fn semantics_from_expr(expr: &LanguageExpr) -> Result<SemanticsTarget> {

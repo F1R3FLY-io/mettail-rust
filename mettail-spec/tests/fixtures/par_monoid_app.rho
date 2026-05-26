@@ -1,0 +1,9 @@
+import "par_monoid_base.rho" as B
+
+module ParApp {
+  export extender ParMonoid(Base) {
+    { Base }
+    exports { Elem => Proc }
+  }
+  export language ParL = ParMonoid(B.Monoid())
+}

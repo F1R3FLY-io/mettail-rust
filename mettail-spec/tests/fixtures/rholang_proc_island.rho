@@ -1,0 +1,9 @@
+module ProcDemo {
+  export extender ProcExt() {
+    Rholang```
+      let x = 1;
+      for y <- ch { !y }
+    ```
+  }
+  export language Demo = ProcExt()
+}

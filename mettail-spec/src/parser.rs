@@ -199,7 +199,7 @@ impl ParserState {
                     break;
                 }
                 self.advance();
-                let (tokens, raw) = self.parse_brace_fragment()?;
+                let (tokens, raw) = self.parse_suffix_brace_fragment(kind)?;
                 lhs = ExtenderExpr::Suffix { inner: Box::new(lhs), kind, tokens, raw };
                 continue;
             }
@@ -260,10 +260,12 @@ impl ParserState {
         }
     }
 
-    fn parse_brace_fragment(&mut self) -> Result<(TokenStream, String)> {
+    fn parse_suffix_brace_fragment(&mut self, kind: SuffixKind) -> Result<(TokenStream, String)> {
         self.expect(Token::LBrace)?;
         let raw = self.extract_balanced_brace_raw()?;
-        // Fragment parsers (mettail-ast) add their own `types { … }` / `terms { … }` wrapper.
+        if matches!(kind, SuffixKind::Exports | SuffixKind::Replacements) {
+            return Ok((TokenStream::new(), raw));
+        }
         let tokens: TokenStream = syn::parse_str(&raw)
             .map_err(|e| self.error(format!("invalid fragment tokens: {e}")))?;
         Ok((tokens, raw))
@@ -333,6 +335,8 @@ fn suffix_keyword(tok: &Token) -> Option<SuffixKind> {
             "equations" => Some(SuffixKind::Equations),
             "relations" => Some(SuffixKind::Relations),
             "rewrites" => Some(SuffixKind::Rewrites),
+            "exports" => Some(SuffixKind::Exports),
+            "replacements" => Some(SuffixKind::Replacements),
             _ => None,
         },
         _ => None,
