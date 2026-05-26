@@ -56,6 +56,8 @@
 | 9-alt | 2026-05-26 | FOLLOW-K lookahead prune | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP-BEFORE-S0** — S0 requires FOLLOW-K codegen infra (S1-level). |
 | 14 | 2026-05-26 | Tomita per-arc GSS-cursor merging | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP** per laziness Plan agent — architectural rewrite ~3000+ LOC. |
 | 15 | 2026-05-26 | CPS / trampolined walker rewrite | n/a | n/a | n/a | n/a | n/a | n/a | n/a | **SKIP** per laziness Plan agent — multi-week scope. |
+| D-E4 S1.a | 2026-05-26 | Streaming SPPF reclamation-window instrumentation | `99e98b6` | 4134/0 | n/a | n/a | n/a | n/a | n/a | **ACCEPT** (data captured) + **DATA-CONCLUDED for S1.b-S1.e**: chain_1000 = 99.8 % cache_pinned, 99.9 % window < 6.25 %, 100 % candidates < 10 %. Streaming SPPF empirically futile. |
+| D-E4 S1.b-e | 2026-05-26 | chunked SPPF storage + reclaim trigger + integration + tuning | n/a (BLOCKED by S1.a gate failure) | n/a | n/a | n/a | n/a | n/a | n/a | **REJECT-DATA-CONCLUDED** — gate failed by 3+ orders of magnitude on chain_1000. Cohort cache pinning of SPPF Symbol positions (median gap ~2000 positions) prevents any streaming reclamation strategy from recovering meaningful memory. The chain_10000 ceiling is in the cohort cache itself, not the SPPF arena. |
 
 ---
 
@@ -603,3 +605,35 @@ Per design at `prattail/docs/design/plans/phase-f13-exp13-earley-outboard.md`.
 - **CPS / trampolined walker rewrite** (Exp 15, SKIPPED): architectural answer (c) from laziness analysis. ~5000+ LOC.
 
 **The chain_10000 ceiling stands as an architectural property of the current walker representation** with all REJECTED experiments empirically documented to inform future work.
+
+---
+
+### Plan D E4 Substage 1.a (2026-05-26, tip `99e98b6`) — Streaming SPPF reclamation-window measurement
+
+Per Plan agent design: Streaming SPPF requires a non-trivial reclamation window — `min(cursor.pos)` AND `min over cohort_cache entries of symbol_id.lo_pos`. Hypothesized that cohort cache might pin low SPPF positions all the way to position 0 on chain workloads. S1.a measured this empirically BEFORE committing to the ~1000-1500 LOC S1.b-S1.e implementation cost.
+
+**Run** (chain_1000 with PRATTAIL_WALKER_STATS=1): see `prattail/docs/design/plans/bench-data/e4_s1a_chain_1000_stats.txt`.
+
+**Headline numbers** (5023 samples):
+
+| Metric | Value | Interpretation |
+|--------|-------|----------------|
+| sppf_reclaim_window_samples | 5023 | sampling baseline |
+| sppf_reclaim_cache_pinned_samples | 5014 (**99.8 %**) | cohort cache holds an SPPF Symbol position BELOW the cursor frontier on essentially every step |
+| sppf_reclaim_cache_pin_gap_max | 1999 | the worst-case lost reclamation opportunity is ~2000 positions (cohort cache pins ~2/3 of chain_1000) |
+| sppf_reclaim_symbol_count_max | 6001 | peak SPPF Symbol count at chain_1000 |
+| window_histogram bucket 0 (0-6 % of chain) | 5019 (**99.9 %**) | the reclaimable window is < 6.25 % of chain at virtually every sample |
+| candidate_fraction bucket 0 (0-10 %) | 5023 (**100.0 %**) | fewer than 10 % of Symbol nodes are ever reclaim candidates |
+
+**Plan agent gate** (PROCEED to S1.b iff candidate fraction ≥ 50 % AND window ≥ 12.5 %): **candidate = 0.0 %, window = 0.1 %** — **FAILS BOTH CRITERIA by 3+ orders of magnitude**.
+
+**Verdict**: **DATA-CONCLUDED — Streaming SPPF is empirically futile for chain workloads**. The cohort cache pins SPPF positions at 99.8 % of samples; the median pinned-gap is ~2000 positions. No streaming reclamation strategy (madvise, segmented arena, copying GC, lazy realize) can recover memory that the cohort cache actively pins.
+
+**Architectural implication**: chain_10000's 24 GB OOM is NOT in the SPPF node arena (heaptrack always pointed elsewhere; S1.a now confirms this from a different angle). The cohort cache's `DispatchCacheEntry::Resolved.symbol_id` + `deferred_continuations` + `pending_members` are the actual memory consumers AT chain_10000. The "fix" for chain_10000 must address the cohort cache size directly — either:
+- Reduce the number of cache entries (Exp 9 / Approach P attempted, REJECTED — pause-side state is the bottleneck, not revive-side)
+- Reduce per-entry size (would require a fundamental cohort_shell / pending_members redesign)
+- Drop cache entries that won't be re-hit (requires a reachability analysis the walker doesn't currently maintain)
+
+Each of these is a multi-week architectural rewrite with its own Plan-agent design cycle.
+
+**E4 closure**: SHIPPED as instrumentation only. S1.b-S1.e implementation BLOCKED by empirical gate failure. Closed per Plan-agent NO-GO recommendation with data backing the closure.
