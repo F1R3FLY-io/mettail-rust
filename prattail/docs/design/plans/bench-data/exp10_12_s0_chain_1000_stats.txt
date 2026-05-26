@@ -1,0 +1,62 @@
+Running as unit: run-p1141601-i118535131.scope; invocation ID: 71a0b1f896984be69a1fa4b1452fcebc
+
+running 1 test
+═══ PRATTAIL WALKER STATS ═══
+  apply_action_calls=416942  step_fanout_calls=5023  avg_cursors_per_step=38.44
+  branch_cursors_peak_pre_merge=338  post_merge=71  sum=193102
+  merge_attempts=462851  merge_collapses=317797  collapse_ratio=0.687
+  cursors_created: seed=1 fork=69902 → total=69903
+  cursors_dropped: resolution=0 explicit=0 outcome=22010 merge=317797
+  fork_total=17981  recovery_dispatches=0  cross_cat_branches=29981
+  fork_kinds: push=30981 opt_group_absent=0 lex_alt=0 consume=14981 other=0
+  merge_miss: pairs=390738 state_only=6022 (1.5%) node_only=8 (0.0%) edge_only=6 (0.0%) depth_only=0 (0.0%) multi=383566 (98.2%)
+  cross_cat: total_branches=29981 would_drop=0 target_in_sppf=0
+  H13_diagnostic: would_merge_under_edge_kind=35 (0.0%) — gate ≥ 60% to proceed to Step 2
+  merge_miss_extended_sole: cohort_origin=0 (0.0%) sppf_top=23 (0.0%) lex_alt_idx=0 (0.0%) weight_src_idx=0 (0.0%) weight_rule_idx=0 (0.0%) lex_fork_stamp=0 (0.0%)
+  merge_miss_multi_participation: state=68796 (17.9%) node=383475 (100.0%) edge=383479 (100.0%) depth=0 (0.0%) cohort_origin=9525 (2.5%) sppf_top=313328 (81.7%) lex_alt_idx=18582 (4.8%) weight_src_idx=18582 (4.8%) weight_rule_idx=18582 (4.8%) lex_fork_stamp=0 (0.0%)
+  Lead1_gate: pred_edge_class_equivalent=0 (0.0%) — Stage A gate ≥ 40% to ship Lead #1 (incoming_edge → (pred, EdgeKind))
+  incoming_edge_stack_len_histogram (n=145054, max=1006): 0=79 (0.1%) 1=30 (0.0%) 2-3=106 (0.1%) 4-7=452 (0.3%) 8-15=1160 (0.8%) 16-31=2320 (1.6%) 32-63=4640 (3.2%) 64+=136267 (93.9%)
+  recovery_deltas_len_histogram (n=145054, max=0): 0=145054 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  visited_dispatch_len_histogram (n=145054, max=1003): 0=0 (0.0%) 1=5 (0.0%) 2-3=115 (0.1%) 4-7=487 (0.3%) 8-15=1000 (0.7%) 16-31=2000 (1.4%) 32-63=4000 (2.8%) 64+=137447 (94.8%)
+  visited_recovery_len_histogram (n=145054, max=0): 0=145054 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  binder_scope_marks_len_histogram (n=145054, max=0): 0=145054 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  optional_scope_marks_len_histogram (n=145054, max=0): 0=145054 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  merge_miss_pair_participation (axis i ∧ j both differ; denom = multi_diff_total = 383566):
+    (state, node) = 68778 (17.9%)
+    (state, edge) = 68732 (17.9%)
+    (state, cohort_origin) = 220 (0.1%)
+    (state, sppf_top) = 49622 (12.9%)
+    (state, lex_alt_idx) = 10480 (2.7%)
+    (state, weight_src_idx) = 10480 (2.7%)
+    (state, weight_rule_idx) = 10480 (2.7%)
+    (node, edge) = 383429 (100.0%)
+    (node, cohort_origin) = 9475 (2.5%)
+    (node, sppf_top) = 313278 (81.7%)
+    (node, lex_alt_idx) = 18541 (4.8%)
+    (node, weight_src_idx) = 18541 (4.8%)
+    (node, weight_rule_idx) = 18541 (4.8%)
+    (edge, cohort_origin) = 9525 (2.5%)
+    (edge, sppf_top) = 313328 (81.7%)
+    (edge, lex_alt_idx) = 18523 (4.8%)
+    (edge, weight_src_idx) = 18523 (4.8%)
+    (edge, weight_rule_idx) = 18523 (4.8%)
+    (cohort_origin, sppf_top) = 3470 (0.9%)
+    (cohort_origin, lex_alt_idx) = 121 (0.0%)
+    (cohort_origin, weight_src_idx) = 121 (0.0%)
+    (cohort_origin, weight_rule_idx) = 121 (0.0%)
+    (sppf_top, lex_alt_idx) = 18523 (4.8%)
+    (sppf_top, weight_src_idx) = 18523 (4.8%)
+    (sppf_top, weight_rule_idx) = 18523 (4.8%)
+    (lex_alt_idx, weight_src_idx) = 18582 (4.8%)
+    (lex_alt_idx, weight_rule_idx) = 18582 (4.8%)
+    (weight_src_idx, weight_rule_idx) = 18582 (4.8%)
+
+═══ DISPATCH-COHORT CACHE STATS ═══
+  registrations_total=29979  inflight_collisions=20983 (70.0%)  resolved_hits=2996  failed_hits=0
+  resolved_transitions=5003  snapshot_appends=68045  failed_transitions=0  cache_entries=6000
+  cohort_cursors_emitted=335808  cohort_cursors_graduated=283883
+
+test test_right_assoc_chain_1000 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 3.08s
+

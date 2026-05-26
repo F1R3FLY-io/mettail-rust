@@ -163,3 +163,141 @@ Per-Plan-B-agent gate criterion (max > 16 → proceed) is triggered by the visit
 **Recommendation per ledger row 5**: SKIP Plan B Substage 1; proceed to Exp 6 (Plan A operator-precedence iterative) which targets `cursor_count` (the multiplier in `cursor_count × per-cursor-state = O(N²)` memory) rather than the per-cursor factor that E3 + E6 already addressed.
 
 A future "Exp 5-alt" (path-tree-for-sets with LRU cache for contains()) is documented for follow-up consideration but not in scope at tip `41d0d22`.
+
+---
+
+### Exp 6b ACCEPT-WITH-CAVEAT (2026-05-26, tip `969f3d5`) — Plan A iterative codegen activation
+
+Already entered in row 6b above. Caveat: chain_10000 OOM trajectory regressed from E6's 15:44 wall (1.6 GB/min) to 6:14 wall (4 GB/min). Cause diagnosed by Explore Agent 1 of the post-6b investigation: the `IterativeChainAbsorb` walker arm (`wpda_walker.rs:5167-5201`) elides the chain-extension GSS push AND the per-iteration `Unwinding → Pop(Return) → emit_fire_action` cycle. Without fire-action, sppf_top diverges per iteration, blocking merge of cursors that should otherwise collapse.
+
+Exp 7 (below) attempts to fix this.
+
+---
+
+### Exp 7 (2026-05-26, tip `6da30a5`) — fix per-iteration fire-action in IterativeChainAbsorb arm
+
+**Hypothesis** (Plan agent, prespecified): restoring per-iteration `emit_fire_action` in the `IterativeChainAbsorb` arm will (a) preserve Exp 6b's chain_50/100/200/1000 wins AND (b) recover the E6 chain_10000 OOM trajectory (≤ 1.6 GB/min).
+
+**Falsifier** (Plan agent, prespecified): if chain_10000 RSS rate > 2× E6 baseline (3.2 GB/min), REVERT both Exp 7 and Exp 6b. The interpretation would be that the chain-extension GSS push elision itself is regressive.
+
+**Acceptance gate**: chain_50/100/200/1000 Welch NEUTRAL-or-WIN AND chain_10000 RSS growth ≤ 1.6 GB/min AND gauntlet 4102/0 preserved.
+
+**Implementation**: in the `IterativeChainAbsorb` arm of `dispatch_step` (`wpda_walker.rs:5167-5201`), when `already_chained == true`, BEFORE the existing pos/weight/state mutations, call `emit_fire_action(cursor, symbol)`. This restores the per-iteration fire-action that the chain-extension elision had skipped. The chain-extension GSS push is still elided (Exp 6b's allocation win preserved). SPPF chain shrinks by 1 per iteration → cohort merge can rediscover equivalent cursors.
+
+**Results (Welch t-test, exp7 vs baseline N=15 quiet, MemoryMax=24G)**:
+
+| Chain | Baseline μ±σ | Exp 7 μ±σ | Δ | t | df | p | Verdict |
+|-------|-------------|-----------|-----|---|-----|---|---------|
+| 50 | 30.16 ms ± 0.43 | 25.62 ms ± 0.72 | -15.1 % | -20.90 | 22.9 | <0.0001 | **WIN** |
+| 100 | 73.04 ms ± 0.83 | 62.07 ms ± 0.97 | -15.0 % | -33.26 | 27.3 | <0.0001 | **WIN** |
+| 200 | 201.72 ms ± 2.56 | 176.69 ms ± 2.79 | -12.4 % | -25.59 | 27.8 | <0.0001 | **WIN** |
+| 1000 | 3316.17 ms ± 52.9 | 3025.21 ms ± 14.7 | -8.8 % | -20.53 | 16.1 | <0.0001 | **WIN** |
+
+**chain_10000**: OOM at 24 G after **6 min 26 s wall (~3.7 GB/min)**. Falsifier threshold = 3.2 GB/min (2× E6's 1.6). **Falsifier triggered** — though only marginally (3.7 vs 3.2 = 16 % over).
+
+**Gauntlet**: 4102/0 prattail-lib preserved.
+
+**Hypothesis fate**: PARTIALLY confirmed. Fire-action restoration preserves chain_50/100/200/1000 wins (Welch WIN ×4). Fire-action restoration does NOT recover E6 trajectory at chain_10000 (3.7 GB/min vs target ≤ 1.6 GB/min).
+
+**Verdict**: **DEFERRED** to user (cross-criteria tradeoff). Per Plan agent's prespecified falsifier: REVERT 6b+7. Per Welch (user's explicit keep-criterion): KEEP 6b+7 — all 4 sizes WIN at p<0.0001 with magnitudes -8.8% to -15.1%. Trade-off:
+- **Keep 6b+7**: chain_50/100/200/1000 ~12 % faster; chain_10000 OOMs at 6:26 vs E6's 15:44.
+- **Revert 6b+7**: chain_10000 returns to E6 trajectory (still OOMs); chain_50/100/200/1000 lose the wins.
+
+Either way chain_10000 still OOMs — so revert just sacrifices the smaller-chain wins for a slower-but-still-failed chain_10000 trajectory. Exp 10 S0 (below) reveals the real merge-blocker is structural (node + edge axes always co-diverge at 100%), beyond what fire-action alone can fix.
+
+---
+
+### Exp 10 Substage 0 (2026-05-26, tip `67d4a3e`) — ConfigKey pairwise correlation matrix
+
+Read-only instrumentation (`PairCounts: PairCounts` newtype + `merge_miss_pair_participation` field + pairwise loop in `sample_merge_misses` multi-diff branch). Display impl prints lower-triangular cells. Zero behavior change when `walker-stats` feature off.
+
+**Build**: 4102/0 prattail-lib under `--features walker-stats`.
+
+**Run** (chain_1000, Exp 7 state in tree): see `prattail/docs/design/plans/bench-data/exp10_12_s0_chain_1000_stats.txt`.
+
+**Pair-correlation matrix** (denom = multi_diff_total = 383,566):
+
+| Pair (i, j) | Co-occurrence count | % of multi-diff |
+|-------------|---------------------|-----------------|
+| (state, node) | 68,778 | 17.9 % |
+| (state, edge) | 68,732 | 17.9 % |
+| (state, sppf_top) | 49,622 | 12.9 % |
+| (state, lex_alt_idx/weight_src_idx/weight_rule_idx) | 10,480 | 2.7 % each |
+| (state, cohort_origin) | 220 | 0.1 % |
+| **(node, edge)** | **383,429** | **100.0 %** |
+| (node, sppf_top) | 313,278 | 81.7 % |
+| (node, lex_alt_idx/weight_src_idx/weight_rule_idx) | 18,541 | 4.8 % each |
+| (node, cohort_origin) | 9,475 | 2.5 % |
+| (edge, sppf_top) | 313,328 | 81.7 % |
+| (edge, lex_alt_idx/weight_src_idx/weight_rule_idx) | 18,523 | 4.8 % each |
+| (edge, cohort_origin) | 9,525 | 2.5 % |
+| (cohort_origin, sppf_top) | 3,470 | 0.9 % |
+| (sppf_top, lex_alt_idx/weight_src_idx/weight_rule_idx) | 18,523 | 4.8 % each |
+| (lex_alt_idx, weight_src_idx/weight_rule_idx) | 18,582 | 4.8 % each |
+| (weight_src_idx, weight_rule_idx) | 18,582 | 4.8 % |
+
+**Sole-diff baseline** (from `merge_miss` line; %s of multi_diff_total = 383,566):
+- node_only = 8 (0.002 %)
+- edge_only = 6 (0.002 %)
+- state_only = 6022 (1.57 %)
+- All others (sppf_top, cohort_origin, lex_alt_idx, etc.) = 0 or near-0
+
+**Gate analysis** (Plan agent's criterion: co-occurrence > 0.95 AND sole-diff < 1 % → drop candidate):
+
+| Pair | Co-occurrence | Sole-diff (i) | Sole-diff (j) | Verdict |
+|------|---------------|---------------|---------------|---------|
+| **(node, edge)** | **100.0 %** | node 0.002 % | edge 0.002 % | **FIRES — drop one of {node, edge}** |
+| (node, sppf_top) | 81.7 % | node 0.002 % | sppf_top 0.006 % | below 95 % gate, do not drop |
+| (edge, sppf_top) | 81.7 % | edge 0.002 % | sppf_top 0.006 % | below 95 % gate, do not drop |
+| (state, node) | 17.9 % | state 1.57 % | node 0.002 % | state sole-diff too high (>1 %) |
+
+**Verdict**: **ACCEPT** (instrumentation) + **GATE FIRES** for Exp 10 Substage 1. The (node, edge) co-divergence is structural: when node differs, edge ALWAYS differs (and vice versa, modulo 8+6 outliers). Both have sole-diff rates of 0.002 % — neither carries information the other lacks. Dropping ONE of {node, edge} from ConfigKey will let 383,429 currently-blocked merges proceed (100 % of node-or-edge multi-diff cases).
+
+**Caution**: node and edge being 100 % co-divergent on chain_1000 is **specific to chain workloads** where every cursor sits on a fresh GSS edge. On non-chain workloads (binders, cross-cat, recovery) the correlation may differ. Exp 10 Substage 1 will need a generalization-test gate (gauntlet 4102/0 plus rhocalc trampoline 15/0/2 ignored).
+
+**Mechanical recommendation** (subject to plan-agent review of Substage 1 design): drop `edge` since `node` carries more semantic weight (the GSS node identity is the more natural per-cursor discriminator; `edge` is the incoming-edge ID, which is derivable from `node` for chain workloads).
+
+---
+
+### Exp 12 Substage 0 (2026-05-26, tip `67d4a3e`) — binder + optional scope-marks histograms
+
+Read-only instrumentation (3 new `WalkerStats` fields: `binder_scope_marks_len_*`, `optional_scope_marks_len_*`, `binder_scope_names_len_*`). `stats_histogram_sample!` calls at per-cursor step_fanout sampling site.
+
+**Build**: 4102/0 prattail-lib under `--features walker-stats`.
+
+**Run** (chain_1000):
+
+| Histogram | n samples | max | All buckets |
+|-----------|-----------|-----|-------------|
+| binder_scope_marks_len | 145,054 | 0 | 100 % at length 0 |
+| optional_scope_marks_len | 145,054 | 0 | 100 % at length 0 |
+| binder_scope_names_len (inner Vec<String>) | not sampled (outer is always empty) | n/a | n/a |
+
+**Gate analysis** (Plan agent's criterion: if max ever exceeds 1 with non-trivial frequency, path-tree arena candidate):
+
+**Gate does NOT fire** for chain workload. Like `recovery_deltas` (Exp 4 REJECT) and `visited_recovery` (Exp 5 SKIP), scope marks are always empty on chain workloads — there are no binders or optional groups to scope-mark. Exp 12 Substage 1 (path-tree arena for scope marks) would be wasted effort for chain_10000 closure.
+
+**Verdict**: **ACCEPT** (instrumentation) + **REJECT-BEFORE-ATTEMPT** for Exp 12 Substage 1 (chain track). Scope marks may matter for binder-heavy workloads (rhocalc PInputs/PNew, Lambda) but those are not in the chain_10000 critical path.
+
+---
+
+## Summary — chain_10000 closure status (post-Exp 7 + Exp 10 S0 + Exp 12 S0)
+
+**Remaining viable experiments per data**:
+
+1. **Exp 10 Substage 1**: drop one of {node, edge} from ConfigKey. **GATE FIRES** on chain_1000 (100 % co-divergence, 0.002 % sole-diff). 383K merge opportunities currently lost — partial close of chain_10000 ceiling expected. Risk: medium (generalization across non-chain workloads needs gauntlet verification).
+
+2. **Exp 8**: path-tree arena for `visited_dispatch` + LRU cache for contains(). Agent 2 diagnosed `visited_dispatch.max = 1003` linearly scaling → ~7 GB live peak at chain_10000. Substage 0 data already in ledger (row 5-S0).
+
+3. **Approach P** (Plan agent Candidate 1, designed at `phase-f13-stage-1-5-4-approach-p-realize-time-fanout.md` but unshipped): realize-time cohort fanout. Highest impact for chain. Substage 0 would be `cohort_revive_count` counter; threshold ≥ 50 % of branch_cursors_sum.
+
+4. **Earley + Leo outboard** (Plan agent Candidate 2): `prattail/src/earley.rs` has full Earley + Leo coded but unwired. Delegate chain regions to Earley; lift back as a single Packing. Substage 0 = chain-region detection counter.
+
+**Order recommendation** (based on Exp 10 S0 evidence and prior plan-agent ranking):
+- Exp 10 Substage 1 first (lowest-effort, highest direct evidence — gate already fires on actual data).
+- Exp 8 second (per-cursor allocator dominant per Agent 2 diagnosis).
+- Approach P or Earley outboard third (highest-impact-if-it-works, but more design risk).
+
+**Pending user decision** (Exp 7 verdict):
+- Keep 6b + 7 (chain_50-1000 WIN, chain_10000 LOSS) AND ship Exp 10 next
+- Revert 6b + 7 per Plan-agent's prespecified falsifier AND ship Exp 10 on E6 baseline
