@@ -7931,27 +7931,6 @@ where
                 if let Some((symbol_id, hi_pos, pos_at_dispatch, snapshots, members)) =
                     self.dispatch_cohort_cache.take_pending_for_drain(&key)
                 {
-                    // Phase F.13 chain_10000 Exp 9 S1.d (2026-05-26):
-                    // for eligible (member, snap) pairs, push a
-                    // CohortContinuation into the entry's
-                    // deferred_continuations and SKIP the per-(member,
-                    // snap) revive. install_cohort_continuations at
-                    // EOI interns the outer-rule packing. Net cursor
-                    // emission: N×M → 0 per drain when eligible.
-                    //
-                    // Try to build a continuation template from the
-                    // FIRST member (all members share the cohort shell
-                    // by ~_obs invariant). If None, fall back to
-                    // today's per-(member, snap) revive for ALL pairs.
-                    let weight_one = W::one_ref();
-                    let eligible_template = members
-                        .first()
-                        .and_then(|m| {
-                            self.try_build_continuation(
-                                &m.return_frame,
-                                &weight_one,
-                            )
-                        });
                     // Phase F.13 Stage L3.5 (2026-05-25): DispatchResolved
                     // broadcast — for each live snapshot, build ONE cohort
                     // frame whose N members are the (snap-fixed) revives
@@ -7974,23 +7953,10 @@ where
                         if members.is_empty() {
                             continue;
                         }
-                        // Phase F.13 chain_10000 Exp 9 S1.d (2026-05-26):
-                        // eligible path — push N continuations (one per
-                        // member at this snap) and skip the per-(member,
-                        // snap) revive entirely. install_cohort_
-                        // continuations at EOI builds the outer-rule
-                        // packing; sppf.intern_packing's dedup collapses
-                        // structurally identical continuations.
-                        if let Some(template) = eligible_template.as_ref() {
-                            for _ in members.iter() {
-                                let cont = template.clone();
-                                let _ = self
-                                    .dispatch_cohort_cache
-                                    .push_deferred_continuation(&key, cont);
-                            }
-                            continue;
-                        }
-                        // Ineligible path: revive ALL members for this snap.
+                        // Revive ALL members for this snap. Each revive
+                        // produces a fresh post-CategoryEntry-push
+                        // BranchCursor. The first becomes the shell
+                        // archetype; all become member states.
                         let revived: Vec<BranchCursor<W>> = members
                             .iter()
                             .map(|m| {
@@ -10757,48 +10723,36 @@ where
                     let synthetic_weight_at_dispatch =
                         parent.weight.times_ref(&branch.weight);
                     // Phase F.13 chain_10000 Exp 9 S1.b (2026-05-26):
-                    // build a CohortContinuation for eligible sites.
-                    // S1.d (2026-05-26): when eligible, the continuation
-                    // is the SOLE representation — skip the per-snap
-                    // revive loop entirely (cursor-population
-                    // reduction). The install_cohort_continuations EOI
-                    // pass (S1.c) interns the outer-rule packing per
-                    // snapshot via the per-snap continuation push.
+                    // dual-write — build a CohortContinuation per
+                    // snapshot for eligible sites. None = ineligible
+                    // (mixfix with post-dispatch children); per-cursor
+                    // revive loop below remains live.
                     let continuation_template =
                         self.try_build_continuation(parent, &branch.weight);
                     let mut revived_cursors = Vec::with_capacity(
                         worker_snapshots.len(),
                     );
-                    if continuation_template.is_none() {
-                        // S1.d INELIGIBLE path: fall back to per-cursor
-                        // revive (today's path). This handles mixfix
-                        // with post-dispatch children + any other
-                        // non-chain-shaped outer rule.
-                        for snap in &worker_snapshots {
-                            if snap.worker_inner_state.is_terminal() {
-                                continue;
-                            }
-                            let synthetic_member =
-                                crate::dispatch_cohort::CohortMember {
-                                    return_frame: parent.clone(),
-                                    weight_at_dispatch:
-                                        synthetic_weight_at_dispatch.clone(),
-                                };
-                            let revived = self.revive_cohort_member_with_snapshot(
-                                synthetic_member,
-                                symbol_id,
-                                pos_at_dispatch,
-                                hi_pos,
-                                s,
-                                b,
-                                snap,
-                            );
-                            revived_cursors.push(revived);
+                    for snap in &worker_snapshots {
+                        if snap.worker_inner_state.is_terminal() {
+                            continue;
                         }
+                        let synthetic_member =
+                            crate::dispatch_cohort::CohortMember {
+                                return_frame: parent.clone(),
+                                weight_at_dispatch:
+                                    synthetic_weight_at_dispatch.clone(),
+                            };
+                        let revived = self.revive_cohort_member_with_snapshot(
+                            synthetic_member,
+                            symbol_id,
+                            pos_at_dispatch,
+                            hi_pos,
+                            s,
+                            b,
+                            snap,
+                        );
+                        revived_cursors.push(revived);
                     }
-                    // (Eligible path: revived_cursors stays empty;
-                    // outer-rule packings flow through deferred
-                    // continuations interned at EOI.)
                     // Park a synthetic member onto the entry's
                     // pending_cohort for future cross-step snapshots.
                     // pause_cohort_member handles Resolved entries
