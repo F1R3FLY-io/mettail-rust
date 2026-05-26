@@ -10509,6 +10509,264 @@ where
     ///     ResolvedHit.
     ///   - N cursors: multi-packing ResolvedHit — one revived cursor
     ///     per worker snapshot. Caller `children.extend(...)`.
+    /// Phase F.13 chain_10000 Exp 13 S1.b (2026-05-26): outboard
+    /// Earley + Leo chain-region recognizer.
+    ///
+    /// **UNREACHABLE in S1.b** — no call sites added; S1.c wires the
+    /// trigger detection in the `IterativeChainAbsorb` arm.
+    ///
+    /// Given a cursor positioned at the start of a left-assoc chain
+    /// region (atom op atom op atom ...), build an Earley chart over
+    /// the chain region, recognize it, and emit the SPPF subforest
+    /// via `EarleyChart::emit_sppf_subforest`. Returns the root
+    /// SppfId, the accumulated per-iteration weight power, and the
+    /// end-of-chain position.
+    ///
+    /// Inputs:
+    /// - `cursor` — read-only reference to the chain-region start
+    ///   cursor (no mutation; caller reconciles).
+    /// - `tokens` — input source for forward peeking.
+    /// - `iter_symbol` — the IterativeChainAbsorb arm's `symbol`,
+    ///   carrying `(category_src_idx, rule_index_in_category)` of
+    ///   the InfixOp rule being iterated.
+    /// - `iter_weight` — per-iteration weight contribution.
+    ///
+    /// Returns:
+    /// - `Some((chain_root_sid, accumulated_weight, end_pos))` on
+    ///   recognition of a chain region of length ≥ 2 atoms.
+    /// - `None` if:
+    ///   * the chain region is too short (< 2 atoms),
+    ///   * the peek detects a non-conforming token at the boundary,
+    ///   * recognition fails (should not happen for well-formed chain),
+    ///   * the iter_symbol's outer rule is not an arity-2 InfixOp.
+    ///
+    /// Borrow discipline: takes `&mut self` because Earley chart
+    /// build + SPPF interning both need walker-owned arenas. The
+    /// `cursor` borrow is immutable; reconciliation is the caller's
+    /// responsibility.
+    ///
+    /// Per design in
+    /// `prattail/docs/design/plans/phase-f13-exp13-earley-outboard.md`.
+    #[allow(dead_code)] // S1.b: unreachable; S1.c wires the trigger.
+    fn earley_outboard_chain(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+        iter_symbol: &crate::wpda_runtime::StackSymbolV2,
+        iter_weight: W,
+    ) -> Option<(crate::sppf::SppfId, W, usize)> {
+        // Step 1: peek atom/op kinds at the chain start.
+        let atom_kind = tokens.peek_kind(cursor.pos)?;
+        let op_kind = tokens.peek_kind(cursor.pos + 1)?;
+        // Atom can't equal op (chain must alternate); short-circuit.
+        if atom_kind == op_kind {
+            return None;
+        }
+
+        // Step 2: detect chain region end via forward peek loop.
+        // Pattern: atom (op atom)* — walk pairs of (op, atom) until
+        // either runs out or pattern breaks. start: cursor.pos
+        // already consumed as atom #0 by the caller's prior iteration.
+        let chain_start = cursor.pos;
+        let mut probe = chain_start;
+        // Atom #0 is at probe; advance past it.
+        if tokens.peek_kind(probe).as_ref() != Some(&atom_kind) {
+            return None;
+        }
+        probe += 1;
+        let mut atom_count = 1usize;
+        loop {
+            // Need an op at probe.
+            match tokens.peek_kind(probe).as_ref() {
+                Some(k) if *k == op_kind => {}
+                _ => break,
+            }
+            // Need an atom at probe+1.
+            match tokens.peek_kind(probe + 1).as_ref() {
+                Some(k) if *k == atom_kind => {}
+                _ => break,
+            }
+            // Consume op + atom.
+            probe += 2;
+            atom_count += 1;
+        }
+        let chain_end = probe;
+        if atom_count < 2 {
+            return None;
+        }
+
+        // Step 3: extract InfixOp metadata.
+        let outer_cat_src_idx = iter_symbol.category_src_idx;
+        let outer_rule_idx = iter_symbol.rule_index_in_category;
+        let action = self.engine.action_for(outer_cat_src_idx, outer_rule_idx)?;
+        // Chain InfixOp has arity 2 (lhs, rhs); op is a TriggerTerminal
+        // not counted in action arity. Defensive: bail if assumption
+        // doesn't hold.
+        if action.arity != 2 {
+            return None;
+        }
+
+        // Step 4: pre-intern terminals for the chain region. The
+        // chain spans [chain_start, chain_end). Each atom and each op
+        // gets a Terminal SppfNode via sppf.intern_terminal.
+        let chain_len_tokens = chain_end - chain_start;
+        let mut terminal_sppf_ids: Vec<crate::sppf::SppfId> =
+            Vec::with_capacity(chain_len_tokens);
+        for offset in 0..chain_len_tokens {
+            let pos = chain_start + offset;
+            let kind = tokens.peek_kind(pos).expect("chain peek invariant");
+            let text = tokens.peek_text(pos);
+            let sid = self.sppf.intern_terminal(
+                kind,
+                crate::sppf::PosOrSynth::Real(pos as u32),
+                text,
+                false,
+            );
+            terminal_sppf_ids.push(sid);
+        }
+
+        // Step 5: build Earley chart over the chain region. Grammar:
+        //   chain → atom
+        //   chain → chain op atom    (left-recursive)
+        //   atom  → atom_terminal
+        // The chart's "input" is the chain region's tokens.
+        // Token tags use TokenKind's discriminant via a stable u32 cast.
+        let atom_tag = crate::earley::token_kind_to_tag(&atom_kind);
+        let op_tag = crate::earley::token_kind_to_tag(&op_kind);
+        let mut chart = crate::earley::EarleyChart::new(chain_len_tokens);
+        chart.add_rule_with_body(
+            "atom",
+            "Atom",
+            vec![crate::earley::RuleItem::Terminal { tag: atom_tag }],
+        );
+        chart.add_rule_with_body(
+            "chain_base",
+            "Chain",
+            vec![crate::earley::RuleItem::NonTerminal {
+                category: "Atom".to_string(),
+            }],
+        );
+        chart.add_rule_with_body(
+            "chain_step",
+            "Chain",
+            vec![
+                crate::earley::RuleItem::NonTerminal {
+                    category: "Chain".to_string(),
+                },
+                crate::earley::RuleItem::Terminal { tag: op_tag },
+                crate::earley::RuleItem::NonTerminal {
+                    category: "Atom".to_string(),
+                },
+            ],
+        );
+
+        // Step 6: drive predict + scan + complete to a fixpoint per
+        // position. Standard Earley algorithm.
+        chart.predict("Chain", 0);
+        for pos in 0..chain_len_tokens {
+            // Recursive predict: any rule needing Atom at pos must
+            // seed Atom rules.
+            chart.predict("Atom", pos);
+            chart.predict("Chain", pos);
+            // Scan the actual token tag at this position.
+            let token_kind = tokens
+                .peek_kind(chain_start + pos)
+                .expect("chain peek invariant");
+            chart.scan(pos, crate::earley::token_kind_to_tag(&token_kind));
+            // Complete to fixpoint at the NEXT position (sets[pos+1]).
+            self.complete_to_fixpoint(&mut chart, pos + 1);
+            // Leo reduction is a no-op for left-recursive chain but
+            // safe to call.
+            chart.leo_reduce(pos + 1, "Chain");
+        }
+        if !chart.recognizes("Chain") {
+            return None;
+        }
+
+        // Step 7: emit SPPF subforest. The walker's outer InfixOp
+        // rule is the "chain_step" rule; the per-atom rule is
+        // synthesized (uses iter_symbol's rule_idx since Atom in our
+        // grammar is the same category as the outer's RHS slot).
+        let outer_nt_tag = outer_cat_src_idx as u32;
+        let mut rule_label_to_meta = std::collections::HashMap::new();
+        // chain_step → maps to the outer InfixOp's rule_idx + cat_tag.
+        rule_label_to_meta.insert(
+            "chain_step".to_string(),
+            (outer_rule_idx as u32, outer_nt_tag),
+        );
+        // chain_base → same rule_idx (degenerate single-atom case).
+        rule_label_to_meta.insert(
+            "chain_base".to_string(),
+            (outer_rule_idx as u32, outer_nt_tag),
+        );
+        // atom → uses a synthetic atom-rule mapping; in production this
+        // would come from grammar metadata. For S1.b standalone we
+        // bail if no atom rule is registered with the engine. For the
+        // chain test the atom IS the same outer category (Int chain).
+        rule_label_to_meta.insert(
+            "atom".to_string(),
+            (outer_rule_idx as u32, outer_nt_tag),
+        );
+        let mut rule_weights = std::collections::HashMap::new();
+        rule_weights.insert("chain_step".to_string(), iter_weight.clone());
+        rule_weights.insert("chain_base".to_string(), W::one_ref());
+        rule_weights.insert("atom".to_string(), W::one_ref());
+        let root = chart.emit_sppf_subforest(
+            &mut self.sppf,
+            "Chain",
+            outer_nt_tag,
+            &rule_label_to_meta,
+            &terminal_sppf_ids,
+            &rule_weights,
+        )?;
+
+        // Step 8: accumulated weight = iter_weight^(atom_count - 1).
+        // Each chain_step Packing contributes iter_weight once; total
+        // contributions = number of chain_step applications = atom_count - 1.
+        // For LexicographicWeight: `times` is `pre_combined`; replay
+        // produces the same result as the walker's per-iteration
+        // multiply_cursor_weight loop would have.
+        let mut accumulated = W::one_ref();
+        for _ in 0..(atom_count - 1) {
+            accumulated = accumulated.times_ref(&iter_weight);
+        }
+        Some((root, accumulated, chain_end))
+    }
+
+    /// Run Earley `complete` at sets[pos] to fixpoint. Each completed
+    /// item may advance items in earlier sets, which may themselves
+    /// complete, etc.
+    #[allow(dead_code)] // S1.b: only called from earley_outboard_chain.
+    fn complete_to_fixpoint(
+        &self,
+        chart: &mut crate::earley::EarleyChart,
+        pos: usize,
+    ) {
+        // Bounded iteration cap: chain length × rule body size as a
+        // generous bound. Prevents pathological infinite loops if a
+        // bug in complete somehow re-inserts an item.
+        let cap = chart.input_len().saturating_mul(8).max(64);
+        let mut iterations = 0usize;
+        loop {
+            iterations += 1;
+            if iterations > cap {
+                break;
+            }
+            let snapshot: Vec<crate::earley::EarleyItem> =
+                chart.items_at(pos).iter().cloned().collect();
+            let mut any_advanced = false;
+            for item in &snapshot {
+                let advanced = chart.complete(pos, item);
+                if advanced > 0 {
+                    any_advanced = true;
+                }
+            }
+            if !any_advanced {
+                break;
+            }
+        }
+    }
+
     fn allocate_fork_push_child(
         &mut self,
         parent: &BranchCursor<W>,

@@ -58,7 +58,26 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::automata::semiring::SemiringRef;
+use crate::automata::TokenKind;
 use crate::sppf::{Sppf, SppfId};
+
+/// Stable u32 tag for a `TokenKind`, used by `RuleItem::Terminal`'s
+/// `tag` field. Each variant gets a distinct discriminant. For
+/// variants that carry a payload (e.g. `IntegerLit(name)`), the
+/// payload is hashed into the discriminant via FxHasher so two
+/// occurrences of `IntegerLit("Int")` map to the same tag, while
+/// `IntegerLit("UInt32")` maps to a different one.
+///
+/// This is the bridge between the walker's TokenKind taxonomy and
+/// Earley's per-item terminal expectation.
+pub fn token_kind_to_tag(kind: &TokenKind) -> u32 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    kind.hash(&mut hasher);
+    // Truncate to u32; collisions are theoretically possible but
+    // negligible for our small TokenKind universe.
+    (hasher.finish() as u32) ^ ((hasher.finish() >> 32) as u32)
+}
 
 // ══════════════════════════════════════════════════════════════════
 // Rule body model
