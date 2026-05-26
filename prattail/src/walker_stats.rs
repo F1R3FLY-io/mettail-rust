@@ -209,6 +209,47 @@ pub struct WalkerStats {
     /// `merge_miss_multi_diff_total` (each multi-diff pair contributes
     /// to multiple indices).
     pub merge_miss_multi_participation: [u64; 10],
+
+    // ── Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26) ─────────
+    // Read-only length-histogram instrumentation for the two
+    // BranchCursor fields targeted by Plan C's SmallVec experiment
+    // (Substage 1). Sampled in `step_fanout` per-cursor; informs the
+    // inline `N` sizing for `SmallVec<[T; N]>` so the spill threshold
+    // covers ≥ 99 % of cursors. Buckets: indices 0..=7 correspond to
+    // length ranges {0, 1, 2, 4, 8, 16, 32, 64+} via
+    // `histogram_bucket_index`.
+    /// Per-cursor `incoming_edge_stack.len()` distribution across all
+    /// step_fanout sampling points. The chain-10000 ceiling-lift plan
+    /// needs the p99 of this distribution to choose SmallVec N.
+    pub incoming_edge_stack_len_histogram: [u64; 8],
+    /// Maximum observed `incoming_edge_stack.len()` across all sample
+    /// points. Caps the histogram's right tail interpretation.
+    pub incoming_edge_stack_len_max: u64,
+    /// Sample count for `incoming_edge_stack` histogram (the divisor
+    /// to compute per-bucket fractions).
+    pub incoming_edge_stack_len_samples: u64,
+    /// Same as above for `recovery_deltas.len()`.
+    pub recovery_deltas_len_histogram: [u64; 8],
+    pub recovery_deltas_len_max: u64,
+    pub recovery_deltas_len_samples: u64,
+}
+
+/// Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26): histogram
+/// bucket index for a non-negative length value. Power-of-two ish
+/// bucketing: {0, 1, 2, 4, 8, 16, 32, 64+}.
+///
+/// Returns an index in 0..8.
+pub fn histogram_bucket_index(len: usize) -> usize {
+    match len {
+        0 => 0,
+        1 => 1,
+        2..=3 => 2,
+        4..=7 => 3,
+        8..=15 => 4,
+        16..=31 => 5,
+        32..=63 => 6,
+        _ => 7, // 64+
+    }
 }
 
 impl WalkerStats {
@@ -375,6 +416,39 @@ impl fmt::Display for WalkerStats {
                 100.0 * self.merge_miss_pairs_pred_edge_class_equivalent as f64 / denom,
             )?;
         }
+        // Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26):
+        // length histograms for incoming_edge_stack + recovery_deltas.
+        // Used to size SmallVec inline N in Plan C Substage 1.
+        if self.incoming_edge_stack_len_samples > 0 {
+            let labels = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64+"];
+            let total = self.incoming_edge_stack_len_samples as f64;
+            write!(
+                f,
+                "  incoming_edge_stack_len_histogram (n={}, max={}):",
+                self.incoming_edge_stack_len_samples,
+                self.incoming_edge_stack_len_max,
+            )?;
+            for (i, lbl) in labels.iter().enumerate() {
+                let c = self.incoming_edge_stack_len_histogram[i];
+                write!(f, " {}={} ({:.1}%)", lbl, c, 100.0 * c as f64 / total)?;
+            }
+            writeln!(f)?;
+        }
+        if self.recovery_deltas_len_samples > 0 {
+            let labels = ["0", "1", "2-3", "4-7", "8-15", "16-31", "32-63", "64+"];
+            let total = self.recovery_deltas_len_samples as f64;
+            write!(
+                f,
+                "  recovery_deltas_len_histogram (n={}, max={}):",
+                self.recovery_deltas_len_samples,
+                self.recovery_deltas_len_max,
+            )?;
+            for (i, lbl) in labels.iter().enumerate() {
+                let c = self.recovery_deltas_len_histogram[i];
+                write!(f, " {}={} ({:.1}%)", lbl, c, 100.0 * c as f64 / total)?;
+            }
+            writeln!(f)?;
+        }
         Ok(())
     }
 }
@@ -421,6 +495,37 @@ macro_rules! stats_max {
             if v > $walker.stats.$field {
                 $walker.stats.$field = v;
             }
+        }
+    };
+}
+
+/// Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26): sample a
+/// length value into a `[u64; 8]` histogram + max + samples counter
+/// (zero-cost when feature off). Triple of fields:
+///   - `$hist_field` is the `[u64; 8]` histogram.
+///   - `$max_field` is the `u64` max.
+///   - `$samples_field` is the `u64` total sample count.
+///
+/// Usage:
+///   `stats_histogram_sample!(self, incoming_edge_stack_len_histogram,
+///                            incoming_edge_stack_len_max,
+///                            incoming_edge_stack_len_samples,
+///                            cursor.incoming_edge_stack.len());`
+#[macro_export]
+macro_rules! stats_histogram_sample {
+    ($walker:expr, $hist_field:ident, $max_field:ident, $samples_field:ident, $value:expr) => {
+        #[cfg(feature = "walker-stats")]
+        {
+            let v: usize = $value;
+            let idx = $crate::walker_stats::histogram_bucket_index(v);
+            $walker.stats.$hist_field[idx] =
+                $walker.stats.$hist_field[idx].saturating_add(1);
+            let vu64 = v as u64;
+            if vu64 > $walker.stats.$max_field {
+                $walker.stats.$max_field = vu64;
+            }
+            $walker.stats.$samples_field =
+                $walker.stats.$samples_field.saturating_add(1);
         }
     };
 }
@@ -479,6 +584,13 @@ mod tests {
             merge_miss_lex_fork_stamp_diff_total: 0,
             merge_miss_pairs_pred_edge_class_equivalent: 0,
             merge_miss_multi_participation: [0; 10],
+            // Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26).
+            incoming_edge_stack_len_histogram: [0; 8],
+            incoming_edge_stack_len_max: 0,
+            incoming_edge_stack_len_samples: 0,
+            recovery_deltas_len_histogram: [0; 8],
+            recovery_deltas_len_max: 0,
+            recovery_deltas_len_samples: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

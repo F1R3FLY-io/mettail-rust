@@ -7380,6 +7380,24 @@ where
                 cursor.pos,
                 tokens,
             );
+            // Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26):
+            // sample BranchCursor field lengths into histograms. Used
+            // post-parse to size SmallVec inline N (Plan C Substage 1).
+            // Zero-cost when feature off.
+            crate::stats_histogram_sample!(
+                self,
+                incoming_edge_stack_len_histogram,
+                incoming_edge_stack_len_max,
+                incoming_edge_stack_len_samples,
+                cursor.incoming_edge_stack.len()
+            );
+            crate::stats_histogram_sample!(
+                self,
+                recovery_deltas_len_histogram,
+                recovery_deltas_len_max,
+                recovery_deltas_len_samples,
+                cursor.recovery_deltas.len()
+            );
             let mut cursor = cursor;
             let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
             // Stage 3.11 / ι Phase 6 (2026-05-01): runaway guard. Any
