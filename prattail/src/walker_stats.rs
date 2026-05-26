@@ -151,6 +151,38 @@ pub struct WalkerStats {
     /// matches — the inverse outlier).
     pub merge_miss_edge_only_by_context: [u64; 4],
 
+    // ── Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26):
+    //     Streaming SPPF reclamation-window measurement ──────────────
+    /// Number of step_fanout iterations at which the reclamation
+    /// window was sampled. Denominator for the histograms below.
+    pub sppf_reclaim_window_samples: u64,
+    /// Number of step_fanout iterations at which the cohort cache
+    /// pinned the SPPF lower-bound position (cache_min < frontier_min).
+    /// Per Plan agent: this is the load-bearing diagnostic — if the
+    /// cohort cache pins low positions, the SPPF reclamation window
+    /// is bounded above by `min over cache_entry of symbol_id.lo_pos`,
+    /// not by the cursor frontier.
+    pub sppf_reclaim_cache_pinned_samples: u64,
+    /// Maximum observed `(frontier_min - cache_min)` gap. When the
+    /// cohort cache pins, this is the size of the lost reclamation
+    /// opportunity (positions that COULD have been released if the
+    /// cache hadn't held them).
+    pub sppf_reclaim_cache_pin_gap_max: u64,
+    /// Bucketed histogram of the reclamation window size relative to
+    /// the chain length. Buckets index by
+    /// `(min_referenced_pos / max(chain_len, 1)) * 16`, clamped to
+    /// `[0, 15]`. Bucket 0 = window 0-6.25 % (effectively no reclaim);
+    /// bucket 15 = 93.75-100 % (entire input reclaimable).
+    pub sppf_reclaim_window_histogram: [u64; 16],
+    /// Bucketed histogram of fraction of Symbol nodes whose
+    /// `hi_pos < min_referenced_pos` (reclaim candidates). 10 buckets
+    /// of 10 % each. Per Plan agent gate: PROCEED to S1.b iff
+    /// reclaim-candidate fraction ≥ 50 % on chain_1000 (buckets 5-9).
+    pub sppf_reclaimable_nodes_pct_histogram: [u64; 10],
+    /// Maximum observed Symbol node count at any step_fanout sample
+    /// (denominator context for the candidate fraction).
+    pub sppf_reclaim_symbol_count_max: u64,
+
     // ── Phase F.13 chain_10000 Exp 13 Substage 0 (2026-05-26):
     //     iterative chain-region length tracker ─────────────────────
     /// Total iterations of the `IterativeChainAbsorb` arm where
@@ -493,6 +525,67 @@ impl fmt::Display for WalkerStats {
                 100.0 * self.merge_miss_edge_only_by_context[2] as f64 / d,
                 self.merge_miss_edge_only_by_context[3],
                 100.0 * self.merge_miss_edge_only_by_context[3] as f64 / d,
+            )?;
+        }
+        // Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26).
+        if self.sppf_reclaim_window_samples > 0 {
+            let total = self.sppf_reclaim_window_samples as f64;
+            writeln!(
+                f,
+                "  sppf_reclaim_window: samples={} cache_pinned={} ({:.1}%) pin_gap_max={} symbol_count_max={}",
+                self.sppf_reclaim_window_samples,
+                self.sppf_reclaim_cache_pinned_samples,
+                100.0 * self.sppf_reclaim_cache_pinned_samples as f64 / total,
+                self.sppf_reclaim_cache_pin_gap_max,
+                self.sppf_reclaim_symbol_count_max,
+            )?;
+            // Window histogram: 16 buckets of 6.25 % each.
+            write!(f, "  sppf_reclaim_window_histogram (% of chain reclaimable):")?;
+            for (i, &count) in self.sppf_reclaim_window_histogram.iter().enumerate() {
+                if count > 0 {
+                    let pct = 100.0 * count as f64 / total;
+                    write!(
+                        f,
+                        " [{}-{}%]={}({:.1}%)",
+                        i * 100 / 16,
+                        (i + 1) * 100 / 16,
+                        count,
+                        pct,
+                    )?;
+                }
+            }
+            writeln!(f)?;
+            // Candidate-fraction histogram: 10 buckets of 10 % each.
+            write!(f, "  sppf_reclaimable_nodes_pct_histogram (% of Symbol nodes droppable):")?;
+            for (i, &count) in self.sppf_reclaimable_nodes_pct_histogram.iter().enumerate() {
+                if count > 0 {
+                    let pct = 100.0 * count as f64 / total;
+                    write!(
+                        f,
+                        " [{}-{}%]={}({:.1}%)",
+                        i * 10,
+                        (i + 1) * 10,
+                        count,
+                        pct,
+                    )?;
+                }
+            }
+            writeln!(f)?;
+            // Gate: per Plan agent, PROCEED to S1.b iff bucket 5-9 sum
+            // (≥ 50 % candidates) ≥ 50 % of samples AND window-histogram
+            // bucket 2+ (≥ 12.5 % window) ≥ 10 % of samples.
+            let cand_50plus: u64 =
+                self.sppf_reclaimable_nodes_pct_histogram[5..].iter().sum();
+            let window_12plus: u64 =
+                self.sppf_reclaim_window_histogram[2..].iter().sum();
+            let cand_pct = 100.0 * cand_50plus as f64 / total;
+            let window_pct = 100.0 * window_12plus as f64 / total;
+            writeln!(
+                f,
+                "  sppf_reclaim_gate: candidate≥50%={:.1}% (need ≥50%) AND window≥12.5%={:.1}% (need ≥10%): {}",
+                cand_pct,
+                window_pct,
+                if cand_pct >= 50.0 && window_pct >= 10.0 { "FIRES" } else { "DOES NOT FIRE → Streaming SPPF futile, close E4 as DATA-CONCLUDED" },
             )?;
         }
         // Phase F.13 chain_10000 Exp 13 Substage 0 (2026-05-26).
@@ -884,6 +977,13 @@ mod tests {
             // Phase F.13 chain_10000 Exp 10 S0-bis (2026-05-26).
             merge_miss_node_only_by_context: [0; 4],
             merge_miss_edge_only_by_context: [0; 4],
+            // Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26).
+            sppf_reclaim_window_samples: 0,
+            sppf_reclaim_cache_pinned_samples: 0,
+            sppf_reclaim_cache_pin_gap_max: 0,
+            sppf_reclaim_window_histogram: [0; 16],
+            sppf_reclaimable_nodes_pct_histogram: [0; 10],
+            sppf_reclaim_symbol_count_max: 0,
             // Phase F.13 chain_10000 Exp 13 Substage 0 (2026-05-26).
             chain_region_iterations: 0,
             // Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26).

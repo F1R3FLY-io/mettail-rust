@@ -727,6 +727,32 @@ impl<W: SemiringRef> Sppf<W> {
     /// Recurses through Packings to their leftmost child until it hits a
     /// Terminal / Symbol / Epsilon (whose `lo_pos` is intrinsic). Returns
     /// `None` if `id` is out-of-range or the node has no determinable
+    /// Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26):
+    /// diagnostic accessor for the Streaming SPPF reclamation-window
+    /// instrumentation. Returns `(symbols_below, total_symbols)`
+    /// where `symbols_below` is the count of `Symbol` nodes with
+    /// `hi_pos < threshold` (i.e., reclamation candidates whose
+    /// extent is entirely below the live frontier). `total_symbols`
+    /// is the count of all `Symbol` nodes (denominator).
+    ///
+    /// O(n) over the node arena. Walker should not call this on the
+    /// hot path; per Plan agent S1.a the sample frequency is
+    /// per-step_fanout-iteration, which is amortized over many
+    /// per-cursor steps.
+    pub fn count_symbols_below_hi(&self, threshold: u32) -> (u64, u64) {
+        let mut below: u64 = 0;
+        let mut total: u64 = 0;
+        for n in &self.nodes {
+            if let SppfNode::Symbol { hi_pos, .. } = n {
+                total += 1;
+                if *hi_pos < threshold {
+                    below += 1;
+                }
+            }
+        }
+        (below, total)
+    }
+
     /// position (e.g., a `Packing` with no children, which the walker
     /// should not emit but is defensively handled).
     ///

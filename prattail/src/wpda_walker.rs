@@ -7943,6 +7943,8 @@ where
         // peak-step bucket; constant overhead per step.
         #[cfg(feature = "walker-stats")]
         self.sample_merge_misses();
+        #[cfg(feature = "walker-stats")]
+        self.sample_sppf_reclaim_window();
         self.merge_equivalent_cursors();
         // Phase F.13 walker-stats (2026-05-20): capture post-merge peak.
         crate::stats_max!(self, branch_cursors_peak_post_merge, self.branch_cursors.len() as u64);
@@ -8073,6 +8075,102 @@ where
     /// - `state` dominates: relaxed-state merge candidate — Branch C.
     /// - `depth` dominates: collection-depth desync bug — Branch D.
     /// - `multi` dominates: no single fix sufficient; H11a rejected.
+
+    /// Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26):
+    /// sample the Streaming SPPF reclamation window. Computes:
+    /// 1. `frontier_min` = min `cursor.pos` over `branch_cursors`
+    /// 2. `cache_min` = min `sppf.span_lo(entry.symbol_id)` over
+    ///    `dispatch_cohort_cache.entries` (Resolved + InFlight)
+    /// 3. `min_referenced_pos = min(frontier_min, cache_min)`
+    /// 4. `(candidates, total) = sppf.count_symbols_below_hi(min_pos)`
+    /// 5. Updates 5 histograms + counters in `self.stats`.
+    ///
+    /// O(branch_cursors + cache_entries + sppf_nodes). Hot but
+    /// amortized over many per-cursor steps.
+    ///
+    /// Per Plan agent S1.a gate: PROCEED to S1.b iff candidate
+    /// fraction ≥ 50 % AND window ≥ 10 % of chain length on
+    /// chain_1000. If gate FAILS, close E4 as DATA-CONCLUDED
+    /// (Streaming SPPF futile because cohort cache pins low
+    /// positions).
+    #[cfg(feature = "walker-stats")]
+    fn sample_sppf_reclaim_window(&mut self) {
+        if self.branch_cursors.is_empty() {
+            return;
+        }
+        // 1. Frontier min cursor pos.
+        let frontier_min = self
+            .branch_cursors
+            .iter()
+            .filter_map(|frame| match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => Some(c.pos),
+                crate::cohort_lazy::Frame::Cohort(cf) => Some(cf.shell.pos),
+            })
+            .min()
+            .unwrap_or(0);
+        // 2. Cache min: scan entries for Resolved.symbol_id.lo_pos.
+        // InFlight has no symbol_id yet, so skip; Failed has none.
+        let cache_min: u32 = self
+            .dispatch_cohort_cache
+            .entries
+            .values()
+            .filter_map(|e| match e {
+                crate::dispatch_cohort::DispatchCacheEntry::Resolved {
+                    symbol_id,
+                    ..
+                } => self.sppf.span_lo(*symbol_id),
+                _ => None,
+            })
+            .min()
+            .unwrap_or(u32::MAX);
+        let min_pos = (frontier_min as u32).min(cache_min);
+        // 3. SPPF reclaim candidates count.
+        let (cand, total) = self.sppf.count_symbols_below_hi(min_pos);
+        // 4. Update samples + cache_pinned counter.
+        self.stats.sppf_reclaim_window_samples =
+            self.stats.sppf_reclaim_window_samples.saturating_add(1);
+        if cache_min < frontier_min as u32 {
+            self.stats.sppf_reclaim_cache_pinned_samples = self
+                .stats
+                .sppf_reclaim_cache_pinned_samples
+                .saturating_add(1);
+            let gap = (frontier_min as u64).saturating_sub(cache_min as u64);
+            if gap > self.stats.sppf_reclaim_cache_pin_gap_max {
+                self.stats.sppf_reclaim_cache_pin_gap_max = gap;
+            }
+        }
+        if total > self.stats.sppf_reclaim_symbol_count_max {
+            self.stats.sppf_reclaim_symbol_count_max = total;
+        }
+        // 5. Window histogram: (min_pos / chain_len) * 16, clamped.
+        // chain_len approximated by max input position seen so far —
+        // we don't know parse-time chain length, so use the
+        // last-cursor-pos as a proxy (= max(cursor.pos)).
+        let chain_len = self
+            .branch_cursors
+            .iter()
+            .filter_map(|frame| match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => Some(c.pos),
+                crate::cohort_lazy::Frame::Cohort(cf) => Some(cf.shell.pos),
+            })
+            .max()
+            .unwrap_or(0)
+            .max(1);
+        let window_bucket = ((min_pos as usize * 16) / chain_len).min(15);
+        self.stats.sppf_reclaim_window_histogram[window_bucket] = self
+            .stats
+            .sppf_reclaim_window_histogram[window_bucket]
+            .saturating_add(1);
+        // 6. Candidate-fraction histogram: (cand / total) * 10.
+        if total > 0 {
+            let cand_bucket =
+                ((cand as usize * 10) / total as usize).min(9);
+            self.stats.sppf_reclaimable_nodes_pct_histogram[cand_bucket] =
+                self.stats.sppf_reclaimable_nodes_pct_histogram[cand_bucket]
+                    .saturating_add(1);
+        }
+    }
+
     #[cfg(feature = "walker-stats")]
     fn sample_merge_misses(&mut self) {
         if self.branch_cursors.len() < 2 {
