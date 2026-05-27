@@ -806,6 +806,17 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     ///
     /// See `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
     pub tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap<W>,
+    /// Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27): walker-
+    /// global cursor store scaffolding. Field exists in all builds
+    /// (zero per-parse cost for an empty CursorStore); dual-write
+    /// mirror at every BranchCursor mutation site is the **scope of
+    /// follow-up Substage 2b**. This scaffold lands the field +
+    /// reset hook + alloc/retire helpers so subsequent commits can
+    /// add the per-site mirrors incrementally without restructuring
+    /// the WpdaWalker layout.
+    ///
+    /// See `prattail/docs/design/plans/exp15-cps-trampolined-walker.md`.
+    pub cursor_store: crate::cursor_store::CursorStore<W>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2649,6 +2660,9 @@ where
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
             tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
+            // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
+            // walker-global cursor store scaffolding. Fresh = empty.
+            cursor_store: crate::cursor_store::CursorStore::new(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2726,6 +2740,9 @@ where
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
             tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
+            // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
+            // walker-global cursor store scaffolding. Fresh = empty.
+            cursor_store: crate::cursor_store::CursorStore::new(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2798,6 +2815,9 @@ where
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
             tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
+            // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
+            // walker-global cursor store scaffolding. Fresh = empty.
+            cursor_store: crate::cursor_store::CursorStore::new(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2876,6 +2896,9 @@ where
         // Per-parse map; cursor ids / arc state are tied to the prior
         // parse's GSS and SPPF arenas.
         self.tomita_frontier_map.clear();
+        // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
+        // clear the cursor store scaffolding at parse boundary.
+        self.cursor_store.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
