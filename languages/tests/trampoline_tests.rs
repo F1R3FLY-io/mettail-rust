@@ -233,8 +233,12 @@ fn test_left_assoc_chain_200() {
 // should fit in 24 GB by linear/quadratic projection from chain_1000's
 // 15 MB peak. Used with --features walker-stats to plot the actual
 // scaling exponent of walker live state.
+// Phase F.13 chain_10000 Exp 14 Substage 7 (2026-05-27): un-ignored.
+// chain_500 LEFT-assoc passes post-Tomita Subs 3-6 in 10:13 wall, 13.6 GB
+// peak RSS (was 17:02, 21.2 GB pre-Tomita: -40% wall, -36% RSS). Kept
+// in the gauntlet as a long-running scaling probe + memory-regression
+// canary.
 #[test]
-#[ignore = "Exp 16 round 3 scaling probe"]
 fn test_left_assoc_chain_500() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(500);

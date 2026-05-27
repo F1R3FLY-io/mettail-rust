@@ -7901,17 +7901,30 @@ where
             } = action
             {
                 let kind = crate::gss::EdgeKind::from_symbol(symbol);
-                // Substage 5 conservative scope: only InfixContinuation
-                // is safe to graduate at this stage — other convergent
-                // kinds (OptionalGroupAt, PrefixRuleEntry, etc.) have
-                // per-cursor side effects beyond GSS push (e.g.,
-                // emit_start_optional_scope, binder bookkeeping) that
-                // would be silently dropped by the shell-broadcast.
-                // Substage 5 extensions can add those kinds once their
-                // side effects are also shell-shareable.
+                // Substage 5 graduated scope: InfixContinuation (chain-
+                // interior dominant) + PrefixRuleEntry (RuleAt push for
+                // prefix dispatch — no per-cursor side effects in the
+                // apply_action_to_cursor Push arm: only cursor_gss_push +
+                // weight multiply + state set) + LexAltLiteral (also
+                // RuleAt push, same shape).
+                //
+                // Other convergent EdgeKinds excluded for soundness:
+                //   - OptionalGroupAt: triggers emit_start_optional_scope
+                //     (per-cursor scope mark).
+                //   - CrossCatProjection: triggers visited_dispatch
+                //     cycle-defense insert (per-cursor cycle defense).
+                //   - CategoryEntryRoot: synthesizes the root sentinel
+                //     in cursor_gss_push_with_kind — exotic enough to
+                //     leave per-cursor.
+                //
+                // The narrow scope keeps the shell-broadcast unsound-
+                // for-no-cursor; expansion to other kinds requires
+                // making their side effects shell-shareable.
                 let safe_for_fast_path = matches!(
                     kind,
                     crate::gss::EdgeKind::InfixContinuation { .. }
+                        | crate::gss::EdgeKind::PrefixRuleEntry { .. }
+                        | crate::gss::EdgeKind::LexAltLiteral { .. }
                 );
                 if safe_for_fast_path {
                     // Shell-level GSS push (once, shared across all arcs).
