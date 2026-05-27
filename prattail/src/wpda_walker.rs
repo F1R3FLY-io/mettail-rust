@@ -7863,35 +7863,118 @@ where
                 node.shell.pos,
                 tokens,
             );
-            // Classify the action; for ObsInvariantOverArcs, apply to
-            // the shell once before materializing arcs (the materialized
-            // cursors inherit the post-step inner_state via the shell).
+            // Phase F.13 Exp 14 Substage 5 (2026-05-27): chain-interior
+            // graduation. For Push with a CONVERGENT EdgeKind, apply at
+            // the shell level (one GSS push for all arcs at this
+            // TomitaKey) + per-arc weight broadcast + per-arc route via
+            // cursor_resolution_check. This is the load-bearing memory
+            // win: 28.9 M edge_stack_arena nodes at chain_500 collapse
+            // to ~500 (one per chain element, shared across all arcs at
+            // the same TomitaKey).
+            if let WpdaStepAction::Push {
+                ref symbol,
+                ref weight,
+                ref new_state,
+            } = action
+            {
+                let kind = crate::gss::EdgeKind::from_symbol(symbol);
+                // Substage 5 conservative scope: only InfixContinuation
+                // is safe to graduate at this stage — other convergent
+                // kinds (OptionalGroupAt, PrefixRuleEntry, etc.) have
+                // per-cursor side effects beyond GSS push (e.g.,
+                // emit_start_optional_scope, binder bookkeeping) that
+                // would be silently dropped by the shell-broadcast.
+                // Substage 5 extensions can add those kinds once their
+                // side effects are also shell-shareable.
+                let safe_for_fast_path = matches!(
+                    kind,
+                    crate::gss::EdgeKind::InfixContinuation { .. }
+                );
+                if safe_for_fast_path {
+                    // Shell-level GSS push (once, shared across all arcs).
+                    let predecessor = if node.shell.node == 0
+                        && self.gss.node(0).is_none()
+                        || node.shell.node == crate::gss::GSS_NODE_NONE
+                    {
+                        // Synthesize root sentinel — same logic as
+                        // cursor_gss_push_with_kind.
+                        let root = self.gss.get_or_create_node(crate::gss::WpdaGssNode {
+                            pos: node.shell.pos,
+                            symbol: crate::wpda_runtime::StackSymbolV2::category_entry(0),
+                        });
+                        Arc::make_mut(&mut node.shell).node = root;
+                        root
+                    } else {
+                        node.shell.node
+                    };
+                    let new_node_id =
+                        self.gss.get_or_create_node(crate::gss::WpdaGssNode {
+                            pos: node.shell.pos,
+                            symbol: symbol.clone(),
+                        });
+                    let edge_id = self.gss.add_edge_kind(
+                        new_node_id,
+                        predecessor,
+                        weight.clone(),
+                        kind,
+                    );
+                    let new_stack_id = self
+                        .incoming_edge_stack_arena
+                        .intern_push(node.shell.incoming_edge_stack_id, edge_id);
+                    // Apply per-arc weight broadcast + shell mutate.
+                    {
+                        let shell_mut = Arc::make_mut(&mut node.shell);
+                        shell_mut.node = new_node_id;
+                        shell_mut.incoming_edge_stack_id = new_stack_id;
+                        shell_mut.inner_state = new_state.clone();
+                    }
+                    for arc in &mut node.arcs {
+                        arc.weight = arc.weight.times_ref(weight);
+                        arc.pending_packing_weight =
+                            arc.pending_packing_weight.times_ref(weight);
+                    }
+                    // Materialize each arc; route via cursor_resolution_check
+                    // (skip apply_action_to_cursor — the action is fully
+                    // shell-broadcast + per-arc multiplied).
+                    for arc in &node.arcs {
+                        let cursor =
+                            crate::tomita_frontier::materialize_branch_cursor_from_arc(
+                                &node.shell,
+                                arc,
+                            );
+                        let outcome = self.cursor_resolution_check(&cursor);
+                        match outcome {
+                            CursorOutcome::Drop => { /* discard */ }
+                            CursorOutcome::Alive => {
+                                new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                            }
+                            CursorOutcome::Resolved => {
+                                resolved_indices.push(new_cursors.len());
+                                new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                            }
+                            CursorOutcome::ForkInto(_) => {
+                                panic!(
+                                    "Substage 5: cursor_resolution_check returned ForkInto — \
+                                     unreachable for the post-shell-broadcast Push fast path."
+                                );
+                            }
+                        }
+                    }
+                    continue;
+                }
+            }
+            // Classify the action; for ObsInvariantOverArcs (Advance /
+            // Accept / Error / Idle), apply to the shell once before
+            // materializing arcs.
             let divergence =
                 crate::cohort_lazy::DivergenceClass::classify_for_tomita(&action);
             let action_for_arcs = if divergence
                 == crate::tomita_frontier::TomitaDivergence::ObsInvariantOverArcs
             {
-                // Apply to shell once. The Substage 2 supported variant
-                // is Advance only; Accept/Error/Idle fall through to the
-                // per-arc apply path because apply_obs_invariant_to_frontier
-                // returns Err for them at Substage 2's scope. That's
-                // acceptable — those variants are O(1) per arc anyway.
-                let applied = crate::cohort_lazy::apply_obs_invariant_to_frontier(
+                let _ = crate::cohort_lazy::apply_obs_invariant_to_frontier(
                     &mut node, action.clone(),
                 );
-                if applied.is_ok() {
-                    // Shell mutated; arcs materialize with new shell
-                    // state. apply_action_to_cursor still runs per arc
-                    // with the SAME action so the cursor-side state
-                    // (e.g., weight multiplication is None for Advance,
-                    // SPPF push is None for Advance) is consistent with
-                    // the baseline. Apply is idempotent for Advance
-                    // (writes inner_state which is already correct from
-                    // the shell mutation).
-                    action.clone()
-                } else {
-                    action.clone()
-                }
+                action.clone()
             } else {
                 action.clone()
             };
