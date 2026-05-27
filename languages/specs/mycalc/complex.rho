@@ -7,7 +7,7 @@ module Math {
     types { ![f64] as Cmplx }
     terms {
       CmplxInj . Cmplx ::= Float ;
-      CmplxAdd . Cmplx ::= Cmplx "+" Cmplx ;
+      CmplxAdd . a:Cmplx, b:Cmplx |- a "+" b : Cmplx ![a + b] fold;
     }
   }
 }

@@ -3,5 +3,8 @@ module Numbers {
     empty
     semantics Rust
     types { ![f64] as Float }
+    terms {
+      AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
+    }
   }
 }
