@@ -8066,7 +8066,33 @@ where
         // `action_template` from the drain stage means the per-cursor
         // loop NO LONGER calls engine.step (one call per frontier shell
         // instead of one per arc — main Substage 4 win).
-        for (cursor, action) in drained {
+        //
+        // Phase F.13 chain_10000 Exp 15 Substage 5 (2026-05-27): the
+        // per-cursor for-loop now operates over a `VecDeque<(BranchCursor,
+        // WpdaStepAction)>` queue. Each iteration dequeues one
+        // (cursor, action) pair (matching `Continuation::ApplyAction`
+        // semantics from `prattail/src/cps_walker.rs`); the loop body may
+        // implicitly enqueue successor work via `new_cursors` which is
+        // re-ingested at the next step_fanout call. This is the explicit
+        // trampoline form of what the implicit for-loop did — the
+        // structural change makes the CPS continuation queue load-bearing
+        // (vs. opportunistic), opening Substage 6+ extensions to drive
+        // arbitrary cursor work through a single queue rather than nested
+        // recursion via apply_action_to_cursor's helpers.
+        //
+        // Behavior identical to the prior for-loop: dequeue order is
+        // insertion order (VecDeque::pop_front + push_back FIFO);
+        // every cursor in `drained` processes exactly once with its
+        // cached action; successor frames are accumulated in `new_cursors`
+        // (NOT re-enqueued in the same step — they ingest at the next
+        // step_fanout call per the step-boundary protocol).
+        let mut continuation_queue: std::collections::VecDeque<
+            (BranchCursor<W>, WpdaStepAction<W>),
+        > = std::collections::VecDeque::with_capacity(drained.len());
+        for entry in drained {
+            continuation_queue.push_back(entry);
+        }
+        while let Some((cursor, action)) = continuation_queue.pop_front() {
             // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
             // observe the projected `Continuation::ApplyAction` record
             // size for this action, plus the per-Fork child-count that
