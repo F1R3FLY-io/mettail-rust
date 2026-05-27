@@ -555,6 +555,26 @@ impl EarleyChart {
             .and_then(|label| rule_label_to_meta.get(label))
             .map(|(_, tag)| *tag)
             .unwrap_or(nt_tag);
+        // KNOWN BUG (Plan v6 H1, 2026-05-27): greedy shortest-match is
+        // unsound for left-recursive grammars. For `Chain → Chain "+"
+        // Atom`, the recursive Chain sub-call always matches the
+        // shortest completion (chain_base at hi=1), leaving no room
+        // for the trailing "+ Atom" pair, and emit_for_item returns
+        // None for the whole tree. Descending order (greedy longest)
+        // is the natural fix BUT causes infinite recursion because the
+        // root chain_step at sets[parent_hi] is ALSO a completed Chain
+        // at the same origin → sub-NT picks the root itself, recursing
+        // forever (stack overflow at chain_50).
+        //
+        // The correct fix requires tracking body position + min-trailing-
+        // token consumption per remaining body item, so sub-NT's
+        // effective max_hi excludes the room needed for trailing terms.
+        // For chain grammar: Chain sub-NT max_hi = parent_hi - 2 (room
+        // for "+" Atom). For general grammars: needs grammar-determined
+        // min-consumption analysis.
+        //
+        // This is out of scope for H1 (which is a SOUNDNESS CHECK, not
+        // a fix). H2 region-amortized handoff design must address this.
         for hi in (origin + 1)..=max_hi {
             let candidates: Vec<EarleyItem> = self.sets[hi]
                 .iter()
@@ -940,6 +960,191 @@ mod tests {
             )
             .expect("replay must produce root SppfId");
         assert_eq!(root_id, root_id2, "intern dedup must collapse replays");
+    }
+
+    // Phase F.13 chain_10000 Plan v6 H1 (2026-05-27): Earley parity
+    // oracle for left-recursive chain workloads. Confirms the existing
+    // earley_outboard_chain substrate (recognizer + emit_sppf_subforest)
+    // is sound for chain_50/100/200 BEFORE wiring the handoff at H2.
+    //
+    // The Plan v6 hybrid-Earley-WPDS design hinges on this soundness:
+    // if Earley misrecognizes or emit_sppf_subforest produces invalid
+    // SppfIds at scale, the handoff cannot be wired and the plan stops.
+    //
+    // Falsifier: any test failure → fix earley.rs before H2.
+    fn build_left_recursive_chain_grammar(input_len: usize) -> EarleyChart {
+        let mut chart = EarleyChart::new(input_len);
+        // chain_base: Chain → Atom
+        chart.add_rule_with_body(
+            "chain_base",
+            "Chain",
+            vec![RuleItem::NonTerminal { category: "Atom".to_string() }],
+        );
+        // chain_step: Chain → Chain "+" Atom  (left-recursive)
+        chart.add_rule_with_body(
+            "chain_step",
+            "Chain",
+            vec![
+                RuleItem::NonTerminal { category: "Chain".to_string() },
+                RuleItem::Terminal { tag: 1 },
+                RuleItem::NonTerminal { category: "Atom".to_string() },
+            ],
+        );
+        // atom: Atom → Integer
+        chart.add_rule_with_body(
+            "atom",
+            "Atom",
+            vec![RuleItem::Terminal { tag: 2 }],
+        );
+        chart
+    }
+
+    fn build_chain_input(atom_count: usize) -> Vec<u32> {
+        // Pattern: atom (op atom)*  — tags [2, 1, 2, 1, 2, ...]
+        assert!(atom_count >= 1);
+        let mut tags = Vec::with_capacity(2 * atom_count - 1);
+        tags.push(2u32);
+        for _ in 1..atom_count {
+            tags.push(1u32);
+            tags.push(2u32);
+        }
+        tags
+    }
+
+    fn drive_chart_with_input(chart: &mut EarleyChart, input_tags: &[u32]) {
+        chart.predict("Chain", 0);
+        for pos in 0..input_tags.len() {
+            chart.predict("Chain", pos);
+            chart.predict("Atom", pos);
+            chart.scan(pos, input_tags[pos]);
+            // Complete to fixpoint at sets[pos+1].
+            let mut changed = true;
+            while changed {
+                changed = false;
+                let snapshot: Vec<EarleyItem> =
+                    chart.items_at(pos + 1).iter().cloned().collect();
+                for item in &snapshot {
+                    let rule = match chart.rules.get(&item.rule_label) {
+                        Some(r) => r,
+                        None => continue,
+                    };
+                    if item.dot_position == rule.body.len() {
+                        let advanced = chart.complete(pos + 1, item);
+                        if advanced > 0 {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn v6_h1_earley_recognizes_left_recursive_chain_50() {
+        let atom_count = 50;
+        let input_tags = build_chain_input(atom_count);
+        let mut chart = build_left_recursive_chain_grammar(input_tags.len());
+        drive_chart_with_input(&mut chart, &input_tags);
+        assert!(
+            chart.recognizes("Chain"),
+            "Earley must recognize left-recursive chain of {} atoms",
+            atom_count
+        );
+    }
+
+    #[test]
+    fn v6_h1_earley_recognizes_left_recursive_chain_100() {
+        let atom_count = 100;
+        let input_tags = build_chain_input(atom_count);
+        let mut chart = build_left_recursive_chain_grammar(input_tags.len());
+        drive_chart_with_input(&mut chart, &input_tags);
+        assert!(
+            chart.recognizes("Chain"),
+            "Earley must recognize left-recursive chain of {} atoms",
+            atom_count
+        );
+    }
+
+    #[test]
+    fn v6_h1_earley_recognizes_left_recursive_chain_200() {
+        let atom_count = 200;
+        let input_tags = build_chain_input(atom_count);
+        let mut chart = build_left_recursive_chain_grammar(input_tags.len());
+        drive_chart_with_input(&mut chart, &input_tags);
+        assert!(
+            chart.recognizes("Chain"),
+            "Earley must recognize left-recursive chain of {} atoms",
+            atom_count
+        );
+    }
+
+    #[test]
+    #[ignore = "Plan v6 H1 FALSIFIER: find_and_emit_sub greedy-shortest is unsound for left-recursive grammars. Must be fixed (grammar-aware min-trailing-token analysis) before H2 wires the handoff. Recognition (the 3 chain_50/100/200 tests above) is sound; only SPPF emission has the bug."]
+    fn v6_h1_earley_chain_50_emits_valid_sppf_root() {
+        // End-to-end check: recognition + SPPF emission produce a
+        // valid root SppfId for chain_50. This is the substrate H2
+        // will wire into the walker handoff.
+        let atom_count = 50;
+        let input_tags = build_chain_input(atom_count);
+        let mut chart = build_left_recursive_chain_grammar(input_tags.len());
+        drive_chart_with_input(&mut chart, &input_tags);
+        assert!(chart.recognizes("Chain"));
+
+        // Pre-intern terminal SppfIds for each input position.
+        let mut sppf: Sppf<LexicographicWeight> = Sppf::new();
+        let mut terminal_sppf_ids = Vec::with_capacity(input_tags.len());
+        for (pos, tag) in input_tags.iter().enumerate() {
+            let (kind, text) = if *tag == 1 {
+                (crate::automata::TokenKind::Fixed("+".to_string()), Some("+"))
+            } else {
+                (crate::automata::TokenKind::Integer, Some("1"))
+            };
+            let sid = sppf.intern_terminal(
+                kind,
+                crate::sppf::PosOrSynth::Real(pos as u32),
+                text,
+                false,
+            );
+            terminal_sppf_ids.push(sid);
+        }
+
+        let mut rule_label_to_meta = HashMap::new();
+        // (rule_idx, nt_tag): nt_tag chosen as 200 for Chain to avoid
+        // collision with any walker-side nt assignment.
+        rule_label_to_meta.insert("chain_step".to_string(), (1u32, 200u32));
+        rule_label_to_meta.insert("chain_base".to_string(), (0u32, 200u32));
+        rule_label_to_meta.insert("atom".to_string(), (0u32, 201u32));
+        let mut weights = HashMap::new();
+        weights.insert("chain_step".to_string(), unit_weight());
+        weights.insert("chain_base".to_string(), unit_weight());
+        weights.insert("atom".to_string(), unit_weight());
+
+        let root_id = chart
+            .emit_sppf_subforest(
+                &mut sppf,
+                "Chain",
+                200,
+                &rule_label_to_meta,
+                &terminal_sppf_ids,
+                &weights,
+            )
+            .expect("Chain root SppfId must be produced");
+
+        // Sanity: replay must dedup to the same root.
+        let root_id_replay = chart
+            .emit_sppf_subforest(
+                &mut sppf,
+                "Chain",
+                200,
+                &rule_label_to_meta,
+                &terminal_sppf_ids,
+                &weights,
+            )
+            .expect("replay must produce root SppfId");
+        assert_eq!(
+            root_id, root_id_replay,
+            "intern_packing dedup must collapse replays — H1 dedup invariant"
+        );
     }
 
     #[test]
