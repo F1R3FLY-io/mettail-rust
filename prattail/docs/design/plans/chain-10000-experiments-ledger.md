@@ -937,5 +937,19 @@ This empirically validates the Substage 5 InfixContinuation shell-broadcast as t
 **Welch panel**: deferred to a follow-up measurement session (each substage's full 7-arm Welch + memory experiment needs N=15 hyperfine × 35 min per substage; multi-session work).
 
 **Substages remaining** (not yet shipped):
-- S7 (un-ignore chain_500 / chain_10000): chain_500 already verified passing; chain_10000 attempt pending (with 30G cap to measure post-Tomita RSS curve).
-- Exp 15 S2-S7 (the CPS rewrite): ~5400 LOC, multi-session.
+- S7 (un-ignore chain_500 / chain_10000): chain_500 PASSES (10:13 wall, 13.6 GB peak — verified above). chain_10000 STILL OOMs (30 GB at 21:24 wall — vs pre-Tomita 24 GB at 7:04 wall): **3× longer time-to-OOM** + ~25% memory-growth-rate reduction, but ceiling not yet closed. chain_10000 un-ignore deferred until further memory wins land. The current chain_10000 RSS trajectory suggests ~3.0 GB/min growth (vs pre-Tomita 3.4 GB/min); a 50 GB cap would likely succeed, but the gauntlet target is 24 GB.
+- Exp 15 S2-S7 (the CPS rewrite): ~5400 LOC, multi-session. Substage 2 SCAFFOLDING shipped (commit `1f4b1e9`: cursor_store field + reset hook only); per-mutation mirror-writes deferred to Substage 2b. Substages 3-7 of Exp 15 pending.
+
+### Chain_10000 attempt 2026-05-27
+
+- Cap: `systemd-run --user --scope -p MemoryMax=30G`.
+- Command: `./target/release/deps/trampoline_tests-d71bb7780e0786e7 --exact test_left_assoc_chain_10000 --include-ignored`.
+- Outcome: OOM-killed at 30 GB after 21:24 wall (vs pre-Tomita 24 GB at 7:04 wall).
+- Improvement: 3× longer time to OOM + 25% memory-growth-rate reduction. Ceiling not yet closed.
+
+To close chain_10000 in 24 GB, further wins needed:
+1. Extend Substage 5 graduation beyond `InfixContinuation` to other convergent EdgeKinds (`PrefixRuleEntry`, `LexAltLiteral`) after their per-cursor side effects are made shell-shareable.
+2. Improve Substage 6 Arc-sharing rate (currently gated on Arc::ptr_eq for 6 heavy fields — most cursors have diverged after first per-cursor mutation).
+3. Ship Exp 15 CPS rewrite (per-cursor cost reduction via HAMT-persistent visited sets — addresses the 23.3% visited_dispatch dominator).
+
+Per the user mandate "complete all tasks end-to-end", chain_10000 un-ignore stays as a pending substage until one of these closes the remaining gap.
