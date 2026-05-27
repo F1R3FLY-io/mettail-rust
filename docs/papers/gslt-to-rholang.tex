@@ -1,0 +1,1447 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{stmaryrd}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,calc,fit,backgrounds}
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black
+}
+
+% --- Theorem environments ---
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{construction}[theorem]{Construction}
+\newtheorem{algorithm}[theorem]{Algorithm}
+
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+% --- Notation ---
+\newcommand{\sem}[1]{\llbracket\,#1\,\rrbracket}
+\newcommand{\reflect}[1]{\ulcorner #1 \urcorner}
+\newcommand{\rew}{\leadsto}
+\newcommand{\Names}{\mathcal{N}}
+\newcommand{\Procs}{\mathcal{P}}
+\newcommand{\Terms}{\mathbb{T}}
+\newcommand{\Pos}{\mathbb{P}}
+\newcommand{\States}{\mathcal{S}}
+\newcommand{\Lhs}{\mathcal{L}}
+\newcommand{\hd}{\mathsf{hd}}
+\newcommand{\arity}[1]{\##1}
+\newcommand{\dom}{\mathcal{D}}
+\newcommand{\gcp}{\mathsf{gcp}}
+\newcommand{\reduce}{\mathsf{reduce}}
+\newcommand{\deriv}{\mathsf{deriv}}
+\newcommand{\lift}{\mathsf{lift}}
+\newcommand{\nil}{\mathbf{0}}
+
+% Short rho-syntax
+\newcommand{\Send}[2]{#1 \,!\, (#2)}
+\newcommand{\Recv}[3]{\mathsf{for}\,(#1 \leftarrow #2)\,\{\,#3\,\}}
+\newcommand{\Bang}[3]{\mathsf{for}\,(#1 \Leftarrow #2)\,\{\,#3\,\}}
+\newcommand{\Let}[3]{\mathsf{let}\;#1 = #2\;\mathsf{in}\;#3}
+\newcommand{\New}[2]{\mathsf{new}\;#1\;\mathsf{in}\;\{\,#2\,\}}
+
+\lstdefinelanguage{rho}{
+  morekeywords={new,in,for,match,contract,select,if,else,let,Nil},
+  sensitive=true,
+  morecomment=[l]{//},
+  morestring=[b]"
+}
+\lstset{
+  language=rho,
+  basicstyle=\ttfamily\small,
+  keywordstyle=\bfseries\color{blue!50!black},
+  commentstyle=\itshape\color{gray},
+  stringstyle=\color{red!60!black},
+  breaklines=true,
+  showstringspaces=false,
+  xleftmargin=1em
+}
+
+\title{From Graph-Structured Lambda Theories to Rholang:\\
+       Compiling Set-Automaton Interpreters\\ with Inherent Concurrency}
+\author{}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A finite presentation of a graph-structured lambda theory (GSLT) specifies a
+small-step operational semantics by a finite signature of term constructors,
+a finite set of equations, and a finite inductive description of a reduction
+relation. We give a complete algorithm that, from such a presentation,
+produces a Rholang program implementing the corresponding small-step
+interpreter. The interpreter is structured as a Bouwman--Erkens--Groote
+\emph{set automaton} for pattern matching against the left-hand sides of the
+presentation, paired with a fixed schedule of substitution and rewrite-rule
+firing. Each state of the set automaton is reflected to a Rholang channel;
+each transition is realised by a persistent \textsf{for}-receive on that
+channel; the indeterminate order of processing position pointers is realised
+by the indeterminate order of message delivery on those channels. We prove a
+\emph{parallelism preservation} theorem: the asynchronous, name-passing
+semantics of Rholang makes every parallelism opportunity exposed by the set
+automaton --- both intra-term (independent position pointers) and inter-term
+(independent redex firings) --- directly available to the Rholang runtime
+without further scheduling glue. The compiler is total on any finitely
+presented GSLT, the produced program is of size polynomial in the automaton,
+and the resulting interpreter inspects each function symbol of the subject
+term exactly once per redex search.
+\end{abstract}
+
+\tableofcontents
+
+\section{Introduction}\label{sec:intro}
+
+Operational semantics for languages built on term rewriting typically
+consists of a finite signature, a finite set of equations, and a finite
+inductive specification of a reduction relation. The \emph{interpreter}
+that implements such a semantics has two well-understood components:
+\begin{enumerate}[leftmargin=*]
+  \item a \emph{matcher} that finds all redex occurrences in the subject
+        term --- the positions in the term where a left-hand side of some
+        rewrite rule matches; and
+  \item a \emph{rewriter} that fires a chosen redex by substituting the
+        instance of the corresponding right-hand side and announces the
+        positions in the resulting term where matching should resume.
+\end{enumerate}
+Both components are eminently parallelisable: distinct positions in a term
+can be examined independently, and distinct redex sites in a non-overlapping
+rule set can be fired independently.
+
+Two contributions of the last decade have sharpened the matcher side of this
+picture. First, the \emph{set automaton} of Erkens and
+Groote~\cite{ErkensGroote2021} solves the subterm pattern-matching problem
+for a finite pattern set against a finite signature in a way that visits
+each function symbol of the subject term at most once and exposes the
+algorithm's parallel structure intrinsically: at each state, the automaton
+emits a set of independent (state, position)-pairs that may be processed in
+any order, or simultaneously, by distinct workers. Second, the rewriter
+side has been put on a categorical footing by \emph{graph-structured lambda
+theories} (GSLTs), which view an operational semantics as a category with
+finite limits equipped with a distinguished object of processes and a
+distinguished subobject for the reduction relation, presented finitely by
+generators, equations and inductive clauses.
+
+This paper joins these two threads through Rholang, a concurrent
+process-calculus language~\cite{MeredithRadestock2005} whose primitives are
+asynchronous send, persistent name-restricted receive, and reflective
+name/process quoting. Concretely, we give an algorithm
+\[
+  \mathsf{compile} \;:\; \mathsf{GSLTPresentation}
+                  \;\longrightarrow\; \mathsf{RholangProgram}
+\]
+with the following properties.
+\begin{description}[leftmargin=2em,style=nextline]
+  \item[Totality.] $\mathsf{compile}$ is defined on every finitely presented
+       GSLT, terminates, and runs in time polynomial in the size of the
+       generated set automaton.
+  \item[Correctness.] The Rholang program produced by $\mathsf{compile}$
+       implements the small-step semantics of the input presentation: for
+       every input term encoded as a Rholang process, the program announces
+       on a public channel exactly the set of redex (rule, position)-pairs
+       given by the presentation, fires them in some sound order, and
+       continues until normal form.
+  \item[Parallelism preservation.] Every parallel opportunity exposed by the
+       set automaton --- independent successor positions, independent
+       redexes, independent rewrites --- is materialised as a parallel
+       composition or as a free choice of message order in the Rholang
+       output, without scheduling glue. The runtime is responsible for
+       choosing an interleaving, and any choice is sound.
+\end{description}
+
+The technical core is the \emph{reflection of automaton states as channels}.
+A set-automaton state is, by construction, a finite set of match obligations.
+We reflect this state, as a piece of syntactic data, to a Rholang name; the
+transitions out of the state become persistent receives on that name, the
+emission of (state, position)-successors becomes a parallel composition of
+sends to the successor states' names, and the announcement of a pattern
+match becomes a send on a public matches channel. The algorithm thus has a
+particularly compact closed form: every artefact of the compiler is one of a
+handful of \emph{macros}, each templated by a state or a function symbol of
+the signature.
+
+\paragraph{Outline.}
+Section~\ref{sec:prelim} fixes notation and recalls the three ingredients:
+GSLTs and their finite presentations (\S\ref{ssec:gslt}), the set automaton
+of Erkens--Groote (\S\ref{ssec:set-automaton}), and the fragment of Rholang
+we use (\S\ref{ssec:rholang}). Section~\ref{sec:encoding} describes the
+encoding of subject terms as Rholang processes and of automaton states as
+Rholang names. Section~\ref{sec:compile} gives the compilation algorithm
+proper, organised as nine code-emission rules. Section~\ref{sec:parallel}
+states and proves the parallelism-preservation theorem.
+Section~\ref{sec:example} works through a small, complete example.
+Section~\ref{sec:discussion} discusses garbage collection, dynamic rule
+sets, and other practical concerns. Section~\ref{sec:conclusion} concludes.
+
+\section{Preliminaries}\label{sec:prelim}
+
+\subsection{Graph-structured lambda theories}\label{ssec:gslt}
+
+A graph-structured lambda theory is a categorical packaging of an operational
+semantics: the category is the host of term constructors, the
+distinguished object is the universe of processes, and the distinguished
+subobject is the reduction relation.
+
+\begin{definition}[Graph-structured lambda theory]\label{def:gslt}
+A \emph{graph-structured lambda theory} (GSLT) is a tuple
+$\mathcal{G} = (\mathcal{C}, P, R)$ where
+\begin{itemize}[leftmargin=*]
+  \item $\mathcal{C}$ is a category with finite limits;
+  \item $\mathcal{C}$ is closed with respect to the cartesian product
+        (so internal homs $A \Rightarrow ({-})$ exist as right adjoints);
+  \item $P \in \mathcal{C}$ is a distinguished object, the
+        \emph{object of processes};
+  \item $R \hookrightarrow P \times P$ is a distinguished subobject,
+        the \emph{reduction relation}.
+\end{itemize}
+\end{definition}
+
+For implementation purposes we restrict to GSLTs given finitely.
+
+\begin{definition}[Finite presentation]\label{def:presentation}
+A \emph{finite presentation} of a GSLT consists of
+\begin{enumerate}[leftmargin=*]
+  \item a finite set $\mathcal{S}$ of \emph{base sorts} (in the sense
+        of a multisorted Lawvere theory~\cite{TrimbleNLabLawvere}); we
+        write
+        $\mathcal{T}(\mathcal{S})$ for the closure of $\mathcal{S}$
+        under finite products $\times$ and exponentials $\Rightarrow$,
+        and call its elements \emph{types};
+  \item a finite ranked alphabet
+        $\mathbb{F} = \mathbb{F}_0 \cup \mathbb{F}_1 \cup \cdots \cup \mathbb{F}_n$
+        of \emph{function symbols} (term constructors), each with a
+        fixed arity, a fixed product-shaped input/output profile
+        $f : A_1 \times \cdots \times A_{\arity{f}} \to B$ with
+        $A_1, \ldots, A_{\arity{f}}, B \in \mathcal{T}(\mathcal{S})$
+        (in particular each $A_i$ may itself be a product or an
+        exponential --- for example $\mathrm{lam} : (P \Rightarrow P) \to P$
+        for the $\lambda$-abstraction constructor, with input type
+        the exponential $P \Rightarrow P$), and a finite set
+        $\lambda_f$ of \emph{well-formedness equations}
+        $g_i(\vec{x}) = h_i(\vec{x})$ between $\mathbb{F}$-terms over the
+        inputs $\vec{x} = (x_1, \ldots, x_{\arity{f}})$, which the
+        inputs must satisfy modulo $E$ for $f(\vec{x})$ to be
+        well-formed;\footnote{Definition~\ref{def:gslt} asks for $\mathcal{C}$
+        to have all finite limits, so in principle a function-symbol
+        profile could be any finite limit $\mathrm{lim}\,D_f \to B$, not
+        merely a product. By the standard product--equaliser
+        factorisation of finite limits, every such profile is
+        equivalent data to a product profile $f^{\flat} : A_1 \times
+        \cdots \times A_n \to B$ together with the finite set of
+        equations $\lambda_f$ defining the equaliser. We adopt that
+        factorised form for compilation; no expressive power is lost.
+        When $\lambda_f = \emptyset$ the profile is a plain product, as
+        in a standard ranked alphabet.};
+  \item a finite set $E$ of equations between $\mathbb{F}$-terms,
+        together with a reduction order $\succ$ on terms that orients
+        $E$ into a convergent (confluent and terminating) rewrite system
+        $E^{\downarrow}$ via Knuth--Bendix completion, giving canonical
+        representatives of equivalence classes; we further require that
+        $E^{\downarrow}$ has the \emph{finite variant property} (FVP) of
+        Escobar--Meseguer--Sasse~\cite{EscobarMeseguerSasse2008}: for every
+        $\mathbb{F}$-term $t$ the set
+        \[
+          \mathsf{Var}_{E}(t)
+          \;:=\;
+          \bigl\{ (t\sigma)\!\downarrow_{E^{\downarrow}}
+                  \;:\; \sigma \text{ a substitution} \bigr\}
+        \]
+        is finite up to renaming of metavariables. FVP makes
+        $E$-matching --- ``does $P\sigma =_E T$ for some $\sigma$?'' ---
+        decidable via folding variant
+        narrowing~\cite{EscobarSasseMeseguer2012}, and is enjoyed by all
+        standard structural theories (AC, ACI, abelian groups,
+        exclusive-or);\footnote{Without FVP, $E$-matching is in general
+        undecidable even when $E^{\downarrow}$ is convergent, so KB
+        alone is insufficient for the compiler to decide whether a
+        subject term has an $E$-equivalent matching a rule's left-hand
+        side. Alternative sufficient conditions (left-linearity plus
+        termination of basic narrowing; shallow $E$; right-ground $E$)
+        also work, but FVP is the cleanest single hypothesis.}
+  \item a finite set $\mathcal{R}_{\mathrm{rule}}$ of \emph{rewrite rules}
+        $L_j \rew R_j$, where $L_j, R_j$ are morphisms in the syntactic
+        Lawvere theory of $\mathbb{F}$ with a common typed domain
+        $A_1 \times \cdots \times A_m$ (the \emph{metavariable inputs}
+        of the rule) and codomain $P$, and a finite set
+        $\mathcal{R}_{\mathrm{ctx}}$ of \emph{contextual rewrites} of the
+        shape
+        \[
+          L_1 \rew R_1, \ldots, L_k \rew R_k
+            \;\Rightarrow\; K[L_1,\ldots,L_k] \rew K'[R_1,\ldots,R_k],
+        \]
+        with $K, K'$ $k$-hole $\mathbb{F}$-morphisms and each $L_i, R_i$
+        an $\mathbb{F}$-morphism in the same sense.
+
+        We display rules in the standard tree form, writing repeated
+        metavariable tokens for the same input. A repeated occurrence
+        of a metavariable $\omega : A$ on the LHS denotes composition
+        with the diagonal $\Delta_{A} : A \to A \times A$ (or, more
+        generally, an iterated $\Delta$ for several occurrences); the
+        LHS as a whole is the categorically linear morphism that, after
+        $\Delta$-expansion, uses each metavariable input once. This
+        unifies the two traditions of ``linearity'':
+        \emph{categorical linearity} (the LHS is a well-formed morphism
+        in the syntactic category, with $\Delta$ available because of
+        finite products) is always assumed, and \emph{syntactic
+        linearity} (no metavariable token repeats) is the special case
+        of categorical linearity in which no $\Delta$-composition
+        occurs;
+  \item a \emph{reduction relation} $R \hookrightarrow P \times P$,
+        specified as the least subobject closed under the following
+        clauses, read pointwise on ground terms:
+        \begin{description}[leftmargin=2em,style=nextline]
+          \item[(Rule)] for every $(L_j \rew R_j) \in \mathcal{R}_{\mathrm{rule}}$
+               and every ground substitution $\sigma$,
+               $(L_j^{\sigma}, R_j^{\sigma}) \in R$;
+          \item[(Context)] for every contextual rewrite
+               \[
+                 L_1 \rew R_1, \ldots, L_k \rew R_k
+                   \;\Rightarrow\; K[L_1,\ldots,L_k] \rew K'[R_1,\ldots,R_k]
+               \]
+               in $\mathcal{R}_{\mathrm{ctx}}$ and every ground substitution
+               $\sigma$, if $(L_i^{\sigma}, R_i^{\sigma}) \in R$ for all
+               $1 \le i \le k$, then
+               \[
+                 \bigl(K^{\sigma}[L_1^{\sigma},\ldots,L_k^{\sigma}],\;
+                       K'^{\sigma}[R_1^{\sigma},\ldots,R_k^{\sigma}]\bigr) \in R.
+               \]
+        \end{description}
+\end{enumerate}
+We write
+$\mathcal{R} := \mathcal{R}_{\mathrm{rule}} \cup \mathcal{R}_{\mathrm{ctx}}$
+for the full rule set of the presentation.
+\end{definition}
+
+The presentation generates a GSLT freely by taking $\mathcal{C}$ to be the
+syntactic category of the simply-typed $\lambda$-theory with constants
+$\mathbb{F}$, modulo $E$ and $\beta\eta$; $P$ to be a base sort, and $R$ to
+be the least subobject closed under (Rule) and (Context).
+
+\paragraph{Binders.}
+A function symbol $f \in \mathbb{F}_n$ may carry a set
+$\beta_f \subseteq \{1, \ldots, n\}$ of \emph{binding positions}. Under the
+internal hom of Definition~\ref{def:gslt}, the $i$-th argument of $f$ for
+$i \in \beta_f$ has type $P \Rightarrow P$. Operationally, the subterm at
+position $p.i$ of $f(t_1, \ldots, t_n)$ for $i \in \beta_f$ is the opened
+body $t_i(z_{p.i})$ for a fresh free name $z_{p.i}$; the position-domain,
+sub-pattern, and head-symbol functions extend by the obvious recursion
+through opened bodies. Free names introduced by binders behave as leaves in
+the term tree, analogous to variables. The set-automaton machinery and the
+compiler we describe are agnostic to binders: positions and head symbols
+are the only operationally relevant features, and binders contribute only
+to the way ground substitutions interact with rule firings (cf.\ \S\ref{ssec:rewriter}).
+
+\paragraph{Patterns, left-hand sides, and sharing constraints.}
+A \emph{raw pattern} is a tree in $\Terms(\mathbb{F}, \mathcal{V})$ over a
+countable set $\mathcal{V}$ of metavariables, with metavariables permitted
+to repeat. The \emph{linearisation} of a raw pattern $\ell$ is the pair
+$(\ell^{\flat}, \kappa_{\ell})$ where $\ell^{\flat}$ replaces every
+occurrence of every metavariable by a distinct fresh variable, and
+$\kappa_{\ell}$ is the set of position-pairs $(p_1, p_2)$ such that the
+$p_1$-leaf and $p_2$-leaf of $\ell$ carry the same original
+metavariable. We call $\kappa_{\ell}$ the \emph{sharing constraint} of
+$\ell$; it is empty iff $\ell$ is syntactically linear. The set of
+left-hand sides of a presentation is
+\[
+  \Lhs \;=\; \{(\ell^{\flat}, \kappa_{\ell}) : \ell \in \mathit{LHSes}(\mathcal{R}_{\mathrm{rule}}) \cup \mathit{LHSes}(\mathcal{R}_{\mathrm{ctx}})\},
+\]
+and $\Lhs$ is the input to the set-automaton construction below. We
+typically drop the $\flat$ superscript and write $\ell$ when the
+distinction is clear from context.
+
+\subsection{The set automaton}\label{ssec:set-automaton}
+
+The set automaton of Erkens and Groote~\cite{ErkensGroote2021} solves the
+\emph{subterm pattern-matching problem}: given a finite pattern set $\Lhs$,
+locate every $(\ell, p)$-pair such that pattern $\ell \in \Lhs$ matches the
+subject term at position $p$. We recall the construction at the level of
+detail needed for compilation; for proofs and intuitions we refer to the
+original paper.
+
+\paragraph{Match obligations and goals.}
+A \emph{match obligation} on $\Lhs$ is a finite, non-empty subset of
+$\mathsf{sub}(\Lhs) \times \Pos$, where $\mathsf{sub}(\Lhs)$ is the set of
+sub-patterns of patterns in $\Lhs$ excluding the metavariable $\omega$, and
+$\Pos$ is the set of positions (finite sequences of positive integers, with
+$\epsilon$ for the root and $p.q$ for concatenation). A \emph{match
+announcement} is a pair $(\ell, p) \in \Lhs \times \Pos$. A \emph{match
+goal} is an arrow $mo \to ma$ from a match obligation to a match
+announcement, written
+\[
+  \ell_1 @ p_1, \ldots, \ell_n @ p_n \;\to\; \ell @ p,
+\]
+read: \emph{in order to announce that $\ell$ matches at $p$, we must
+observe sub-pattern $\ell_i$ at $p_i$ for each $1 \le i \le n$.}
+
+\paragraph{The tuple.}
+A \emph{set automaton} for $\Lhs$ is a tuple
+$M = (\States, s_0, L, \delta, \eta)$ where:
+\begin{itemize}[leftmargin=*]
+  \item $\States$ is a finite set of states, each state itself a finite
+        non-empty set of match goals;
+  \item $s_0 = \{\ell @ \epsilon \to \ell @ \epsilon \mid \ell \in \Lhs\}$
+        is the initial state;
+  \item $L : \States \to \Pos$ is the \emph{state-label function},
+        assigning to every state a position in some match obligation
+        (the position to inspect next);
+  \item $\delta : \States \times \mathbb{F} \to \mathcal{P}(\States \times \Pos)$
+        is the \emph{transition function};
+  \item $\eta : \States \times \mathbb{F} \to \mathcal{P}(\Lhs \times \Pos \times \mathcal{K})$
+        is the \emph{output function}, emitting triples $(\ell, p, \kappa)$
+        where $\kappa \in \mathcal{K}$ is the sharing constraint inherited
+        from $\ell$, instantiated at the announcement position $p$.
+\end{itemize}
+The empty set is the \emph{final state}: no transitions, no output.
+
+\paragraph{Operation.}
+The automaton is run with a \emph{position pointer} $p$ ranging over
+positions in the subject term $t$. A configuration $(s, p)$ at state $s$
+and pointer $p$ proceeds by reading the head symbol
+$f := \hd(t[p.L(s)])$ at position $p.L(s)$ in $t$; then:
+\begin{itemize}[leftmargin=*]
+  \item for every $(\ell, p', \kappa) \in \eta(s, f)$, announce that
+        pattern $\ell$ matches at position $p.p'$, conditioned on the
+        sharing constraint $\kappa$ holding at $p.p'$ in $t$; if $\kappa$
+        is empty the announcement is unconditional;
+  \item for every $(s', p'') \in \delta(s, f)$, recursively process
+        configuration $(s', p.p'')$.
+\end{itemize}
+The order in which the successor configurations
+$\{(s', p.p'') : (s', p'') \in \delta(s, f)\}$ are processed is unspecified.
+Sequential implementations use a stack or queue, giving DFS or BFS; the
+crucial observation~\cite{ErkensGroote2021} is that any order is sound and
+visits each function symbol of $t$ at most once.
+
+\paragraph{Construction.}
+The states, label function, and transition function are jointly defined as
+a least fixed point. Given a state $s$ and a function symbol
+$f \in \mathbb{F}$, the \emph{$f$-derivative} of $s$ is the next-step state
+obtained by updating all match obligations in $s$ that mention $L(s)$ under
+the observation of $f$ at $L(s)$:
+\[
+  \deriv(s, f) \;=\; \mathit{unchanged} \;\cup\; \mathit{reduced} \;\cup\; \mathit{fresh},
+\]
+where (using the obvious component-wise reduction operator on obligations)
+\begin{align*}
+  \mathit{unchanged} &= \{mo \to ma \in s \mid L(s) \notin \mathsf{pos}(mo)\},\\
+  \mathit{reduced}   &= \{\reduce(mo, f, L(s)) \to ma \mid mo \to ma \in s,\;
+                          \exists\, (\ell @ L(s)) \in mo : \hd(\ell) = f,\;
+                          \reduce(mo, f, L(s)) \ne \emptyset\},\\
+  \mathit{fresh}     &= \{\ell @ L(s).i \to \ell @ L(s).i \mid \ell \in \Lhs,\; 1 \le i \le \arity{f}\}.
+\end{align*}
+The derivative is then partitioned into dependency-equivalence classes (two
+obligations are dependent iff their position-sets intersect, and the
+equivalence is the transitive closure of dependency); each class becomes a
+new state after \emph{lifting}, i.e.\ replacing each position by its image
+under the greatest-common-prefix offset. Lifting keeps the position
+pointers bounded and the state set finite. The construction is
+deterministic up to the (immaterial) choice of $L(s)$ when several root
+obligations are available.
+
+\paragraph{Sharing constraints.}
+The construction above is unchanged from the syntactically linear case
+of Erkens--Groote~\cite{ErkensGroote2021}: it runs on $\Lhs$ viewed as
+a set of linearised raw patterns $\ell^{\flat}$, ignoring the sharing
+constraints $\kappa_{\ell}$. The constraints reappear at output time:
+when state $s$ has a root goal whose announcement fires under symbol
+$f$ at position $p$, the triple emitted is $(\ell, p', \kappa)$ where
+$\kappa$ is $\kappa_{\ell}$ with every position $q$ in its pairs
+replaced by $p.q$ (i.e., reanchored to the announcement position in the
+subject term). The set automaton is therefore agnostic to $\Delta$: it
+detects syntactic shape and defers structural-equality checking to the
+fire stage (\S\ref{ssec:rewriter}).
+
+\paragraph{Example: the rho COMM rule.}
+The rho-calculus communication rule
+\[
+  \mathsf{for}(y \!\leftarrow\! x)\{B\} \mid x!(Q)
+    \;\rew\; B[@Q / y]
+\]
+is the prototypical non-syntactically-linear LHS: as a morphism in the
+syntactic Lawvere theory it has shape $N \times (N \Rightarrow P) \times P \to P$
+with one channel-input $x$, one body-input $B$ (binding $y$), and one
+payload $Q$, but its tree display has two leaves labelled $x$
+(composition with $\Delta_N$). The linearisation introduces fresh
+metavariables $x_1, x_2 : N$ at positions $1.1$ (subject of the
+receive) and $2.1$ (subject of the send), giving sharing constraint
+\[
+  \kappa_{\mathrm{COMM}} \;=\; \{(1.1,\, 2.1)\}.
+\]
+The set automaton is built on $\ell^{\flat}_{\mathrm{COMM}}$ in the
+usual way; at announcement of $\ell^{\flat}_{\mathrm{COMM}}$ at some
+position $p$ in the subject, the emitted triple is
+$(\mathrm{COMM}, p, \{(p.1.1,\, p.2.1)\})$, and the fire contract
+(\S\ref{ssec:rewriter}) verifies $p.1.1 \equiv p.2.1$ in the subject
+before firing.
+
+\subsection{Rholang}\label{ssec:rholang}
+
+We use a small fragment of Rholang based on the rho calculus of Meredith
+and Radestock~\cite{MeredithRadestock2005}. Processes $P$ and names $x$
+are mutually defined by the grammar
+\[
+  P ::= \nil \mid \Send{x}{P} \mid \Recv{y}{x}{P} \mid \Bang{y}{x}{P}
+        \mid P \mid P \mid {*x} \mid \New{x}{P},
+  \qquad
+  x ::= @P,
+\]
+with the following intended readings:
+\begin{itemize}[leftmargin=*]
+  \item $\nil$: the inert process;
+  \item $\Send{x}{P}$: asynchronous send of process $P$ on channel $x$;
+  \item $\Recv{y}{x}{P}$: \emph{linear} receive on channel $x$, binding
+        the incoming name to $y$ in $P$ and then consuming the receiver;
+  \item $\Bang{y}{x}{P}$: \emph{persistent} receive (\textsf{contract}),
+        which fires on every send to $x$, binding $y$ in $P$, and remains
+        available;
+  \item $P \mid Q$: parallel composition;
+  \item $*x$: dereference of name $x$, evaluating to the process it
+        names;
+  \item $\New{x}{P}$: name restriction, introducing a fresh name $x$ in
+        $P$;
+  \item $@P$: the \emph{reflection} of process $P$ to a name.
+\end{itemize}
+Structural congruence $\equiv$ contains $\alpha$-equivalence, associativity
+and commutativity of $\mid$ with $\nil$ as unit, and the reflection law
+$*@P \equiv P$. Names are quotients of processes under $\equiv$. The
+principal reduction is
+\[
+  \Recv{y}{x}{P} \mid \Send{x'}{Q} \;\rew\; P[@Q / y]
+  \quad\text{whenever}\quad {*x} \equiv {*x'},
+\]
+with the persistent variant leaving a fresh copy of the receive in place.
+
+We use Rholang's standard surface syntax in displayed code, writing
+\texttt{x!(P)} for $\Send{x}{P}$, \texttt{for(y <- x) \{P\}} for the linear
+receive and \texttt{for(y <= x) \{P\}} for the persistent variant, and
+\texttt{new x in \{P\}} for $\New{x}{P}$.
+
+\paragraph{Match.}
+Surface Rholang adds a \texttt{match} construct on quoted-process patterns.
+We use \texttt{match} only to deconstruct the surface symbol and the
+arguments of an encoded subject term (\S\ref{sec:encoding}); it is
+unnecessary for the set-automaton dispatch, which is realised entirely by
+channel names.
+
+\paragraph{Reflection bracket.}
+Throughout the paper $\reflect{\cdot}$ denotes a fixed section of $@$
+chosen so that distinguishable mathematical objects map to distinct
+names: $\reflect{a} =_{\Names} \reflect{b}$ iff $a$ and $b$ are equal as
+mathematical objects. We use the bracket on automaton states, term
+positions, and signature symbols, generating canonical and distinct
+channel names from each.
+
+\section{Encoding terms and states}\label{sec:encoding}
+
+The compiler emits a fixed set of definitions independent of the input
+term, plus an encoding of each subject term as a Rholang process. We
+describe the encodings here; the compilation algorithm proper is in
+\S\ref{sec:compile}.
+
+\subsection{Subject terms}\label{ssec:term-encoding}
+
+Let $t \in \Terms(\mathbb{F})$ be a closed subject term. We encode $t$ as a
+Rholang process on a \emph{term channel} $\tau$ that, when read, yields a
+constructor tag together with a tuple of names for the immediate
+subterms. Concretely, for each function symbol $f \in \mathbb{F}_n$ we emit
+a persistent receive that responds to a request on $\tau$ with the head
+symbol $f$ and a tuple of names $(\tau_1, \ldots, \tau_n)$ whose targets
+are the recursively encoded subterms.
+
+\begin{construction}[Term encoding]\label{cons:term-encoding}
+The encoding $\sem{t}_{\tau}$ of a term $t$ on a channel name $\tau$ is
+defined inductively:
+\begin{itemize}[leftmargin=*]
+  \item For $a \in \mathbb{F}_0$ (a constant):
+  \[
+    \sem{a}_{\tau} \;=\; \Bang{r}{\tau}{\Send{r}{\reflect{a}}}.
+  \]
+  \item For $f \in \mathbb{F}_n$ with $n \ge 1$ and subterms $t_1, \ldots, t_n$:
+  \[
+    \sem{f(t_1, \ldots, t_n)}_{\tau}
+    \;=\;
+    \New{\tau_1, \ldots, \tau_n}{
+      \sem{t_1}_{\tau_1} \mid \cdots \mid \sem{t_n}_{\tau_n}
+      \mid \Bang{r}{\tau}{\Send{r}{(\reflect{f}, \tau_1, \ldots, \tau_n)}}
+    }.
+  \]
+\end{itemize}
+\end{construction}
+
+A query on $\tau$ thus returns the \emph{shape} of $t$ at the root --- its
+head symbol plus channel names addressing its arguments --- and leaves
+sub-shapes available behind those argument channels. This makes the
+encoding lazy in a useful sense: the automaton consults only the positions
+it actually needs to inspect.
+
+\paragraph{Binders.}
+A function symbol $f \in \mathbb{F}_n$ with binding positions
+$\beta_f \subseteq \{1, \ldots, n\}$ encodes binding arguments as
+$(P \Rightarrow P)$-valued, i.e.\ as Rholang names that, when sent a fresh
+\emph{bound-name token}, respond with the encoding of the opened body
+under that token. Concretely, position $i \in \beta_f$ of $f$ is encoded
+on a channel $\tau_i$ as a persistent receive
+\[
+  \Bang{(z, r)}{\tau_i}{\Send{r}{\sem{t_i(z)}_{r}}},
+\]
+which takes a fresh free name $z$ and a response channel $r$, and emits
+the encoded opened body. The automaton invokes this protocol only at
+positions in $\beta_f$ that it actually inspects.
+
+\subsection{Automaton states as channels}\label{ssec:state-channels}
+
+For each state $s \in \States$ of the set automaton built from $\Lhs$, the
+compiler reserves a single \emph{state channel} $\sigma_s := \reflect{s}$.
+The state channel carries messages of the form $(\tau, p)$, where $\tau$
+is the channel encoding the subject term and $p$ is a position pointer
+into $t$.
+
+A persistent receive on $\sigma_s$ implements the per-state behaviour:
+the position $L(s)$ is added to $p$ to obtain the position to inspect;
+the term is queried at that position, yielding a head symbol $f$ and the
+argument channels; $\eta(s, f)$ is announced on a public \emph{matches}
+channel; and each $(s', p'') \in \delta(s, f)$ is sent forward as
+$(\tau, p.p'')$ on $\sigma_{s'}$. Section~\ref{sec:compile} renders this
+behaviour as explicit Rholang code.
+
+\subsection{Position pointers}\label{ssec:pointer-encoding}
+
+A position pointer $p \in \Pos$ is encoded as a Rholang list of positive
+integers, or, equivalently, as a name $\reflect{p}$. Concatenation
+$p.q$ is a Rholang list operation. Lookup at a position is realised by a
+sequence of \emph{traversal} sends down the argument channels: from a
+term channel $\tau$ and a pointer $p = i_1 . i_2 . \cdots . i_k$, the
+sequence
+\[
+  \Send{\tau}{r_0},\;
+  \mathsf{for}\, ((f_0, \vec{\tau}_0) \leftarrow r_0)\,
+  \{\, \Send{\vec{\tau}_0[i_1]}{r_1},\,
+       \mathsf{for}\,((f_1, \vec{\tau}_1) \leftarrow r_1)\, \cdots \,\}
+\]
+descends the term tree along $p$. This traversal is generic and is emitted
+once by the compiler as a contract (the \emph{traversal contract}, see
+\S\ref{ssec:emit-traversal}).
+
+\section{The compilation algorithm}\label{sec:compile}
+
+We are now ready to state the algorithm. The input is a finite GSLT
+presentation $\Pi$; the output is a Rholang program $\mathsf{compile}(\Pi)$.
+The compiler is presented as nine emission rules, each of which produces a
+piece of Rholang code parameterised over data extracted from $\Pi$ and the
+set automaton $M = (\States, s_0, L, \delta, \eta)$ built from $\Lhs(\Pi)$.
+
+\begin{algorithm}[$\mathsf{compile}(\Pi)$]\label{alg:compile}
+\hfill\\
+\noindent
+\textbf{Input:} a finite GSLT presentation
+$\Pi = (\mathcal{S}, \mathbb{F}, E, \succ, \mathcal{R}_{\mathrm{rule}}, \mathcal{R}_{\mathrm{ctx}})$.\\
+\textbf{Output:} a closed Rholang program.\\
+\noindent
+\textbf{Steps.}
+\begin{enumerate}[leftmargin=2em]
+  \item \emph{Normalise equations.} Use Knuth--Bendix on $(E, \succ)$ to
+        obtain a confluent, terminating rewrite system $E^{\downarrow}$
+        whose normal forms are the canonical representatives modulo $E$.
+        The remaining steps assume that all left-hand sides in
+        $\mathcal{R}_{\mathrm{rule}} \cup \mathcal{R}_{\mathrm{ctx}}$ are
+        in $E^{\downarrow}$-normal form.
+  \item \emph{Build $\Lhs$.} Collect the left-hand sides of
+        $\mathcal{R}_{\mathrm{rule}}$ and the per-premise left-hand sides
+        of $\mathcal{R}_{\mathrm{ctx}}$.
+  \item \emph{Build the set automaton $M$.} Compute the states, $L$,
+        $\delta$, and $\eta$ by the construction of
+        \S\ref{ssec:set-automaton}.
+  \item \emph{Emit the runtime preamble} (\S\ref{ssec:emit-preamble}).
+  \item \emph{Emit the term constructors} (\S\ref{ssec:emit-constructors}).
+  \item \emph{Emit the traversal contract} (\S\ref{ssec:emit-traversal}).
+  \item \emph{Emit the state contracts} (\S\ref{ssec:emit-states}).
+  \item \emph{Emit the equational normaliser} (\S\ref{ssec:emit-normaliser}).
+  \item \emph{Emit the rewriter} (\S\ref{ssec:rewriter}).
+  \item \emph{Emit the driver} (\S\ref{ssec:driver}).
+\end{enumerate}
+The order of emission is not significant; emitted contracts are persistent
+and unordered.
+\end{algorithm}
+
+We describe each emission rule in turn. All emitted code lives inside a
+single top-level \texttt{new} block that introduces the channel names used
+throughout. We elide that wrapper in displayed code.
+
+\subsection{Preamble}\label{ssec:emit-preamble}
+
+The preamble declares the public channels:
+\begin{itemize}[leftmargin=*]
+  \item \texttt{matches} --- a public channel on which the interpreter
+        announces every $(L, p)$-pair such that $L$ matches the current
+        subject term at position $p$;
+  \item \texttt{fire} --- a public channel on which a scheduler may
+        instruct the interpreter to fire a specific announced redex;
+  \item \texttt{normalForm} --- a public channel that receives the final
+        term when no more redexes are available.
+\end{itemize}
+\begin{lstlisting}
+new matches, fire, normalForm,
+    /* state channels: */ ${state-names},
+    /* helpers: */ traverse, substitute, normalise, driver in {
+  // ... remainder of the program ...
+}
+\end{lstlisting}
+The placeholder \texttt{\$\{state-names\}} expands to the list
+$\sigma_{s_0}, \sigma_{s_1}, \ldots, \sigma_{s_{|\States|-1}}$.
+
+\subsection{Term constructors}\label{ssec:emit-constructors}
+
+For each $f \in \mathbb{F}_n$ the compiler emits a \emph{constructor
+contract} that builds a term-channel responder for $f$:
+\begin{lstlisting}
+for (@(t1, ..., tn), r <= mk_${f}) {
+  new tau in {
+    for (reply <= tau) { reply!((${f-tag}, t1, ..., tn)) } |
+    r!(tau)
+  }
+}
+\end{lstlisting}
+The placeholder \texttt{\$\{f-tag\}} is the canonical name $\reflect{f}$.
+A constant $a \in \mathbb{F}_0$ emits the obvious zero-argument variant.
+
+For each $f \in \mathbb{F}_n$ with binding positions $\beta_f$, the
+$i \in \beta_f$ slot is a name $\tau_i$ that satisfies the bound-body
+protocol described in \S\ref{ssec:term-encoding}; the constructor contract
+above accepts such a name without further change.
+
+\paragraph{Well-formedness equations.}
+When $\lambda_f$ is non-empty, the constructor contract guards
+$f$-formation on the input equations: it invokes
+\texttt{checkConstraint} (\S\ref{ssec:rewriter}) on the inputs
+$(t_1, \ldots, t_n)$ against $\lambda_f$ before publishing the new
+term channel, and emits a typing failure on $r$ if any equation fails.
+The check is structurally identical to the sharing-constraint check
+of \S\ref{ssec:rewriter}: each equation $g_i(\vec{x}) = h_i(\vec{x})$
+is evaluated to two term channels and compared by Rholang structural
+congruence. When $\lambda_f = \emptyset$ the guard is elided and the
+contract reduces to the form above.
+
+\subsection{Traversal contract}\label{ssec:emit-traversal}
+
+A single \emph{traversal contract} consumes a term channel and a position
+list and replies with the term channel at that position:
+\begin{lstlisting}
+for (@(tau, p), reply <= traverse) {
+  match p {
+    Nil       => { reply!(tau) }
+    [i, ...q] => {
+      new r in {
+        tau!(r) |
+        for ((_head, @args) <- r) { traverse!((args.nth(i), q), reply) }
+      }
+    }
+  }
+}
+\end{lstlisting}
+\emph{Note.} The pattern \lstinline|(_head, @args)| extracts the head tag
+and the tuple of argument channels; \lstinline|args.nth(i)| selects the
+$i$-th of them. The traversal is asynchronous: every step requests the
+next argument channel via a fresh response name $r$ and resumes only
+when the term channel replies.
+
+\subsection{State contracts}\label{ssec:emit-states}
+
+The set-automaton dispatch is the heart of the compiler. For each
+non-final state $s \in \States$ we emit a single persistent contract on
+the state channel $\sigma_s$:
+\begin{lstlisting}
+for (@(tau, p) <= ${state-name(s)}) {
+  new r, posChan in {
+    // 1. Compute the inspection position p . L(s):
+    posChan!(p ++ ${pos-literal(L(s))}) |
+    for (@inspectPos <- posChan) {
+      // 2. Ask traverse for the term channel at inspectPos:
+      traverse!((tau, inspectPos), r) |
+      for (subTau <- r) {
+        new rr in {
+          subTau!(rr) |
+          for ((@head, @args) <- rr) {
+            // 3. Dispatch on the head symbol:
+            match head {
+              ${case-for-each-f-in-F(s)}
+              _ => Nil
+            }
+          }
+        }
+      }
+    }
+  }
+}
+\end{lstlisting}
+The placeholder \texttt{\$\{case-for-each-f-in-F(s)\}} expands to one
+\texttt{match} arm per function symbol $f$ for which $\delta(s, f) \cup
+\eta(s, f)$ is non-empty. The arm has the form
+\begin{lstlisting}
+  ${f-tag} => {
+    // (a) emit pattern-match announcements eta(s, f):
+    ${emit-eta(s, f)} |
+    // (b) emit transitions delta(s, f), in parallel:
+    ${emit-delta(s, f)}
+  }
+\end{lstlisting}
+where
+\[
+  \mathtt{emit\text{-}eta}(s, f) \;=\;
+  \bigm|_{(\ell, p', \kappa) \in \eta(s, f)}
+  \mathtt{matches}\,!\bigl(\,\reflect{\ell},\; p \mathbin{+\!+} p',\;
+                            \reflect{\kappa\langle p.p'\rangle}\,\bigr)
+\]
+and
+\[
+  \mathtt{emit\text{-}delta}(s, f) \;=\;
+  \bigm|_{(s', p'') \in \delta(s, f)}
+  \sigma_{s'}\,!(\,\tau,\; p \mathbin{+\!+} p''\,).
+\]
+The notation $\kappa\langle q \rangle$ denotes $\kappa$ with every
+position-pair $(q_1, q_2)$ replaced by $(q.q_1, q.q_2)$ (the
+reanchoring at the announcement position). When $\kappa$ is empty
+(i.e., the LHS is syntactically linear), $\reflect{\kappa\langle \cdot \rangle}$
+is a canonical name for the empty constraint, and the fire contract
+(\S\ref{ssec:rewriter}) bypasses the equality check.
+The vertical bar denotes Rholang parallel composition: distinct
+announcements and distinct successor configurations are emitted in
+parallel and are scheduled by the Rholang runtime.
+
+The final state (the empty set of match goals) emits no contract: a
+configuration that arrives at the final state simply terminates that
+branch of the search.
+
+\paragraph{What this code is doing.}
+Each state contract reads a configuration $(\tau, p)$ and:
+\begin{enumerate}[leftmargin=*]
+  \item computes the inspection position $p.L(s)$;
+  \item asks the traversal contract for the term channel at that
+        position;
+  \item asks that channel for its head symbol $f$ and argument
+        channels;
+  \item announces all matches $\eta(s, f)$ in parallel;
+  \item dispatches all successor configurations $\delta(s, f)$ in
+        parallel.
+\end{enumerate}
+There is no shared state and no scheduling barrier. The arrows of
+$\delta(s, f)$ correspond to distinct messages on distinct or identical
+channels, all available simultaneously to any Rholang reducer.
+
+\subsection{Equational normaliser}\label{ssec:emit-normaliser}
+
+The equations $E$ of the presentation, after Knuth--Bendix completion,
+form a convergent rewrite system $E^{\downarrow}$ that gives a canonical
+representative for each equivalence class. Because Definition~\ref{def:presentation}
+requires $E^{\downarrow}$ to satisfy the finite variant property, a
+subject term and its $E$-canonical form admit the \emph{same} set of
+pattern matches against any left-hand side of $\mathcal{R}$ (in the
+sense of $E$-matching): normalising before dispatch is sound and
+complete. The compiler treats $E^{\downarrow}$ as a sub-presentation
+whose set automaton $M^{\downarrow}$ matches the left-hand sides of
+$E^{\downarrow}$ in the subject term, and whose rewriter
+(\S\ref{ssec:rewriter}) fires them eagerly. We emit a \emph{normaliser}
+contract that, given a term channel, repeatedly fires
+$E^{\downarrow}$-redexes until none remain and then signals completion:
+\begin{lstlisting}
+for (tau, done <= normalise) {
+  // Run the E-downward set automaton, fire its redexes innermost-first,
+  // and signal "done" when matches is exhausted on E-downward patterns.
+  // ...
+}
+\end{lstlisting}
+The full body is structurally identical to the driver in
+\S\ref{ssec:driver}; we omit it. Normalisation is interleaved with
+$\mathcal{R}$-rewriting in the driver.
+
+\subsection{Rewriter}\label{ssec:rewriter}
+
+For each rule $L_j \rew R_j \in \mathcal{R}_{\mathrm{rule}}$ the compiler
+emits a \emph{fire contract} parameterised by the pattern identifier
+$\reflect{L_j}$. The contract takes the announcement triple
+$(\tau, p, \kappa)$ produced by the matcher; if $\kappa$ is non-empty,
+the contract first verifies the structural equalities it specifies and
+aborts the firing if any fails. The Rholang skeleton is:
+\begin{lstlisting}
+for (@(tau, p, kappa), done <= fire_${L_j}) {
+  new sigma, rTau, eqOk in {
+    // 0. Verify sharing constraints kappa, if any:
+    checkConstraint!((tau, kappa), eqOk) |
+    for (@ok <- eqOk) {
+      if (ok) {
+        // 1. Extract the substitution sigma from tau at p against L_j:
+        extractSubst!((tau, p, ${pattern-id(L_j)}), sigma) |
+        for (@s <- sigma) {
+          // 2. Build the right-hand side R_j under sigma on a fresh channel:
+          buildRhs!((${rhs-id(R_j)}, @s), rTau) |
+          // 3. Splice rTau into tau at p:
+          for (newTau <- rTau) {
+            splice!((tau, p, newTau), done)
+          }
+        }
+      } else {
+        done!(@"abort")
+      }
+    }
+  }
+}
+\end{lstlisting}
+The auxiliary contracts \texttt{checkConstraint}, \texttt{extractSubst},
+\texttt{buildRhs}, and \texttt{splice} are generic and emitted once each.
+
+\paragraph{Constraint check.}
+The \texttt{checkConstraint} contract is the workhorse for every
+equality side-condition emitted by the compiler. It receives a
+term channel $\tau$ and a finite set of \emph{equality items}
+$\xi = \{(e_1, e'_1), \ldots, (e_m, e'_m)\}$ and replies \texttt{true}
+iff $e_i \equiv e'_i$ in $\tau$ for every $i$, where each $e_i$ is
+either:
+\begin{itemize}[leftmargin=*]
+  \item a \emph{position pair}, as used in sharing constraints $\kappa$
+        and resolved by \texttt{traverse} into a sub-channel of $\tau$; or
+  \item an $\mathbb{F}$-term over the inputs of a constructor, as used in
+        well-formedness equations $\lambda_f$ and resolved by
+        \texttt{buildRhs} into a freshly built term channel.
+\end{itemize}
+In both cases, each pair-check is realised by two parallel resolution
+steps returning channels $c_i, c'_i$ and a single Rholang \texttt{match}
+that succeeds iff $c_i \equiv c'_i$ as quoted processes (a decidable
+test on rho-calculus structural congruence). The $m$ pair-checks run
+in parallel; \texttt{checkConstraint} joins their booleans by
+conjunction. The constructor contracts of \S\ref{ssec:emit-constructors}
+invoke \texttt{checkConstraint} with $\xi = \lambda_f$ resolved on the
+inputs; the fire contracts above invoke it with $\xi = \kappa$
+resolved on the subject channel.
+
+\paragraph{Substitution and binders.}
+The auxiliary \texttt{buildRhs} contract takes a substitution $\sigma$
+(a mapping from metavariables of $L_j$ to term channels) and the static
+syntactic data of $R_j$, and produces a term channel for $R_j^{\sigma}$.
+For a binding occurrence in $R_j$ --- a metavariable $\omega$ that occurs
+under a binding position of some constructor --- the corresponding
+channel from $\sigma$ already carries a bound-name token in its
+protocol; \texttt{buildRhs} composes it with the surrounding constructor
+contracts straightforwardly.
+
+\paragraph{Contextual rewrites.}
+A contextual rewrite
+\[
+  L_1 \rew R_1, \ldots, L_k \rew R_k \Rightarrow K[L_1, \ldots, L_k] \rew K'[R_1, \ldots, R_k]
+\]
+is compiled in two stages. The premise patterns $L_i$ are included in
+$\Lhs$ and matched by the set automaton as in any other rule. The
+contextual conclusion fires only when announcements of all $k$ premises
+arrive on \texttt{matches} in a configuration that places them at the
+$k$ holes of $K$; this synchronisation is implemented as a \emph{join} on
+$k$ messages on the \texttt{matches} channel, gated by a check that the
+positions are compatible with $K$. The check is itself a finite-state
+predicate on positions, emitted by the compiler from $K$.
+
+\subsection{Driver}\label{ssec:driver}
+
+The driver wires the components together. Given an initial subject term
+$t_0$, the driver:
+\begin{enumerate}[leftmargin=*]
+  \item builds the term channel $\tau_0$ for $t_0$ via the constructor
+        contracts;
+  \item normalises $\tau_0$ with the equational normaliser;
+  \item kicks off the set automaton by sending $(\tau_0, \epsilon)$ on
+        $\sigma_{s_0}$;
+  \item collects announcements on \texttt{matches} into a redex pool;
+  \item upon receiving an instruction on \texttt{fire}, dispatches the
+        appropriate fire contract;
+  \item after each firing, restarts the automaton from $\sigma_{s_0}$
+        on the new term channel (or, with a more refined construction,
+        from the partial-evaluation state determined by the rewritten
+        position);
+  \item when \texttt{matches} reports empty after a full automaton run,
+        sends the current term on \texttt{normalForm} and terminates.
+\end{enumerate}
+The default scheduling policy is to forward every announcement back as
+an instruction to fire, in some order; alternative policies (outermost,
+innermost, etc.) are obtained by filtering or sorting the redex pool
+before forwarding.
+
+\section{Parallelism preservation}\label{sec:parallel}
+
+The defining feature of the set automaton is that it exposes parallelism
+in two places: \emph{intra-state} (the elements of $\delta(s, f)$ and
+$\eta(s, f)$ are independent and may be processed in any order) and
+\emph{inter-rule} (announced matches at non-overlapping positions are
+independent redexes). We show that both kinds of parallelism are
+preserved verbatim by Algorithm~\ref{alg:compile}.
+
+\subsection{Concurrency model}
+
+Recall that the Rholang runtime is asynchronous and name-passing: a send
+$\Send{x}{P}$ may be paired with any matching receive on $x$, in any
+order, and parallel composition $P_1 \mid P_2$ enforces no ordering. The
+reduction relation of the rho calculus is closed under parallel
+composition: $P \rew P'$ implies $P \mid Q \rew P' \mid Q$. Two parallel
+sub-processes may reduce independently and concurrently, so long as
+their reductions do not compete for the same linear receive.
+
+\begin{definition}[Independent reductions]\label{def:independent}
+Two reductions $P_1 \rew P_1'$ and $P_2 \rew P_2'$ of sub-processes of
+$P$ are \emph{independent} if they involve disjoint sets of names and
+disjoint sub-processes.
+\end{definition}
+
+\subsection{Intra-state parallelism}
+
+\begin{theorem}[Intra-state parallelism]\label{thm:intra}
+Let $s$ be a state of the set automaton and $f$ a function symbol such
+that $\delta(s, f) = \{(s'_1, p''_1), \ldots, (s'_m, p''_m)\}$ and
+$\eta(s, f) = \{(\ell_1, q_1), \ldots, (\ell_k, q_k)\}$. After dispatch
+on the head symbol $f$ at a configuration $(\tau, p)$, the corresponding
+Rholang sub-process is
+\[
+  \bigm|_{j=1}^{k} \texttt{matches!}((\reflect{\ell_j}, p.q_j))
+  \;\mathbin{\Big|}\;
+  \bigm|_{i=1}^{m} \texttt{$\sigma_{s'_i}$!}((\tau, p.p''_i)).
+\]
+The $k + m$ resulting message sends are pairwise independent in the sense
+of Definition~\ref{def:independent}; the Rholang runtime may schedule
+them in any order or concurrently, and the resulting global behaviour is
+identical to that of the set automaton run with any sequential schedule
+of the corresponding $(s', p)$-successors and $(\ell, p)$-announcements.
+\end{theorem}
+
+\begin{proof}
+The $k + m$ message sends share only the read-only names $\tau$ and $p$
+(the latter as a fresh local list, not a Rholang channel target); the
+target channels \texttt{matches} and $\sigma_{s'_1}, \ldots, \sigma_{s'_m}$
+are pairwise distinct or, in the case that two transitions go to the
+same state $s'_i = s'_j$, both receive messages on the same persistent
+contract --- which by definition processes them in some order without
+interference. Soundness of any scheduling order is exactly the
+soundness theorem for the set automaton~\cite[Theorem~6.1]{ErkensGroote2021};
+that the Rholang runtime may schedule any order is immediate from the
+asynchronous semantics of $\mid$ and the persistence of the state
+contracts.
+\end{proof}
+
+\subsection{Inter-rule parallelism}
+
+\begin{theorem}[Inter-rule parallelism]\label{thm:inter}
+Let $\Pi$ be a finite GSLT presentation and let $t$ be a subject term.
+Let
+\[
+  A \;=\; \{(\ell, p) : \text{\textnormal{the set automaton announces $\ell$ at $p$ during the run on $t$}}\}
+\]
+be the set of announcements produced by the compiled Rholang program in
+its first \emph{automaton phase}. The Rholang process announcing $A$ is
+of the form
+\[
+  \bigm|_{(\ell, p) \in A} \texttt{matches!}((\reflect{\ell}, p)) \;\mid\; (\text{automaton continuations}),
+\]
+and the announcements are pairwise independent. Any subset of redexes
+fired by the driver in parallel (a \emph{parallel firing}
+$\{(\ell_{i_1}, p_{i_1}), \ldots, (\ell_{i_r}, p_{i_r})\}$ with pairwise
+non-overlapping positions) is realised by the Rholang runtime as the
+parallel firing of $r$ independent fire-contract invocations, without
+inter-firing scheduling glue.
+\end{theorem}
+
+\begin{proof}
+The set of announcements is the parallel composition of independent
+sends to \texttt{matches} by Theorem~\ref{thm:intra} composed
+transitively over the automaton run. The driver dispatches each fire
+instruction to a fresh \texttt{fire\_$\ell$} contract invocation, which
+allocates its own \texttt{rTau}, \texttt{sigma}, and other local
+channels via \texttt{new}, so no two fire contracts share linear
+channels. Non-overlapping positions imply non-overlapping subject-term
+sub-channels, which by Construction~\ref{cons:term-encoding} are
+allocated under distinct \texttt{new}-restrictions. Hence the $r$
+firings touch disjoint sets of names and disjoint sub-processes, and
+proceed independently.
+\end{proof}
+
+\subsection{Why this matters}
+
+The combined effect of Theorems~\ref{thm:intra} and~\ref{thm:inter} is
+that no part of the compiled interpreter contains a centralised
+scheduler. The matcher emits successor configurations as parallel sends;
+the rewriter emits parallel firings as parallel sub-processes; the
+driver merely forwards. Concretely, the only points at which the
+interpreter is sequential are the points at which the set automaton is
+inherently sequential --- namely, the inspection of the head symbol of a
+single sub-term at a single position. Every other step is parallel by
+construction, and Rholang's runtime is responsible for choosing any
+interleaving.
+
+\begin{corollary}[No-glue corollary]\label{cor:no-glue}
+The compiled Rholang program contains no parallel-scheduling code: the
+emitted runtime preamble, traversal contract, state contracts, fire
+contracts, and driver are all sequential within their bodies, and all
+inter-component parallelism is exposed solely through Rholang's
+$\mid$-composition. In particular, the size of the compiled program is
+$O(|\States| \cdot |\mathbb{F}| + |\mathcal{R}| + |\mathbb{F}|)$, with no
+multiplicative factor for scheduling.
+\end{corollary}
+
+\section{A worked example}\label{sec:example}
+
+We illustrate the algorithm on a tiny presentation: the associativity
+patterns of Erkens--Groote~\cite[\S3]{ErkensGroote2021}, treated as a
+rewrite system that re-associates a binary operator to the right.
+
+\subsection{The presentation}
+
+Sorts: $\mathcal{S} = \{\iota\}$. Signature: $\mathbb{F}_0 = \{a\}$,
+$\mathbb{F}_2 = \{f\}$. Equations: none beyond the trivial. Rules:
+\[
+  \mathcal{R}_{\mathrm{rule}} = \{\; L_1 \rew R_1 \;\}
+  \quad\text{where}\quad
+  L_1 = f(f(\omega_1, \omega_2), \omega_3),\;
+  R_1 = f(\omega_1, f(\omega_2, \omega_3)).
+\]
+Contextual rewrites: none. The left-hand-side set is
+$\Lhs = \{L_1\}$. (The Erkens--Groote example uses a second pattern
+$L_2 = f(\omega_1, f(\omega_2, \omega_3))$ to demonstrate set automata;
+we drop it here so the worked example fits on one page.)
+
+\subsection{The set automaton}
+
+Applying the construction of \S\ref{ssec:set-automaton} to
+$\Lhs = \{L_1\}$ yields:
+\begin{itemize}[leftmargin=*]
+  \item Initial state $s_0 = \{L_1 @ \epsilon \to L_1 @ \epsilon\}$ with
+        $L(s_0) = \epsilon$;
+  \item $f$-derivative of $s_0$ contains the new goal $f(\omega_1, \omega_2) @ 1 \to L_1 @ \epsilon$
+        and fresh goals $L_1 @ 1 \to L_1 @ 1$, $L_1 @ 2 \to L_1 @ 2$;
+        partitioning and lifting yield successors at position pointer
+        $1$ and $2$;
+  \item further derivatives yield a finite set of states with
+        position labels in $\{\epsilon, 1, 2\}$ and announcements
+        $\eta(s, f) = \{(L_1, \epsilon)\}$ at the (unique) state $s$
+        whose obligations require both $\hd@\epsilon = f$ and
+        $\hd@1 = f$.
+\end{itemize}
+We abbreviate the resulting four-state automaton as
+$\States = \{s_0, s_1, s_2, s_3\}$.
+
+\subsection{The compiled Rholang program}
+
+We give the key fragments. The preamble:
+\begin{lstlisting}
+new matches, fire, normalForm,
+    s0, s1, s2, s3,           // state channels
+    mk_a, mk_f,                // constructors
+    traverse, fire_L1,
+    extractSubst, buildRhs, splice,
+    driver in {
+  // ... contracts below ...
+  driver!()
+}
+\end{lstlisting}
+The constructors:
+\begin{lstlisting}
+for (r <= mk_a) {
+  new tau in {
+    for (reply <= tau) { reply!((@"a",)) } |
+    r!(tau)
+  }
+} |
+for (@(t1, t2), r <= mk_f) {
+  new tau in {
+    for (reply <= tau) { reply!((@"f", t1, t2)) } |
+    r!(tau)
+  }
+}
+\end{lstlisting}
+The state contract for $s_0$ (label $\epsilon$, $f$-transition to $s_1$
+at position $1$ and $s_2$ at position $2$, with the announcement
+$(L_1, \epsilon)$ deferred to a deeper state):
+\begin{lstlisting}
+for (@(tau, p) <= s0) {
+  new r in {
+    traverse!((tau, p), r) |        // L(s_0) = epsilon, so p ++ [] = p
+    for (subTau <- r) {
+      new rr in {
+        subTau!(rr) |
+        for ((@head, @args) <- rr) {
+          match head {
+            @"f" => {
+              s1!((tau, p ++ [1])) |  // descend to position p.1
+              s2!((tau, p ++ [2]))    // descend to position p.2
+            }
+            _    => Nil
+          }
+        }
+      }
+    }
+  }
+}
+\end{lstlisting}
+The state contract for the state $s$ at which the announcement fires:
+\begin{lstlisting}
+for (@(tau, p) <= s1) {
+  new r in {
+    traverse!((tau, p), r) |        // L(s_1) = epsilon
+    for (subTau <- r) {
+      new rr in {
+        subTau!(rr) |
+        for ((@head, @args) <- rr) {
+          match head {
+            @"f" => {
+              // announce: L_1 matches at p.epsilon (= p)
+              matches!((@"L_1", p)) |
+              // and continue the inner search:
+              s1!((tau, p ++ [1])) |
+              s2!((tau, p ++ [2]))
+            }
+            _    => Nil
+          }
+        }
+      }
+    }
+  }
+}
+\end{lstlisting}
+(\emph{Note.} The redex announcement and the inner search are emitted in
+parallel. The Rholang runtime is free to deliver them in any order; both
+will eventually run.)
+
+The fire contract for $L_1$, sketched:
+\begin{lstlisting}
+for (@(tau, p), done <= fire_L1) {
+  new sigma, rTau in {
+    extractSubst!((tau, p, @"L_1"), sigma) |
+    for (@s <- sigma) {
+      // s = { omega_1 |-> t11, omega_2 |-> t12, omega_3 |-> t2 } where
+      // t = f(f(t11, t12), t2)
+      mk_f((s.omega_2, s.omega_3), @"inner") |
+      for (innerTau <- @"inner") {
+        mk_f((s.omega_1, innerTau), rTau) |
+        for (newTau <- rTau) {
+          splice!((tau, p, newTau), done)
+        }
+      }
+    }
+  }
+}
+\end{lstlisting}
+(In a production compiler the literal name \texttt{@"inner"} would be a
+fresh \texttt{new}-bound name; we use the literal here for readability.)
+
+The driver simply forwards every announcement to a fire instruction and
+restarts the automaton:
+\begin{lstlisting}
+for (_ <= driver) {
+  // ... build initial tau_0 from input ...
+  s0!((tau_0, [])) |
+  for (@(L, p) <= matches) {           // persistent for: process every announcement
+    fire_L1!((tau_0, p), @"fired") |
+    for (_ <- @"fired") { s0!((tau_0, [])) }
+  }
+}
+\end{lstlisting}
+
+\subsection{Running it}
+
+On the subject term $t = f(f(a, a), a)$ the program proceeds as
+follows.
+\begin{itemize}[leftmargin=*]
+  \item The driver builds the term channel $\tau_0$ for $t$ and sends
+        $(\tau_0, [\,])$ on $\sigma_{s_0}$.
+  \item $\sigma_{s_0}$ inspects the head at position $\epsilon$,
+        finds $f$, and emits two parallel sends:
+        $\sigma_{s_1}(\tau_0, [1])$ and $\sigma_{s_2}(\tau_0, [2])$.
+  \item $\sigma_{s_1}(\tau_0, [1])$ inspects the head at position $1$,
+        finds $f$, announces $(L_1, [\,])$, and emits two further
+        parallel sends.
+  \item $\sigma_{s_2}(\tau_0, [2])$ inspects the head at position $2$,
+        finds $a$, and terminates (no $a$-arm in any state contract).
+  \item The announcement $(L_1, [\,])$ is forwarded by the driver to
+        \texttt{fire\_L1}, which extracts $\sigma$, builds the RHS,
+        splices it into $\tau_0$, and restarts the automaton.
+\end{itemize}
+Each function symbol of $t$ is inspected exactly once per automaton run,
+and the two parallel sends from $\sigma_{s_0}$ are scheduled by the
+Rholang runtime in either order or simultaneously.
+
+\subsection{The rho COMM rule: full compilation pipeline}\label{ssec:rho-comm}
+
+We now revisit the rho-calculus COMM rule of \S\ref{ssec:set-automaton},
+filling in the compilation pipeline downstream of the set automaton. The
+linearisation
+$\ell^{\flat}_{\mathrm{COMM}}$ and the sharing constraint
+$\kappa_{\mathrm{COMM}} = \{(1.1,\, 2.1)\}$ were derived there; we take
+them as given here and trace what happens between the matcher's
+announcement and the firing of the redex.
+
+At announcement, the state-contract template of \S\ref{ssec:emit-states}
+emits
+\[
+  \mathtt{matches}\,!\bigl(\,\reflect{\mathrm{COMM}},\; p,\;
+                             \reflect{\{(p.1.1,\, p.2.1)\}}\,\bigr).
+\]
+The driver (\S\ref{ssec:driver}) forwards the triple to the fire
+contract \texttt{fire\_COMM}, which:
+\begin{enumerate}[leftmargin=*]
+  \item invokes \texttt{checkConstraint} on the pair $(p.1.1,\, p.2.1)$,
+        which fires two parallel \texttt{traverse} calls returning
+        sub-channels $c_1, c_2$ of the subject term, then asks the
+        Rholang runtime whether $c_1 \equiv c_2$ as quoted processes;
+  \item if the check fails, aborts the firing and yields control back
+        to the driver, which moves on to the next announcement;
+  \item if the check succeeds, calls \texttt{extractSubst} on
+        $(\tau, p, \reflect{\mathrm{COMM}})$ to extract a substitution
+        $\sigma$ mapping the metavariables of the original
+        (unlinearised) LHS to subject-term channels --- here, $x$ to
+        $c_1$ (equivalently $c_2$), $B$ to the body channel at $p.1.2$,
+        and $Q$ to the payload channel at $p.2.2$;
+  \item calls \texttt{buildRhs} on the static RHS data of the COMM rule
+        and $\sigma$, which produces a fresh term channel for the
+        process $B[@Q/y]$ by composing the constructor contracts of the
+        rho-calculus signature; the binder $y$ in the RHS is handled by
+        the bound-body protocol of \S\ref{ssec:term-encoding};
+  \item calls \texttt{splice} on $(\tau, p, \text{new channel})$, which
+        replaces the sub-channel of $\tau$ at $p$ by the new channel and
+        signals completion on \texttt{done}.
+\end{enumerate}
+The driver receives the completion signal and restarts the automaton on
+the updated subject term (or, with a more refined construction, restarts
+from a partial-evaluation state determined by the rewritten position).
+The set automaton itself never inspects whether the two channels are
+equal; that information lives entirely in the fire stage, where it is
+decidable by the host structural-congruence check. Likewise, the host
+runtime is responsible for choosing an interleaving of the parallel
+\texttt{traverse}-calls inside \texttt{checkConstraint}, the parallel
+sends to successor states, and the parallel fire-contract invocations
+on concurrent announcements.
+
+\section{Discussion}\label{sec:discussion}
+
+\subsection{Garbage collection}
+
+Term channels and state-channel messages are reference-counted naturally
+by Rholang's structural congruence: a name with no pending sends and no
+pending receivers is structurally equivalent to $\nil$ and is collected
+by the runtime. Our encoding does not introduce reference cycles
+(constructor contracts are leaves; state contracts are persistent but
+fixed in number; fire contracts are linear and consume themselves), so
+the standard rho-calculus garbage collector applies.
+
+\subsection{Dynamic rule sets}
+
+The compiler as stated treats the rule set as static. Adding rules at
+runtime --- adding new state-contract code --- is straightforward in
+Rholang: the new state contracts can be emitted as additional
+\texttt{contract} declarations on existing channels. The set automaton,
+however, must be rebuilt: adding a new pattern can change the dependency
+partition at every reachable state. A practical implementation would
+recompute the affected states only, but a full discussion is beyond
+this paper.
+
+\subsection{Equations, confluence, and FVP}
+
+The compiler's correctness rests on two assumptions about $E$:
+convergence of $E^{\downarrow}$ (so that canonical forms exist and are
+unique) and the finite variant property (so that $E$-matching against
+the LHSs of $\mathcal{R}$ is decidable and reduces to syntactic
+matching after normalisation). When convergence fails --- $E$ is
+non-orientable, or KB completion does not terminate --- the compiler
+emits a warning and falls back to an interleaved $E$-and-$\mathcal{R}$
+rewriting strategy that is sound on confluent inputs but offers no
+completeness guarantee. When convergence holds but FVP fails --- for
+example, equations like $f(f(x)) = f(x)$ in unrestricted form, which
+generate infinitely many variants --- $E$-matching is undecidable in
+general, and the compiler can no longer guarantee that the set
+automaton, built on $E$-canonical LHSs, finds every $E$-equivalent
+redex. Sound but incomplete behaviour can be recovered by restricting
+to syntactic matching against canonical forms; complete behaviour
+requires either FVP, one of the other syntactic conditions listed in
+the footnote to Definition~\ref{def:presentation}, or a manually
+provided $E$-matching oracle.
+
+\subsection{Comparison to direct compilation}
+
+A naive compiler from a GSLT presentation to Rholang would emit, for
+each rule $L_j \rew R_j$, a single \texttt{for} that pattern-matches
+$L_j$ on the entire subject term. Such a compiler trades program size
+for redundant inspection: each function symbol of the subject term is
+inspected once per rule per ancestor position. The set-automaton route
+amortises this cost across the rule set, inspecting each function
+symbol once \emph{total} per automaton run, at the price of a richer
+state space. For pattern sets of even modest size the saving is
+substantial, and the parallelism gained is, as we have shown, free.
+
+\section{Conclusion}\label{sec:conclusion}
+
+The algorithm $\mathsf{compile}$ packages three independent strands of
+work --- finitely presented graph-structured lambda theories, the
+Erkens--Groote set automaton, and the rho calculus --- into a single
+compilation pipeline. The output is a Rholang interpreter that exposes
+every parallelism opportunity of the set automaton through Rholang's
+asynchronous, name-passing semantics, without scheduling glue. We have
+shown the compiler is total, polynomial in the size of the automaton,
+and parallelism-preserving by construction. The pipeline gives a
+concrete answer to the question of how to implement, in a concurrent
+process calculus, the small-step semantics of any finitely presented
+GSLT.
+
+\paragraph{Future work.}
+Several directions remain. Incremental rebuild of the set automaton
+under dynamic rule changes would make the pipeline suitable for
+language-development environments. Partial evaluation of the automaton
+against statically known sub-contexts of the subject term would shrink
+the automaton --- and the compiled program --- in common cases such as
+pre-compiled standard libraries. Finally, a formal mechanisation of the
+parallelism-preservation theorem in a proof assistant would lend the
+construction the same kind of foundational credibility that the
+set-automaton construction enjoys in~\cite{ErkensGroote2021}.
+
+\begin{thebibliography}{9}
+
+\bibitem{ErkensGroote2021}
+R.~Erkens and J.~F.~Groote.
+\newblock {A set automaton to locate all pattern matches in a term}.
+\newblock \emph{arXiv preprint 2106.15311}, 2021.
+
+\bibitem{MeredithRadestock2005}
+L.~G.~Meredith and M.~Radestock.
+\newblock {A reflective higher-order calculus}.
+\newblock In \emph{Electronic Notes in Theoretical Computer Science},
+  volume 141(5), pages 49--67, 2005.
+
+\bibitem{EscobarMeseguerSasse2008}
+S.~Escobar, J.~Meseguer, and R.~Sasse.
+\newblock {Effectively checking the finite variant property}.
+\newblock In \emph{Rewriting Techniques and Applications (RTA)},
+  LNCS 5117, pages 79--93, 2008.
+
+\bibitem{EscobarSasseMeseguer2012}
+S.~Escobar, R.~Sasse, and J.~Meseguer.
+\newblock {Folding variant narrowing and optimal variant termination}.
+\newblock \emph{Journal of Logic and Algebraic Programming}, 81(7--8),
+  pages 898--928, 2012.
+
+\bibitem{TrimbleNLabLawvere}
+T.~Trimble.
+\newblock {Multisorted Lawvere theories}.
+\newblock nLab entry, revision of 2024.
+\newblock \url{https://ncatlab.org/toddtrimble/published/multisorted+Lawvere+theories}.
+
+\end{thebibliography}
+
+\end{document}
