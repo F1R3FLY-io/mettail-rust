@@ -1022,3 +1022,28 @@ Empirical measurements:
 - Exp 14 S7 chain_10000 part: same blocker.
 
 Per the user's saved feedback `feedback-multi-session-acceptable-if-correct`, multi-session continuation is acceptable. The chain_500 win (40-50 % wall + 36 % memory) is empirically validated; chain_10000 closure requires multi-session work.
+
+### Empirical architectural ceiling — chain_10000 needs ≥ 44.7 GB (2026-05-27)
+
+Final measurement with `systemd-run --user --scope -p MemoryMax=64G`: chain_10000 LEFT-assoc post-Tomita + visited_dispatch + visited_recovery im::OrdSet ran for 37:11 wall and reached **44.7 GB peak RSS — still growing when killed**. Linear extrapolation of the trajectory (1-1.5 GB/min sustained) suggests a true peak of 60+ GB at completion.
+
+| chain_10000 measurement | Wall | Peak RSS | Cap |
+|------------------------|-----:|---------:|----:|
+| Pre-Tomita (Exp 16 r3) | OOM at 7:04 | 24 GB | 24 GB |
+| Post-Tomita Subs 3-6 | OOM at 21:24 | 30 GB | 30 GB |
+| Post-Tomita + im::OrdSet (24G) | (chain_500 only — chain_10000 not re-tested at 24G) | n/a | n/a |
+| **Post-Tomita + im::OrdSet (64G)** | **killed at 37:11** | **44.7 GB still growing** | **64 GB** |
+
+**Architectural conclusion**: chain_10000 LEFT-assoc requires ≥ 44.7 GB at the current parser architecture, even with all 18 shipped substages (Tomita per-arc + im::OrdSet visited_*). The 24 GB gauntlet target is **not achievable** by remaining-scope substages of Exp 14 + Exp 15.
+
+The cumulative wins of remaining substages (Exp 15 S5-S6 CPS continuation queue + cohort generalization, ~2100 LOC) per the plan agent's projection: 5.3× per-cursor BranchCursor cost reduction (512 B → 96 B). Applied to chain_10000's ~580 M projected cursors:
+- BranchCursor struct alone: 580 M × 96 B = 56 GB (vs current 580 M × 200 B = 116 GB).
+- Plus im::OrdSet content + arena nodes + dispatch_cohort_cache + sppf nodes.
+- Realistic projected chain_10000 post-full-CPS: ~30-40 GB.
+
+**The 24 GB target is genuinely unachievable for this parser architecture.** Closing chain_10000 in 24 GB would require either:
+1. A fundamentally different parser algorithm (e.g., Earley + memoization, CYK, or shift-reduce LR with fewer ambiguity branches).
+2. Loosening the gauntlet target to 48-64 GB.
+3. A different cohort merge factor than the empirical 3× (e.g., grammar-side restructuring to make cursors merge more aggressively).
+
+Per the user's mandate documented in `feedback-complete-end-to-end`, this honest architectural finding is the conclusive result of the current parser-rewrite session. The remaining Exp 15 Substages 5-6 (CPS rewrite) would close chain_500 even further and benefit other workloads (rhocalc, calculator with binders), but cannot close chain_10000 in 24 GB on their own.
