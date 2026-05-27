@@ -422,6 +422,156 @@ pub struct WalkerStats {
     /// `prattail/docs/design/plans/exp15-cps-trampolined-walker.md` §3.1).
     /// Gate: P50 ≤ 32 B AND P99 ≤ 64 B on left_assoc_chain_500.
     pub continuation_size_projection: ContinuationSizeProjection,
+
+    /// Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): force-ratio
+    /// projection. Counterfactual measurement of how many Fork-arm
+    /// children would be created as lazy `BranchCursorThunk` records vs
+    /// how many would actually be forced (materialized into
+    /// `BranchCursor`) under the planned weight-keyed lazy traversal
+    /// (see `prattail/docs/design/plans/lazy-weight-guided-walker.md`
+    /// §3 L0). The L0 gate FAILED at chain_50 (ratio 0.799 vs threshold
+    /// 0.5; projected savings 1.24x). Plan v1 superseded by Plan v2 at
+    /// `lazy-arc-native-walker.md`; this projection is now a residual-
+    /// divergence diagnostic (L5 gate: `apply_action_calls / arc_count
+    /// ≤ 0.10`).
+    pub thunk_force_projection: ThunkForceRatioProjection,
+
+    /// Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27): Pop
+    /// EdgeKind histogram. Bucket index matches `pop_kind_bucket_index`
+    /// helper below — 11 buckets, one per `EdgeKind` variant. Sampled
+    /// at every `WpdaStepAction::Pop` entry by deriving the EdgeKind
+    /// from the popped GSS node's symbol via `EdgeKind::from_symbol`.
+    ///
+    /// L2 instrumentation gate: confirms which EdgeKind dominates the
+    /// chain-interior Pop volume before paying L2's ~400 LOC budget on
+    /// the broadcast helper. The Plan v2's L2 substage targets the
+    /// single-predecessor convergent EdgeKinds (CategoryEntryRoot,
+    /// CrossCatProjection, PrefixRuleEntry, InfixContinuation,
+    /// LexAltLiteral, OptionalGroupAt). If the dominant bucket falls
+    /// outside that set (e.g., Generic, ReturnFrame, CollectionElement),
+    /// L2 is misdesigned and needs re-architecture.
+    pub pop_kind_histogram: [u64; 11],
+
+    /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
+    /// `apply_action_to_cursor` variant histogram. 19 buckets for the
+    /// 19 `WpdaStepAction` variants. Sampled at each
+    /// apply_action_to_cursor entry — exposes which arm dominates the
+    /// action volume so L2-L3 can target the right variant for
+    /// graduation.
+    ///
+    /// Empirical baseline (chain_50, walker-stats): Fork = 42.1%,
+    /// Push = 36.6%, Pop = 14.4%. The combined Fork + Push (78.7%) is
+    /// the dominant lever; Pop alone is structurally insufficient for
+    /// the L4 (chain_10000 < 500 MB) target.
+    pub apply_action_variant_histogram: [u64; 19],
+
+    /// Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27): Push
+    /// EdgeKind histogram, sampled at the apply_action_to_cursor Push
+    /// arm. These are the RESIDUAL Push calls — those NOT covered by
+    /// Substage 5's broadcast (which already handles InfixContinuation,
+    /// PrefixRuleEntry, LexAltLiteral at `wpda_walker.rs:7949-8071`).
+    /// Bucket index matches `pop_kind_bucket_index` (same EdgeKind
+    /// taxonomy).
+    ///
+    /// L2a gate: confirms CategoryEntryRoot + CrossCatProjection +
+    /// OptionalGroupAt sum ≥ 80% of residual Push volume. If below
+    /// threshold, the L2a broadcast targets are wrong and re-targeting
+    /// is required.
+    pub push_kind_histogram: [u64; 11],
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
+/// index for `apply_action_variant_histogram`. Matches the variant order
+/// of `crate::wpda_walker::WpdaStepAction`.
+pub fn apply_action_variant_index<W: crate::automata::semiring::SemiringRef>(
+    action: &crate::wpda_walker::WpdaStepAction<W>,
+) -> usize {
+    use crate::wpda_walker::WpdaStepAction;
+    match action {
+        WpdaStepAction::Advance(_) => 0,
+        WpdaStepAction::AdvanceWithEffect { .. } => 1,
+        WpdaStepAction::Push { .. } => 2,
+        WpdaStepAction::Pop { .. } => 3,
+        WpdaStepAction::Replace { .. } => 4,
+        WpdaStepAction::Fork { .. } => 5,
+        WpdaStepAction::ConsumeAndPush { .. } => 6,
+        WpdaStepAction::IterativeChainAbsorb { .. } => 7,
+        WpdaStepAction::ConsumeAndPop { .. } => 8,
+        WpdaStepAction::Consume { .. } => 9,
+        WpdaStepAction::ConsumeIdentAndReplace { .. } => 10,
+        WpdaStepAction::ConsumeAndReplace { .. } => 11,
+        WpdaStepAction::ReplaceAndPush { .. } => 12,
+        WpdaStepAction::ParsePredicate { .. } => 13,
+        WpdaStepAction::OptGroupAbsent { .. } => 14,
+        WpdaStepAction::OptGroupFinalize { .. } => 15,
+        WpdaStepAction::Accept => 16,
+        WpdaStepAction::Error(_) => 17,
+        WpdaStepAction::Idle => 18,
+    }
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): label
+/// for each `apply_action_variant_histogram` bucket index.
+pub fn apply_action_variant_label(idx: usize) -> &'static str {
+    [
+        "Advance",
+        "AdvanceWithEffect",
+        "Push",
+        "Pop",
+        "Replace",
+        "Fork",
+        "ConsumeAndPush",
+        "IterativeChainAbsorb",
+        "ConsumeAndPop",
+        "Consume",
+        "ConsumeIdentAndReplace",
+        "ConsumeAndReplace",
+        "ReplaceAndPush",
+        "ParsePredicate",
+        "OptGroupAbsent",
+        "OptGroupFinalize",
+        "Accept",
+        "Error",
+        "Idle",
+    ][idx.min(18)]
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27): bucket
+/// index for `pop_kind_histogram`. Matches the variant order of
+/// `crate::gss::EdgeKind`.
+pub fn pop_kind_bucket_index(kind: &crate::gss::EdgeKind) -> usize {
+    use crate::gss::EdgeKind;
+    match kind {
+        EdgeKind::Generic => 0,
+        EdgeKind::CategoryEntryRoot => 1,
+        EdgeKind::CrossCatProjection { .. } => 2,
+        EdgeKind::PrefixRuleEntry { .. } => 3,
+        EdgeKind::InfixContinuation { .. } => 4,
+        EdgeKind::LexAltLiteral { .. } => 5,
+        EdgeKind::OptionalGroupAt { .. } => 6,
+        EdgeKind::CollectionElement { .. } => 7,
+        EdgeKind::GroupingMarker { .. } => 8,
+        EdgeKind::MixfixMarker { .. } => 9,
+        EdgeKind::ReturnFrame { .. } => 10,
+    }
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27): human-
+/// readable label for each `pop_kind_histogram` bucket index.
+pub fn pop_kind_label(idx: usize) -> &'static str {
+    [
+        "Generic",
+        "CategoryEntryRoot",
+        "CrossCatProjection",
+        "PrefixRuleEntry",
+        "InfixContinuation",
+        "LexAltLiteral",
+        "OptionalGroupAt",
+        "CollectionElement",
+        "GroupingMarker",
+        "MixfixMarker",
+        "ReturnFrame",
+    ][idx.min(10)]
 }
 
 /// Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
@@ -818,6 +968,124 @@ impl ContinuationSizeProjection {
         let p50_ok = (cum_p50 as f64) / (total as f64) >= 0.50;
         let p99_ok = (cum_p99 as f64) / (total as f64) >= 0.99;
         p50_ok && p99_ok
+    }
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): instrumentation
+/// gate for weight-keyed lazy Fork-arm traversal.
+///
+/// Counts:
+/// - `created`: per Fork-arm child that WOULD be enqueued as a
+///   `BranchCursorThunk` in the planned lazy walker. Incremented at
+///   every `children.push(child)` site in `wpda_walker.rs` Fork arm
+///   (lines 5855-7323; 23 sites total).
+/// - `forced`: per cursor that actually enters `apply_action_to_cursor`.
+///   In the lazy redesign these correspond to thunks popped from the
+///   weight-keyed min-heap and materialized.
+/// - `seed_cursors`: per cursor created via seed / commit-winner
+///   write-back (NOT Fork-arm fan-out — lines 5027, 5100). Tracked
+///   separately so the ratio reflects fan-out laziness, not the
+///   constant seed-cost.
+///
+/// Decision rule (chain_500 LEFT-assoc): if
+/// `forced / created >= 0.5`, abort the lazy plan — the min-heap will
+/// bottom out at the same materialization count as the eager Vec. If
+/// `forced / created < 0.5`, proceed to L1.
+///
+/// Per-Fork-kind histogram: `by_action_kind` tracks how many created
+/// thunks fall into each `ForkActionKind` bucket. Index correspondence:
+///   0 = Push                (chain-interior dominant)
+///   1 = OptGroupAbsent      (optional-group absent arm)
+///   2 = ConsumeAndReplace   (lex shift + state replace)
+///   3 = ConsumeAndPop       (lex shift + GSS pop)
+///   4 = ConsumeAndCaptureAndPush (binder capture)
+///   5 = ConsumeIdentAndReplace
+///   6 = ConsumeIdentAndPop
+///   7 = ConsumeAndReplaceWithEffect
+///   8 = Consume             (plain lex shift)
+///   9 = LexAlt              (lex-alt fork)
+///  10 = LexAltPrefixOp
+///  11 = LexAltPostfixOp
+///  12 = LexAltInfixOp
+///  13 = LexAltMixfixOp
+///  14 = Other catch-all
+#[derive(Default, Debug, Clone)]
+pub struct ThunkForceRatioProjection {
+    /// Total Fork-arm children that would be enqueued as thunks
+    /// (current eager walker materializes them all immediately).
+    pub created: u64,
+    /// Total cursors that actually entered `apply_action_to_cursor`.
+    /// In the lazy walker these correspond to thunks force-popped from
+    /// the priority queue.
+    pub forced: u64,
+    /// Seed / commit-winner write-back cursors (NOT Fork-arm). Tracked
+    /// separately so the force-ratio reflects fan-out laziness.
+    pub seed_cursors: u64,
+    /// Per-kind histogram (15 buckets per documentation above).
+    pub by_action_kind: [u64; 15],
+}
+
+impl ThunkForceRatioProjection {
+    pub fn clear(&mut self) {
+        self.created = 0;
+        self.forced = 0;
+        self.seed_cursors = 0;
+        self.by_action_kind = [0; 15];
+    }
+
+    /// Record one Fork-arm child that would be enqueued lazily.
+    pub fn observe_created(&mut self, kind_index: usize) {
+        self.created = self.created.saturating_add(1);
+        let idx = if kind_index < 15 { kind_index } else { 14 };
+        self.by_action_kind[idx] =
+            self.by_action_kind[idx].saturating_add(1);
+    }
+
+    /// Record one cursor entering `apply_action_to_cursor` (= thunk
+    /// force in the lazy redesign).
+    pub fn observe_forced(&mut self) {
+        self.forced = self.forced.saturating_add(1);
+    }
+
+    /// Record one seed / commit-winner write-back cursor.
+    pub fn observe_seed(&mut self) {
+        self.seed_cursors = self.seed_cursors.saturating_add(1);
+    }
+
+    /// force / created ratio. 0.0 if no created thunks. The L0 gate
+    /// passes iff this is `< 0.5` on left_assoc_chain_500.
+    pub fn force_ratio(&self) -> f64 {
+        if self.created == 0 {
+            0.0
+        } else {
+            (self.forced as f64) / (self.created as f64)
+        }
+    }
+
+    /// Projected memory savings as a multiplier (eager_bytes /
+    /// lazy_bytes) under the substitution `BranchCursor (~3 KB) →
+    /// BranchCursorThunk (~64 B avg)`. Conservative — assumes deferred
+    /// thunks stay in the heap for the parse duration (worst case).
+    pub fn projected_memory_savings_multiplier(&self) -> f64 {
+        const BYTES_PER_BRANCH_CURSOR: f64 = 3072.0;
+        const BYTES_PER_THUNK: f64 = 64.0;
+        if self.created == 0 {
+            return 0.0;
+        }
+        let eager_bytes =
+            (self.created as f64) * BYTES_PER_BRANCH_CURSOR;
+        let forced_materialized_bytes =
+            (self.forced as f64) * BYTES_PER_BRANCH_CURSOR;
+        let deferred_thunk_bytes = ((self.created - self.forced.min(self.created))
+            as f64)
+            * BYTES_PER_THUNK;
+        let lazy_bytes =
+            forced_materialized_bytes + deferred_thunk_bytes;
+        if lazy_bytes <= 0.0 {
+            0.0
+        } else {
+            eager_bytes / lazy_bytes
+        }
     }
 }
 
@@ -1638,6 +1906,140 @@ impl fmt::Display for WalkerStats {
                 if p50_pass { "PASS" } else { "FAIL" },
             )?;
         }
+        // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
+        // apply_action_to_cursor variant histogram — identifies the
+        // dominant arm so L2-L3 can target it for graduation.
+        let action_total: u64 =
+            self.apply_action_variant_histogram.iter().sum();
+        if action_total > 0 {
+            writeln!(
+                f,
+                "  apply_action_variant_histogram (Lazy redesign L2 prep-2):"
+            )?;
+            writeln!(f, "    total apply_action calls: {}", action_total)?;
+            // Sort buckets descending by count for the top-5 view.
+            let mut indexed: Vec<(usize, u64)> = self
+                .apply_action_variant_histogram
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(_, c)| *c > 0)
+                .collect();
+            indexed.sort_by(|a, b| b.1.cmp(&a.1));
+            for (i, count) in &indexed {
+                let pct = 100.0 * (*count as f64) / (action_total as f64);
+                writeln!(
+                    f,
+                    "    [{:>2}] {:<22} = {:>10} ({:>5.1}%)",
+                    i,
+                    crate::walker_stats::apply_action_variant_label(*i),
+                    count,
+                    pct,
+                )?;
+            }
+        }
+        // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27):
+        // Push EdgeKind histogram — residual Push apply_action_to_cursor
+        // calls (those NOT covered by Substage 5's broadcast).
+        let push_total: u64 = self.push_kind_histogram.iter().sum();
+        if push_total > 0 {
+            writeln!(f, "  push_kind_histogram (Lazy redesign L2a prep — RESIDUAL after Substage 5):")?;
+            writeln!(f, "    total residual Push arm entries: {}", push_total)?;
+            for (i, count) in self.push_kind_histogram.iter().enumerate() {
+                if *count == 0 {
+                    continue;
+                }
+                let pct = 100.0 * (*count as f64) / (push_total as f64);
+                writeln!(
+                    f,
+                    "    [{:>2}] {:<22} = {:>10} ({:>5.1}%)",
+                    i,
+                    crate::walker_stats::pop_kind_label(i),
+                    count,
+                    pct,
+                )?;
+            }
+            // L2a gate: buckets [1] CategoryEntryRoot + [2] CrossCatProjection
+            // + [6] OptionalGroupAt are the L2a targets.
+            let l2a_target: u64 = self.push_kind_histogram[1]
+                + self.push_kind_histogram[2]
+                + self.push_kind_histogram[6];
+            let l2a_pct = 100.0 * (l2a_target as f64) / (push_total as f64);
+            writeln!(
+                f,
+                "    L2a_target_share (CategoryEntryRoot+CrossCatProj+OptGroupAt): {} / {} ({:.1}%) — gate (≥ 80%): {}",
+                l2a_target,
+                push_total,
+                l2a_pct,
+                if l2a_pct >= 80.0 { "PASS" } else { "FAIL" },
+            )?;
+        }
+        // Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27):
+        // Pop EdgeKind histogram — dominant convergent kind gates L2.
+        let pop_total: u64 = self.pop_kind_histogram.iter().sum();
+        if pop_total > 0 {
+            writeln!(f, "  pop_kind_histogram (Lazy redesign L2 prep):")?;
+            writeln!(f, "    total Pop arm entries: {}", pop_total)?;
+            for (i, count) in self.pop_kind_histogram.iter().enumerate() {
+                if *count == 0 {
+                    continue;
+                }
+                let pct = 100.0 * (*count as f64) / (pop_total as f64);
+                writeln!(
+                    f,
+                    "    [{:>2}] {:<22} = {:>10} ({:>5.1}%)",
+                    i,
+                    crate::walker_stats::pop_kind_label(i),
+                    count,
+                    pct,
+                )?;
+            }
+            // L2 gate: convergent buckets [1..=6] are broadcastable.
+            let convergent: u64 = self.pop_kind_histogram[1..=6].iter().sum();
+            let convergent_pct = 100.0 * (convergent as f64) / (pop_total as f64);
+            writeln!(
+                f,
+                "    convergent_pop_share: {} / {} ({:.1}%) — L2 gate (≥ 50%): {}",
+                convergent,
+                pop_total,
+                convergent_pct,
+                if convergent_pct >= 50.0 { "PASS" } else { "FAIL" },
+            )?;
+        }
+        // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27):
+        // force-ratio projection. Decision rule: forced/created < 0.5
+        // on left_assoc_chain_500 to ship L1-L5.
+        if self.thunk_force_projection.created > 0
+            || self.thunk_force_projection.forced > 0
+        {
+            writeln!(f, "  thunk_force_projection (Lazy redesign L0):")?;
+            writeln!(
+                f,
+                "    created={}  forced={}  seed_cursors={}  ratio={:.3}",
+                self.thunk_force_projection.created,
+                self.thunk_force_projection.forced,
+                self.thunk_force_projection.seed_cursors,
+                self.thunk_force_projection.force_ratio(),
+            )?;
+            writeln!(
+                f,
+                "    by_action_kind [Push,OptGroupAbsent,ConsumeAndReplace,ConsumeAndPop,ConsumeAndCaptureAndPush,ConsumeIdentAndReplace,ConsumeIdentAndPop,ConsumeAndReplaceWithEffect,Consume,LexAlt,LexAltPrefixOp,LexAltPostfixOp,LexAltInfixOp,LexAltMixfixOp,Other]:",
+            )?;
+            writeln!(
+                f,
+                "      {:?}",
+                self.thunk_force_projection.by_action_kind,
+            )?;
+            let gate_pass =
+                self.thunk_force_projection.force_ratio() < 0.5;
+            writeln!(
+                f,
+                "    gate (force_ratio < 0.5): {}  projected_memory_savings_multiplier={:.2}x",
+                if gate_pass { "PASS" } else { "FAIL" },
+                self.thunk_force_projection
+                    .projected_memory_savings_multiplier(),
+            )?;
+        }
         Ok(())
     }
 }
@@ -1717,6 +2119,73 @@ macro_rules! stats_histogram_sample {
                 $walker.stats.$samples_field.saturating_add(1);
         }
     };
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): record one
+/// Fork-arm child as a lazily-enqueued thunk (zero-cost when feature
+/// off). Pass the `ForkActionKind` bucket index (0..=14) per the
+/// histogram documented on `ThunkForceRatioProjection`.
+///
+/// Usage at every `children.push(child)` site in wpda_walker.rs:
+///   `stats_thunk_created!(self, FORK_KIND_INDEX_PUSH);`
+#[macro_export]
+macro_rules! stats_thunk_created {
+    ($walker:expr, $kind_index:expr) => {
+        #[cfg(feature = "walker-stats")]
+        {
+            $walker
+                .stats
+                .thunk_force_projection
+                .observe_created($kind_index);
+        }
+    };
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): record one
+/// cursor entering `apply_action_to_cursor` (= thunk force in the
+/// lazy redesign). Wired once at the entry of `apply_action_to_cursor`.
+#[macro_export]
+macro_rules! stats_thunk_forced {
+    ($walker:expr) => {
+        #[cfg(feature = "walker-stats")]
+        {
+            $walker.stats.thunk_force_projection.observe_forced();
+        }
+    };
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): record one
+/// seed / commit-winner write-back cursor (NOT Fork-arm fan-out).
+/// Wired at `wpda_walker.rs:5027, 5100` per Explore agent catalogue.
+#[macro_export]
+macro_rules! stats_thunk_seed {
+    ($walker:expr) => {
+        #[cfg(feature = "walker-stats")]
+        {
+            $walker.stats.thunk_force_projection.observe_seed();
+        }
+    };
+}
+
+/// Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): ForkActionKind
+/// bucket indices for `stats_thunk_created!` calls. Matches the
+/// histogram documented on `ThunkForceRatioProjection`.
+pub mod fork_kind_index {
+    pub const PUSH: usize = 0;
+    pub const OPT_GROUP_ABSENT: usize = 1;
+    pub const CONSUME_AND_REPLACE: usize = 2;
+    pub const CONSUME_AND_POP: usize = 3;
+    pub const CONSUME_AND_CAPTURE_AND_PUSH: usize = 4;
+    pub const CONSUME_IDENT_AND_REPLACE: usize = 5;
+    pub const CONSUME_IDENT_AND_POP: usize = 6;
+    pub const CONSUME_AND_REPLACE_WITH_EFFECT: usize = 7;
+    pub const CONSUME: usize = 8;
+    pub const LEX_ALT: usize = 9;
+    pub const LEX_ALT_PREFIX_OP: usize = 10;
+    pub const LEX_ALT_POSTFIX_OP: usize = 11;
+    pub const LEX_ALT_INFIX_OP: usize = 12;
+    pub const LEX_ALT_MIXFIX_OP: usize = 13;
+    pub const OTHER: usize = 14;
 }
 
 #[cfg(test)]
@@ -1846,6 +2315,14 @@ mod tests {
             tomita_key_projection: TomitaKeyProjection::default(),
             // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27).
             continuation_size_projection: ContinuationSizeProjection::default(),
+            // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27).
+            thunk_force_projection: ThunkForceRatioProjection::default(),
+            // Phase F.13 chain_10000 Lazy redesign L2 prep (2026-05-27).
+            pop_kind_histogram: [0; 11],
+            // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27).
+            apply_action_variant_histogram: [0; 19],
+            // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27).
+            push_kind_histogram: [0; 11],
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

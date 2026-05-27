@@ -5024,6 +5024,8 @@ where
                 // fresh singleton anchored at the current walker view to
                 // preserve L4 (always-non-empty branch_cursors).
                 // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
+                // L0 (2026-05-27): seed/commit-winner write-back (NOT Fork fanout).
+                crate::stats_thunk_seed!(self);
                 self.branch_cursors.push(crate::cohort_lazy::Frame::Concrete(BranchCursor {
                     node: self.top_node.unwrap_or(0),
                     pos: self.pos,
@@ -5097,6 +5099,8 @@ where
                 // self.builder is a stub (F.3c.5 deletes); downstream
                 // consumers use walker.resolve() / realize_root_to_terms.
                 // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
+                // L0 (2026-05-27): commit-winner write-back (NOT Fork fanout).
+                crate::stats_thunk_seed!(self);
                 self.branch_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
             }
             CursorOutcome::ForkInto(children) => {
@@ -5142,6 +5146,23 @@ where
     ) -> CursorOutcome<W> {
         // Phase F.13 walker-stats (2026-05-20): count per-cursor invocations.
         crate::stats_inc!(self, apply_action_calls);
+        // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): every
+        // entry into `apply_action_to_cursor` corresponds to a thunk
+        // FORCE in the planned lazy walker (the popped head of the
+        // weight-keyed priority queue is materialized into a
+        // BranchCursor and dispatched here). Compared against the
+        // `created` counter incremented at every Fork-arm
+        // `children.push(child)` site, the ratio yields the L0 gate.
+        crate::stats_thunk_forced!(self);
+        // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
+        // record per-variant call counts to identify the dominant
+        // apply_action arm for L2-L3 graduation targeting.
+        #[cfg(feature = "walker-stats")]
+        {
+            let bucket = crate::walker_stats::apply_action_variant_index(&action);
+            self.stats.apply_action_variant_histogram[bucket] =
+                self.stats.apply_action_variant_histogram[bucket].saturating_add(1);
+        }
         match action {
             WpdaStepAction::Advance(s) => {
                 self.set_cursor_inner_state(cursor, s);
@@ -5169,6 +5190,17 @@ where
                 self.cursor_resolution_check(cursor)
             }
             WpdaStepAction::Push { mut symbol, weight, new_state } => {
+                // Lazy redesign L2a prep (2026-05-27): record the residual
+                // Push EdgeKind (i.e., NOT covered by Substage 5's
+                // broadcast at wpda_walker.rs:7949-8071). Confirms L2a's
+                // 80% target before we ship the broadcast extension.
+                #[cfg(feature = "walker-stats")]
+                {
+                    let kind = crate::gss::EdgeKind::from_symbol(&symbol);
+                    let bucket = crate::walker_stats::pop_kind_bucket_index(&kind);
+                    self.stats.push_kind_histogram[bucket] =
+                        self.stats.push_kind_histogram[bucket].saturating_add(1);
+                }
                 // B12 / Candidate E (2026-05-07): cross-cat projection
                 // cycle defense for SINGLETON projection arms. Singleton
                 // bucket emits `WpdaStepAction::Push` (not Fork) when only
@@ -5226,6 +5258,16 @@ where
                 // pattern is replaced by per-cursor edge identity
                 // (Scott & Johnstone 2010 GLL descriptor uniqueness).
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
+                // Lazy redesign L2 prep (2026-05-27): record the popped
+                // EdgeKind so L2 can confirm dominance of convergent
+                // kinds before paying the broadcast-helper budget.
+                #[cfg(feature = "walker-stats")]
+                if let Some(sym) = popped_symbol.as_ref() {
+                    let kind = crate::gss::EdgeKind::from_symbol(sym);
+                    let bucket = crate::walker_stats::pop_kind_bucket_index(&kind);
+                    self.stats.pop_kind_histogram[bucket] =
+                        self.stats.pop_kind_histogram[bucket].saturating_add(1);
+                }
                 let pred_id =
                     self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
                 self.apply_pop_body_to_cursor(
@@ -5853,6 +5895,8 @@ where
                             );
                             for child in new_children {
                                 children.push(child);
+                                // L0 (2026-05-27): lazy-thunk created (Push arm — chain-interior dominant).
+                                crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::PUSH);
                                 child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                             }
                         }
@@ -5955,6 +5999,8 @@ where
                                 branch.weight.clone(),
                             );
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6036,6 +6082,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6103,6 +6151,8 @@ where
                             };
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6202,6 +6252,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6281,6 +6333,8 @@ where
                                 tokens,
                             );
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6361,6 +6415,8 @@ where
                                 tokens,
                             );
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6444,6 +6500,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6576,6 +6634,8 @@ where
                             // sources via the default trait method).
                             child.pos = next_pos;
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6726,6 +6786,8 @@ where
                             // sources via the default trait method).
                             child.pos = next_pos;
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6849,6 +6911,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6884,6 +6948,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6934,6 +7000,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -6963,6 +7031,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -7014,6 +7084,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -7072,6 +7144,8 @@ where
                                 tokens,
                             );
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -7122,6 +7196,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -7186,6 +7262,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -7242,6 +7320,8 @@ where
                                 tokens,
                             );
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -7278,6 +7358,8 @@ where
                                 branch.weight.clone(),
                             );
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
 
@@ -7321,6 +7403,8 @@ where
                             );
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
+                            // L0 (2026-05-27): lazy-thunk created counter.
+                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                         }
                     }
@@ -7906,25 +7990,75 @@ where
                 // weight multiply + state set) + LexAltLiteral (also
                 // RuleAt push, same shape).
                 //
-                // Other convergent EdgeKinds excluded for soundness:
+                // Lazy redesign L2a (2026-05-27): CategoryEntryRoot added.
+                // Empirical chain_50: 100% of 391K residual Push calls are
+                // CategoryEntryRoot (cohort-revive root-sentinel pushes).
+                // The per-cursor side effect at the apply_action Push arm
+                // is the B12 visited_dispatch cycle defense (only when
+                // new_state == CrossCatDelegate). For broadcast we run
+                // the B12 check per-arc BEFORE the shell mutation so each
+                // arc's per-arc im::OrdSet::insert is correctly applied;
+                // arcs that hit a cycle are dropped from the post-broadcast
+                // routing loop.
+                //
+                // Other convergent EdgeKinds still excluded for soundness:
                 //   - OptionalGroupAt: triggers emit_start_optional_scope
                 //     (per-cursor scope mark).
                 //   - CrossCatProjection: triggers visited_dispatch
-                //     cycle-defense insert (per-cursor cycle defense).
-                //   - CategoryEntryRoot: synthesizes the root sentinel
-                //     in cursor_gss_push_with_kind — exotic enough to
-                //     leave per-cursor.
-                //
-                // The narrow scope keeps the shell-broadcast unsound-
-                // for-no-cursor; expansion to other kinds requires
-                // making their side effects shell-shareable.
+                //     cycle-defense insert (per-cursor cycle defense) —
+                //     similar to CategoryEntryRoot, can be graduated next
+                //     if it appears in the residual.
                 let safe_for_fast_path = matches!(
                     kind,
                     crate::gss::EdgeKind::InfixContinuation { .. }
                         | crate::gss::EdgeKind::PrefixRuleEntry { .. }
                         | crate::gss::EdgeKind::LexAltLiteral { .. }
+                        | crate::gss::EdgeKind::CategoryEntryRoot
                 );
                 if safe_for_fast_path {
+                    // Lazy redesign L2a (2026-05-27): per-arc B12 cycle
+                    // defense BEFORE shell mutation. Mirrors the
+                    // apply_action_to_cursor Push arm's B12 check at
+                    // wpda_walker.rs:5206-5226 — only fires for
+                    // CategoryEntryRoot + CrossCatDelegate transitions.
+                    // Each arc's visited_dispatch is checked and (if no
+                    // cycle) inserted with the dispatch_config key. Arcs
+                    // whose visited_dispatch already contains the key
+                    // accumulate in `b12_dropped_indices` and are skipped
+                    // in the post-mutation routing loop.
+                    let needs_b12_defense = matches!(
+                        kind,
+                        crate::gss::EdgeKind::CategoryEntryRoot
+                    ) && matches!(
+                        new_state,
+                        WpdaState::CrossCatDelegate { .. }
+                    );
+                    let mut b12_dropped_indices: Vec<usize> = Vec::new();
+                    if needs_b12_defense {
+                        for (idx, arc) in node.arcs.iter_mut().enumerate() {
+                            // Materialize a temp cursor for key extraction.
+                            // The shell still has the OLD inner_state at
+                            // this point (mutation happens below); the
+                            // cursor.inner_state for extract_dispatch_config
+                            // is the pre-push state — exactly the
+                            // semantic the eager Push arm relies on.
+                            let temp_cursor =
+                                crate::tomita_frontier::materialize_branch_cursor_from_arc(
+                                    &node.shell,
+                                    &*arc,
+                                );
+                            if let Some(key) =
+                                extract_dispatch_config(&temp_cursor, &self.gss)
+                            {
+                                if arc.visited_dispatch.contains(&key) {
+                                    b12_dropped_indices.push(idx);
+                                } else {
+                                    arc.visited_dispatch.insert(key);
+                                }
+                            }
+                        }
+                    }
+
                     // Shell-level GSS push (once, shared across all arcs).
                     let predecessor = if node.shell.node == 0
                         && self.gss.node(0).is_none()
@@ -7970,7 +8104,11 @@ where
                     // Materialize each arc; route via cursor_resolution_check
                     // (skip apply_action_to_cursor — the action is fully
                     // shell-broadcast + per-arc multiplied).
-                    for arc in &node.arcs {
+                    for (idx, arc) in node.arcs.iter().enumerate() {
+                        // L2a: skip arcs that B12 dropped above.
+                        if b12_dropped_indices.binary_search(&idx).is_ok() {
+                            continue;
+                        }
                         let cursor =
                             crate::tomita_frontier::materialize_branch_cursor_from_arc(
                                 &node.shell,
@@ -8020,43 +8158,26 @@ where
             }
         }
         // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): observe
-        // TomitaKey for every frame in the pre-step frontier. Concrete
-        // frames contribute one observation; Cohort frames contribute one
-        // per member (all sharing the shell's TomitaKey by construction).
+        // TomitaKey for every frame in the pre-step frontier. Post Exp 14
+        // Substages 3-4 and Exp 15 Substage 5, `drained` is a flat
+        // `Vec<(BranchCursor, WpdaStepAction)>` (the Tomita ingest pass
+        // flattens cohort frames to per-arc concrete cursors before this
+        // point, see comment at 8062-8068). Every entry contributes one
+        // observation keyed by the cursor's TomitaKey.
         #[cfg(feature = "walker-stats")]
         {
-            for frame in &drained {
-                match frame {
-                    crate::cohort_lazy::Frame::Concrete(c) => {
-                        let edge_top = self
-                            .incoming_edge_stack_arena
-                            .top(c.incoming_edge_stack_id);
-                        let key = crate::walker_stats::TomitaKey {
-                            state: c.inner_state.clone(),
-                            node: c.node,
-                            pos: c.pos,
-                            incoming_edge_top: edge_top,
-                            collection_depth: c.collection_stack_depth,
-                        };
-                        self.stats.tomita_key_projection.observe(key, 1);
-                    }
-                    crate::cohort_lazy::Frame::Cohort(cf) => {
-                        let edge_top = self
-                            .incoming_edge_stack_arena
-                            .top(cf.shell.incoming_edge_stack_id);
-                        let key = crate::walker_stats::TomitaKey {
-                            state: cf.shell.inner_state.clone(),
-                            node: cf.shell.node,
-                            pos: cf.shell.pos,
-                            incoming_edge_top: edge_top,
-                            collection_depth: cf.shell.collection_depth,
-                        };
-                        let member_count = cf.members.len() as u64;
-                        self.stats
-                            .tomita_key_projection
-                            .observe(key, member_count.max(1));
-                    }
-                }
+            for (c, _action) in &drained {
+                let edge_top = self
+                    .incoming_edge_stack_arena
+                    .top(c.incoming_edge_stack_id);
+                let key = crate::walker_stats::TomitaKey {
+                    state: c.inner_state.clone(),
+                    node: c.node,
+                    pos: c.pos,
+                    incoming_edge_top: edge_top,
+                    collection_depth: c.collection_stack_depth,
+                };
+                self.stats.tomita_key_projection.observe(key, 1);
             }
         }
         // Phase F.13 chain_10000 Exp 14 Substage 3+4 (2026-05-27): the
@@ -8587,28 +8708,32 @@ where
         if gss_edges > self.stats.mem_attr_gss_edges_max {
             self.stats.mem_attr_gss_edges_max = gss_edges;
         }
-        // visited_dispatch is per-cursor Arc<FxHashSet>. Count unique
-        // Arc allocations + total entries across all cursors. Uses
-        // Arc::as_ptr identity for dedup.
-        let mut vd_unique: std::collections::HashSet<*const _> =
-            std::collections::HashSet::new();
+        // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): post
+        // Exp 15 S2/S3/S4 migration, `visited_dispatch` is now
+        // `im::OrdSet<PackedDispatchConfig>` (HAMT-shared, not Arc'd at
+        // the root). The original "unique Arc identity" dedup no longer
+        // applies — structural sharing now happens at HAMT-node level
+        // inside the OrdSet, invisible to a single pointer comparison.
+        // Approximate the metric by summing per-cursor `len()`s for
+        // total entries, and use 1-per-concrete-cursor as the unique
+        // count (worst-case over-estimate; the true unique-Arc-equivalent
+        // metric is no longer measurable post-migration). `recovery_deltas`
+        // is still `Arc<...>` and retains the Arc-pointer dedup path.
         let mut vd_total_entries: u64 = 0;
+        let mut vd_concrete_cursors: u64 = 0;
         let mut rd_unique: std::collections::HashSet<*const _> =
             std::collections::HashSet::new();
         for frame in &self.branch_cursors {
             if let crate::cohort_lazy::Frame::Concrete(c) = frame {
-                let vd_ptr = std::sync::Arc::as_ptr(&c.visited_dispatch)
-                    as *const _;
-                if vd_unique.insert(vd_ptr) {
-                    vd_total_entries = vd_total_entries
-                        .saturating_add(c.visited_dispatch.len() as u64);
-                }
+                vd_total_entries = vd_total_entries
+                    .saturating_add(c.visited_dispatch.len() as u64);
+                vd_concrete_cursors = vd_concrete_cursors.saturating_add(1);
                 let rd_ptr = std::sync::Arc::as_ptr(&c.recovery_deltas)
                     as *const _;
                 rd_unique.insert(rd_ptr);
             }
         }
-        let vd_unique_count = vd_unique.len() as u64;
+        let vd_unique_count = vd_concrete_cursors;
         let rd_unique_count = rd_unique.len() as u64;
         if vd_unique_count > self.stats.mem_attr_visited_dispatch_unique_arcs_max {
             self.stats.mem_attr_visited_dispatch_unique_arcs_max = vd_unique_count;
