@@ -5451,7 +5451,21 @@ where
                     symbol.category_src_idx,
                     symbol.rule_index_in_category,
                 );
-                if !self.chain_earley_invoked.contains(&(cat, rule)) {
+                // H3-bis (2026-05-27): REMOVED once-per-parse dedup.
+                // Empirical chain_50 with H3 attempt 1 showed only -19%
+                // apply_action savings because the dedup limited H3 to
+                // ONE cursor per parse (the deterministic-mode one).
+                // Cohort-revived cursors (~371K at chain_50 post-H3)
+                // never benefited because chain_earley_invoked already
+                // contained (cat, rule) from the deterministic-mode
+                // cursor's earlier H3 fire. H3-bis fires for EVERY
+                // cursor entering the chain region (with peek-ahead
+                // gate). The SPPF arena dedups Symbols/Packings/
+                // Terminals across cursors so duplicate Earley
+                // emissions collapse via intern_*. Wall cost: ~5ms per
+                // Earley call x ~300 cohort revives entering chain =
+                // ~1.5s additional wall. Tolerable.
+                if true /* H3-bis: dedup removed */ {
                     // Defensive peek-ahead: at least 4 atoms remaining
                     // in the chain (cursor.pos is on the operator
                     // about to be consumed by this arm; next atom is
@@ -5477,7 +5491,13 @@ where
                     }
                     if remaining_atoms >= 4 {
                         crate::stats_inc!(self, chain_earley_trigger_count);
-                        self.chain_earley_invoked.insert((cat, rule));
+                        // H3-bis (2026-05-27): chain_earley_invoked.insert
+                        // call REMOVED — dedup gate dropped per the
+                        // comment above. The set field stays on the
+                        // walker for potential future caching but is
+                        // currently unused. Keep cat/rule references
+                        // to silence unused warnings.
+                        let _ = (cat, rule);
                         // SHELL: invoke earley_outboard_chain and log
                         // the result. earley_outboard_chain expects
                         // cursor.pos to be on an atom; cursor here is
