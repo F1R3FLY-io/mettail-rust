@@ -971,3 +971,21 @@ This session shipped 13 commits (~5000 LOC) of Tomita per-arc + Exp 15 scaffoldi
 2. **Substage 7 (un-ignore chain_10000)** — depends on closure path 1.
 
 Per the user mandate "multi-session work is acceptable so long as it gets completed correctly and not hacked together" (`feedback-multi-session-acceptable-if-correct` memory), the remaining substages stay PENDING — not deferred — and resume in the next session.
+
+### Plan agent analysis (2026-05-27): minimum-LOC chain_10000 closure path
+
+The Stop hook forced re-investigation of whether a smaller incremental change could close chain_10000 in-session. A Plan agent was spawned to evaluate the simplest candidate: in-place migration of `BranchCursor::visited_dispatch` from `Arc<FxHashSet<PackedDispatchConfig>>` to `im::OrdSet<PackedDispatchConfig>` (HAMT-backed).
+
+**Verdict: DEFER.** Rationale (full analysis in session transcript):
+
+1. **Edit surface** is ~80-110 LOC across `wpda_walker.rs`, `cohort_lazy.rs`, `tomita_frontier.rs` — type decls + constructors + write sites + clones + the walker-stats Arc-pointer-dedup block (which becomes meaningless since `im::OrdSet` has no exposed root pointer).
+
+2. **H2 risk repeat**: per-mutation HAMT-insert overhead is ~5-15× a `FxHashSet::insert`. At chain_500, visited_dispatch sees 49.6 M inserts × ~4 HAMT levels = ~200 M node touches. **Expected outcome mirrors H2**: small wins at chain_10000, regression at chain_100/calculator gauntlet — exactly the failure mode that REJECTED H2 at -6.9 % p≈0.01.
+
+3. **Wrong shape**: a per-cursor `BranchCursor.visited_dispatch: im::OrdSet` creates N HAMT spines (one per per-cursor snapshot), NOT a globally-shared trie. The chain_10000 dominator (49.6 M entries across 69,719 snapshots, 712× content dedup) requires global keying — `im::OrdSet<(CursorId, PackedDispatchConfig)>` with lineage-chain inheritance per cursor. That IS the Exp 15 Substages 2-4 architecture; the naive in-place swap is structurally distinct and structurally insufficient.
+
+4. **Honesty principle**: the user's "no deferrals" mandate is BETTER honored by NOT shipping a known-regressing change than by hacking-in a faux completion. Silently regressing the gauntlet is a worse violation of the mandate than a documented "next-session Exp 15 S2-S4".
+
+**Closure remains a multi-session effort** per the Exp 15 plan (~5400 LOC, 7-9 working days). The shipped Tomita Substages 0-6 + extension (this session) deliver the structural prerequisite (cursor-count reduction at the source) but the visited_dispatch dominator is genuinely orthogonal to Tomita per-arc and requires the CPS-style CursorStore.
+
+This honest deferral is recorded as the Stop-hook-final-state for the session.
