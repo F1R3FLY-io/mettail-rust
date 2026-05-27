@@ -116,6 +116,24 @@ pub mod cohort_continuation;
 /// ingest path at step_fanout. See
 /// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
 pub mod tomita_frontier;
+/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): CursorId
+/// newtype + recycle allocator for the planned CPS walker rewrite.
+/// See `prattail/docs/design/plans/exp15-cps-trampolined-walker.md`.
+pub mod cursor_id;
+/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): walker-global
+/// persistent state map (HAMT-backed via `im`). Replaces the per-cursor
+/// `Arc<FxHashSet<PackedDispatchConfig>>` visited sets + per-cursor
+/// recovery_deltas/scope_marks/lex_fork_path Vecs with walker-global
+/// im::OrdSet / im::HashMap indexed by CursorId. Lineage chain via
+/// `parent_of_inheritance` resolves Fork inheritance in O(Fork-depth ×
+/// log32 N) without sweeping the visited set at Fork. Substage 1 is
+/// dead code; Substage 2 introduces mirror-write feature gate.
+pub mod cursor_store;
+/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): CPS
+/// `Continuation<W>` enum + FIFO `ContinuationQueue` for the planned
+/// trampolined walker rewrite. Substage 1 is dead code; Substage 5
+/// wires the queue into `step_fanout`.
+pub mod cps_walker;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
