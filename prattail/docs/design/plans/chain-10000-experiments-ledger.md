@@ -741,3 +741,48 @@ Either of these is the prerequisite for any further closure attempt — the stru
 3. **Per-cohort visited_dispatch sharing**: cohort revives currently inherit parent's Arc<FxHashSet>, but a per-revive insert mutates → CoW deep-clone. Replace with per-cohort Arc<FxHashSet> shared across revivals from the same key. ~200 LOC.
 
 **Bench data saved**: `prattail/docs/design/plans/bench-data/exp16r3_left_assoc_500.txt`
+
+---
+
+### Exp 17 (2026-05-26, tip `65ae007` ATTEMPT → revert at next commit) — Re-apply Approach P with LEFT-assoc Welch baseline
+
+**Hypothesis** (per Exp 16 round 3 finding): the original Exp 9 / Approach P REJECTED on right-assoc Welch which doesn't exercise chain_10000's iterative path. Re-applying S1.b/c/d with LEFT-assoc Welch baseline might pass.
+
+**Implementation**: re-applied the original 3 reverted commits (S1.b dual-write + S1.c install_cohort_continuations + S1.d skip-revive). All compile / gauntlet 4134/0 + tramp 15/0.
+
+**LEFT-assoc baseline** (default trampoline_tests, no Exp 17, N=15):
+
+| Test | Mean | σ |
+|------|------|---|
+| left_assoc_chain_50 | 1.430 s | 0.017 |
+| left_assoc_chain_100 | 9.734 s | 0.109 |
+
+**Welch results** (Exp 17 vs baseline):
+
+| Chain | Baseline | Exp 17 | Δ | p | Verdict |
+|-------|----------|--------|---|---|---------|
+| left_assoc_50 | 1430.3 ms | 2064.0 ms | **+44.31 %** | <0.0001 | **LOSS** |
+| left_assoc_100 | 9733.6 ms | 12479.2 ms | **+28.21 %** | <0.0001 | **LOSS** |
+
+**Hypothesis fate**: FALSIFIED. Approach P's continuation construction + push_deferred_continuation overhead **exceeds any cursor-population savings on LEFT-assoc workload too**. The Welch right-assoc REJECT was not an artifact of wrong-workload measurement — Approach P is genuinely time-regressive even on the workload it was supposed to help.
+
+**Verdict**: **REJECT** per user mandate "keep all that pass Welch's T-test, revert all that do not". Reverted at next commit. S1.a infra (cohort_continuation.rs module + DispatchCacheEntry deferred_continuations field) retained as before.
+
+**Critical implication for chain_10000 architectural ceiling**:
+
+Per Exp 16 round 3 + Exp 17 combined:
+- The 24 GB ceiling is in `edge_stack_arena` (70.7 %) + `visited_dispatch entries` (23.3 %) driven by 29 M cohort cursor emissions per chain_500 left-assoc.
+- Reducing cursor emissions via Approach P's defer-to-EOI strategy adds enough per-step overhead to REGRESS time even on left-assoc (where it should help most).
+- Therefore: the cohort revive mechanism's time cost and memory cost are **fundamentally coupled** — you can't reduce one without increasing the other within the current walker architecture.
+
+**Remaining viable closure paths** (all multi-week architectural rewrites per the laziness Plan agent):
+
+1. **Tomita per-arc GSS-cursor merging** (Exp 14, SKIPPED) — would eliminate the cohort revive mechanism entirely. ~3000+ LOC rewrite.
+2. **CPS / trampolined walker rewrite** (Exp 15, SKIPPED) — same architectural depth. ~5000+ LOC.
+3. **Coarse edge_stack_arena dedup** (per-RuleIndex instead of per-GssEdgeId) — would address the 70.7 % memory dominator directly. ~1000-2000 LOC; correctness risk unknown.
+
+None of these is in scope for the current session given the Welch p<0.05 gate has rejected every targeted fix so far. The chain_10000 architectural ceiling is documented as **a stable property of the current walker representation** with all explored mitigations exhausted.
+
+**Bench data**:
+- `prattail/docs/design/plans/bench-data/baseline_left_assoc_chain_{50,100}.json`
+- `prattail/docs/design/plans/bench-data/exp17_la{50,100}.json`
