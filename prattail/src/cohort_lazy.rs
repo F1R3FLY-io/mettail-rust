@@ -344,6 +344,53 @@ impl DivergenceClass {
             }
         }
     }
+
+    /// Phase F.13 chain_10000 Exp 14 Substage 2 (2026-05-27): per-arc
+    /// Tomita classifier. Returns the planned Tomita per-arc
+    /// dispatch class for the given action.
+    ///
+    /// Plan ref: `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
+    /// §3.6.
+    ///
+    /// Substage 2 ships the classifier with the SAME conservative
+    /// graduation as `classify` (Advance + Accept/Error/Idle =
+    /// `ObsInvariantOverArcs`; everything else = `ObsDivergentOverArcs`).
+    /// Substage 5 will graduate Push/Pop/Replace/ConsumeAndPush to
+    /// `ObsInvariantOverArcs` when the pushed/popped symbol's `EdgeKind`
+    /// is convergent (per `gss::EdgeKind::is_convergent`) — that is the
+    /// chain-interior payoff. Substage 5 will also expose a sibling
+    /// `classify_for_tomita_with_edge_kind(action, edge_kind)` that
+    /// takes the per-action EdgeKind hint to make the graduation
+    /// decision at the call site.
+    pub fn classify_for_tomita<W: crate::automata::semiring::SemiringRef>(
+        action: &crate::wpda_walker::WpdaStepAction<W>,
+    ) -> crate::tomita_frontier::TomitaDivergence {
+        use crate::tomita_frontier::TomitaDivergence;
+        use crate::wpda_walker::WpdaStepAction;
+        match action {
+            WpdaStepAction::Advance(_)
+            | WpdaStepAction::Accept
+            | WpdaStepAction::Error(_)
+            | WpdaStepAction::Idle => TomitaDivergence::ObsInvariantOverArcs,
+            WpdaStepAction::AdvanceWithEffect { .. }
+            | WpdaStepAction::Push { .. }
+            | WpdaStepAction::Pop { .. }
+            | WpdaStepAction::Replace { .. }
+            | WpdaStepAction::Fork { .. }
+            | WpdaStepAction::ConsumeAndPush { .. }
+            | WpdaStepAction::ConsumeAndPop { .. }
+            | WpdaStepAction::Consume { .. }
+            | WpdaStepAction::ConsumeIdentAndReplace { .. }
+            | WpdaStepAction::ConsumeAndReplace { .. }
+            | WpdaStepAction::ReplaceAndPush { .. }
+            | WpdaStepAction::ParsePredicate { .. }
+            | WpdaStepAction::OptGroupAbsent { .. }
+            | WpdaStepAction::OptGroupFinalize { .. }
+            | WpdaStepAction::IterativeChainAbsorb { .. } => {
+                TomitaDivergence::ObsDivergentOverArcs
+            }
+        }
+    }
 }
 
 impl<W: SemiringRef> Frame<W> {
@@ -623,6 +670,39 @@ pub fn apply_obs_invariant_to_shell<W: SemiringRef + Clone>(
     }
 }
 
+/// Phase F.13 chain_10000 Exp 14 Substage 2 (2026-05-27): apply an
+/// `ObsInvariantOverArcs` action to a Tomita frontier node's shell + all
+/// arcs. Returns `Ok(())` on success; `Err(action)` on a variant not yet
+/// supported in this stage (caller materializes each arc via
+/// `materialize_branch_cursor` and falls through to per-cursor step).
+///
+/// Plan ref: `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
+/// §3.2 (the per-frontier dispatch loop) and §3.4 (per-arc weight
+/// aggregation).
+///
+/// **Substage 2 supported variants** (same conservative initial scope
+/// as `apply_obs_invariant_to_shell`):
+/// - `Advance(new_state)`: shell-mutate via `Arc::make_mut`; arcs
+///   observe the new state without per-arc mutation.
+///
+/// Substage 4 will add Accept/Error/Idle terminal handling. Substage 5
+/// will add Push/Pop/Replace/ConsumeAndPush (the chain-interior payoff)
+/// with per-arc `weight ← weight ⊗ action.weight` broadcast inline.
+pub fn apply_obs_invariant_to_frontier<W: SemiringRef + Clone>(
+    node: &mut crate::tomita_frontier::FrontierNode<W>,
+    action: crate::wpda_walker::WpdaStepAction<W>,
+) -> Result<(), crate::wpda_walker::WpdaStepAction<W>> {
+    use crate::wpda_walker::WpdaStepAction;
+    match action {
+        WpdaStepAction::Advance(new_state) => {
+            // Single shell mutation. Per-arc state is unchanged.
+            std::sync::Arc::make_mut(&mut node.shell).inner_state = new_state;
+            Ok(())
+        }
+        other => Err(other),
+    }
+}
+
 /// Phase F.13 Stage L3.2 (2026-05-25): consume a cohort frame and yield
 /// one `Frame::Concrete(BranchCursor)` per member via
 /// `materialize_branch_cursor`. This is the L3.2 step_cohort_frame
@@ -796,5 +876,209 @@ mod tests {
         };
         assert_eq!(DivergenceClass::classify(&abs), DivergenceClass::ObsDivergent);
         assert_eq!(DivergenceClass::classify(&fin), DivergenceClass::ObsDivergent);
+    }
+
+    // ── Phase F.13 chain_10000 Exp 14 Substage 2 (2026-05-27): Tomita
+    // per-arc classifier + apply tests. Substage 2 mirrors the conservative
+    // initial-scope graduation of `classify` / `apply_obs_invariant_to_shell`.
+
+    #[test]
+    fn classify_for_tomita_advance_is_invariant_over_arcs() {
+        use crate::tomita_frontier::TomitaDivergence;
+        let action: WpdaStepAction<LexicographicWeight> =
+            WpdaStepAction::Advance(ready());
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&action),
+            TomitaDivergence::ObsInvariantOverArcs,
+        );
+    }
+
+    #[test]
+    fn classify_for_tomita_accept_error_idle_are_invariant() {
+        use crate::tomita_frontier::TomitaDivergence;
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Accept;
+        let e: WpdaStepAction<LexicographicWeight> =
+            WpdaStepAction::Error("x".into());
+        let i: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Idle;
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&a),
+            TomitaDivergence::ObsInvariantOverArcs,
+        );
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&e),
+            TomitaDivergence::ObsInvariantOverArcs,
+        );
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&i),
+            TomitaDivergence::ObsInvariantOverArcs,
+        );
+    }
+
+    #[test]
+    fn classify_for_tomita_push_is_divergent_over_arcs_at_substage_2() {
+        use crate::tomita_frontier::TomitaDivergence;
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Push {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+        };
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&a),
+            TomitaDivergence::ObsDivergentOverArcs,
+        );
+    }
+
+    #[test]
+    fn classify_for_tomita_pop_is_divergent_over_arcs_at_substage_2() {
+        use crate::tomita_frontier::TomitaDivergence;
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Pop {
+            weight: one(),
+            new_state: ready(),
+        };
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&a),
+            TomitaDivergence::ObsDivergentOverArcs,
+        );
+    }
+
+    #[test]
+    fn classify_for_tomita_fork_is_divergent_over_arcs() {
+        use crate::tomita_frontier::TomitaDivergence;
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Fork {
+            branches: Vec::new(),
+            consume_trigger: false,
+        };
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&a),
+            TomitaDivergence::ObsDivergentOverArcs,
+        );
+    }
+
+    #[test]
+    fn classify_for_tomita_consume_and_push_is_divergent_over_arcs() {
+        use crate::tomita_frontier::TomitaDivergence;
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeAndPush {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+            trigger_mode: TriggerMode::Discard,
+        };
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&a),
+            TomitaDivergence::ObsDivergentOverArcs,
+        );
+    }
+
+    #[test]
+    fn classify_for_tomita_iterative_chain_absorb_is_divergent_over_arcs() {
+        use crate::tomita_frontier::TomitaDivergence;
+        let a: WpdaStepAction<LexicographicWeight> =
+            WpdaStepAction::IterativeChainAbsorb {
+                symbol: ret_sym(),
+                weight: one(),
+                new_state: ready(),
+            };
+        assert_eq!(
+            DivergenceClass::classify_for_tomita(&a),
+            TomitaDivergence::ObsDivergentOverArcs,
+        );
+    }
+
+    #[test]
+    fn apply_obs_invariant_to_frontier_advance_updates_shell() {
+        use crate::tomita_frontier::{FrontierArc, FrontierNode};
+        use std::sync::Arc;
+        let shell = CohortShell::<LexicographicWeight> {
+            node: 0,
+            incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
+            collection_depth: 0,
+            cohort_origin: None,
+            lex_alt_idx: 0,
+            weight_src_idx: 0,
+            weight_rule_idx: 0,
+            lex_fork_stamp: None,
+            binder_scope_marks: Arc::new(Vec::new()),
+            optional_scope_marks: Arc::new(Vec::new()),
+            sppf_collection_arena: Arc::new(Vec::new()),
+            visited_dispatch: Arc::new(rustc_hash::FxHashSet::default()),
+            visited_recovery: Arc::new(rustc_hash::FxHashSet::default()),
+            recovery_depth: 0,
+            recovery_deltas: Arc::new(Vec::new()),
+            inner_state: WpdaState::Ready { min_bp: 0 },
+            pos: 0,
+            dispatch_key: crate::dispatch_cohort::DispatchKey::new(0, 0, 0),
+            sppf_stack_baseline_id: crate::sppf_stack_arena::STACK_ID_ROOT,
+            _phantom_weight: std::marker::PhantomData,
+        };
+        let arc = FrontierArc::<LexicographicWeight>::new(
+            one(),
+            one(),
+            crate::sppf_stack_arena::STACK_ID_ROOT,
+            0,
+            None,
+            None,
+            0,
+            Arc::new(Vec::new()),
+            0,
+            0,
+            0,
+        );
+        let mut node = FrontierNode::new(shell, arc, 0);
+        let new_state = WpdaState::PrefixDispatch { pos: 5, cur_bp: 3 };
+        let result = apply_obs_invariant_to_frontier(
+            &mut node,
+            WpdaStepAction::<LexicographicWeight>::Advance(new_state.clone()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(node.shell.inner_state, new_state);
+    }
+
+    #[test]
+    fn apply_obs_invariant_to_frontier_push_returns_err_at_substage_2() {
+        use crate::tomita_frontier::{FrontierArc, FrontierNode};
+        use std::sync::Arc;
+        let shell = CohortShell::<LexicographicWeight> {
+            node: 0,
+            incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
+            collection_depth: 0,
+            cohort_origin: None,
+            lex_alt_idx: 0,
+            weight_src_idx: 0,
+            weight_rule_idx: 0,
+            lex_fork_stamp: None,
+            binder_scope_marks: Arc::new(Vec::new()),
+            optional_scope_marks: Arc::new(Vec::new()),
+            sppf_collection_arena: Arc::new(Vec::new()),
+            visited_dispatch: Arc::new(rustc_hash::FxHashSet::default()),
+            visited_recovery: Arc::new(rustc_hash::FxHashSet::default()),
+            recovery_depth: 0,
+            recovery_deltas: Arc::new(Vec::new()),
+            inner_state: WpdaState::Ready { min_bp: 0 },
+            pos: 0,
+            dispatch_key: crate::dispatch_cohort::DispatchKey::new(0, 0, 0),
+            sppf_stack_baseline_id: crate::sppf_stack_arena::STACK_ID_ROOT,
+            _phantom_weight: std::marker::PhantomData,
+        };
+        let arc = FrontierArc::<LexicographicWeight>::new(
+            one(),
+            one(),
+            crate::sppf_stack_arena::STACK_ID_ROOT,
+            0,
+            None,
+            None,
+            0,
+            Arc::new(Vec::new()),
+            0,
+            0,
+            0,
+        );
+        let mut node = FrontierNode::new(shell, arc, 0);
+        let action = WpdaStepAction::<LexicographicWeight>::Push {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+        };
+        let result = apply_obs_invariant_to_frontier(&mut node, action.clone());
+        assert!(result.is_err());
     }
 }
