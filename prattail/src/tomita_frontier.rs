@@ -203,7 +203,7 @@ pub struct FrontierArc<W: SemiringRef> {
     /// Per-cursor cross-cat dispatch defense set.
     pub visited_dispatch: im::OrdSet<PackedDispatchConfig>,
     /// Per-cursor recovery dispatch defense set.
-    pub visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+    pub visited_recovery: im::OrdSet<PackedDispatchConfig>,
     /// Per-cursor binder scope marks.
     pub binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
     /// Per-cursor optional scope marks.
@@ -230,7 +230,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
         weight_rule_idx: u16,
         recovery_deltas: Arc<Vec<BuilderDelta>>,
         visited_dispatch: im::OrdSet<PackedDispatchConfig>,
-        visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+        visited_recovery: im::OrdSet<PackedDispatchConfig>,
         binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
         optional_scope_marks: Arc<Vec<usize>>,
         sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
@@ -278,7 +278,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             // Substage 1.5+2.5 soundness-fix heavy fields: per-arc Arcs.
             recovery_deltas: Arc::clone(&cursor.recovery_deltas),
             visited_dispatch: cursor.visited_dispatch.clone(),
-            visited_recovery: Arc::clone(&cursor.visited_recovery),
+            visited_recovery: cursor.visited_recovery.clone(),
             binder_scope_marks: Arc::new(cursor.binder_scope_marks.clone()),
             optional_scope_marks: Arc::new(cursor.optional_scope_marks.clone()),
             sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
@@ -339,7 +339,7 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         // THE SOUNDNESS FIX: 6 heavy fields read from arc, not shell.
         recovery_deltas: Arc::clone(&arc.recovery_deltas),
         visited_dispatch: arc.visited_dispatch.clone(),
-        visited_recovery: Arc::clone(&arc.visited_recovery),
+        visited_recovery: arc.visited_recovery.clone(),
         binder_scope_marks: (*arc.binder_scope_marks).clone(),
         optional_scope_marks: (*arc.optional_scope_marks).clone(),
         sppf_collection_arena: Arc::clone(&arc.sppf_collection_arena),
@@ -558,10 +558,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                             &arc.recovery_deltas,
                         )
                         && existing.visited_dispatch == arc.visited_dispatch
-                        && Arc::ptr_eq(
-                            &existing.visited_recovery,
-                            &arc.visited_recovery,
-                        )
+                        && existing.visited_recovery == arc.visited_recovery
                         && Arc::ptr_eq(
                             &existing.binder_scope_marks,
                             &arc.binder_scope_marks,
@@ -752,7 +749,7 @@ mod tests {
             0,
             Arc::new(Vec::new()),
             im::OrdSet::new(),
-            Arc::new(rustc_hash::FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -765,7 +762,7 @@ mod tests {
     fn arc_with_heavy(
         recovery_deltas: Arc<Vec<BuilderDelta>>,
         visited_dispatch: im::OrdSet<PackedDispatchConfig>,
-        visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+        visited_recovery: im::OrdSet<PackedDispatchConfig>,
         binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
         optional_scope_marks: Arc<Vec<usize>>,
         sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
@@ -1017,7 +1014,7 @@ mod tests {
         let arc_a = arc_with_heavy(
             Arc::clone(&deltas_a_arc),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1025,7 +1022,7 @@ mod tests {
         let arc_b = arc_with_heavy(
             Arc::clone(&deltas_b_arc),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1050,7 +1047,7 @@ mod tests {
         let arc_a = arc_with_heavy(
             Arc::new(Vec::new()),
             set_a,
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1058,7 +1055,7 @@ mod tests {
         let arc_b = arc_with_heavy(
             Arc::new(Vec::new()),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1081,7 +1078,7 @@ mod tests {
         let arc = arc_with_heavy(
             Arc::new(vec![BuilderDelta::EndBinderScope]),
             set_a,
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(vec![(1u16, vec!["x".to_string(), "y".to_string()])]),
             Arc::new(vec![5usize, 10usize]),
             Arc::new(vec![vec![1u32, 2u32, 3u32]]),
@@ -1105,7 +1102,7 @@ mod tests {
         let arc_a = arc_with_heavy(
             Arc::new(vec![BuilderDelta::EndBinderScope]),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1113,7 +1110,7 @@ mod tests {
         let arc_b = arc_with_heavy(
             Arc::new(Vec::new()),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1144,7 +1141,7 @@ mod tests {
         let arc = arc_with_heavy(
             Arc::clone(&deltas),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1163,7 +1160,7 @@ mod tests {
         let arc_a = arc_with_heavy(
             Arc::clone(&shared),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1171,7 +1168,7 @@ mod tests {
         let arc_b = arc_with_heavy(
             Arc::clone(&shared),
             im::OrdSet::new(),
-            Arc::new(FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -1219,7 +1216,7 @@ mod tests {
             lex_fork_path: Arc::new(Vec::new()),
             recovery_deltas: Arc::new(Vec::new()),
             visited_dispatch: im::OrdSet::new(),
-            visited_recovery: Arc::new(FxHashSet::default()),
+            visited_recovery: im::OrdSet::new(),
             binder_scope_marks: Vec::new(),
             optional_scope_marks: Vec::new(),
             sppf_collection_arena: Arc::new(Vec::new()),

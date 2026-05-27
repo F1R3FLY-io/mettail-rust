@@ -1360,7 +1360,7 @@ pub struct BranchCursor<W: SemiringRef> {
     /// `CohortShell::from_branch_cursor` now Arc::clone instead of deep-
     /// cloning). Mutation sites use `Arc::make_mut` (CoW deep-clones
     /// only the first time per fork-child).
-    pub visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+    pub visited_recovery: im::OrdSet<PackedDispatchConfig>,
     /// B12 / Candidate E (2026-05-07): per-cursor configurations at
     /// which a CROSS-CAT-PROJECTION Fork has already fired on this
     /// cursor's path. Each entry is `(pos, state_cat_src_idx, cur_bp)`
@@ -1690,7 +1690,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone is O(1)
             // (was deep-clone of FxHashSet pre-L4.1). Mutation sites
             // use Arc::make_mut for copy-on-write semantics.
-            visited_recovery: Arc::clone(&self.visited_recovery),
+            visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
             // Phase F.3c.4 (2026-05-20): builder field deleted; the
             // Arc::clone is no longer needed.
@@ -1792,7 +1792,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // has not experienced any recovery, so depth 0 + empty
             // visited set.
             recovery_depth: 0,
-            visited_recovery: Arc::new(FxHashSet::default()),
+            visited_recovery: im::OrdSet::new(),
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
             visited_dispatch: im::OrdSet::new(),
@@ -3309,7 +3309,7 @@ where
                     // book-keeping — the resolved parse path doesn't
                     // carry its ancestors' recovery history.
                     recovery_depth: 0,
-                    visited_recovery: Arc::new(FxHashSet::default()),
+                    visited_recovery: im::OrdSet::new(),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-resolution singleton resets projection
                     // visited set.
@@ -5041,7 +5041,7 @@ where
                     // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
                     // post-Drop reset resets recovery book-keeping.
                     recovery_depth: 0,
-                    visited_recovery: Arc::new(FxHashSet::default()),
+                    visited_recovery: im::OrdSet::new(),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
                     visited_dispatch: im::OrdSet::new(),
@@ -5775,16 +5775,15 @@ where
                 // via Arc::clone (cheap) + optional Arc::make_mut for
                 // CoW insertion. The first child whose mutation diverges
                 // from parent allocates; subsequent children share.
-                let (child_visited_recovery, child_recovery_depth) = if is_recovery {
+                let (child_visited_recovery, child_recovery_depth): (im::OrdSet<PackedDispatchConfig>, u8) = if is_recovery {
                     let depth = cursor.recovery_depth.saturating_add(1);
-                    let mut set: Arc<FxHashSet<_>> =
-                        Arc::clone(&cursor.visited_recovery);
+                    let mut set = cursor.visited_recovery.clone();
                     if let Some(key) = recovery_dispatch_config {
-                        Arc::make_mut(&mut set).insert(key);
+                        set.insert(key);
                     }
                     (set, depth)
                 } else {
-                    (Arc::clone(&cursor.visited_recovery), cursor.recovery_depth)
+                    (cursor.visited_recovery.clone(), cursor.recovery_depth)
                 };
                 let child_visited_dispatch: im::OrdSet<PackedDispatchConfig> = if !is_recovery {
                     let mut set = cursor.visited_dispatch.clone();
@@ -11489,7 +11488,7 @@ where
         // defense lazy sharing. Callers compute these via Arc::clone +
         // optional Arc::make_mut(...).insert(...) for CoW. The Arc
         // bumps to the cursor's field via Arc::clone are O(1).
-        child_visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+        child_visited_recovery: im::OrdSet<PackedDispatchConfig>,
         child_visited_dispatch: im::OrdSet<PackedDispatchConfig>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {

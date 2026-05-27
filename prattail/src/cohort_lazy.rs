@@ -138,7 +138,7 @@ pub struct CohortShell<W: SemiringRef> {
     /// Shared cycle-defense at the moment the cohort formed. Any
     /// member that would mutate this triggers materialization.
     pub visited_dispatch: im::OrdSet<crate::wpda_walker::PackedDispatchConfig>,
-    pub visited_recovery: Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>>,
+    pub visited_recovery: im::OrdSet<crate::wpda_walker::PackedDispatchConfig>,
     /// Recovery depth (Phase L12 / Stage 3.20). Mirrors
     /// `BranchCursor::recovery_depth` (u8); cohort formation captures
     /// the parent's depth verbatim (all members share by ~_obs def).
@@ -500,8 +500,8 @@ impl<W: SemiringRef> CohortShell<W> {
         // BranchCursor; this site bumps the refcount.
         let visited_dispatch_arc: im::OrdSet<crate::wpda_walker::PackedDispatchConfig> =
             parent.visited_dispatch.clone();
-        let visited_recovery_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
-            std::sync::Arc::clone(&parent.visited_recovery);
+        let visited_recovery_arc: im::OrdSet<crate::wpda_walker::PackedDispatchConfig> =
+            parent.visited_recovery.clone();
         let optional_scope_marks_arc: std::sync::Arc<Vec<usize>> =
             std::sync::Arc::new(parent.optional_scope_marks.clone());
         let binder_scope_marks_arc: std::sync::Arc<Vec<(u16, Vec<String>)>> =
@@ -610,7 +610,7 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // deep-clone pre-L4.1. The materialized cursor now shares the
         // shell's Arc'd cycle-defense sets; first per-cursor mutation
         // triggers Arc::make_mut copy-on-write.
-        visited_recovery: std::sync::Arc::clone(&shell.visited_recovery),
+        visited_recovery: shell.visited_recovery.clone(),
         visited_dispatch: shell.visited_dispatch.clone(),
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena-interned StackId (Copy u32) replaces Arc<Vec<SppfId>>.
@@ -1017,7 +1017,7 @@ mod tests {
             0,
             Arc::new(Vec::new()),
             im::OrdSet::new(),
-            Arc::new(rustc_hash::FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
