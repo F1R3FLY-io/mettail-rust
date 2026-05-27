@@ -134,6 +134,18 @@ pub mod cursor_store;
 /// trampolined walker rewrite. Substage 1 is dead code; Substage 5
 /// wires the queue into `step_fanout`.
 pub mod cps_walker;
+/// Phase F.13 chain_10000 Lazy redesign L1 (2026-05-27):
+/// `BranchCursorThunk<W>` enum — the lazy-evaluation kernel of the
+/// weight-keyed priority queue walker. Fork-arm emits one thunk per
+/// alternative (~48 B vs ~3 KB materialized BranchCursor). The min-
+/// heap pops thunks in lex-min weight order and forces them via
+/// `force()` which reconstructs a `BranchCursor` from the parent's
+/// CursorStore entry + the thunk's deltas. Deferred thunks (never
+/// popped because the lex-min head resolves first) cost zero
+/// `BranchCursor` allocations. L1 ships ONLY the enum + force() +
+/// size_of asserts as dead code; L2 wires it into the Push arm.
+/// See `prattail/docs/design/plans/lazy-weight-guided-walker.md`.
+pub mod lazy_thunk;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
