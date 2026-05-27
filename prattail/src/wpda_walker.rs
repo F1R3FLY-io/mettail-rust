@@ -1984,7 +1984,17 @@ struct ConfigKey {
     /// Both survive to end-of-parse; both contribute distinct packings
     /// linked to the same SPPF Symbol; realize fanout enumerates all
     /// derivations. See `phase-f13-stage-1-5-3-redux.md` §3.
-    cohort_origin: Option<crate::dispatch_cohort::DispatchKey>,
+    ///
+    /// **COQ-S1 (2026-05-27)**: type changed from `Option<DispatchKey>`
+    /// to `Option<EquivKey>` — drops the `pos` axis from the
+    /// equivalence relation. Two cohort revives at different chain
+    /// depths but for the same `(source_src_idx, inner_cur_bp)` now
+    /// share a bucket, collapsing the per-step cohort from O(N) to
+    /// O(grammar size). The BranchCursor still carries full
+    /// `Option<DispatchKey>` (`cohort_origin` field) for graduation
+    /// logic that needs `pos`; only the ConfigKey equality discriminator
+    /// is quotiented. See `cohort-origin-quotient-coq.md` §2.
+    cohort_origin: Option<crate::dispatch_cohort::EquivKey>,
     /// Phase F.13 H12 Stage 1.5.3-Alt#1 (2026-05-21): GLL descriptor
     /// completion (Scott-Johnstone "GLL Parsing", ENTCS 253(7):
     /// 177-189, 2010 §3). The formal GLL descriptor is the 4-tuple
@@ -9277,7 +9287,16 @@ where
                 // from per-cursor cursors so they don't collapse via
                 // lex-min and discard each other's distinct outer
                 // packings (the `-3!` bug).
-                cohort_origin: cursor.cohort_origin.clone(),
+                //
+                // COQ-S1 (2026-05-27): quotient by EquivKey (drops
+                // pos). Cohort revives at different chain depths but
+                // same (source_src_idx, inner_cur_bp) now share a
+                // ConfigKey bucket — collapses the per-step cohort
+                // from O(N) to O(grammar size).
+                cohort_origin: cursor
+                    .cohort_origin
+                    .as_ref()
+                    .map(|k| k.equiv()),
                 // Phase F.13 H12 Stage 1.5.3-Alt#1 (2026-05-21): GLL
                 // descriptor completion. Two cursors with distinct
                 // sppf_stack tops represent semantically distinct

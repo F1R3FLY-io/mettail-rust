@@ -46,6 +46,19 @@ use crate::wpda_runtime::WpdaState;
 /// Cache key for cross-cat-projection dispatch sites. Mirrors the
 /// payload of `WpdaState::CrossCatDelegate { source_src_idx,
 /// inner_cur_bp }` together with the dispatch position.
+///
+/// `DispatchKey` is used as the FxHashMap key for the
+/// `DispatchCohortCache::entries` lookup — it includes `pos` to
+/// distinguish dispatch sites at different input positions (so the
+/// cache correctly identifies in-flight dispatches per chain step).
+///
+/// **COQ-S1 (2026-05-27)**: `DispatchKey` is no longer used as a
+/// `ConfigKey` equality discriminator — the proposed Cohort Origin
+/// Quotient (`prattail/docs/design/plans/cohort-origin-quotient-coq.md`)
+/// shows the `pos` axis prevents cursor merging across chain depths,
+/// causing super-linear scaling. ConfigKey now uses
+/// [`EquivKey`] instead, obtained via [`DispatchKey::equiv`]. The
+/// cache itself still keys on full DispatchKey.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DispatchKey {
     pub pos: u32,
@@ -58,6 +71,50 @@ impl DispatchKey {
     pub fn new(pos: usize, source_src_idx: u16, inner_cur_bp: u8) -> Self {
         DispatchKey {
             pos: pos as u32,
+            source_src_idx,
+            inner_cur_bp,
+        }
+    }
+
+    /// **COQ-S1 (2026-05-27)**: project to the position-independent
+    /// equivalence class for cohort-merge purposes. Two DispatchKeys
+    /// produced at different chain depths but for the same
+    /// `(source_src_idx, inner_cur_bp)` pair are observationally
+    /// equivalent post-revive (engine.step is pure of cursor state at
+    /// the dispatch site — same EquivKey ⇒ same action).
+    ///
+    /// Empirical chain_50 LEFT-assoc: 300 distinct DispatchKeys collapse
+    /// to 6 distinct EquivKeys (50× collision rate). See COQ-S0
+    /// instrumentation in walker_stats.rs.
+    #[inline(always)]
+    pub fn equiv(&self) -> EquivKey {
+        EquivKey {
+            source_src_idx: self.source_src_idx,
+            inner_cur_bp: self.inner_cur_bp,
+        }
+    }
+}
+
+/// **COQ-S1 (2026-05-27)**: position-independent quotient of
+/// [`DispatchKey`] for the cohort-merge equivalence relation. Drops
+/// `pos`; retains the two grammar-determined axes.
+///
+/// Used as the `ConfigKey.cohort_origin` discriminator so cohort-revived
+/// cursors at different chain depths can merge when they share the same
+/// `(source_src_idx, inner_cur_bp)` dispatch site. This is the structural
+/// fix for the chain workload's O(N²) apply_action scaling — the per-step
+/// cohort discriminator was bounded by `|DispatchKey|` (= O(N) growth with
+/// chain length), now bounded by `|EquivKey|` (= O(1), grammar-determined).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct EquivKey {
+    pub source_src_idx: u16,
+    pub inner_cur_bp: u8,
+}
+
+impl EquivKey {
+    #[inline(always)]
+    pub fn new(source_src_idx: u16, inner_cur_bp: u8) -> Self {
+        EquivKey {
             source_src_idx,
             inner_cur_bp,
         }
