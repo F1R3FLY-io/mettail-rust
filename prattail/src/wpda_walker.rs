@@ -1383,7 +1383,7 @@ pub struct BranchCursor<W: SemiringRef> {
     /// allocation cost; Arc-sharing replaces N deep clones with N Arc
     /// bumps, with `Arc::make_mut` only allocating on first per-cursor
     /// mutation.
-    pub visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+    pub visited_dispatch: im::OrdSet<PackedDispatchConfig>,
     // Phase 5.6-tail-A (2026-05-12): `consistency_memo` field deleted.
     // It memoized `cursor_committed_ops_consistent`, which is also
     // deleted — the B13d-R/Resolution-R consistency override is
@@ -1691,7 +1691,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // (was deep-clone of FxHashSet pre-L4.1). Mutation sites
             // use Arc::make_mut for copy-on-write semantics.
             visited_recovery: Arc::clone(&self.visited_recovery),
-            visited_dispatch: Arc::clone(&self.visited_dispatch),
+            visited_dispatch: self.visited_dispatch.clone(),
             // Phase F.3c.4 (2026-05-20): builder field deleted; the
             // Arc::clone is no longer needed.
             // Phase F.11 (2026-05-20): Arc bump — clone is O(1); first
@@ -1795,7 +1795,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             visited_recovery: Arc::new(FxHashSet::default()),
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
-            visited_dispatch: Arc::new(FxHashSet::default()),
+            visited_dispatch: im::OrdSet::new(),
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
             // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
             // The seed cursor's builder is independent of the walker's
@@ -3313,7 +3313,7 @@ where
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-resolution singleton resets projection
                     // visited set.
-                    visited_dispatch: Arc::new(FxHashSet::default()),
+                    visited_dispatch: im::OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -5044,7 +5044,7 @@ where
                     visited_recovery: Arc::new(FxHashSet::default()),
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
-                    visited_dispatch: Arc::new(FxHashSet::default()),
+                    visited_dispatch: im::OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -5200,7 +5200,7 @@ where
                             return CursorOutcome::Drop;
                         }
                         // Phase F.13 Stage L4.1 (2026-05-25): Arc::make_mut CoW.
-                        Arc::make_mut(&mut cursor.visited_dispatch).insert(key);
+                        cursor.visited_dispatch.insert(key);
                     }
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01): symbol-kind-driven
@@ -5786,15 +5786,14 @@ where
                 } else {
                     (Arc::clone(&cursor.visited_recovery), cursor.recovery_depth)
                 };
-                let child_visited_dispatch = if !is_recovery {
-                    let mut set: Arc<FxHashSet<_>> =
-                        Arc::clone(&cursor.visited_dispatch);
+                let child_visited_dispatch: im::OrdSet<PackedDispatchConfig> = if !is_recovery {
+                    let mut set = cursor.visited_dispatch.clone();
                     if let Some(key) = parent_dispatch_config {
-                        Arc::make_mut(&mut set).insert(key);
+                        set.insert(key);
                     }
                     set
                 } else {
-                    Arc::clone(&cursor.visited_dispatch)
+                    cursor.visited_dispatch.clone()
                 };
                 let mut children = Vec::with_capacity(branches.len());
                 // B14 C5: parallel tracker — for each child pushed below,
@@ -11491,7 +11490,7 @@ where
         // optional Arc::make_mut(...).insert(...) for CoW. The Arc
         // bumps to the cursor's field via Arc::clone are O(1).
         child_visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
-        child_visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+        child_visited_dispatch: im::OrdSet<PackedDispatchConfig>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache

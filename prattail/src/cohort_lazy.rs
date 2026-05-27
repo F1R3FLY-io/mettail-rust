@@ -137,7 +137,7 @@ pub struct CohortShell<W: SemiringRef> {
     pub sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
     /// Shared cycle-defense at the moment the cohort formed. Any
     /// member that would mutate this triggers materialization.
-    pub visited_dispatch: Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>>,
+    pub visited_dispatch: im::OrdSet<crate::wpda_walker::PackedDispatchConfig>,
     pub visited_recovery: Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>>,
     /// Recovery depth (Phase L12 / Stage 3.20). Mirrors
     /// `BranchCursor::recovery_depth` (u8); cohort formation captures
@@ -498,8 +498,8 @@ impl<W: SemiringRef> CohortShell<W> {
         // `Arc::new(parent.visited_*.clone())` pre-L4.1 which deep-
         // cloned the HashSet. visited_* are now Arc-wrapped in
         // BranchCursor; this site bumps the refcount.
-        let visited_dispatch_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
-            std::sync::Arc::clone(&parent.visited_dispatch);
+        let visited_dispatch_arc: im::OrdSet<crate::wpda_walker::PackedDispatchConfig> =
+            parent.visited_dispatch.clone();
         let visited_recovery_arc: std::sync::Arc<rustc_hash::FxHashSet<crate::wpda_walker::PackedDispatchConfig>> =
             std::sync::Arc::clone(&parent.visited_recovery);
         let optional_scope_marks_arc: std::sync::Arc<Vec<usize>> =
@@ -611,7 +611,7 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // shell's Arc'd cycle-defense sets; first per-cursor mutation
         // triggers Arc::make_mut copy-on-write.
         visited_recovery: std::sync::Arc::clone(&shell.visited_recovery),
-        visited_dispatch: std::sync::Arc::clone(&shell.visited_dispatch),
+        visited_dispatch: shell.visited_dispatch.clone(),
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena-interned StackId (Copy u32) replaces Arc<Vec<SppfId>>.
         sppf_stack_id: shell.sppf_stack_baseline_id,
@@ -1016,7 +1016,7 @@ mod tests {
             0,
             0,
             Arc::new(Vec::new()),
-            Arc::new(rustc_hash::FxHashSet::default()),
+            im::OrdSet::new(),
             Arc::new(rustc_hash::FxHashSet::default()),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
