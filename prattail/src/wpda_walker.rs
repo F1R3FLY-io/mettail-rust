@@ -7781,7 +7781,11 @@ where
                     );
                     let shell = crate::tomita_frontier::TomitaShell::from_cursor(c);
                     let arc = crate::tomita_frontier::FrontierArc::from_cursor(c);
-                    self.tomita_frontier_map.register_arc(key, shell, arc);
+                    // Substage 6: ⊕-aggregation on TomitaKey collision —
+                    // arcs with same merge_disambiguator + same heavy-Arc
+                    // identities collapse via LexicographicWeight::plus.
+                    self.tomita_frontier_map
+                        .register_arc_with_aggregation(key, shell, arc);
                 }
                 crate::cohort_lazy::Frame::Cohort(cf) => {
                     // Materialize each member of the H12 cohort, then
@@ -7810,7 +7814,9 @@ where
                         let arc = crate::tomita_frontier::FrontierArc::from_cursor(
                             &cursor,
                         );
-                        self.tomita_frontier_map.register_arc(key, shell, arc);
+                        // Substage 6: ⊕-aggregation on TomitaKey collision.
+                        self.tomita_frontier_map
+                            .register_arc_with_aggregation(key, shell, arc);
                     }
                 }
             }

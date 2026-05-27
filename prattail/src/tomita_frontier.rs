@@ -519,6 +519,92 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
         }
     }
 
+    /// Phase F.13 chain_10000 Exp 14 Substage 6 (2026-05-27): arc
+    /// weight ⊕-aggregation on TomitaKey collision. Like `register_arc`
+    /// but checks whether the existing frontier node has an arc with
+    /// the same `merge_disambiguator` AND same per-arc heavy-field
+    /// Arc-pointer identity (per redesigned plan §3.1 Option A: arcs
+    /// with distinct heavy Arcs are SOUNDLY distinct and cannot merge
+    /// without dropping per-cursor state). When both match, ⊕-aggregate
+    /// the new arc's weight into the existing arc via `LexicographicWeight::plus`
+    /// (= lex-min under idempotent semiring); otherwise push as a new arc.
+    ///
+    /// Returns the post-insert arc-count of the frontier node at this
+    /// key.
+    ///
+    /// **Soundness**: arcs that merge under this aggregation have
+    /// identical per-arc state (Arc::ptr_eq on all 6 heavy fields) so
+    /// the merged arc preserves observational equivalence with the
+    /// pre-merge pair. Weights aggregate via the IdempotentSemiring's
+    /// `plus` which is the lex-min tiebreak for `LexicographicWeight`.
+    pub fn register_arc_with_aggregation(
+        &mut self,
+        key: TomitaKey,
+        shell_if_new: TomitaShell<W>,
+        arc: FrontierArc<W>,
+    ) -> usize {
+        self.total_registrations = self.total_registrations.saturating_add(1);
+        let gen = self.current_generation;
+        match self.map.get_mut(&key) {
+            Some(node) => {
+                let new_disambig = arc.merge_disambiguator();
+                // Search for an existing arc with matching disambiguator
+                // AND matching heavy-field Arc identities. If found,
+                // ⊕-aggregate the new arc's weight in place.
+                if let Some(idx) = node.arcs.iter().position(|existing| {
+                    existing.merge_disambiguator() == new_disambig
+                        && Arc::ptr_eq(
+                            &existing.recovery_deltas,
+                            &arc.recovery_deltas,
+                        )
+                        && Arc::ptr_eq(
+                            &existing.visited_dispatch,
+                            &arc.visited_dispatch,
+                        )
+                        && Arc::ptr_eq(
+                            &existing.visited_recovery,
+                            &arc.visited_recovery,
+                        )
+                        && Arc::ptr_eq(
+                            &existing.binder_scope_marks,
+                            &arc.binder_scope_marks,
+                        )
+                        && Arc::ptr_eq(
+                            &existing.optional_scope_marks,
+                            &arc.optional_scope_marks,
+                        )
+                        && Arc::ptr_eq(
+                            &existing.sppf_collection_arena,
+                            &arc.sppf_collection_arena,
+                        )
+                }) {
+                    // Aggregate weight: existing.weight ← existing.weight ⊕ arc.weight.
+                    let existing = &mut node.arcs[idx];
+                    let merged_weight = existing.weight.plus_ref(&arc.weight);
+                    existing.weight = merged_weight;
+                    let merged_pending = existing
+                        .pending_packing_weight
+                        .plus_ref(&arc.pending_packing_weight);
+                    existing.pending_packing_weight = merged_pending;
+                    self.dedup_hits = self.dedup_hits.saturating_add(1);
+                    node.generation = gen;
+                    node.arc_count()
+                } else {
+                    node.push_arc(arc, gen);
+                    self.dedup_hits = self.dedup_hits.saturating_add(1);
+                    node.arc_count()
+                }
+            }
+            None => {
+                let stamp = self.next_insertion_stamp;
+                self.next_insertion_stamp = self.next_insertion_stamp.saturating_add(1);
+                let node = FrontierNode::new(shell_if_new, arc, gen, stamp);
+                self.map.insert(key, node);
+                1
+            }
+        }
+    }
+
     /// Number of distinct TomitaKeys currently in the map.
     pub fn distinct_keys(&self) -> usize {
         self.map.len()
