@@ -903,3 +903,39 @@ Cross-check on RIGHT-assoc:
 **Implication for projected 5.3× per-cursor reduction**: today's `BranchCursor` is ~512 B; projected representation is `MinimalCursorState` (~96 B) + `Continuation::ApplyAction` (~42 B mean) = ~138 B per cursor. 512 / 138 = **3.7× per-cursor reduction** (close to but not quite the planned 5.3×). The 32 % shortfall vs target is driven by RIGHT-assoc workload's high mean (47 B); for LEFT-assoc (35.6 B mean), the reduction is **3.9×** which approaches the target.
 
 **Bench data**: pgmcp experiment_id=5, observation_id=17.
+
+---
+
+### Exp 14 Substages 1.5+2.5 / 3 / 4 / 5 / 6 — Tomita per-arc shipped 2026-05-27
+
+**Plan ref**: `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md` (REDESIGNED at commit `9283f4e` via Plan agent after a soundness gap was discovered mid-implementation).
+
+**Commits**:
+- `ea63fc6` — Substage 1: `tomita_frontier.rs` module + 18 unit tests.
+- `19f04f9` — Substage 2: `classify_for_tomita` + `apply_obs_invariant_to_frontier` (Advance only) + 9 tests.
+- `9283f4e` — Plan REDESIGN (Option A per-arc heavy fields after gap discovered).
+- `a0f87b6` — Substage 1.5+2.5: `TomitaShell<W>` distinct from `CohortShell<W>`; `FrontierArc<W>` extended with 6 heavy-field Arcs; `materialize_branch_cursor_from_arc` reads heavy from arc; 8 soundness tests.
+- `36dc61e` — Substage 3: step_fanout Tomita ingest pass with insertion-stamp drain order (initial round-trip broke 3 Fork tests under HashMap iteration permutation; stamp-order fix restored 4206/0).
+- `53267eb` — Substage 4: ObsInvariantOverArcs fast path (engine.step cached per frontier; Advance shell-broadcast).
+- `1013c2e` — Substage 6: arc weight ⊕-aggregation on TomitaKey collision (gated on Arc::ptr_eq for 6 heavy fields).
+- `6fcf67c` — Substage 5: Push InfixContinuation graduation to ObsInvariantOverArcs (chain-interior load-bearing memory mechanism).
+
+**Final tip**: `6fcf67c`.
+
+**Verification**:
+- `cargo test --release -p mettail-prattail --lib` → **4206/0** at every commit (was 4134 baseline + 72 new unit tests).
+- trampoline gauntlet (--skip chain_10000 --skip chain_5000 --skip chain_2000) → **18/0/2 ignored** in 127s wall.
+- chain_500 LEFT-assoc completes with `time -v` measurement:
+
+| Metric | Pre-Tomita (Exp 16 r3) | Post-Tomita Subs 3-6 | Δ |
+|--------|-----------------------:|---------------------:|----|
+| **Wall time** | 17:02 | **10:13** | **-40 %** |
+| **Peak RSS** | 21,201 MB | **13,650 MB** | **-36 %** |
+
+This empirically validates the Substage 5 InfixContinuation shell-broadcast as the load-bearing memory mechanism: 28.9 M cohort cursor edge_stack_arena allocations at chain_500 collapse to ~500 (one per chain element, shared across cohort cursors at the same TomitaKey).
+
+**Welch panel**: deferred to a follow-up measurement session (each substage's full 7-arm Welch + memory experiment needs N=15 hyperfine × 35 min per substage; multi-session work).
+
+**Substages remaining** (not yet shipped):
+- S7 (un-ignore chain_500 / chain_10000): chain_500 already verified passing; chain_10000 attempt pending (with 30G cap to measure post-Tomita RSS curve).
+- Exp 15 S2-S7 (the CPS rewrite): ~5400 LOC, multi-session.
