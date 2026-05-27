@@ -7826,14 +7826,74 @@ where
         // materialize_branch_cursor_from_arc; heavy fields are restored
         // from the arc (soundness fix Substage 1.5+2.5).
         let drained_nodes = self.tomita_frontier_map.drain_current_generation();
-        let mut drained: Vec<crate::cohort_lazy::Frame<W>> =
+        // Phase F.13 chain_10000 Exp 14 Substage 4 (2026-05-27): cache
+        // engine.step result per frontier. Each frontier shell yields
+        // ONE engine.step call (instead of N per arc). All arcs at the
+        // same TomitaKey receive the SAME action by engine.step purity
+        // (the engine reads only the 5-tuple TomitaKey from the cursor
+        // → identical actions across arcs). Pre-Substage-4 each arc
+        // paid an engine.step call; this collapses to 1 per frontier.
+        //
+        // For ObsInvariantOverArcs (Advance / Accept / Error / Idle):
+        // apply_obs_invariant_to_frontier mutates the shell once; the
+        // arc materializes with the post-step inner_state inherited
+        // from the shell. apply_action_to_cursor is still called per
+        // arc for the per-cursor accounting + recovery_deltas / SPPF
+        // routing, but its engine.step inputs are pre-computed so the
+        // per-cursor engine.step is elided.
+        //
+        // For ObsDivergentOverArcs / DispatchResolved: same materialize-
+        // then-step path but with the cached action (no per-arc
+        // engine.step).
+        let mut drained: Vec<(BranchCursor<W>, WpdaStepAction<W>)> =
             Vec::with_capacity(drained_nodes.len());
-        for (_key, node) in drained_nodes {
+        for (_key, mut node) in drained_nodes {
+            // ONE engine.step call per frontier.
+            let frontier_top = self.gss.node(node.shell.node).cloned();
+            let action = self.engine.step(
+                &node.shell.inner_state,
+                &self.gss,
+                frontier_top.as_ref(),
+                node.shell.pos,
+                tokens,
+            );
+            // Classify the action; for ObsInvariantOverArcs, apply to
+            // the shell once before materializing arcs (the materialized
+            // cursors inherit the post-step inner_state via the shell).
+            let divergence =
+                crate::cohort_lazy::DivergenceClass::classify_for_tomita(&action);
+            let action_for_arcs = if divergence
+                == crate::tomita_frontier::TomitaDivergence::ObsInvariantOverArcs
+            {
+                // Apply to shell once. The Substage 2 supported variant
+                // is Advance only; Accept/Error/Idle fall through to the
+                // per-arc apply path because apply_obs_invariant_to_frontier
+                // returns Err for them at Substage 2's scope. That's
+                // acceptable — those variants are O(1) per arc anyway.
+                let applied = crate::cohort_lazy::apply_obs_invariant_to_frontier(
+                    &mut node, action.clone(),
+                );
+                if applied.is_ok() {
+                    // Shell mutated; arcs materialize with new shell
+                    // state. apply_action_to_cursor still runs per arc
+                    // with the SAME action so the cursor-side state
+                    // (e.g., weight multiplication is None for Advance,
+                    // SPPF push is None for Advance) is consistent with
+                    // the baseline. Apply is idempotent for Advance
+                    // (writes inner_state which is already correct from
+                    // the shell mutation).
+                    action.clone()
+                } else {
+                    action.clone()
+                }
+            } else {
+                action.clone()
+            };
             for arc in &node.arcs {
                 let cursor = crate::tomita_frontier::materialize_branch_cursor_from_arc(
                     &node.shell, arc,
                 );
-                drained.push(crate::cohort_lazy::Frame::Concrete(cursor));
+                drained.push((cursor, action_for_arcs.clone()));
             }
         }
         // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): observe
@@ -7876,81 +7936,14 @@ where
                 }
             }
         }
-        for frame in drained {
-            // Phase F.13 Stage L3.2 (2026-05-25): Frame::Cohort dispatch.
-            // L3.2 stub always materializes (step_cohort_frame returns N
-            // Concrete frames); L3.4 introduces the ObsInvariant fast
-            // path that returns a single Cohort frame for invariant
-            // actions. Resolved cursors among the produced frames are
-            // re-classified after step_cohort_frame returns.
-            let cursor = match frame {
-                crate::cohort_lazy::Frame::Concrete(c) => c,
-                crate::cohort_lazy::Frame::Cohort(cf) => {
-                    let produced = self.step_cohort_frame(cf, tokens);
-                    // step_cohort_frame returns a Vec<Frame<W>>; route each
-                    // produced frame through outcome accounting. L3.2:
-                    // produced frames are always Concrete (cf materialized
-                    // and per-cursor-stepped internally). L3.4: produced
-                    // frames may include a single Cohort if ObsInvariant.
-                    for produced_frame in produced {
-                        // Re-route via same Alive/Drop/Resolved logic by
-                        // re-running cursor_resolution_check (no-op for the
-                        // already-stepped state — cheap). The classifier
-                        // determines whether the produced cursor is alive,
-                        // resolved, or terminal.
-                        match produced_frame {
-                            crate::cohort_lazy::Frame::Concrete(produced_cursor) => {
-                                let oc = self.cursor_resolution_check(&produced_cursor);
-                                match oc {
-                                    CursorOutcome::Drop => { /* discard */ }
-                                    CursorOutcome::Alive => {
-                                        new_cursors.push(
-                                            crate::cohort_lazy::Frame::Concrete(
-                                                produced_cursor,
-                                            ),
-                                        );
-                                    }
-                                    CursorOutcome::ForkInto(_) => {
-                                        // step_cohort_frame should never
-                                        // surface ForkInto to its caller —
-                                        // the per-cursor pass inside
-                                        // already expanded forks.
-                                        panic!(
-                                            "L3.2: step_cohort_frame returned a ForkInto-classified cursor; should have been expanded internally",
-                                        );
-                                    }
-                                    CursorOutcome::Resolved => {
-                                        resolved_indices.push(new_cursors.len());
-                                        new_cursors.push(
-                                            crate::cohort_lazy::Frame::Concrete(
-                                                produced_cursor,
-                                            ),
-                                        );
-                                    }
-                                }
-                            }
-                            cohort_frame @ crate::cohort_lazy::Frame::Cohort(_) => {
-                                // L3.4: ObsInvariant fast path — single
-                                // cohort frame returned, stays alive.
-                                new_cursors.push(cohort_frame);
-                            }
-                        }
-                    }
-                    continue;
-                }
-            };
-            let frontier_top = self.gss.node(cursor.node).cloned();
-            // M4 (2026-05-13): pass `tokens` directly. The CursorViewSource
-            // wrap is deleted — alt identity now lives in the SHARED input
-            // DAG (`LatticeTokenSource`, M3) and the cursor's `pos: usize`
-            // (DAG node-id) is sufficient to identify its alt timeline.
-            let action = self.engine.step(
-                &cursor.inner_state,
-                &self.gss,
-                frontier_top.as_ref(),
-                cursor.pos,
-                tokens,
-            );
+        // Phase F.13 chain_10000 Exp 14 Substage 3+4 (2026-05-27): the
+        // Tomita ingest+drain flattens all frames to Concrete arcs;
+        // cohort routing via step_cohort_frame is bypassed because every
+        // arc carries its own per-arc heavy fields. The cached
+        // `action_template` from the drain stage means the per-cursor
+        // loop NO LONGER calls engine.step (one call per frontier shell
+        // instead of one per arc — main Substage 4 win).
+        for (cursor, action) in drained {
             // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
             // observe the projected `Continuation::ApplyAction` record
             // size for this action, plus the per-Fork child-count that
