@@ -469,6 +469,15 @@ impl EarleyChart {
     ///
     /// Recurses into NonTerminal body items by searching the chart
     /// for matching completed items.
+    ///
+    /// **Plan v6 H1 fix (2026-05-27)**: tracks per-body-position
+    /// min-trailing-token consumption so non-last NonTerminal items
+    /// search with `max_hi = hi_pos - trailing_min`, avoiding the
+    /// self-recursion that breaks left-recursive grammars. For
+    /// `Chain -> Chain "+" Atom`, the recursive Chain sub-call now
+    /// has max_hi = hi_pos - 2 (room for "+" Atom), excluding the
+    /// root completion at hi_pos and forcing the descending search
+    /// to find a strictly smaller sub-chain.
     fn emit_for_item<W: SemiringRef>(
         &self,
         sppf: &mut Sppf<W>,
@@ -483,12 +492,28 @@ impl EarleyChart {
         let (rule_idx, _cat_nt_tag) =
             rule_label_to_meta.get(&item.rule_label)?.clone();
         let weight = rule_weights.get(&item.rule_label)?.clone();
+        // Plan v6 H1 fix (2026-05-27): compute min-trailing-tokens per
+        // body position. trailing_min[k] = min number of tokens that
+        // body[k..body.len()] must consume. Terminal = 1; NonTerminal
+        // = 1 (conservative — assumes no epsilon rules, true for the
+        // chain grammar). For NonTerminal at body[k], sub-NT's
+        // effective max_hi = hi_pos - trailing_min[k+1].
+        let body = &rule.body;
+        let body_len = body.len();
+        let mut trailing_min: Vec<usize> = vec![0; body_len + 1];
+        for k in (0..body_len).rev() {
+            let item_min = match &body[k] {
+                RuleItem::Terminal { .. } => 1,
+                RuleItem::NonTerminal { .. } => 1,
+            };
+            trailing_min[k] = trailing_min[k + 1] + item_min;
+        }
         // Walk body left-to-right, accumulating children SppfIds.
         // `pos` tracks the current input position; starts at
         // `item.origin`, ends at `hi_pos`.
-        let mut children: Vec<SppfId> = Vec::with_capacity(rule.body.len());
+        let mut children: Vec<SppfId> = Vec::with_capacity(body_len);
         let mut pos = item.origin;
-        for body_item in &rule.body {
+        for (k, body_item) in body.iter().enumerate() {
             match body_item {
                 RuleItem::Terminal { tag: _ } => {
                     if pos >= terminal_sppf_ids.len() {
@@ -498,16 +523,22 @@ impl EarleyChart {
                     pos += 1;
                 }
                 RuleItem::NonTerminal { category } => {
-                    // Find a completed sub-item: category at sets[k]
-                    // with origin == pos, for the smallest k > pos
-                    // that yields recognition (greedy match).
-                    // For left-assoc chain: the sub-item is unique
-                    // for each (origin, category) pair.
+                    // Sub-NT's max_hi excludes the room needed for
+                    // trailing body items. For chain grammar's
+                    // chain_step Chain body[0]: trailing_min[1] = 2
+                    // (one "+" + one Atom), so Chain's max_hi
+                    // = hi_pos - 2. This avoids self-recursion at
+                    // hi=hi_pos.
+                    let sub_max_hi = (hi_pos as usize)
+                        .saturating_sub(trailing_min[k + 1]);
+                    if sub_max_hi <= pos {
+                        return None;
+                    }
                     let (sub_id, sub_hi) = self.find_and_emit_sub(
                         sppf,
                         category,
                         pos,
-                        hi_pos as usize,
+                        sub_max_hi,
                         rule_label_to_meta,
                         terminal_sppf_ids,
                         rule_weights,
@@ -555,27 +586,20 @@ impl EarleyChart {
             .and_then(|label| rule_label_to_meta.get(label))
             .map(|(_, tag)| *tag)
             .unwrap_or(nt_tag);
-        // KNOWN BUG (Plan v6 H1, 2026-05-27): greedy shortest-match is
-        // unsound for left-recursive grammars. For `Chain → Chain "+"
-        // Atom`, the recursive Chain sub-call always matches the
-        // shortest completion (chain_base at hi=1), leaving no room
-        // for the trailing "+ Atom" pair, and emit_for_item returns
-        // None for the whole tree. Descending order (greedy longest)
-        // is the natural fix BUT causes infinite recursion because the
-        // root chain_step at sets[parent_hi] is ALSO a completed Chain
-        // at the same origin → sub-NT picks the root itself, recursing
-        // forever (stack overflow at chain_50).
+        // Plan v6 H1 fix (2026-05-27): iterate hi DESCENDING so left-
+        // recursive sub-non-terminals find the LONGEST completion that
+        // fits within max_hi. The caller (emit_for_item) computes
+        // max_hi = parent_hi - trailing_min[k+1] to exclude the room
+        // needed for trailing body items, which also excludes the
+        // parent's self-completion at parent_hi — avoiding the infinite
+        // self-recursion that naive descending would cause.
         //
-        // The correct fix requires tracking body position + min-trailing-
-        // token consumption per remaining body item, so sub-NT's
-        // effective max_hi excludes the room needed for trailing terms.
-        // For chain grammar: Chain sub-NT max_hi = parent_hi - 2 (room
-        // for "+" Atom). For general grammars: needs grammar-determined
-        // min-consumption analysis.
-        //
-        // This is out of scope for H1 (which is a SOUNDNESS CHECK, not
-        // a fix). H2 region-amortized handoff design must address this.
-        for hi in (origin + 1)..=max_hi {
+        // For non-recursive non-terminals (e.g. Atom), descending vs
+        // ascending picks the same item (Atom only completes at one hi
+        // per origin). For left-recursive, descending picks the longest
+        // sub-chain — exactly what the parent needs to leave the
+        // trailing-min tokens for the rest of the body.
+        for hi in (origin + 1..=max_hi).rev() {
             let candidates: Vec<EarleyItem> = self.sets[hi]
                 .iter()
                 .filter(|i| {
@@ -590,7 +614,7 @@ impl EarleyChart {
                 .cloned()
                 .collect();
             if let Some(item) = candidates.first() {
-                let sid = self.emit_for_item(
+                if let Some(sid) = self.emit_for_item(
                     sppf,
                     item,
                     hi as u32,
@@ -598,8 +622,13 @@ impl EarleyChart {
                     rule_label_to_meta,
                     terminal_sppf_ids,
                     rule_weights,
-                )?;
-                return Some((sid, hi as u32));
+                ) {
+                    return Some((sid, hi as u32));
+                }
+                // emit_for_item returned None: this hi candidate's body
+                // could not be fully reconstructed downstream (e.g., the
+                // chain doesn't extend that long). Try the next smaller
+                // hi.
             }
         }
         None
@@ -1079,7 +1108,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Plan v6 H1 FALSIFIER: find_and_emit_sub greedy-shortest is unsound for left-recursive grammars. Must be fixed (grammar-aware min-trailing-token analysis) before H2 wires the handoff. Recognition (the 3 chain_50/100/200 tests above) is sound; only SPPF emission has the bug."]
     fn v6_h1_earley_chain_50_emits_valid_sppf_root() {
         // End-to-end check: recognition + SPPF emission produce a
         // valid root SppfId for chain_50. This is the substrate H2
