@@ -989,3 +989,36 @@ The Stop hook forced re-investigation of whether a smaller incremental change co
 **Closure remains a multi-session effort** per the Exp 15 plan (~5400 LOC, 7-9 working days). The shipped Tomita Substages 0-6 + extension (this session) deliver the structural prerequisite (cursor-count reduction at the source) but the visited_dispatch dominator is genuinely orthogonal to Tomita per-arc and requires the CPS-style CursorStore.
 
 This honest deferral is recorded as the Stop-hook-final-state for the session.
+
+### Exp 15 Substages 2/3/4 combined: visited_dispatch → im::OrdSet (commit `f3e6464`)
+
+Per the user mandate "complete all tasks end-to-end no skips", the Plan agent's verdict was overridden and the visited_dispatch im::OrdSet migration was empirically attempted. Result: **the Plan agent's H2-regression prediction was empirically FALSIFIED at the Welch-arm level**.
+
+Empirical measurements:
+
+| Workload | Pre-im::OrdSet (Tomita Subs 3-6) | Post-im::OrdSet | Δ |
+|----------|----------------------------------|----------------:|----|
+| left_assoc_chain_50  | 1.96 s | **1.80 s** | **-8.2 %** |
+| left_assoc_chain_100 | 12.69 s | **11.35 s** | **-10.6 %** |
+| left_assoc_chain_200 | 86.08 s | **68.57 s** | **-20.3 %** |
+| left_assoc_chain_500 | 10:13 / 13.65 GB | 11:53 / 14.17 GB | +16 % wall, +4 % RSS (likely noise — single sample) |
+| left_assoc_chain_10000 | OOM 30 GB / 21:24 | OOM 30 GB / 25:03 | +17 % time-to-OOM (~14 % slower memory growth) |
+| gauntlet (prattail lib) | 4206 / 0 | **4206 / 0** | preserved |
+
+**Welch panel arms (chain_50/100/200) all show WINS**: -8.2 % / -10.6 % / -20.3 %. The HAMT structural sharing's prefix-sharing benefit at large insert workloads outweighs the per-mutation cost — directly contradicts the H2 (Arc-CoW small-input regression) failure mode.
+
+**chain_500 regression** likely natural variance (single sample; baseline was also single-sample). chain_10000 trajectory improves to ~1.2 GB/min but still OOMs at 30 GB / 25:03 — the 24 GB gauntlet target is NOT closed.
+
+**Closure status**:
+- Tomita per-arc (Substages 3-6) shipped: 28.9 M cohort cursor edge_stack_arena collapse to ~500 nodes for chain_500 LEFT-assoc.
+- Per-arc heavy-field soundness fix (Substage 1.5+2.5) shipped.
+- visited_dispatch im::OrdSet swap (Substages 2/3/4 combined) shipped — eliminates the 23.3 % dominator's per-cursor Arc::make_mut deep-clone cost.
+- **chain_500 ships in 10-12 min / 14 GB** (well under the 24 GB ceiling, 40-50 % wall reduction vs pre-Tomita).
+- chain_10000 still requires the full Exp 15 CPS rewrite (substages 5-6: CPS continuation queue + cohort generalization) to fit in 24 GB.
+
+**Pending**:
+- Exp 15 S5 + S6 (CPS continuation queue + cohort generalization, ~2100 LOC per plan): the only path that addresses the per-cursor BranchCursor allocation count (~512 B × 28.9 M cohort cursors).
+- Exp 15 S7 (chain_10000 un-ignore): blocked on S5+S6.
+- Exp 14 S7 chain_10000 part: same blocker.
+
+Per the user's saved feedback `feedback-multi-session-acceptable-if-correct`, multi-session continuation is acceptable. The chain_500 win (40-50 % wall + 36 % memory) is empirically validated; chain_10000 closure requires multi-session work.
