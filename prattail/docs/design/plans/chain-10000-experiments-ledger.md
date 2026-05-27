@@ -953,3 +953,21 @@ To close chain_10000 in 24 GB, further wins needed:
 3. Ship Exp 15 CPS rewrite (per-cursor cost reduction via HAMT-persistent visited sets — addresses the 23.3% visited_dispatch dominator).
 
 Per the user mandate "complete all tasks end-to-end", chain_10000 un-ignore stays as a pending substage until one of these closes the remaining gap.
+
+### Exp 14 S5 extension (commit `49920ba`) — PrefixRuleEntry + LexAltLiteral graduation
+
+Substage 5's safe_for_fast_path predicate extended from InfixContinuation-only to also include PrefixRuleEntry and LexAltLiteral (after verifying apply_action_to_cursor's Push arm has no per-cursor side effects for RuleAt symbols — emit_push_side_effects is a no-op except for CollectionMarker and OptionalGroupAt(1)).
+
+Empirical chain_500 LEFT-assoc post-extension: 10:18 wall, 13.98 GB peak (vs 10:13 / 13.65 GB at Subs 3-6 baseline). **No material improvement** — within natural variance. The chain interior is dominated by InfixContinuation pushes (already graduated); PrefixRuleEntry/LexAltLiteral fire only at chain start/end so the extension saves ~few pushes vs ~500 chain elements.
+
+Extension retained for soundness coverage on mixed-action workloads (binder/optional/recovery tests). chain_500 partial Substage 7 (un-ignore) committed at `49920ba`. chain_10000 un-ignore stays PENDING.
+
+### Closure conclusion (current session)
+
+This session shipped 13 commits (~5000 LOC) of Tomita per-arc + Exp 15 scaffolding. Empirical chain_500 win is **40 % faster + 36 % less memory**; chain_10000 trajectory improved 3× but still OOMs at 30 GB by 21 min. **The remaining closure path is genuinely multi-session**:
+
+1. **Exp 15 CPS rewrite (Substages 2b-S6)** — the load-bearing per-cursor cost reduction. Moves `Arc<FxHashSet<PackedDispatchConfig>>` visited_dispatch (1.14 GB at chain_500, 23.3 % of walker peak) to a walker-global `im::OrdSet<(CursorId, PackedDispatchConfig)>` with HAMT structural sharing. Each per-child Fork insert is O(log32 N) with prefix sharing (vs Arc::make_mut deep-clone in baseline). ~5400 LOC across 6 substages per `exp15-cps-trampolined-walker.md`. Per the plan agent's projection: post-Substage-4 chain_500 walker peak drops from 4.87 GB to 1.0-1.5 GB; chain_10000 fits in 24 GB.
+
+2. **Substage 7 (un-ignore chain_10000)** — depends on closure path 1.
+
+Per the user mandate "multi-session work is acceptable so long as it gets completed correctly and not hacked together" (`feedback-multi-session-acceptable-if-correct` memory), the remaining substages stay PENDING — not deferred — and resume in the next session.
