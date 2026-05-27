@@ -693,3 +693,51 @@ mimalloc gave a marginal 8 % growth-rate improvement but did NOT close the archi
 (b) **Further instrumentation**: per-step memory deltas, sppf_collection_arena size, dedup_packing key total bytes, WorkerSnapshot Arc-content sizing. Each ~50 LOC.
 
 Either of these is the prerequisite for any further closure attempt — the structural attribution gap is the load-bearing scientific gap.
+
+---
+
+### Exp 16 round 3 (2026-05-26) — CRITICAL FINDING: chain_500 LEFT-assoc reveals the actual chain_10000 bottleneck
+
+**Setup**: added `test_left_assoc_chain_500/1000/2000/5000` (ignored by default) to probe scaling on the LEFT-assoc workload that hits chain_10000's iterative path (Exp 6b/7's AddInt activation). All prior Welch tests used RIGHT-assoc (`^`, exponentiation, NOT iterative-eligible) — a fundamentally different memory profile.
+
+**Run**: `left_assoc_chain(500)` completed successfully (test passed) in **17 min 02 s wall** with **21.2 GB peak RSS**. Did NOT OOM (just below 24 GB cap). Walker-stats attribution:
+
+| Structure | Count | Size (B) | MB | % |
+|-----------|-------|----------|-----|---|
+| **edge_stack_arena** | **225,565,809** | 16 | **3,441.86** | **70.7 %** ← DOMINANT |
+| **visited_dispatch** | **49,615,919** entries (69,719 unique Arcs, **712× dedup**) | 24 | **1,135.62** | **23.3 %** |
+| sppf_stack_arena | 8,642,388 | 16 | 131.87 | 2.7 % |
+| branch_cursors | 183,843 | 512 | 89.77 | 1.8 % |
+| sppf_nodes | 578,235 | 56 | 30.88 | 0.6 % |
+| gss_edges | 309,193 | 64 | 18.87 | 0.4 % |
+| sppf_symbol_terms | 278,942 | 32 | 8.51 | 0.2 % |
+| pending_members | 47,546 | 96 | 4.35 | 0.1 % |
+| worker_snapshots | 45,587 | 96 | 4.17 | 0.1 % |
+| sppf.dedup_symbol entries | 278,942 | 16 | 4.26 | n/a |
+| **Total** | — | — | **4,870.10 MB** | — |
+
+**Dispatch cohort cache stats**:
+- registrations_total = **100,749,075** (~200K per chain element!)
+- inflight_collisions = 98,933,608 (98.2 %)
+- cohort_cursors_emitted = **28,947,298** ← 29 M cursor allocations for 500 chain elements
+- cohort_cursors_graduated = 2,435,299 (8.4 %)
+
+**Why this matters**:
+
+1. **The chain_50/100/200/1000 Welch tests use RIGHT-assoc (`^`)**, which is NOT iterative-eligible. At chain_1000 right-assoc, walker peak = 15.47 MB. At chain_500 LEFT-assoc, walker peak = **4,870 MB** — 315× larger for half the chain length. **All prior REJECTED experiments (Exp 8 / Exp 9 / Exp 10 S1 / Exp 13) were measured on the wrong workload.** The chain_10000 OOM happens on LEFT-assoc; the Welch gate was right-assoc.
+
+2. **edge_stack_arena dedup is broken on left-assoc**: 225 M unique arena nodes for 29 M cohort cursors = ~7.8 unique nodes per cursor. Per Exp 4-alt the path-tree was supposed to dedup chain prefixes. On left-assoc, **each cohort cursor has its own unique edge chain** — the arena dedup factor is ≈ 1.
+
+3. **The actual chain_10000 closure path** must address edge_stack_arena growth — either reduce cohort cursor emission count (Exp 9 / Approach P attempted this; was REJECTED on the wrong Welch gate), or change the arena to dedup at a coarser granularity (some "GSS path summary" rather than per-edge).
+
+4. **Approach P revisit indicated**: Exp 9 S1.d's chain_10000 RSS measurement showed marginal 3 % improvement on the right-assoc-style trajectory. With LEFT-assoc the cohort emission rate (29 M cursors) is what produces the 3.4 GB edge_stack_arena. Approach P's defer-cohort-revive would have collapsed those 29 M into deferred continuations and PROBABLY closed the LEFT-assoc ceiling, but the right-assoc Welch gate vetoed it.
+
+**Conclusion**: The chain_10000 architectural ceiling has been empirically attributed to **edge_stack_arena (70.7 %) + visited_dispatch entries (23.3 %)** under LEFT-assoc cohort cursor explosion (~58K cohort cursors per chain element). The Welch gate methodology was incorrect for this experiment series — it tested a NON-iterative workload while the OOM target was iterative. Future closure attempts must use LEFT-assoc Welch baselines (the new `test_left_assoc_chain_{500,1000,2000,5000}` tests at `trampoline_tests.rs`).
+
+**Specific architectural fix paths newly justified**:
+
+1. **Re-run Exp 9 / Approach P with LEFT-assoc Welch baseline** — S1.d's skip-revive would collapse cohort emissions; the Welch right-assoc gate that REJECTED it was wrong. **Highest-confidence path.**
+2. **edge_stack_arena coarse dedup**: replace per-GssEdgeId nodes with per-RuleIndex summaries. Multi-week.
+3. **Per-cohort visited_dispatch sharing**: cohort revives currently inherit parent's Arc<FxHashSet>, but a per-revive insert mutates → CoW deep-clone. Replace with per-cohort Arc<FxHashSet> shared across revivals from the same key. ~200 LOC.
+
+**Bench data saved**: `prattail/docs/design/plans/bench-data/exp16r3_left_assoc_500.txt`

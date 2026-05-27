@@ -734,6 +734,35 @@ impl<W: SemiringRef> Sppf<W> {
         self.nodes.len()
     }
 
+    /// Phase F.13 chain_10000 Exp 16 round 3 (2026-05-26): SPPF
+    /// auxiliary storage size diagnostic. Returns
+    /// `(text_arena_bytes, text_index_count, dedup_packing_children_bytes,
+    ///   dedup_symbol_count, dedup_terminal_count)`.
+    /// Used to identify which SPPF-side accumulator scales super-
+    /// linearly beyond what `node_count_diag` captures.
+    pub fn dedup_table_sizes_diag(&self) -> (usize, usize, usize, usize, usize) {
+        let text_arena_bytes = self.text_arena.len();
+        let text_index_count = self.text_index.len();
+        // dedup_packing keys are (u32, Vec<SppfId>). The Vec<SppfId>
+        // grows with rule arity; the per-rule arity is bounded but
+        // the per-rule INSTANCE count grows with parse size. Sum the
+        // Vec lengths × 4 bytes (SppfId = u32) for total child-bytes.
+        let dedup_packing_children_bytes: usize = self
+            .dedup_packing
+            .keys()
+            .map(|(_, children)| children.len() * 4)
+            .sum();
+        let dedup_symbol_count = self.dedup_symbol.len();
+        let dedup_terminal_count = self.dedup_terminal.len();
+        (
+            text_arena_bytes,
+            text_index_count,
+            dedup_packing_children_bytes,
+            dedup_symbol_count,
+            dedup_terminal_count,
+        )
+    }
+
     /// Phase F.13 chain_10000 Exp 16 (2026-05-26): symbol_packings
     /// link-table size diagnostic. Used by walker memory-attribution
     /// sampling.

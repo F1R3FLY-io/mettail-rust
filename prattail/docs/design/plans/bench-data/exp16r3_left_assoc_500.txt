@@ -1,0 +1,95 @@
+Running as unit: run-p3414276-i120772621.scope; invocation ID: 7e099cb1c776423690844d8f3809f5db
+
+running 1 test
+test test_left_assoc_chain_500 has been running for over 60 seconds
+═══ PRATTAIL WALKER STATS ═══
+  apply_action_calls=159311343  step_fanout_calls=7598  avg_cursors_per_step=20878.10
+  branch_cursors_peak_pre_merge=183843  post_merge=106025  sum=158631825
+  merge_attempts=272256091  merge_collapses=113669706  collapse_ratio=0.418
+  cursors_created: seed=1 fork=185456904 → total=185456905
+  cursors_dropped: resolution=0 explicit=0 outcome=7755633 merge=113669706
+  fork_total=71535694  recovery_dispatches=0  cross_cat_branches=166168218
+  fork_kinds: push=186373619 opt_group_absent=0 lex_alt=0 consume=38140157 other=0
+  merge_miss_node_only_by_context: cohort_revive=0 (0.0%) infix_loop=88 (55.7%) recovery=0 (0.0%) other=70 (44.3%)
+  merge_miss_edge_only_by_context: cohort_revive=7791 (92.5%) infix_loop=0 (0.0%) recovery=0 (0.0%) other=635 (7.5%)
+  mem_attr (peak; conservative — Arc'd heap not counted): total=4870.10 MB
+    branch_cursors      = 183843 ×  512 B =    89.77 MB (  1.8%)
+    cohort cache base   = 3000 ×  256 B =     0.73 MB (  0.0%)
+    pending_members     = 47546 ×   96 B =     4.35 MB (  0.1%)
+    worker_snapshots    = 45587 ×   96 B =     4.17 MB (  0.1%)
+    deferred_continuations = 0 ×   64 B =     0.00 MB (  0.0%)
+    sppf_stack_arena    = 8642388 ×   16 B =   131.87 MB (  2.7%)
+    edge_stack_arena    = 225565809 ×   16 B =  3441.86 MB ( 70.7%)
+    sppf_nodes          = 578235 ×   56 B =    30.88 MB (  0.6%)
+    sppf_symbol_packings = 298793 ×    8 B =     2.28 MB (  0.0%)
+    gss_nodes           = 19350 ×   64 B =     1.18 MB (  0.0%)
+    gss_edges           = 309193 ×   64 B =    18.87 MB (  0.4%)
+    visited_dispatch (unique Arcs / total entries) = 69719 / 49615919 (711.6556318937448 dedup ratio); entries × 24 B = 1135.62 MB (23.3%)
+    recovery_deltas (unique Arcs) = 1 × 64 B = 0.00 MB (0.0%)
+    sppf_symbol_terms (walker memo) = 278942 × 32 B = 8.51 MB (0.2%)
+  Exp 16 round 3 — additional structures (NOT in 'total' above):
+    sppf.text_arena                = 500 B = 0.00 MB
+    sppf.text_index                = 500 entries × 8 B = 0.00 MB
+    sppf.dedup_packing keys (sum Vec<SppfId> child bytes) = 2367416 B = 2.26 MB
+    sppf.dedup_symbol entries      = 278942 × ~16 B = 4.26 MB
+    sppf.dedup_terminal entries    = 500 × ~32 B = 0.02 MB
+    sppf_collection_arena (unique Arcs / total entries) = 1 / 0; entries × 4 B + arcs × 24 B = 0.00 MB
+    lex_fork_path (unique Arcs / total entries) = 1 / 0; entries × 16 B = 0.00 MB
+    binder_scope_marks (unique Arcs) = 1
+  sppf_reclaim_window: samples=7598 cache_pinned=5095 (67.1%) pin_gap_max=999 symbol_count_max=278942
+  sppf_reclaim_window_histogram (% of chain reclaimable): [0-6%]=5100(67.1%) [25-31%]=1700(22.4%) [31-37%]=608(8.0%) [37-43%]=84(1.1%) [43-50%]=32(0.4%) [50-56%]=21(0.3%) [56-62%]=18(0.2%) [62-68%]=19(0.3%) [68-75%]=11(0.1%) [75-81%]=3(0.0%) [81-87%]=2(0.0%)
+  sppf_reclaimable_nodes_pct_histogram (% of Symbol nodes droppable): [0-10%]=5102(67.1%) [10-20%]=2308(30.4%) [20-30%]=94(1.2%) [30-40%]=32(0.4%) [40-50%]=19(0.3%) [50-60%]=22(0.3%) [60-70%]=16(0.2%) [70-80%]=2(0.0%) [80-90%]=2(0.0%) [90-100%]=1(0.0%)
+  sppf_reclaim_gate: candidate≥50%=0.6% (need ≥50%) AND window≥12.5%=32.9% (need ≥10%): DOES NOT FIRE → Streaming SPPF futile, close E4 as DATA-CONCLUDED
+  fork_class: lex_fork=0 (0.0%) cross_cat_total=71535694 (100.0%) other=0 (0.0%)
+  fork_avg_fanout_by_class: lex=0.00 cross_cat=2.32 other=58345558.00
+  merge_miss: pairs=737669 state_only=500 (0.1%) node_only=158 (0.0%) edge_only=8426 (1.1%) depth_only=0 (0.0%) multi=719791 (97.6%)
+  cross_cat: total_branches=166168218 would_drop=0 target_in_sppf=0
+  H13_diagnostic: would_merge_under_edge_kind=16428 (2.2%) — gate ≥ 60% to proceed to Step 2
+  merge_miss_extended_sole: cohort_origin=0 (0.0%) sppf_top=2352 (0.3%) lex_alt_idx=0 (0.0%) weight_src_idx=0 (0.0%) weight_rule_idx=3 (0.0%) lex_fork_stamp=0 (0.0%)
+  merge_miss_multi_participation: state=657502 (91.3%) node=706579 (98.2%) edge=708795 (98.5%) depth=0 (0.0%) cohort_origin=32030 (4.4%) sppf_top=693139 (96.3%) lex_alt_idx=405936 (56.4%) weight_src_idx=405936 (56.4%) weight_rule_idx=406802 (56.5%) lex_fork_stamp=0 (0.0%)
+  Lead1_gate: pred_edge_class_equivalent=0 (0.0%) — Stage A gate ≥ 40% to ship Lead #1 (incoming_edge → (pred, EdgeKind))
+  incoming_edge_stack_len_histogram (n=158586385, max=2190): 0=19673 (0.0%) 1=22689 (0.0%) 2-3=33268 (0.0%) 4-7=323916 (0.2%) 8-15=18664608 (11.8%) 16-31=26114856 (16.5%) 32-63=2721951 (1.7%) 64+=110685424 (69.8%)
+  recovery_deltas_len_histogram (n=158586385, max=0): 0=158586385 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  visited_dispatch_len_histogram (n=158586385, max=1480): 0=0 (0.0%) 1=6 (0.0%) 2-3=357 (0.0%) 4-7=398 (0.0%) 8-15=1935 (0.0%) 16-31=73275 (0.0%) 32-63=718809 (0.5%) 64+=157791605 (99.5%)
+  visited_recovery_len_histogram (n=158586385, max=0): 0=158586385 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  binder_scope_marks_len_histogram (n=158586385, max=0): 0=158586385 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  optional_scope_marks_len_histogram (n=158586385, max=0): 0=158586385 (100.0%) 1=0 (0.0%) 2-3=0 (0.0%) 4-7=0 (0.0%) 8-15=0 (0.0%) 16-31=0 (0.0%) 32-63=0 (0.0%) 64+=0 (0.0%)
+  merge_miss_pair_participation (axis i ∧ j both differ; denom = multi_diff_total = 719791):
+    (state, node) = 655179 (91.0%)
+    (state, edge) = 652222 (90.6%)
+    (state, cohort_origin) = 8945 (1.2%)
+    (state, sppf_top) = 647129 (89.9%)
+    (state, lex_alt_idx) = 399918 (55.6%)
+    (state, weight_src_idx) = 399918 (55.6%)
+    (state, weight_rule_idx) = 400666 (55.7%)
+    (node, edge) = 703516 (97.7%)
+    (node, cohort_origin) = 32030 (4.4%)
+    (node, sppf_top) = 687901 (95.6%)
+    (node, lex_alt_idx) = 397990 (55.3%)
+    (node, weight_src_idx) = 397990 (55.3%)
+    (node, weight_rule_idx) = 398808 (55.4%)
+    (edge, cohort_origin) = 32030 (4.4%)
+    (edge, sppf_top) = 693139 (96.3%)
+    (edge, lex_alt_idx) = 395277 (54.9%)
+    (edge, weight_src_idx) = 395277 (54.9%)
+    (edge, weight_rule_idx) = 396143 (55.0%)
+    (cohort_origin, sppf_top) = 24055 (3.3%)
+    (cohort_origin, lex_alt_idx) = 1946 (0.3%)
+    (cohort_origin, weight_src_idx) = 1946 (0.3%)
+    (cohort_origin, weight_rule_idx) = 2010 (0.3%)
+    (sppf_top, lex_alt_idx) = 395188 (54.9%)
+    (sppf_top, weight_src_idx) = 395188 (54.9%)
+    (sppf_top, weight_rule_idx) = 396045 (55.0%)
+    (lex_alt_idx, weight_src_idx) = 405936 (56.4%)
+    (lex_alt_idx, weight_rule_idx) = 405936 (56.4%)
+    (weight_src_idx, weight_rule_idx) = 405936 (56.4%)
+
+═══ DISPATCH-COHORT CACHE STATS ═══
+  registrations_total=100749075  inflight_collisions=98933608 (98.2%)  resolved_hits=1812467  failed_hits=0
+  resolved_transitions=2850  snapshot_appends=42737  failed_transitions=0  cache_entries=3000
+  cohort_cursors_emitted=28947298  cohort_cursors_graduated=2435299
+
+test test_left_assoc_chain_500 ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 1021.43s
+

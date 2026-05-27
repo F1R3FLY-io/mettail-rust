@@ -174,6 +174,18 @@ pub struct WalkerStats {
     pub mem_attr_visited_dispatch_total_entries_max: u64,
     pub mem_attr_recovery_deltas_unique_arcs_max: u64,
     pub mem_attr_sppf_symbol_terms_max: u64,
+    // Exp 16 round 3: SPPF auxiliary storage + per-cursor splice
+    // arenas + cohort-revive WorkerSnapshot Arc heap accounting.
+    pub mem_attr_sppf_text_arena_bytes_max: u64,
+    pub mem_attr_sppf_text_index_count_max: u64,
+    pub mem_attr_sppf_dedup_packing_children_bytes_max: u64,
+    pub mem_attr_sppf_dedup_symbol_count_max: u64,
+    pub mem_attr_sppf_dedup_terminal_count_max: u64,
+    pub mem_attr_sppf_collection_arena_total_entries_max: u64,
+    pub mem_attr_sppf_collection_arena_unique_arcs_max: u64,
+    pub mem_attr_lex_fork_path_total_entries_max: u64,
+    pub mem_attr_lex_fork_path_unique_arcs_max: u64,
+    pub mem_attr_binder_scope_marks_unique_arcs_max: u64,
 
     // ── Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26):
     //     Streaming SPPF reclamation-window measurement ──────────────
@@ -742,6 +754,73 @@ impl fmt::Display for WalkerStats {
                 mb(sppf_terms_b),
                 pct(sppf_terms_b),
             )?;
+            // Exp 16 round 3: extra structures previously uncounted.
+            let text_arena_b = self.mem_attr_sppf_text_arena_bytes_max;
+            let dedup_packing_keys_b =
+                self.mem_attr_sppf_dedup_packing_children_bytes_max;
+            const SZ_SPLICE_SLOT_BASE: u64 = 24;
+            const SZ_LEX_FORK_STAMP: u64 = 16;
+            let splice_b =
+                self.mem_attr_sppf_collection_arena_total_entries_max * 4
+                    + self.mem_attr_sppf_collection_arena_unique_arcs_max
+                        * SZ_SPLICE_SLOT_BASE;
+            let lex_fork_b =
+                self.mem_attr_lex_fork_path_total_entries_max * SZ_LEX_FORK_STAMP;
+            writeln!(
+                f,
+                "  Exp 16 round 3 — additional structures (NOT in 'total' above):",
+            )?;
+            writeln!(
+                f,
+                "    sppf.text_arena                = {} B = {:.2} MB",
+                text_arena_b,
+                mb(text_arena_b),
+            )?;
+            writeln!(
+                f,
+                "    sppf.text_index                = {} entries × 8 B = {:.2} MB",
+                self.mem_attr_sppf_text_index_count_max,
+                mb(self.mem_attr_sppf_text_index_count_max * 8),
+            )?;
+            writeln!(
+                f,
+                "    sppf.dedup_packing keys (sum Vec<SppfId> child bytes) = {} B = {:.2} MB",
+                dedup_packing_keys_b,
+                mb(dedup_packing_keys_b),
+            )?;
+            writeln!(
+                f,
+                "    sppf.dedup_symbol entries      = {} × ~16 B = {:.2} MB",
+                self.mem_attr_sppf_dedup_symbol_count_max,
+                mb(self.mem_attr_sppf_dedup_symbol_count_max * 16),
+            )?;
+            writeln!(
+                f,
+                "    sppf.dedup_terminal entries    = {} × ~32 B = {:.2} MB",
+                self.mem_attr_sppf_dedup_terminal_count_max,
+                mb(self.mem_attr_sppf_dedup_terminal_count_max * 32),
+            )?;
+            writeln!(
+                f,
+                "    sppf_collection_arena (unique Arcs / total entries) = {} / {}; entries × 4 B + arcs × {} B = {:.2} MB",
+                self.mem_attr_sppf_collection_arena_unique_arcs_max,
+                self.mem_attr_sppf_collection_arena_total_entries_max,
+                SZ_SPLICE_SLOT_BASE,
+                mb(splice_b),
+            )?;
+            writeln!(
+                f,
+                "    lex_fork_path (unique Arcs / total entries) = {} / {}; entries × {} B = {:.2} MB",
+                self.mem_attr_lex_fork_path_unique_arcs_max,
+                self.mem_attr_lex_fork_path_total_entries_max,
+                SZ_LEX_FORK_STAMP,
+                mb(lex_fork_b),
+            )?;
+            writeln!(
+                f,
+                "    binder_scope_marks (unique Arcs) = {}",
+                self.mem_attr_binder_scope_marks_unique_arcs_max,
+            )?;
         }
         // Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26).
         if self.sppf_reclaim_window_samples > 0 {
@@ -1209,6 +1288,17 @@ mod tests {
             mem_attr_visited_dispatch_total_entries_max: 0,
             mem_attr_recovery_deltas_unique_arcs_max: 0,
             mem_attr_sppf_symbol_terms_max: 0,
+            // Exp 16 round 3 (2026-05-26).
+            mem_attr_sppf_text_arena_bytes_max: 0,
+            mem_attr_sppf_text_index_count_max: 0,
+            mem_attr_sppf_dedup_packing_children_bytes_max: 0,
+            mem_attr_sppf_dedup_symbol_count_max: 0,
+            mem_attr_sppf_dedup_terminal_count_max: 0,
+            mem_attr_sppf_collection_arena_total_entries_max: 0,
+            mem_attr_sppf_collection_arena_unique_arcs_max: 0,
+            mem_attr_lex_fork_path_total_entries_max: 0,
+            mem_attr_lex_fork_path_unique_arcs_max: 0,
+            mem_attr_binder_scope_marks_unique_arcs_max: 0,
             // Phase F.13 chain_10000 Plan D E4 Substage 1.a (2026-05-26).
             sppf_reclaim_window_samples: 0,
             sppf_reclaim_cache_pinned_samples: 0,

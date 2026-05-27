@@ -199,6 +199,47 @@ fn test_left_assoc_chain_10000() {
     assert!(result.is_ok(), "10000 left-assoc ops should parse: {:?}", result.err());
 }
 
+// Phase F.13 chain_10000 Exp 16 round 3 (2026-05-26): scaling probes
+// for walker memory attribution. left_assoc_chain at N=2000 and 5000
+// should fit in 24 GB by linear/quadratic projection from chain_1000's
+// 15 MB peak. Used with --features walker-stats to plot the actual
+// scaling exponent of walker live state.
+#[test]
+#[ignore = "Exp 16 round 3 scaling probe"]
+fn test_left_assoc_chain_500() {
+    mettail_runtime::clear_var_cache();
+    let input = left_assoc_chain(500);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "500 left-assoc ops should parse: {:?}", result.err());
+}
+
+#[test]
+#[ignore = "Exp 16 round 3 scaling probe"]
+fn test_left_assoc_chain_1000() {
+    mettail_runtime::clear_var_cache();
+    let input = left_assoc_chain(1000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "1000 left-assoc ops should parse: {:?}", result.err());
+}
+
+#[test]
+#[ignore = "Exp 16 round 3 scaling probe: run with --features walker-stats PRATTAIL_WALKER_STATS=1 to capture per-N attribution"]
+fn test_left_assoc_chain_2000() {
+    mettail_runtime::clear_var_cache();
+    let input = left_assoc_chain(2_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "2000 left-assoc ops should parse: {:?}", result.err());
+}
+
+#[test]
+#[ignore = "Exp 16 round 3 scaling probe: run with --features walker-stats PRATTAIL_WALKER_STATS=1 to capture per-N attribution"]
+fn test_left_assoc_chain_5000() {
+    mettail_runtime::clear_var_cache();
+    let input = left_assoc_chain(5_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "5000 left-assoc ops should parse: {:?}", result.err());
+}
+
 // ── Tests: Deep unary prefix chains ──
 
 #[test]

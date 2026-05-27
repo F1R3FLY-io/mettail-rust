@@ -8218,6 +8218,92 @@ where
         if sppf_terms > self.stats.mem_attr_sppf_symbol_terms_max {
             self.stats.mem_attr_sppf_symbol_terms_max = sppf_terms;
         }
+        // Exp 16 round 3: SPPF auxiliary storage + per-cursor splice +
+        // lex_fork_path Arc dedup.
+        let (text_b, text_idx, dedup_pack_b, dedup_sym, dedup_term) =
+            self.sppf.dedup_table_sizes_diag();
+        if (text_b as u64) > self.stats.mem_attr_sppf_text_arena_bytes_max {
+            self.stats.mem_attr_sppf_text_arena_bytes_max = text_b as u64;
+        }
+        if (text_idx as u64) > self.stats.mem_attr_sppf_text_index_count_max {
+            self.stats.mem_attr_sppf_text_index_count_max = text_idx as u64;
+        }
+        if (dedup_pack_b as u64)
+            > self.stats.mem_attr_sppf_dedup_packing_children_bytes_max
+        {
+            self.stats.mem_attr_sppf_dedup_packing_children_bytes_max =
+                dedup_pack_b as u64;
+        }
+        if (dedup_sym as u64) > self.stats.mem_attr_sppf_dedup_symbol_count_max {
+            self.stats.mem_attr_sppf_dedup_symbol_count_max = dedup_sym as u64;
+        }
+        if (dedup_term as u64)
+            > self.stats.mem_attr_sppf_dedup_terminal_count_max
+        {
+            self.stats.mem_attr_sppf_dedup_terminal_count_max = dedup_term as u64;
+        }
+        // sppf_collection_arena per-cursor dedup. Arc<Vec<Vec<SppfId>>>.
+        let mut splice_arcs: std::collections::HashSet<*const _> =
+            std::collections::HashSet::new();
+        let mut splice_total_entries: u64 = 0;
+        let mut lex_arcs: std::collections::HashSet<*const _> =
+            std::collections::HashSet::new();
+        let mut lex_total_entries: u64 = 0;
+        let mut binder_arcs: std::collections::HashSet<*const _> =
+            std::collections::HashSet::new();
+        for frame in &self.branch_cursors {
+            if let crate::cohort_lazy::Frame::Concrete(c) = frame {
+                let sp_ptr = std::sync::Arc::as_ptr(&c.sppf_collection_arena)
+                    as *const _;
+                if splice_arcs.insert(sp_ptr) {
+                    splice_total_entries = splice_total_entries.saturating_add(
+                        c.sppf_collection_arena
+                            .iter()
+                            .map(|inner| inner.len() as u64)
+                            .sum(),
+                    );
+                }
+                let lf_ptr =
+                    std::sync::Arc::as_ptr(&c.lex_fork_path) as *const _;
+                if lex_arcs.insert(lf_ptr) {
+                    lex_total_entries = lex_total_entries
+                        .saturating_add(c.lex_fork_path.len() as u64);
+                }
+                // binder_scope_marks is Vec, not Arc — count by .as_ptr()
+                let bs_ptr = c.binder_scope_marks.as_ptr() as *const _;
+                binder_arcs.insert(bs_ptr);
+            }
+        }
+        if (splice_arcs.len() as u64)
+            > self.stats.mem_attr_sppf_collection_arena_unique_arcs_max
+        {
+            self.stats.mem_attr_sppf_collection_arena_unique_arcs_max =
+                splice_arcs.len() as u64;
+        }
+        if splice_total_entries
+            > self.stats.mem_attr_sppf_collection_arena_total_entries_max
+        {
+            self.stats.mem_attr_sppf_collection_arena_total_entries_max =
+                splice_total_entries;
+        }
+        if (lex_arcs.len() as u64)
+            > self.stats.mem_attr_lex_fork_path_unique_arcs_max
+        {
+            self.stats.mem_attr_lex_fork_path_unique_arcs_max =
+                lex_arcs.len() as u64;
+        }
+        if lex_total_entries
+            > self.stats.mem_attr_lex_fork_path_total_entries_max
+        {
+            self.stats.mem_attr_lex_fork_path_total_entries_max =
+                lex_total_entries;
+        }
+        if (binder_arcs.len() as u64)
+            > self.stats.mem_attr_binder_scope_marks_unique_arcs_max
+        {
+            self.stats.mem_attr_binder_scope_marks_unique_arcs_max =
+                binder_arcs.len() as u64;
+        }
     }
 
     #[cfg(feature = "walker-stats")]
