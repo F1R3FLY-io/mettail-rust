@@ -478,6 +478,43 @@ pub struct WalkerStats {
     /// threshold, the L2a broadcast targets are wrong and re-targeting
     /// is required.
     pub push_kind_histogram: [u64; 11],
+
+    /// Phase F.13 chain_10000 COQ-S0 (2026-05-27): cumulative count of
+    /// distinct `DispatchKey` values observed across all
+    /// `DispatchCohortCache::register` calls during the parse. The
+    /// DispatchKey includes `pos: u32` as a discriminator.
+    ///
+    /// Sampled via FxHashSet at every register call site in
+    /// `wpda_walker.rs::allocate_fork_push_child`. The set's memory
+    /// cost is bounded by the distinct count (e.g., ~500 entries at
+    /// chain_500) so this is cheap.
+    pub cohort_origin_dispatch_keys_seen:
+        rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+
+    /// Phase F.13 chain_10000 COQ-S0 (2026-05-27): cumulative count of
+    /// distinct `EquivKey` values observed (= DispatchKey minus pos).
+    /// The proposed COQ quotient drops `pos` from ConfigKey equality;
+    /// this set measures the empirical collision rate.
+    ///
+    /// Gate: `len(dispatch_keys_seen) / len(equiv_keys_seen) ≥ 20` at
+    /// chain_500 confirms the pos axis is the dominant discriminator
+    /// and COQ would collapse the cohort merge factor by ≥ 20×.
+    pub cohort_origin_equiv_keys_seen: rustc_hash::FxHashSet<(u16, u8)>,
+
+    /// Phase F.13 chain_10000 COQ-S0 (2026-05-27): peak per-step
+    /// distinct DispatchKey count across branch_cursors' cohort_origin.
+    /// Sampled at the start of each step_fanout call by counting unique
+    /// cohort_origins in the current branch_cursors set.
+    ///
+    /// If median per-step distinct count ≥ 5, the cohort merge fails
+    /// to coalesce across chain depths (COQ target confirmed).
+    pub cohort_origin_distinct_per_step_max: u64,
+    /// Phase F.13 chain_10000 COQ-S0 (2026-05-27): running sum of
+    /// per-step distinct DispatchKey counts (for computing average).
+    pub cohort_origin_distinct_per_step_sum: u64,
+    /// Phase F.13 chain_10000 COQ-S0 (2026-05-27): per-step samples
+    /// counter.
+    pub cohort_origin_per_step_samples: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -1938,6 +1975,50 @@ impl fmt::Display for WalkerStats {
                 )?;
             }
         }
+        // Phase F.13 chain_10000 COQ-S0 (2026-05-27): cohort_origin
+        // distinct count vs EquivKey collision rate.
+        if !self.cohort_origin_dispatch_keys_seen.is_empty() {
+            let dispatch_distinct =
+                self.cohort_origin_dispatch_keys_seen.len() as u64;
+            let equiv_distinct = self.cohort_origin_equiv_keys_seen.len() as u64;
+            let collision_ratio = if equiv_distinct == 0 {
+                0.0
+            } else {
+                (dispatch_distinct as f64) / (equiv_distinct as f64)
+            };
+            let avg_per_step =
+                if self.cohort_origin_per_step_samples == 0 {
+                    0.0
+                } else {
+                    (self.cohort_origin_distinct_per_step_sum as f64)
+                        / (self.cohort_origin_per_step_samples as f64)
+                };
+            writeln!(
+                f,
+                "  cohort_origin_equivkey (COQ-S0 prep):",
+            )?;
+            writeln!(
+                f,
+                "    distinct_dispatch_keys={}  distinct_equiv_keys={}  collision_ratio={:.1}x",
+                dispatch_distinct, equiv_distinct, collision_ratio,
+            )?;
+            writeln!(
+                f,
+                "    per_step_distinct: max={} avg={:.1} samples={}",
+                self.cohort_origin_distinct_per_step_max,
+                avg_per_step,
+                self.cohort_origin_per_step_samples,
+            )?;
+            writeln!(
+                f,
+                "    gate (collision_ratio ≥ 20x AND per_step_avg ≥ 5): {}",
+                if collision_ratio >= 20.0 && avg_per_step >= 5.0 {
+                    "PASS — COQ justified"
+                } else {
+                    "FAIL — re-target"
+                },
+            )?;
+        }
         // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27):
         // Push EdgeKind histogram — residual Push apply_action_to_cursor
         // calls (those NOT covered by Substage 5's broadcast).
@@ -2323,6 +2404,12 @@ mod tests {
             apply_action_variant_histogram: [0; 19],
             // Phase F.13 chain_10000 Lazy redesign L2a prep (2026-05-27).
             push_kind_histogram: [0; 11],
+            // Phase F.13 chain_10000 COQ-S0 (2026-05-27).
+            cohort_origin_dispatch_keys_seen: rustc_hash::FxHashSet::default(),
+            cohort_origin_equiv_keys_seen: rustc_hash::FxHashSet::default(),
+            cohort_origin_distinct_per_step_max: 0,
+            cohort_origin_distinct_per_step_sum: 0,
+            cohort_origin_per_step_samples: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

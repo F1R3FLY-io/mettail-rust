@@ -7843,6 +7843,36 @@ where
         {
             self.stats.tomita_key_projection.begin_step();
         }
+        // COQ-S0 (2026-05-27): count distinct cohort_origin DispatchKeys
+        // in branch_cursors at step entry. Confirms the per-step cohort
+        // grows linearly in chain depth (the super-linear root cause).
+        #[cfg(feature = "walker-stats")]
+        {
+            let mut step_distinct: rustc_hash::FxHashSet<
+                crate::dispatch_cohort::DispatchKey,
+            > = rustc_hash::FxHashSet::default();
+            for frame in &self.branch_cursors {
+                let cohort_origin = match frame {
+                    crate::cohort_lazy::Frame::Concrete(c) => &c.cohort_origin,
+                    crate::cohort_lazy::Frame::Cohort(cf) => &cf.shell.cohort_origin,
+                };
+                if let Some(key) = cohort_origin {
+                    step_distinct.insert(key.clone());
+                }
+            }
+            let count = step_distinct.len() as u64;
+            if count > self.stats.cohort_origin_distinct_per_step_max {
+                self.stats.cohort_origin_distinct_per_step_max = count;
+            }
+            self.stats.cohort_origin_distinct_per_step_sum = self
+                .stats
+                .cohort_origin_distinct_per_step_sum
+                .saturating_add(count);
+            self.stats.cohort_origin_per_step_samples = self
+                .stats
+                .cohort_origin_per_step_samples
+                .saturating_add(1);
+        }
         // Phase F.13 Stage L3.1 (2026-05-25): containers now hold Frame<W>
         // (Concrete-only before L3.4 enables cohort variants).
         let mut new_cursors: Vec<crate::cohort_lazy::Frame<W>> =
@@ -11654,6 +11684,18 @@ where
             let s = *source_src_idx;
             let b = *inner_cur_bp;
             let key = crate::dispatch_cohort::DispatchKey::new(pos_after, s, b);
+            // COQ-S0 (2026-05-27): track distinct DispatchKey vs
+            // EquivKey to confirm the cohort_origin pos discriminator
+            // is the super-linear scaling root cause.
+            #[cfg(feature = "walker-stats")]
+            {
+                self.stats
+                    .cohort_origin_dispatch_keys_seen
+                    .insert(key.clone());
+                self.stats
+                    .cohort_origin_equiv_keys_seen
+                    .insert((s, b));
+            }
             // Stage 1.5.3 (2026-05-21): pass worker's pre-dispatch
             // weight so the cache can recover the per-packing weight
             // delta at revive time (tropical primary subtraction).
