@@ -199,6 +199,35 @@ fn test_left_assoc_chain_10000() {
     assert!(result.is_ok(), "10000 left-assoc ops should parse: {:?}", result.err());
 }
 
+// Phase F.13 chain_10000 plan-amend (2026-05-26): LEFT-associative
+// Welch-panel chains at N=50/100/200. The amended substage gate per
+// `~/.claude/plans/replicated-conjuring-turtle.md` requires LEFT-assoc
+// regression coverage at these sizes — prior REJECTs only ran the
+// RIGHT-assoc panel which does not exercise the iterative path.
+#[test]
+fn test_left_assoc_chain_50() {
+    mettail_runtime::clear_var_cache();
+    let input = left_assoc_chain(50);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "50 left-assoc ops should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_left_assoc_chain_100() {
+    mettail_runtime::clear_var_cache();
+    let input = left_assoc_chain(100);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "100 left-assoc ops should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_left_assoc_chain_200() {
+    mettail_runtime::clear_var_cache();
+    let input = left_assoc_chain(200);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "200 left-assoc ops should parse: {:?}", result.err());
+}
+
 // Phase F.13 chain_10000 Exp 16 round 3 (2026-05-26): scaling probes
 // for walker memory attribution. left_assoc_chain at N=2000 and 5000
 // should fit in 24 GB by linear/quadratic projection from chain_1000's

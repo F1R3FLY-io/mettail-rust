@@ -10799,13 +10799,31 @@ where
             cursor.node
         };
         let new_id = self.gss.get_or_create_node(WpdaGssNode { pos, symbol: sym });
+        // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
+        // clone the EdgeKind before move so the projection observer can
+        // use it. Cost gated by `walker-stats` feature.
+        #[cfg(feature = "walker-stats")]
+        let kind_for_projection = kind.clone();
         let edge_id = self.gss.add_edge_kind(new_id, predecessor, w, kind);
         cursor.node = new_id;
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut incoming_edge_stack).push.
+        let parent_stack_id = cursor.incoming_edge_stack_id;
         cursor.incoming_edge_stack_id = self
             .incoming_edge_stack_arena
-            .intern_push(cursor.incoming_edge_stack_id, edge_id);
+            .intern_push(parent_stack_id, edge_id);
+        // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
+        // mirror the push into the EdgeKind projection counter so we
+        // can compute the counterfactual dedup ratio under Intervention A.
+        #[cfg(feature = "walker-stats")]
+        {
+            self.stats.edge_kind_projection.observe_push(
+                parent_stack_id,
+                cursor.incoming_edge_stack_id,
+                kind_for_projection,
+                edge_id,
+            );
+        }
         if self.deterministic {
             self.top_node = Some(new_id);
         }

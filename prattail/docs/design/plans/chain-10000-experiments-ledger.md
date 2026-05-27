@@ -786,3 +786,64 @@ None of these is in scope for the current session given the Welch p<0.05 gate ha
 **Bench data**:
 - `prattail/docs/design/plans/bench-data/baseline_left_assoc_chain_{50,100}.json`
 - `prattail/docs/design/plans/bench-data/exp17_la{50,100}.json`
+
+---
+
+### Exp 18 Substage 0 (2026-05-26) — EdgeKind projected dedup-rate gate (Plan-amend Intervention A)
+
+**Plan ref**: `~/.claude/plans/replicated-conjuring-turtle.md` Substage 0.
+**pgmcp experiment**: id=1, slug `exp-18-substage-0-edgekind-projected-dedup-rate-gate`.
+**Hypothesis**: On left_assoc_chain_500, the projected `(parent, EdgeKind)` dedup ratio is ≥ 100× the current `(parent, GssEdgeId)` ratio (per-arena node ratio). Gate FAIL → Intervention A (load-bearing) is wrong → SKIP the entire amendment plan.
+
+**Implementation**: `WalkerStats::edge_kind_projection: EdgeKindProjection` (new struct, walker-stats feature only). At every `cursor_gss_push_with_kind` site (the single funnel for all GSS pushes, since `cursor_gss_push_auto` delegates), `observe_push` mirrors the actual `intern_push(parent_stack_id, edge_id) -> new_stack_id` into a shadow arena keyed by `(projected_parent, EdgeKind, divergent_disambiguator)` where divergent_disambiguator = `None` for convergent EdgeKind variants (CategoryEntryRoot, CrossCatProjection, PrefixRuleEntry, InfixContinuation, LexAltLiteral, OptionalGroupAt) and `Some(edge_id)` for divergent variants (Generic, CollectionElement, GroupingMarker, MixfixMarker, ReturnFrame) — preserving Stage 3.12.6 wrong-pop defense. Per-cursor `projected_stack_id` is NOT stored; instead a sidecar `Vec<StackId>` maps actual `StackId.0` → projected `StackId`, so the next push's projected parent resolves via lookup.
+
+**Code paths touched**:
+- `prattail/src/walker_stats.rs` — new `EdgeKindProjection` struct (~120 LOC), field on `WalkerStats`, Display block (~10 LOC), tests already passing.
+- `prattail/src/wpda_walker.rs` — single push site in `cursor_gss_push_with_kind` (~10 LOC under `#[cfg(feature = "walker-stats")]`).
+- `languages/tests/trampoline_tests.rs` — added `test_left_assoc_chain_50/100/200` (non-ignored, for Welch panel).
+
+**Verification**:
+- `cargo build --release -p mettail-prattail` ✓ clean.
+- `cargo build --release -p mettail-prattail --features walker-stats` ✓ clean.
+- `cargo test --release -p mettail-prattail --lib` → **4134/0** preserved.
+- `./target/release/deps/trampoline_tests-...` (no walker-stats) → **15/0/6 ignored** preserved.
+- Smoke test: `test_right_assoc_chain_50` with `PRATTAIL_WALKER_STATS=1` emits ratios as expected (no panic, deterministic output).
+
+**Gate measurement** (LEFT-assoc chain_50/100/200):
+
+| Workload | Wall | observe_push_calls | projected_nodes | actual_nodes_seen | **dedup_ratio** | hit_ratio |
+|----------|------|-------------------:|-----------------|-------------------|----------------:|-----------|
+| left_assoc_chain_50  | 1.96 s | 1,817,087 | 1,420,859 | 1,419,655 | **1.0008×** | 0.2181 |
+| left_assoc_chain_100 | 12.69 s | 8,558,273 | 7,237,751 | 7,236,170 | **1.0002×** | 0.1543 |
+| left_assoc_chain_200 | 86.08 s | 37,040,417 | 32,221,922 | 32,219,362 | **1.0001×** | 0.1301 |
+
+Cross-check on RIGHT-assoc:
+
+| Workload | Wall | observe_push_calls | projected_nodes | actual_nodes_seen | dedup_ratio | hit_ratio |
+|----------|------|-------------------:|-----------------|-------------------|------------:|-----------|
+| right_assoc_chain_50   | 0.03 s | 18,519  | 1,728  | 1,776  | 1.03× | 0.9067 |
+| right_assoc_chain_1000 | 3.39 s | 374,769 | 34,978 | 35,976 | 1.03× | 0.9067 |
+
+`left_assoc_chain_500` attempt: OOM-killed at 20 GB after 3:32 min CPU (vs baseline 21.2 GB at 17 min). At ratio = 1.00× the projection arena grows alongside the actual arena (~225 M entries × ~42 B each ≈ 9.5 GB additional instrumentation cost). Killed second attempt at 32 GB cap after 12.5 GB by 1:37 min — extrapolated peak well beyond cap given near-zero projection dedup. **Smaller-N data already pins the ratio to within 0.001 of 1.000 across chain_50/100/200; chain_500 would extrapolate identically.**
+
+**Gate verdict**: **FAILED**. Measured projected dedup ratio ≈ **1.0003× across N = {50, 100, 200}**; gate required ≥ 100×.
+
+**Falsifies prediction**: the plan's expected ≥ 450,000× ratio for LEFT-assoc rested on the assumption that cursors at the same chain depth share `InfixContinuation { cat, rule, l_bp }` history. Empirically they do NOT — cohort branching produces distinct EdgeKind sequences per cursor, so each cursor's `projected_parent` diverges. The actual `edge_stack_arena` has ~225 M nodes for ~29 M cohort cursors not because GssEdgeId is over-distinguishing semantically equivalent edges, but because the cursor *histories themselves* are genuinely distinct.
+
+**pgmcp verdict**: hypothesis_id=1 REJECTED (Welch t-test, p=0.118 against H₀ μ_treatment ≤ μ_control + 0.5σ; CI=[-0.0006, 0.0013]; effect = 0.0003 in absolute terms vs ≥ 100× required). Recorded as experiment_id=1, decision id=1, observation id=3 — see `experiment_decide` output in session log. Artifact id=1 captures raw counters.
+
+**Consequence per plan**:
+> "Pre-gate prediction: InfixContinuation { cat_src, rule_idx, l_bp } identical across every chain iteration on left-assoc → expected ratio > 1000×. If FAILS, Intervention A is wrong (user's framing wrong); SKIP entire amendment."
+
+**Substages 1-4 SKIPPED**. Intervention A (LOAD-BEARING), Intervention B (graduate ObsInvariant, conditional on A's per-arena reduction), Intervention C (visited_dispatch chain-arena, conditional on B's residual) all assumed Intervention A would collapse the edge_stack_arena dominator. With A falsified, the cascade does not begin.
+
+**What this rules out / re-orients**:
+- The amendment plan's framing — "we have a lazy WPDA substrate but bypass it at Fork-arm and cohort-revive sites" — is empirically NOT the issue here. The lazy substrate IS being used; the cursor histories ARE genuinely distinct.
+- The chain_10000 OOM ceiling is not a "coarse keying" problem at the `edge_stack_arena` layer. The 225 M nodes for 29 M cursors reflect genuine semantic distinctness driven by cohort branching upstream.
+- The architectural fix path that REMAINS viable per the laziness Plan agent (`Exp 16 round 3` notes): reduce cohort branching at its source (Tomita per-arc GSS-cursor merging, Exp 14 SKIPPED; CPS / trampolined walker rewrite, Exp 15 SKIPPED). Both are multi-week architectural rewrites.
+
+**Instrumentation retained**: `walker_stats::EdgeKindProjection` + `cursor_gss_push_with_kind` integration kept in the tree as a permanent diagnostic. Zero cost when `walker-stats` feature is off (the field exists on `WalkerStats` as empty Default, but `observe_push` is never called outside the feature). Future EdgeKind-related dedup hypotheses can re-use the apparatus.
+
+**Bench data**:
+- `prattail/docs/design/plans/bench-data/exp18-substage0-edgekind-projection.txt` (raw counters)
+- pgmcp artifact id=1, slug `exp-18-substage-0-edgekind-projected-dedup-rate-gate`

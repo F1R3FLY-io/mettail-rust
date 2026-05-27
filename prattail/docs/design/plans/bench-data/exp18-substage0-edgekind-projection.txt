@@ -1,0 +1,148 @@
+Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26)
+EdgeKind projected dedup-rate gate measurement
+================================================================
+
+Tip:    c2aba6c + uncommitted Substage 0 instrumentation
+Source: prattail/src/walker_stats.rs (EdgeKindProjection struct)
+        prattail/src/wpda_walker.rs (cursor_gss_push_with_kind instrumentation)
+Binary: target/release/deps/trampoline_tests-8867deef65ac2747
+Cmd:    cargo test --release -p mettail-languages --test trampoline_tests \
+            --features mettail-prattail/walker-stats --no-run
+
+Workload: left_assoc_chain(N) for N in {50, 100, 200, 500} and right_assoc_chain(N) cross-check
+Env:      PRATTAIL_WALKER_STATS=1
+Host:     AMD Ryzen Threadripper PRO 5975WX, 125 GB RAM
+Measurement: deterministic structural — 1 run per workload (no replicate variance)
+pgmcp:    experiment_id=1 slug=exp-18-substage-0-edgekind-projected-dedup-rate-gate
+          hypothesis_id=1 verdict=rejected
+          artifact_id=1 (raw counters)
+          observation_id=3 / decision_id=1 (Welch t-test verdict)
+
+================================================================
+LEFT-ASSOC (gate workload)
+================================================================
+
+=== left_assoc_chain_50 ===
+wall = 1.96 s
+  edge_kind_projection (Intervention A counterfactual):
+    observe_push_calls=1,817,087
+    projected_nodes=1,420,859
+    actual_nodes_seen=1,419,655
+    dedup_ratio=1.0008x
+    hit_ratio=0.2181
+
+=== left_assoc_chain_100 ===
+wall = 12.69 s
+  edge_kind_projection (Intervention A counterfactual):
+    observe_push_calls=8,558,273
+    projected_nodes=7,237,751
+    actual_nodes_seen=7,236,170
+    dedup_ratio=1.0002x
+    hit_ratio=0.1543
+
+=== left_assoc_chain_200 ===
+wall = 86.08 s
+  edge_kind_projection (Intervention A counterfactual):
+    observe_push_calls=37,040,417
+    projected_nodes=32,221,922
+    actual_nodes_seen=32,219,362
+    dedup_ratio=1.0001x
+    hit_ratio=0.1301
+
+=== left_assoc_chain_500 ===
+ATTEMPT 1 — systemd-run --user --scope -p MemoryMax=20G
+  OOM-killed at 20 GB after 3:32 min CPU.
+  systemd journal: run-p3705978-i121114833.scope: Consumed 3min 31.293s CPU
+                  time over 3min 32.588s wall clock time, 20G memory peak.
+
+ATTEMPT 2 — systemd-run --user --scope -p MemoryMax=32G
+  Manually killed after RSS reached 12.5 GB at 1:37 min, growing fast.
+  Extrapolated peak well beyond 32 GB cap given projection ratio ≈ 1.0x
+  causes projection_dedup map to grow alongside the actual arena
+  (estimated ~225 M entries × ~42 B each ≈ 9.5 GB additional cost).
+
+NOTE: chain_50/100/200 data already pins the ratio to within 0.001 of
+1.000; chain_500 would extrapolate identically. No need to wait for it.
+
+================================================================
+RIGHT-ASSOC (cross-check)
+================================================================
+
+=== right_assoc_chain_50 ===
+wall = 0.03 s
+  edge_kind_projection:
+    observe_push_calls=18,519
+    projected_nodes=1,728
+    actual_nodes_seen=1,776
+    dedup_ratio=1.03x
+    hit_ratio=0.9067
+
+=== right_assoc_chain_1000 ===
+wall = 3.39 s
+  edge_kind_projection:
+    observe_push_calls=374,769
+    projected_nodes=34,978
+    actual_nodes_seen=35,976
+    dedup_ratio=1.03x
+    hit_ratio=0.9067
+
+================================================================
+GATE
+================================================================
+
+  Plan threshold: dedup_ratio >= 100x on left_assoc_chain_500.
+  Measured:       dedup_ratio ≈ 1.0003x (LEFT-assoc, N in {50, 100, 200}).
+  Verdict:        FAILED — three orders of magnitude below the gate.
+
+================================================================
+INTERPRETATION
+================================================================
+
+1. The actual edge_stack_arena ALREADY dedups about as well as a coarse
+   EdgeKind keying would. There is no per-arena structural reduction
+   available at the (parent, EdgeKind) granularity.
+
+2. The plan's prediction of 450,000x ratio assumed cursors at the same
+   chain depth would share an InfixContinuation history. Empirically
+   they do NOT — cohort branching produces distinct EdgeKind sequences
+   per cursor, so the projected_parent diverges even when the immediate
+   kind matches.
+
+3. The 225 M actual nodes for 29 M cursors observation (Exp 16 r3) is
+   therefore NOT caused by GssEdgeId over-distinguishing semantically
+   equivalent edges. It is caused by genuinely distinct cursor histories.
+
+4. Per-call hit_ratio decreases monotonically with chain size on LEFT-
+   assoc (0.22 → 0.15 → 0.13). Per-arena ratio stays at 1.00x because
+   both arenas grow at the same rate.
+
+5. RIGHT-assoc shows a small structural win (1.03x): a few projected
+   nodes consolidate due to repeated exponentiation rules. Not
+   significant.
+
+================================================================
+PER-PLAN CONSEQUENCE
+================================================================
+
+Plan ref: ~/.claude/plans/replicated-conjuring-turtle.md Substage 0:
+  "Pre-gate prediction: ... expected ratio > 1000x. If FAILS,
+   Intervention A is wrong (user's framing wrong); SKIP entire
+   amendment."
+
+  Substage 0: COMPLETE (gate measured).
+  Substage 1 (Intervention A — LOAD-BEARING): SKIPPED.
+  Substage 2 (Intervention B): SKIPPED (depended on A).
+  Substage 3 (Intervention C): SKIPPED (conditional on B).
+  Substage 4 (drain decomposition cleanup): SKIPPED.
+
+================================================================
+RETAINED ARTIFACTS
+================================================================
+
+  prattail/src/walker_stats.rs:    EdgeKindProjection struct (+ tests)
+  prattail/src/wpda_walker.rs:     observe_push call at cursor_gss_push_with_kind
+  languages/tests/trampoline_tests.rs: test_left_assoc_chain_50/100/200
+
+  Instrumentation is gated by #[cfg(feature = "walker-stats")];
+  zero cost when feature is off. Retained as permanent diagnostic
+  apparatus for future EdgeKind-related dedup hypotheses.

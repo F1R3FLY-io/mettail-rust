@@ -42,6 +42,8 @@
 
 use std::fmt;
 
+use rustc_hash::FxHashMap;
+
 /// Walker statistics — 19 u64 counters tracking invocation count,
 /// cursor proliferation, merge effectiveness, lifecycle, and Fork
 /// composition.
@@ -392,6 +394,156 @@ pub struct WalkerStats {
     pub binder_scope_names_len_histogram: [u64; 8],
     pub binder_scope_names_len_max: u64,
     pub binder_scope_names_len_samples: u64,
+
+    /// Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
+    /// EdgeKind coarse-dedup projection. Counterfactual measurement of
+    /// what `EdgeStackArena` would look like under Intervention A's
+    /// keying scheme (`(parent, EdgeKind)` for convergent kinds;
+    /// `(parent, EdgeKind, GssEdgeId)` for divergent kinds). The gate
+    /// to ship Intervention A is `projected_dedup_rate() >= 100x` on
+    /// left_assoc_chain_500. Populated by walker push sites under the
+    /// `walker-stats` feature; zero-cost when disabled.
+    pub edge_kind_projection: EdgeKindProjection,
+}
+
+/// Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
+/// counterfactual projection of the `EdgeStackArena` under Intervention A's
+/// coarse `(parent, EdgeKind)` keying.
+///
+/// Used only with `--features walker-stats` + `PRATTAIL_WALKER_STATS=1`.
+/// When the feature is off, every field stays at `Default` (empty
+/// `Vec`/`FxHashMap`, zero counters) and `observe_push` is never called.
+/// Memory cost when idle: ~48 bytes (empty Vec + empty FxHashMap).
+///
+/// Projection algorithm: each call to `observe_push` mirrors the actual
+/// arena's `intern_push` against a shadow arena keyed by
+/// `(projected_parent, EdgeKind, divergent_disambiguator)`. The
+/// `projected_id_by_actual` sidecar maps each actual `StackId` to its
+/// counterpart in the shadow arena, so the next push from the same
+/// actual parent resolves the same projected parent. Divergent kinds
+/// (per `EdgeKind::is_convergent`) keep the `GssEdgeId` in the key to
+/// preserve Stage 3.12.6's wrong-pop defense; convergent kinds drop it
+/// (this is where the coarse-dedup wins materialize).
+#[derive(Default, Debug, Clone)]
+pub struct EdgeKindProjection {
+    /// Sidecar `projected_id_by_actual[actual_stack_id.0 as usize] =
+    /// projected_stack_id`. `STACK_ID_ROOT` (== `u32::MAX`) is treated
+    /// out-of-band — both projection root and actual root are the
+    /// shared sentinel.
+    pub projected_id_by_actual: Vec<crate::path_tree_arena::StackId>,
+    /// Shadow arena dedup map. Key = `(projected_parent, EdgeKind,
+    /// optional GssEdgeId)`. The third component is `Some(edge_id)` for
+    /// divergent kinds, `None` for convergent — matching what
+    /// Intervention A would key on.
+    pub projection_dedup: FxHashMap<
+        (
+            crate::path_tree_arena::StackId,
+            crate::gss::EdgeKind,
+            Option<crate::gss::GssEdgeId>,
+        ),
+        crate::path_tree_arena::StackId,
+    >,
+    /// Distinct projected nodes seen (== shadow arena node count).
+    pub projected_node_count: u32,
+    /// Max `actual_new_id.0 + 1` observed — proxies the actual arena's
+    /// node count so `projected_dedup_rate` is self-contained.
+    pub actual_node_count_seen: u32,
+    /// Total `observe_push` invocations (== total intern_push call
+    /// attempts on the actual edge arena while instrumentation was on).
+    pub observe_push_calls: u64,
+    /// `observe_push` outcomes where the projection dedup hit an
+    /// existing shadow entry. `projected_dedup_hit_ratio = hits /
+    /// observe_push_calls` is the per-call hit rate (independent of
+    /// the per-arena node ratio).
+    pub projection_dedup_hits: u64,
+}
+
+impl EdgeKindProjection {
+    /// Reset to empty (called from walker reset).
+    pub fn clear(&mut self) {
+        self.projected_id_by_actual.clear();
+        self.projection_dedup.clear();
+        self.projected_node_count = 0;
+        self.actual_node_count_seen = 0;
+        self.observe_push_calls = 0;
+        self.projection_dedup_hits = 0;
+    }
+
+    /// Record an actual `intern_push(actual_parent, edge_id) ->
+    /// actual_new_id` and mirror it through the shadow arena keyed by
+    /// `(projected_parent, kind, divergent_disambiguator)`. Returns
+    /// the projected `StackId` assigned (or hit) for this push.
+    pub fn observe_push(
+        &mut self,
+        actual_parent: crate::path_tree_arena::StackId,
+        actual_new_id: crate::path_tree_arena::StackId,
+        kind: crate::gss::EdgeKind,
+        edge_id: crate::gss::GssEdgeId,
+    ) -> crate::path_tree_arena::StackId {
+        use crate::path_tree_arena::{StackId, STACK_ID_ROOT};
+        self.observe_push_calls = self.observe_push_calls.saturating_add(1);
+        let projected_parent = if actual_parent == STACK_ID_ROOT {
+            STACK_ID_ROOT
+        } else {
+            let idx = actual_parent.0 as usize;
+            if idx < self.projected_id_by_actual.len() {
+                self.projected_id_by_actual[idx]
+            } else {
+                // Parent was never observed — instrumentation gap.
+                // Conservative fallback: treat as a fresh root chain.
+                STACK_ID_ROOT
+            }
+        };
+        let divergent_disambiguator = if kind.is_convergent() {
+            None
+        } else {
+            Some(edge_id)
+        };
+        let key = (projected_parent, kind, divergent_disambiguator);
+        let projected_new = if let Some(&existing) = self.projection_dedup.get(&key) {
+            self.projection_dedup_hits = self.projection_dedup_hits.saturating_add(1);
+            existing
+        } else {
+            let id = StackId(self.projected_node_count);
+            self.projection_dedup.insert(key, id);
+            self.projected_node_count = self.projected_node_count.saturating_add(1);
+            id
+        };
+        let new_id_u = actual_new_id.0;
+        if new_id_u != u32::MAX {
+            let need = (new_id_u as usize).saturating_add(1);
+            if self.projected_id_by_actual.len() < need {
+                self.projected_id_by_actual
+                    .resize(need, STACK_ID_ROOT);
+            }
+            self.projected_id_by_actual[new_id_u as usize] = projected_new;
+            if new_id_u.saturating_add(1) > self.actual_node_count_seen {
+                self.actual_node_count_seen = new_id_u.saturating_add(1);
+            }
+        }
+        projected_new
+    }
+
+    /// Compute the projected dedup ratio:
+    /// `actual_node_count_seen / projected_node_count`. Returns 0.0
+    /// when the projection has no nodes yet.
+    pub fn projected_dedup_rate(&self) -> f64 {
+        if self.projected_node_count == 0 {
+            0.0
+        } else {
+            (self.actual_node_count_seen as f64) / (self.projected_node_count as f64)
+        }
+    }
+
+    /// Per-call dedup hit ratio: fraction of `observe_push` calls that
+    /// hit an existing projected entry. 0.0 when no calls yet.
+    pub fn projected_dedup_hit_ratio(&self) -> f64 {
+        if self.observe_push_calls == 0 {
+            0.0
+        } else {
+            (self.projection_dedup_hits as f64) / (self.observe_push_calls as f64)
+        }
+    }
 }
 
 /// Phase F.13 chain_10000 Exp 10 Substage 0 (2026-05-26): wrapper
@@ -1151,6 +1303,21 @@ impl fmt::Display for WalkerStats {
                 }
             }
         }
+        // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
+        // EdgeKind projected dedup gate. Shows the counterfactual arena
+        // node count + ratio under Intervention A's keying scheme.
+        if self.edge_kind_projection.observe_push_calls > 0 {
+            writeln!(f, "  edge_kind_projection (Intervention A counterfactual):")?;
+            writeln!(
+                f,
+                "    observe_push_calls={} projected_nodes={} actual_nodes_seen={} dedup_ratio={:.2}x hit_ratio={:.4}",
+                self.edge_kind_projection.observe_push_calls,
+                self.edge_kind_projection.projected_node_count,
+                self.edge_kind_projection.actual_node_count_seen,
+                self.edge_kind_projection.projected_dedup_rate(),
+                self.edge_kind_projection.projected_dedup_hit_ratio(),
+            )?;
+        }
         Ok(())
     }
 }
@@ -1353,6 +1520,8 @@ mod tests {
             binder_scope_names_len_histogram: [0; 8],
             binder_scope_names_len_max: 0,
             binder_scope_names_len_samples: 0,
+            // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26).
+            edge_kind_projection: EdgeKindProjection::default(),
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
