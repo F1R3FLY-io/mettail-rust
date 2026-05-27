@@ -5492,7 +5492,7 @@ where
                             &symbol,
                             weight.clone(),
                         ) {
-                            Some((_root_sid, _acc_weight, chain_end)) => {
+                            Some((root_sid, acc_weight, chain_end)) => {
                                 crate::stats_inc!(
                                     self,
                                     chain_earley_succeeded_count
@@ -5506,10 +5506,36 @@ where
                                     chain_earley_atoms_absorbed_sum,
                                     atoms as u64
                                 );
-                                // H3 will replace cursor state with
-                                // (root_sid, acc_weight, chain_end).
-                                // Shell: ignore result; normal per-
-                                // iteration path runs.
+                                // Plan v6 H3 (2026-05-27, ATTEMPT 1):
+                                // replace cursor state with Earley
+                                // result. Risk: post-chain state
+                                // machine alignment.
+                                //
+                                // 1. Jump cursor.pos to chain_end.
+                                cursor.pos = chain_end;
+                                if self.deterministic {
+                                    self.pos = chain_end;
+                                }
+                                // 2. Push earley_root onto sppf_stack.
+                                cursor.sppf_stack_id = self
+                                    .sppf_stack_arena
+                                    .intern_push(
+                                        cursor.sppf_stack_id,
+                                        root_sid,
+                                    );
+                                // 3. Multiply weight by acc_weight.
+                                self.multiply_cursor_weight(
+                                    cursor, &acc_weight,
+                                );
+                                // 4. Set state to Unwinding (best-
+                                // guess post-chain state). If wrong,
+                                // gauntlet will catch.
+                                self.set_cursor_inner_state(
+                                    cursor,
+                                    crate::wpda_runtime::WpdaState::Unwinding,
+                                );
+                                // 5. Skip the rest of this arm.
+                                return self.cursor_resolution_check(cursor);
                             }
                             None => {
                                 crate::stats_inc!(
