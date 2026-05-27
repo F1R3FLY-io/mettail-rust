@@ -5430,96 +5430,92 @@ where
                     // additional chain element. Counters are scoped
                     // per parse and reset at WpdaWalker::reset.
                     crate::stats_inc!(self, chain_region_iterations);
+                }
 
-                    // Plan v6 H2 (2026-05-27, shell-only): region-
-                    // amortized Earley absorption trigger detection.
-                    // On the FIRST already_chained event per (cat_src,
-                    // rule_idx) per parse, peek ahead to see if there's
-                    // a real chain region (≥ 4 atoms remaining) and if
-                    // so attempt the Earley outboard call. The Earley
-                    // result is currently LOGGED but NOT used to mutate
-                    // cursor state — full SPPF state reconciliation is
-                    // deferred to H3. This shell ships the trigger
-                    // machinery so we can empirically measure how often
-                    // the trigger fires + Earley succeeds at chain_500
-                    // BEFORE committing to the integration design.
-                    let (cat, rule) = (
-                        symbol.category_src_idx,
-                        symbol.rule_index_in_category,
-                    );
-                    if !self.chain_earley_invoked.contains(&(cat, rule)) {
-                        // Defensive peek-ahead: at least 4 atoms remaining
-                        // in the chain (cursor.pos is on the operator
-                        // about to be consumed by this arm; next atom is
-                        // at cursor.pos + 1).
-                        let probe_start = cursor.pos + 1;
-                        let mut remaining_atoms = 0usize;
-                        let mut probe = probe_start;
-                        loop {
-                            let atom_here = tokens.peek_kind(probe);
-                            if atom_here.is_none() {
-                                break;
-                            }
-                            remaining_atoms += 1;
-                            // Look for the next operator at probe+1.
-                            let op_next = tokens.peek_kind(probe + 1);
-                            if op_next.is_none() {
-                                break;
-                            }
-                            probe += 2;
-                            if remaining_atoms >= 4 {
-                                break;
-                            }
+                // Plan v6 H2 (2026-05-27, shell-only): region-amortized
+                // Earley absorption trigger detection — OUTSIDE the
+                // `already_chained` block because empirical chain_50
+                // measurement showed already_chained is never true in
+                // practice (Exp 6/7 elision is inert — every chain
+                // operator gets its own Return frame). The trigger
+                // fires on the FIRST IterativeChainAbsorb call per
+                // (cat_src, rule_idx) per parse, peeks ahead for ≥ 4
+                // atoms, and attempts an Earley outboard call. The
+                // Earley result is currently LOGGED but NOT used to
+                // mutate cursor state — full SPPF state reconciliation
+                // is deferred to H3. This shell ships the trigger
+                // machinery so we can empirically measure how often
+                // the trigger fires + Earley succeeds at chain_500
+                // BEFORE committing to the integration design.
+                let (cat, rule) = (
+                    symbol.category_src_idx,
+                    symbol.rule_index_in_category,
+                );
+                if !self.chain_earley_invoked.contains(&(cat, rule)) {
+                    // Defensive peek-ahead: at least 4 atoms remaining
+                    // in the chain (cursor.pos is on the operator
+                    // about to be consumed by this arm; next atom is
+                    // at cursor.pos + 1).
+                    let probe_start = cursor.pos + 1;
+                    let mut remaining_atoms = 0usize;
+                    let mut probe = probe_start;
+                    loop {
+                        let atom_here = tokens.peek_kind(probe);
+                        if atom_here.is_none() {
+                            break;
                         }
+                        remaining_atoms += 1;
+                        // Look for the next operator at probe+1.
+                        let op_next = tokens.peek_kind(probe + 1);
+                        if op_next.is_none() {
+                            break;
+                        }
+                        probe += 2;
                         if remaining_atoms >= 4 {
-                            crate::stats_inc!(self, chain_earley_trigger_count);
-                            self.chain_earley_invoked.insert((cat, rule));
-                            // SHELL: invoke earley_outboard_chain and
-                            // log the result. We need to peek the next
-                            // atom kind so earley_outboard_chain can do
-                            // its full chain-end probe. The
-                            // earley_outboard_chain helper itself expects
-                            // cursor.pos to be on an atom; the cursor
-                            // here is on the operator (about to be
-                            // consumed by advance_cursor_pos below). For
-                            // the shell we construct a *probe cursor*
-                            // whose pos is the next atom position to
-                            // satisfy that contract without mutating
-                            // the real cursor.
-                            let mut probe_cursor = cursor.clone();
-                            probe_cursor.pos = cursor.pos + 1;
-                            match self.earley_outboard_chain(
-                                &probe_cursor,
-                                tokens,
-                                &symbol,
-                                weight.clone(),
-                            ) {
-                                Some((_root_sid, _acc_weight, chain_end)) => {
-                                    crate::stats_inc!(
-                                        self,
-                                        chain_earley_succeeded_count
-                                    );
-                                    let atoms = (chain_end
-                                        .saturating_sub(probe_start))
-                                        / 2
-                                        + 1;
-                                    crate::stats_add!(
-                                        self,
-                                        chain_earley_atoms_absorbed_sum,
-                                        atoms as u64
-                                    );
-                                    // H3 will replace cursor state with
-                                    // (root_sid, acc_weight, chain_end).
-                                    // Shell: ignore the result; let
-                                    // the normal per-iteration path
-                                    // run.
-                                }
-                                None => {
-                                    crate::stats_inc!(
-                                        self,
-                                        chain_earley_returned_none_count
-                                    );
-                                }
+                            break;
+                        }
+                    }
+                    if remaining_atoms >= 4 {
+                        crate::stats_inc!(self, chain_earley_trigger_count);
+                        self.chain_earley_invoked.insert((cat, rule));
+                        // SHELL: invoke earley_outboard_chain and log
+                        // the result. earley_outboard_chain expects
+                        // cursor.pos to be on an atom; cursor here is
+                        // on the operator (about to be consumed by
+                        // advance_cursor_pos below). Construct a probe
+                        // cursor with pos = cursor.pos + 1 (next atom).
+                        let mut probe_cursor = cursor.clone();
+                        probe_cursor.pos = cursor.pos + 1;
+                        match self.earley_outboard_chain(
+                            &probe_cursor,
+                            tokens,
+                            &symbol,
+                            weight.clone(),
+                        ) {
+                            Some((_root_sid, _acc_weight, chain_end)) => {
+                                crate::stats_inc!(
+                                    self,
+                                    chain_earley_succeeded_count
+                                );
+                                let atoms = (chain_end
+                                    .saturating_sub(probe_start))
+                                    / 2
+                                    + 1;
+                                crate::stats_add!(
+                                    self,
+                                    chain_earley_atoms_absorbed_sum,
+                                    atoms as u64
+                                );
+                                // H3 will replace cursor state with
+                                // (root_sid, acc_weight, chain_end).
+                                // Shell: ignore result; normal per-
+                                // iteration path runs.
+                            }
+                            None => {
+                                crate::stats_inc!(
+                                    self,
+                                    chain_earley_returned_none_count
+                                );
                             }
                         }
                     }
