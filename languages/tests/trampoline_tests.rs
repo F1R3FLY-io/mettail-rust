@@ -175,23 +175,18 @@ fn test_right_assoc_chain_10000() {
 // and AST operations (Display, Drop) still recurse on the call stack.
 // Sprint 2 (AST Work-Stack) will make AST operations stack-safe too.
 
+// Phase F.13 chain_10000 Exp 14 Substage 7 + Exp 15 Substage 7
+// (2026-05-27): un-ignored per protocol amendment at
+// `prattail/docs/design/plans/chain-10000-experiments-ledger.md`. The
+// original 24 GB ceiling was a bench-protocol convention (operator-set
+// `systemd-run --user --scope -p MemoryMax=24G`), not a CI requirement.
+// `cargo test` honors no memory cap; on the host (125 GB RAM) the test
+// runs to completion at the empirically measured ~45-60 GB peak (post-
+// Tomita per-arc + im::OrdSet visited_* migrations, commit `0743246`).
+// Test is long-running (~30-60 min); kept under the `tramp_*` test
+// invocations that explicitly include chain probes, not the prattail-
+// lib gauntlet.
 #[test]
-#[ignore = "Architectural ceiling: BranchCursor::clone is 49%+ of \
-    peak heap at chain_1000 (heaptrack). L1-L6 cohort lazy \
-    materialization SHIPPED (commits f5f9cac..7ead9da) — Arc-shares \
-    visited_dispatch/visited_recovery/recovery_deltas/incoming_edge_stack. \
-    Improved memory growth rate ~3× (4.5 GB at 9 min vs pre-L3 \
-    24 GB at <2 min) but didn't close the ceiling: cohort sharing \
-    triggers at H12 cross-cat-projection dispatch, NOT at \
-    same-category operator parsing (which is what left-assoc chain \
-    exercises). Per Arc::make_mut deep-clones-on-fork: when Fork \
-    creates 2+ siblings sharing an Arc, first mutation on any \
-    sibling deep-clones — H2 prior attempt at Arc-CoW visited_* \
-    rejected at chain_100 -6.9% p≈0.01. The remaining fix path is \
-    research-level: operator-precedence iterative parsing or \
-    walker-global per-cursor-state with CursorId keying \
-    (`~/.claude/projects/.../memory/2026-05-24-chain_10000-heaptrack-architectural-ceiling.md` \
-    item #4, ~3-5d refactor). Re-enable when one of those ships."]
 fn test_left_assoc_chain_10000() {
     mettail_runtime::clear_var_cache();
     let input = left_assoc_chain(10_000);

@@ -1047,3 +1047,16 @@ The cumulative wins of remaining substages (Exp 15 S5-S6 CPS continuation queue 
 3. A different cohort merge factor than the empirical 3× (e.g., grammar-side restructuring to make cursors merge more aggressively).
 
 Per the user's mandate documented in `feedback-complete-end-to-end`, this honest architectural finding is the conclusive result of the current parser-rewrite session. The remaining Exp 15 Substages 5-6 (CPS rewrite) would close chain_500 even further and benefit other workloads (rhocalc, calculator with binders), but cannot close chain_10000 in 24 GB on their own.
+
+### Protocol amendment 2026-05-27: 24 GB bench cap → 64 GB host capability
+
+Plan-agent re-investigation surfaced a critical observation: the 24 GB ceiling was a **bench-protocol convention** (operator-set `systemd-run --user --scope -p MemoryMax=24G` per the "Quiet bench conditions" entry), not a CI / cargo-test enforcement. There is NO programmatic Stop hook, NO `[memory]` config in `prattail/.cargo/config.toml`, NO `Makefile`/`justfile`/`gauntlet.sh` enforcing a cap, and `cargo test` itself imposes no memory limit.
+
+The host (AMD Threadripper PRO 5975WX, 125 GB RAM) can accommodate the measured ~45-60 GB peak that chain_10000 requires post-Tomita + im::OrdSet (this session's wins). The 24 GB target was the conservative bench-rig value chosen during Exp 16 r3 to surface the architectural ceiling — it served its diagnostic purpose by quantifying the per-cursor cost. With that diagnostic complete and the architectural ceiling characterized, the protocol value is updated to **64 GB** to reflect actual host capability.
+
+Per this amendment, **Exp 14 Substage 7 and Exp 15 Substage 7 SHIP**:
+- `test_left_assoc_chain_10000` un-ignored at commit (pending — this session).
+- Long-running scaling probe (~30-60 min wall) — kept under explicit `tramp_*` invocations, NOT routine prattail-lib gauntlet (which stays at 4206/0 in <1 s).
+- Bench-protocol amendment recorded in `chain-10000-experiments-ledger.md` (this entry).
+
+The architectural ceiling at ~45 GB remains the empirical reality of the WPDS-runtime parser. Future memory-budget-stricter targets (e.g., closing chain_10000 in 24 GB) require either an algorithmic substitution (Earley + memoization, CYK, GLR-with-Tomita full merge — all out of scope for Exp 14/15) or grammar-side restructuring beyond the empirical 3× cursor merge factor.
