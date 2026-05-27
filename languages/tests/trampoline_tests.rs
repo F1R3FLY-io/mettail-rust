@@ -205,31 +205,6 @@ fn test_left_assoc_chain_10000() {
 // 15 MB peak. Used with --features walker-stats to plot the actual
 // scaling exponent of walker live state.
 #[test]
-fn test_left_assoc_chain_50() {
-    mettail_runtime::clear_var_cache();
-    let input = left_assoc_chain(50);
-    let result = Int::parse_structured(&input);
-    assert!(result.is_ok(), "50 left-assoc ops should parse: {:?}", result.err());
-}
-
-#[test]
-fn test_left_assoc_chain_100() {
-    mettail_runtime::clear_var_cache();
-    let input = left_assoc_chain(100);
-    let result = Int::parse_structured(&input);
-    assert!(result.is_ok(), "100 left-assoc ops should parse: {:?}", result.err());
-}
-
-#[test]
-#[ignore = "Exp 17 / Exp 16 r3 scaling probe — left-assoc N=200 takes minutes"]
-fn test_left_assoc_chain_200() {
-    mettail_runtime::clear_var_cache();
-    let input = left_assoc_chain(200);
-    let result = Int::parse_structured(&input);
-    assert!(result.is_ok(), "200 left-assoc ops should parse: {:?}", result.err());
-}
-
-#[test]
 #[ignore = "Exp 16 round 3 scaling probe"]
 fn test_left_assoc_chain_500() {
     mettail_runtime::clear_var_cache();

@@ -3585,10 +3585,6 @@ where
                 eprintln!("{}", CacheSummary(&self.dispatch_cohort_cache));
             }
         }
-        // Phase F.13 chain_10000 Exp 17 (re-Exp 9 S1.c, 2026-05-26):
-        // drain deferred continuations into outer-rule SPPF packings
-        // BEFORE force_materialize so realize sees them.
-        self.install_cohort_continuations();
         // Phase F.13 Stage L3.6 (2026-05-25): force-materialize all
         // remaining cohort frames at EOI so resolution operates on
         // concrete cursors. The full ambiguity multiset is preserved
@@ -7835,21 +7831,6 @@ where
                 if let Some((symbol_id, hi_pos, pos_at_dispatch, snapshots, members)) =
                     self.dispatch_cohort_cache.take_pending_for_drain(&key)
                 {
-                    // Phase F.13 chain_10000 Exp 17 (re-Exp 9 S1.d,
-                    // 2026-05-26): build CohortContinuation from FIRST
-                    // member's return_frame (all members share the
-                    // cohort shell by ~_obs). Eligible: skip per-snap
-                    // revive loop entirely; push N continuations per
-                    // snap. Ineligible: fall back to revive.
-                    let weight_one = W::one_ref();
-                    let eligible_template = members
-                        .first()
-                        .and_then(|m| {
-                            self.try_build_continuation(
-                                &m.return_frame,
-                                &weight_one,
-                            )
-                        });
                     // Phase F.13 Stage L3.5 (2026-05-25): DispatchResolved
                     // broadcast — for each live snapshot, build ONE cohort
                     // frame whose N members are the (snap-fixed) revives
@@ -7870,17 +7851,6 @@ where
                             continue;
                         }
                         if members.is_empty() {
-                            continue;
-                        }
-                        // S1.d eligible path: skip the per-(member, snap)
-                        // revive entirely; push N continuations.
-                        if let Some(template) = eligible_template.as_ref() {
-                            for _ in members.iter() {
-                                let cont = template.clone();
-                                let _ = self
-                                    .dispatch_cohort_cache
-                                    .push_deferred_continuation(&key, cont);
-                            }
                             continue;
                         }
                         // Revive ALL members for this snap. Each revive
@@ -11108,117 +11078,6 @@ where
         }
     }
 
-    /// Phase F.13 chain_10000 Exp 17 (re-Exp 9 S1.b, 2026-05-26):
-    /// attempt to build a `CohortContinuation` from a pausing cursor.
-    /// Returns `None` if the cohort site is ineligible (parent's
-    /// GSS-top frame is not `RuleAt`/`InfixContinuation`, or the
-    /// worker's dispatch is not at the last child slot of the outer
-    /// rule).
-    ///
-    /// For chain workloads (InfixOp lhs op rhs): universally eligible.
-    fn try_build_continuation(
-        &self,
-        parent: &BranchCursor<W>,
-        branch_weight: &W,
-    ) -> Option<crate::cohort_continuation::CohortContinuation<W>> {
-        let gss_node = self.gss.node(parent.node)?;
-        let symbol = &gss_node.symbol;
-        let (outer_cat_src_idx, outer_rule_idx) = match &symbol.kind {
-            crate::wpda_runtime::SymbolKind::RuleAt(_)
-            | crate::wpda_runtime::SymbolKind::InfixContinuation => (
-                symbol.category_src_idx,
-                symbol.rule_index_in_category,
-            ),
-            _ => return None,
-        };
-        let action = self.engine.action_for(outer_cat_src_idx, outer_rule_idx)?;
-        let arity = action.arity as usize;
-        if arity == 0 {
-            return None;
-        }
-        let other_children =
-            self.sppf_stack_arena.to_vec(parent.sppf_stack_id);
-        let substitution_slot = match arity.checked_sub(1) {
-            Some(n) if n <= u8::MAX as usize => n as u8,
-            _ => return None,
-        };
-        if other_children.len() != substitution_slot as usize {
-            return None;
-        }
-        Some(crate::cohort_continuation::CohortContinuation {
-            outer_rule_idx,
-            outer_cat_src_idx,
-            outer_lo_pos: parent.pos as u32,
-            other_children,
-            substitution_slot,
-            weight_at_dispatch: parent.weight.times_ref(branch_weight),
-        })
-    }
-
-    /// Phase F.13 chain_10000 Exp 17 (re-Exp 9 S1.c, 2026-05-26):
-    /// drain `deferred_continuations` from every Resolved cache
-    /// entry at EOI and intern each as an outer-rule Packing via
-    /// `sppf.intern_symbol` + `intern_packing` + `link`. Dedup'd by
-    /// `(rule_idx, children)` so repeats collapse.
-    fn install_cohort_continuations(&mut self) {
-        let keys: Vec<crate::dispatch_cohort::DispatchKey> = self
-            .dispatch_cohort_cache
-            .entries
-            .keys()
-            .cloned()
-            .collect();
-        for key in keys {
-            let (symbol_id, hi_pos, continuations) = match self
-                .dispatch_cohort_cache
-                .entries
-                .get_mut(&key)
-            {
-                Some(crate::dispatch_cohort::DispatchCacheEntry::Resolved {
-                    symbol_id,
-                    hi_pos,
-                    deferred_continuations,
-                    ..
-                }) => (
-                    *symbol_id,
-                    *hi_pos,
-                    std::mem::take(deferred_continuations),
-                ),
-                _ => continue,
-            };
-            if continuations.is_empty() {
-                continue;
-            }
-            for cont in continuations {
-                let crate::cohort_continuation::CohortContinuation {
-                    outer_rule_idx,
-                    outer_cat_src_idx,
-                    outer_lo_pos,
-                    other_children,
-                    substitution_slot,
-                    weight_at_dispatch,
-                } = cont;
-                let mut children = other_children;
-                let slot = substitution_slot as usize;
-                if slot > children.len() {
-                    continue;
-                }
-                children.insert(slot, symbol_id);
-                let outer_symbol = self.sppf.intern_symbol(
-                    outer_cat_src_idx as u32,
-                    outer_lo_pos,
-                    hi_pos,
-                );
-                let outer_packing = self.sppf.intern_packing(
-                    outer_rule_idx as u32,
-                    children,
-                    weight_at_dispatch,
-                );
-                self.sppf
-                    .link_packing_to_symbol(outer_symbol, outer_packing);
-            }
-        }
-    }
-
     fn allocate_fork_push_child(
         &mut self,
         parent: &BranchCursor<W>,
@@ -11268,22 +11127,10 @@ where
                             .weight
                             .times_ref(&branch.weight),
                     };
-                    // Phase F.13 chain_10000 Exp 17 (re-Exp 9 S1.b,
-                    // 2026-05-26): dual-write CohortContinuation
-                    // alongside the cohort pause for eligible sites.
-                    // Construction must precede the &mut self borrow
-                    // for pause_cohort_member.
-                    let continuation =
-                        self.try_build_continuation(parent, &branch.weight);
                     if self
                         .dispatch_cohort_cache
-                        .pause_cohort_member(key.clone(), member)
+                        .pause_cohort_member(key, member)
                     {
-                        if let Some(cont) = continuation {
-                            let _ = self
-                                .dispatch_cohort_cache
-                                .push_deferred_continuation(&key, cont);
-                        }
                         return Vec::new();
                     }
                     // Cap exceeded — fall through to allocate as worker.
@@ -11308,57 +11155,35 @@ where
                     // packing cross-step case (the `-3!` failure).
                     let synthetic_weight_at_dispatch =
                         parent.weight.times_ref(&branch.weight);
-                    // Phase F.13 chain_10000 Exp 17 (re-Exp 9 S1.b+d,
-                    // 2026-05-26): build CohortContinuation. When
-                    // eligible (Some), SKIP the per-snap revive loop —
-                    // EOI install handles outer-rule packing
-                    // interning. When ineligible (None), fall back to
-                    // per-cursor revive (mixfix with post-dispatch
-                    // children).
-                    let continuation_template =
-                        self.try_build_continuation(parent, &branch.weight);
                     let mut revived_cursors = Vec::with_capacity(
                         worker_snapshots.len(),
                     );
-                    if continuation_template.is_none() {
-                        for snap in &worker_snapshots {
-                            if snap.worker_inner_state.is_terminal() {
-                                continue;
-                            }
-                            let synthetic_member =
-                                crate::dispatch_cohort::CohortMember {
-                                    return_frame: parent.clone(),
-                                    weight_at_dispatch:
-                                        synthetic_weight_at_dispatch.clone(),
-                                };
-                            let revived = self
-                                .revive_cohort_member_with_snapshot(
-                                    synthetic_member,
-                                    symbol_id,
-                                    pos_at_dispatch,
-                                    hi_pos,
-                                    s,
-                                    b,
-                                    snap,
-                                );
-                            revived_cursors.push(revived);
+                    for snap in &worker_snapshots {
+                        if snap.worker_inner_state.is_terminal() {
+                            continue;
                         }
-                    } else if let Some(template) =
-                        continuation_template.as_ref()
-                    {
-                        // Push one continuation per non-terminal snapshot.
-                        let snap_count = worker_snapshots
-                            .iter()
-                            .filter(|s| !s.worker_inner_state.is_terminal())
-                            .count();
-                        for _ in 0..snap_count {
-                            let cont = template.clone();
-                            let _ = self
-                                .dispatch_cohort_cache
-                                .push_deferred_continuation(&key, cont);
-                        }
+                        let synthetic_member =
+                            crate::dispatch_cohort::CohortMember {
+                                return_frame: parent.clone(),
+                                weight_at_dispatch:
+                                    synthetic_weight_at_dispatch.clone(),
+                            };
+                        let revived = self.revive_cohort_member_with_snapshot(
+                            synthetic_member,
+                            symbol_id,
+                            pos_at_dispatch,
+                            hi_pos,
+                            s,
+                            b,
+                            snap,
+                        );
+                        revived_cursors.push(revived);
                     }
-                    // Future-cross-step pause (unchanged).
+                    // Park a synthetic member onto the entry's
+                    // pending_cohort for future cross-step snapshots.
+                    // pause_cohort_member handles Resolved entries
+                    // (dispatch_cohort.rs:412-432) and honors
+                    // MAX_PENDING_COHORT_PER_KEY cap.
                     let future_member = crate::dispatch_cohort::CohortMember {
                         return_frame: parent.clone(),
                         weight_at_dispatch: synthetic_weight_at_dispatch,

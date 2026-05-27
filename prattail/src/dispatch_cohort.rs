@@ -639,36 +639,6 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
     }
 
-    /// Phase F.13 chain_10000 Exp 17 (re-Exp 9 S1.b, 2026-05-26):
-    /// push a `CohortContinuation` into the matched entry's
-    /// `deferred_continuations` Vec. Mirrors `pause_cohort_member`'s
-    /// two-arm match pattern (`InFlight` + `Resolved`).
-    ///
-    /// Returns `true` if the continuation was pushed, `false` if
-    /// entry missing, `Failed`, or cap reached. Hard cap is
-    /// `MAX_DEFERRED_PER_KEY = 64`.
-    pub fn push_deferred_continuation(
-        &mut self,
-        key: &DispatchKey,
-        cont: crate::cohort_continuation::CohortContinuation<W>,
-    ) -> bool {
-        let cap = crate::cohort_continuation::MAX_DEFERRED_PER_KEY;
-        match self.entries.get_mut(key) {
-            Some(DispatchCacheEntry::InFlight {
-                deferred_continuations,
-                ..
-            })
-            | Some(DispatchCacheEntry::Resolved {
-                deferred_continuations,
-                ..
-            }) if deferred_continuations.len() < cap => {
-                deferred_continuations.push(cont);
-                true
-            }
-            _ => false,
-        }
-    }
-
     /// Transition InFlight → Failed (sub-parse drop without a usable
     /// SPPF symbol). Reserved for Stage 1.5+.
     #[allow(dead_code)]
