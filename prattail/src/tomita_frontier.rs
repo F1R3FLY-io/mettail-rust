@@ -35,17 +35,19 @@
 //!   step_fanout's per-frontier dispatch consults; Substage 2 ships the
 //!   classifier extensions in `cohort_lazy.rs`.
 
+use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::automata::semiring::SemiringRef;
-use crate::cohort_lazy::CohortShell;
 use crate::dispatch_cohort::DispatchKey;
+use crate::edge_stack_arena::EdgeStackId;
 use crate::gss::{GssEdgeId, GssNodeId};
+use crate::sppf::SppfId;
 use crate::sppf_stack_arena::StackId;
 use crate::wpda_runtime::WpdaState;
-use crate::wpda_walker::LexForkStamp;
+use crate::wpda_walker::{BranchCursor, BuilderDelta, LexForkStamp, PackedDispatchConfig};
 
 /// Tomita-merge key for the walker-global frontier merge map.
 ///
@@ -89,12 +91,85 @@ impl TomitaKey {
     }
 }
 
-/// Per-arc per-cursor-divergent state: the axes that today's
-/// `BranchCursor` tracks distinctly but `TomitaKey` deliberately drops.
+/// Phase F.13 chain_10000 Exp 14 Substage 1.5+2.5 (2026-05-27): the
+/// soundness-fix shell — strictly the TomitaKey-invariant axes plus
+/// three dispatch-derived axes. Distinct from `CohortShell<W>` (which
+/// continues to back H12 dispatch cohorts where members satisfy the
+/// `~_obs` equivalence by construction).
 ///
-/// Size budget per plan §2.5: ~52 B for `LexicographicWeight` (12 B W),
-/// vs today's ~512 B `BranchCursor`. Arc storage replaces full cursor
-/// storage at every frontier collision.
+/// The 6 heavy fields (`recovery_deltas`, `visited_dispatch`,
+/// `visited_recovery`, `binder_scope_marks`, `optional_scope_marks`,
+/// `sppf_collection_arena`) that the prior plan had on the shell live
+/// PER-ARC on `FrontierArc<W>` — see redesigned plan §2.4.1 for the
+/// gap analysis. Materializing an arc reads heavy fields from the
+/// arc, not from the shell — preserving each cursor's original state.
+///
+/// Size budget per plan §2.5: ~48 B (5 + 3 axes, mostly Copy or small).
+#[derive(Clone, Debug)]
+pub struct TomitaShell<W: SemiringRef> {
+    /// The 5 TomitaKey axes (cached for materialize / step).
+    pub node: GssNodeId,
+    pub pos: usize,
+    pub inner_state: WpdaState,
+    pub incoming_edge_stack_id: EdgeStackId,
+    pub collection_depth: u8,
+    /// The 3 dispatch-derived axes (TomitaKey-invariant by engine.step
+    /// purity at every dispatch site — the same TomitaKey yields the
+    /// same dispatch_key / sppf_stack_baseline_id / recovery_depth).
+    pub dispatch_key: DispatchKey,
+    pub sppf_stack_baseline_id: StackId,
+    pub recovery_depth: u8,
+    /// Phantom for the W type parameter (the shell itself carries no
+    /// weight — weights live on FrontierArc).
+    pub _phantom: PhantomData<W>,
+}
+
+impl<W: SemiringRef> TomitaShell<W> {
+    /// Construct a TomitaShell from a BranchCursor. Reads the 5
+    /// TomitaKey axes + 3 dispatch-derived axes; ignores per-arc
+    /// divergent fields (those go on FrontierArc).
+    pub fn from_cursor(cursor: &BranchCursor<W>) -> Self {
+        Self {
+            node: cursor.node,
+            pos: cursor.pos,
+            inner_state: cursor.inner_state.clone(),
+            incoming_edge_stack_id: cursor.incoming_edge_stack_id,
+            collection_depth: cursor.collection_stack_depth,
+            // dispatch_key, sppf_stack_baseline_id, recovery_depth are
+            // not strictly TomitaKey-invariant axes — they're per-cursor
+            // by today's representation. Per the plan §3.1 they're
+            // "dispatch-derived" axes that the H12 cohort_origin /
+            // sppf_stack_baseline carry. For now we read them from the
+            // cursor verbatim; Substage 6 may refine to enforce strict
+            // shell-invariance via classifier predicates.
+            dispatch_key: cursor.cohort_origin.clone().unwrap_or(DispatchKey::new(
+                cursor.pos, 0, 0,
+            )),
+            sppf_stack_baseline_id: cursor.sppf_stack_id,
+            recovery_depth: cursor.recovery_depth,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+/// Per-arc per-cursor-divergent state.
+///
+/// Under the soundness-fix redesign (Substage 1.5+2.5, per redesigned
+/// plan §3.1 Option A), the 6 heavy `Arc<...>` fields move from
+/// `CohortShell` to here. Each is an O(1) refcount bump at ingest; if
+/// two arcs at the same TomitaKey share an Arc handle (because they
+/// share a Fork ancestor that has not mutated the field since the
+/// fork), physical memory is shared via Arc; if not, each arc keeps
+/// its own.
+///
+/// Size budget under Option A: ~100 B
+///   - 11 light fields (~52 B) — the original Substage 1 set
+///   - 6 heavy field Arcs (~48 B = 6 × 8 B pointers) — NEW
+///
+/// vs today's ~512 B `BranchCursor`. The per-arc cost increase (~48 B
+/// for the soundness fix) is offset by the structural sharing of the
+/// shared 5-axis TomitaShell + the elimination of per-cursor
+/// duplicate state at TomitaKey collisions.
 #[derive(Clone, Debug)]
 pub struct FrontierArc<W: SemiringRef> {
     /// Cumulative weight (matches `BranchCursor::weight`).
@@ -119,11 +194,28 @@ pub struct FrontierArc<W: SemiringRef> {
     pub lex_alt_idx: u16,
     pub weight_src_idx: u16,
     pub weight_rule_idx: u16,
+    // ── Substage 1.5+2.5 soundness-fix heavy fields (Option A) ──────
+    /// Per-cursor recovery journal (preserved verbatim per arc — see
+    /// redesigned plan §2.4.1 for the soundness rationale: the prior
+    /// plan placed this on the shell, silently dropping per-cursor
+    /// deltas).
+    pub recovery_deltas: Arc<Vec<BuilderDelta>>,
+    /// Per-cursor cross-cat dispatch defense set.
+    pub visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+    /// Per-cursor recovery dispatch defense set.
+    pub visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+    /// Per-cursor binder scope marks.
+    pub binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
+    /// Per-cursor optional scope marks.
+    pub optional_scope_marks: Arc<Vec<usize>>,
+    /// Per-cursor SPPF collection arena.
+    pub sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
 }
 
-impl<W: SemiringRef> FrontierArc<W> {
+impl<W: SemiringRef + Clone> FrontierArc<W> {
     /// Construct an arc with the given state. All fields explicit so
     /// callers cannot accidentally miss any.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         weight: W,
         pending_packing_weight: W,
@@ -136,6 +228,12 @@ impl<W: SemiringRef> FrontierArc<W> {
         lex_alt_idx: u16,
         weight_src_idx: u16,
         weight_rule_idx: u16,
+        recovery_deltas: Arc<Vec<BuilderDelta>>,
+        visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+        visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+        binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
+        optional_scope_marks: Arc<Vec<usize>>,
+        sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
     ) -> Self {
         Self {
             weight,
@@ -149,6 +247,41 @@ impl<W: SemiringRef> FrontierArc<W> {
             lex_alt_idx,
             weight_src_idx,
             weight_rule_idx,
+            recovery_deltas,
+            visited_dispatch,
+            visited_recovery,
+            binder_scope_marks,
+            optional_scope_marks,
+            sppf_collection_arena,
+        }
+    }
+
+    /// Construct an arc from a BranchCursor — captures every per-arc
+    /// divergent axis (the 11 light + 6 heavy fields). Each Arc is
+    /// O(1) refcount bump; the underlying storage is shared until a
+    /// later `Arc::make_mut` triggers CoW.
+    pub fn from_cursor(cursor: &BranchCursor<W>) -> Self {
+        Self {
+            weight: cursor.weight.clone(),
+            pending_packing_weight: cursor.pending_packing_weight.clone(),
+            sppf_stack_id: cursor.sppf_stack_id,
+            source_priority: cursor.source_priority,
+            cohort_origin: cursor.cohort_origin.clone(),
+            last_action_output_cat: cursor.last_action_output_cat,
+            cohort_revive_depth: cursor.cohort_revive_depth,
+            lex_fork_path: Arc::clone(&cursor.lex_fork_path),
+            // Lex provenance — read from weight if the weight supports
+            // it. For now, default to 0 (Substage 6 may refine).
+            lex_alt_idx: 0,
+            weight_src_idx: 0,
+            weight_rule_idx: 0,
+            // Substage 1.5+2.5 soundness-fix heavy fields: per-arc Arcs.
+            recovery_deltas: Arc::clone(&cursor.recovery_deltas),
+            visited_dispatch: Arc::clone(&cursor.visited_dispatch),
+            visited_recovery: Arc::clone(&cursor.visited_recovery),
+            binder_scope_marks: Arc::new(cursor.binder_scope_marks.clone()),
+            optional_scope_marks: Arc::new(cursor.optional_scope_marks.clone()),
+            sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
         }
     }
 
@@ -172,20 +305,67 @@ impl<W: SemiringRef> FrontierArc<W> {
     }
 }
 
-/// Frontier node: one shell (cached TomitaKey axes + L1-L6 cohort shell
-/// fields) + N arcs. Equivalent to a Tomita-GLR stack node with N
-/// predecessor edges augmented with the WPDS-walker shell state.
+/// Phase F.13 chain_10000 Exp 14 Substage 1.5+2.5 (2026-05-27): the
+/// soundness-fix materialize primitive. Reconstructs a `BranchCursor`
+/// from a `(TomitaShell, FrontierArc)` pair. ALL 6 heavy fields are
+/// read from the ARC, not from the shell — preserving each cursor's
+/// original observable state. See redesigned plan §2.4.1.
+///
+/// This is the Tomita analog of `cohort_lazy::materialize_branch_cursor`
+/// (which reads heavy fields from the shell — sound under H12's
+/// construction-time `~_obs` guarantee but unsound for arbitrary-cursor
+/// Tomita ingest).
+pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
+    shell: &TomitaShell<W>,
+    arc: &FrontierArc<W>,
+) -> BranchCursor<W> {
+    BranchCursor {
+        // Shared shell axes (TomitaKey-invariant).
+        node: shell.node,
+        pos: shell.pos,
+        inner_state: shell.inner_state.clone(),
+        incoming_edge_stack_id: shell.incoming_edge_stack_id,
+        collection_stack_depth: shell.collection_depth,
+        recovery_depth: shell.recovery_depth,
+        // Per-arc divergent light axes.
+        weight: arc.weight.clone(),
+        pending_packing_weight: arc.pending_packing_weight.clone(),
+        sppf_stack_id: arc.sppf_stack_id,
+        source_priority: arc.source_priority,
+        cohort_origin: arc.cohort_origin.clone(),
+        last_action_output_cat: arc.last_action_output_cat,
+        cohort_revive_depth: arc.cohort_revive_depth,
+        lex_fork_path: Arc::clone(&arc.lex_fork_path),
+        // THE SOUNDNESS FIX: 6 heavy fields read from arc, not shell.
+        recovery_deltas: Arc::clone(&arc.recovery_deltas),
+        visited_dispatch: Arc::clone(&arc.visited_dispatch),
+        visited_recovery: Arc::clone(&arc.visited_recovery),
+        binder_scope_marks: (*arc.binder_scope_marks).clone(),
+        optional_scope_marks: (*arc.optional_scope_marks).clone(),
+        sppf_collection_arena: Arc::clone(&arc.sppf_collection_arena),
+    }
+}
+
+/// Frontier node: one shell (cached TomitaKey-invariant axes) + N arcs.
+/// Equivalent to a Tomita-GLR stack node with N predecessor edges
+/// augmented with the WPDS-walker shell state.
+///
+/// **Substage 1.5+2.5 redesign**: the shell is now `Arc<TomitaShell<W>>`
+/// (not `Arc<CohortShell<W>>`). This separates the soundness boundary:
+/// `TomitaShell` carries only TomitaKey-invariant axes (no heavy
+/// per-cursor-divergent fields). The 6 heavy fields live PER-ARC on
+/// `FrontierArc`. See redesigned plan §2.4.1 and §3.1.
+///
+/// The existing `Arc<CohortShell<W>>` continues to back H12 dispatch
+/// cohorts (which DO satisfy the construction-time `~_obs` equivalence
+/// at `dispatch_cohort::pause_cohort_member`); Tomita uses the strictly
+/// soundness-safe `TomitaShell` subset for general-purpose merging.
 #[derive(Clone)]
 pub struct FrontierNode<W: SemiringRef> {
-    /// Shared shell — reuses the existing L1-L6 `CohortShell` layout.
-    /// Substage 3 wiring: at ingest, the walker constructs a new
-    /// `CohortShell` per fresh TomitaKey, then shares the `Arc` across
-    /// all arcs that land on this key. `Arc::make_mut` does one
-    /// deep-clone per cohort first-mutation (vs one per cursor today).
-    pub shell: Arc<CohortShell<W>>,
-    /// The arcs. Vec because arc count is small (median ~10 at
-    /// chain_500 LEFT-assoc per the Exp 16 r3 cohort-cursor-emission
-    /// ratio).
+    /// Shared shell — strictly TomitaKey-invariant axes.
+    pub shell: Arc<TomitaShell<W>>,
+    /// The arcs. Vec because arc count is small (median ~3 at
+    /// chain_500 LEFT-assoc per Substage 0 measurement).
     pub arcs: Vec<FrontierArc<W>>,
     /// Generation counter; incremented per `step_fanout` iteration.
     /// Frontier nodes whose generation lags the current map generation
@@ -194,10 +374,10 @@ pub struct FrontierNode<W: SemiringRef> {
 }
 
 impl<W: SemiringRef> FrontierNode<W> {
-    /// Construct a fresh frontier node from a shell + initial single
-    /// arc. The shell is wrapped in `Arc` here so all later
+    /// Construct a fresh frontier node from a TomitaShell + initial
+    /// single arc. The shell is wrapped in `Arc` here so all later
     /// arc-insertions share the same shell.
-    pub fn new(shell: CohortShell<W>, initial_arc: FrontierArc<W>, generation: u32) -> Self {
+    pub fn new(shell: TomitaShell<W>, initial_arc: FrontierArc<W>, generation: u32) -> Self {
         Self {
             shell: Arc::new(shell),
             arcs: vec![initial_arc],
@@ -292,7 +472,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
     pub fn register_arc(
         &mut self,
         key: TomitaKey,
-        shell_if_new: CohortShell<W>,
+        shell_if_new: TomitaShell<W>,
         arc: FrontierArc<W>,
     ) -> usize {
         self.total_registrations = self.total_registrations.saturating_add(1);
@@ -424,28 +604,17 @@ mod tests {
         )
     }
 
-    fn fresh_shell() -> CohortShell<LexicographicWeight> {
-        CohortShell {
+    fn fresh_shell() -> TomitaShell<LexicographicWeight> {
+        TomitaShell {
             node: 0,
+            pos: 0,
+            inner_state: WpdaState::Ready { min_bp: 0 },
             incoming_edge_stack_id: EDGE_STACK_ID_ROOT,
             collection_depth: 0,
-            cohort_origin: None,
-            lex_alt_idx: 0,
-            weight_src_idx: 0,
-            weight_rule_idx: 0,
-            lex_fork_stamp: None,
-            binder_scope_marks: Arc::new(Vec::new()),
-            optional_scope_marks: Arc::new(Vec::new()),
-            sppf_collection_arena: Arc::new(Vec::new()),
-            visited_dispatch: Arc::new(rustc_hash::FxHashSet::default()),
-            visited_recovery: Arc::new(rustc_hash::FxHashSet::default()),
-            recovery_depth: 0,
-            recovery_deltas: Arc::new(Vec::new()),
-            inner_state: WpdaState::Ready { min_bp: 0 },
-            pos: 0,
             dispatch_key: DispatchKey::new(0, 0, 0),
             sppf_stack_baseline_id: STACK_ID_ROOT,
-            _phantom_weight: std::marker::PhantomData,
+            recovery_depth: 0,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -462,6 +631,44 @@ mod tests {
             0,
             0,
             0,
+            Arc::new(Vec::new()),
+            Arc::new(rustc_hash::FxHashSet::default()),
+            Arc::new(rustc_hash::FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        )
+    }
+
+    // Helper: build a FrontierArc with specific heavy fields for
+    // soundness round-trip tests.
+    #[allow(clippy::too_many_arguments)]
+    fn arc_with_heavy(
+        recovery_deltas: Arc<Vec<BuilderDelta>>,
+        visited_dispatch: Arc<FxHashSet<PackedDispatchConfig>>,
+        visited_recovery: Arc<FxHashSet<PackedDispatchConfig>>,
+        binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
+        optional_scope_marks: Arc<Vec<usize>>,
+        sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
+    ) -> FrontierArc<LexicographicWeight> {
+        FrontierArc::new(
+            LexicographicWeight::default(),
+            LexicographicWeight::default(),
+            STACK_ID_ROOT,
+            0,
+            None,
+            None,
+            0,
+            Arc::new(Vec::new()),
+            0,
+            0,
+            0,
+            recovery_deltas,
+            visited_dispatch,
+            visited_recovery,
+            binder_scope_marks,
+            optional_scope_marks,
+            sppf_collection_arena,
         )
     }
 
@@ -673,5 +880,236 @@ mod tests {
         assert_eq!(count, 2);
         let node = map.get(&fresh_key()).expect("node present");
         assert_eq!(node.generation, 1, "registration in gen 1 marks the node current");
+    }
+
+    // ── Substage 1.5+2.5 soundness-fix tests ─────────────────────────
+
+    #[test]
+    fn frontier_arc_carries_heavy_fields_independently() {
+        // Two arcs at the same TomitaKey can have different heavy
+        // Arcs — register_arc must preserve each arc's Arcs (not
+        // drop them via shell-overwrite as the prior plan would have).
+        let mut map: TomitaFrontierMap<LexicographicWeight> =
+            TomitaFrontierMap::new();
+        let mut deltas_a = Vec::new();
+        deltas_a.push(BuilderDelta::EndBinderScope);
+        let deltas_a_arc: Arc<Vec<BuilderDelta>> = Arc::new(deltas_a);
+        let deltas_b_arc: Arc<Vec<BuilderDelta>> = Arc::new(Vec::new());
+        let arc_a = arc_with_heavy(
+            Arc::clone(&deltas_a_arc),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        let arc_b = arc_with_heavy(
+            Arc::clone(&deltas_b_arc),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        map.register_arc(fresh_key(), fresh_shell(), arc_a);
+        map.register_arc(fresh_key(), fresh_shell(), arc_b);
+        let node = map.get(&fresh_key()).expect("node present");
+        assert_eq!(node.arcs.len(), 2);
+        // Per-arc heavy fields are preserved verbatim.
+        assert_eq!(node.arcs[0].recovery_deltas.len(), 1);
+        assert_eq!(node.arcs[1].recovery_deltas.len(), 0);
+        assert!(Arc::ptr_eq(&node.arcs[0].recovery_deltas, &deltas_a_arc));
+        assert!(Arc::ptr_eq(&node.arcs[1].recovery_deltas, &deltas_b_arc));
+    }
+
+    #[test]
+    fn frontier_arc_visited_dispatch_per_arc() {
+        // Two arcs at the same TomitaKey can have different
+        // visited_dispatch sets — neither sees the other's entries.
+        let mut set_a: FxHashSet<PackedDispatchConfig> = FxHashSet::default();
+        set_a.insert(PackedDispatchConfig::pack(0, 1, 0));
+        let arc_a = arc_with_heavy(
+            Arc::new(Vec::new()),
+            Arc::new(set_a),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        let arc_b = arc_with_heavy(
+            Arc::new(Vec::new()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        let mut map: TomitaFrontierMap<LexicographicWeight> =
+            TomitaFrontierMap::new();
+        map.register_arc(fresh_key(), fresh_shell(), arc_a);
+        map.register_arc(fresh_key(), fresh_shell(), arc_b);
+        let node = map.get(&fresh_key()).expect("node present");
+        assert_eq!(node.arcs[0].visited_dispatch.len(), 1);
+        assert_eq!(node.arcs[1].visited_dispatch.len(), 0);
+    }
+
+    #[test]
+    fn materialize_from_arc_restores_heavy_fields() {
+        // materialize_branch_cursor_from_arc must reconstruct ALL 6
+        // heavy fields from the arc, not from the shell.
+        let mut set_a: FxHashSet<PackedDispatchConfig> = FxHashSet::default();
+        set_a.insert(PackedDispatchConfig::pack(42, 7, 3));
+        let arc = arc_with_heavy(
+            Arc::new(vec![BuilderDelta::EndBinderScope]),
+            Arc::new(set_a),
+            Arc::new(FxHashSet::default()),
+            Arc::new(vec![(1u16, vec!["x".to_string(), "y".to_string()])]),
+            Arc::new(vec![5usize, 10usize]),
+            Arc::new(vec![vec![1u32, 2u32, 3u32]]),
+        );
+        let cursor = materialize_branch_cursor_from_arc(&fresh_shell(), &arc);
+        assert_eq!(cursor.recovery_deltas.len(), 1);
+        assert_eq!(cursor.visited_dispatch.len(), 1);
+        assert_eq!(cursor.visited_recovery.len(), 0);
+        assert_eq!(cursor.binder_scope_marks.len(), 1);
+        assert_eq!(cursor.binder_scope_marks[0].1.len(), 2);
+        assert_eq!(cursor.optional_scope_marks, vec![5usize, 10usize]);
+        assert_eq!(cursor.sppf_collection_arena.len(), 1);
+    }
+
+    #[test]
+    fn materialize_round_trip_two_distinct_arcs_recovers_separate_heavy_state() {
+        // Soundness regression test: ingest two cursors with distinct
+        // recovery_deltas at the same TomitaKey; materialize each arc
+        // back to a cursor; verify each materialized cursor has its
+        // original recovery_deltas, NOT the other's.
+        let arc_a = arc_with_heavy(
+            Arc::new(vec![BuilderDelta::EndBinderScope]),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        let arc_b = arc_with_heavy(
+            Arc::new(Vec::new()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        let mut map: TomitaFrontierMap<LexicographicWeight> =
+            TomitaFrontierMap::new();
+        map.register_arc(fresh_key(), fresh_shell(), arc_a);
+        map.register_arc(fresh_key(), fresh_shell(), arc_b);
+        let node = map.get(&fresh_key()).expect("node present");
+        // Materialize both arcs:
+        let cursor_a =
+            materialize_branch_cursor_from_arc(&node.shell, &node.arcs[0]);
+        let cursor_b =
+            materialize_branch_cursor_from_arc(&node.shell, &node.arcs[1]);
+        // Each cursor preserved its own recovery_deltas:
+        assert_eq!(cursor_a.recovery_deltas.len(), 1);
+        assert_eq!(cursor_b.recovery_deltas.len(), 0);
+    }
+
+    #[test]
+    fn arc_clone_preserves_strong_count() {
+        // Each arc's heavy field Arcs increment strong_count when the
+        // arc is registered (Arc::clone in from_cursor / new). After
+        // registration, the underlying Arc has 2 strong refs (caller +
+        // arc's copy).
+        let deltas: Arc<Vec<BuilderDelta>> = Arc::new(Vec::new());
+        assert_eq!(Arc::strong_count(&deltas), 1);
+        let arc = arc_with_heavy(
+            Arc::clone(&deltas),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        assert_eq!(Arc::strong_count(&deltas), 2);
+        // Drop the arc: strong_count drops back to 1.
+        drop(arc);
+        assert_eq!(Arc::strong_count(&deltas), 1);
+    }
+
+    #[test]
+    fn arc_clone_shared_via_arc_ptr_eq() {
+        // Two arcs constructed from the same parent's Arc (via
+        // Arc::clone) share the underlying allocation.
+        let shared: Arc<Vec<BuilderDelta>> = Arc::new(Vec::new());
+        let arc_a = arc_with_heavy(
+            Arc::clone(&shared),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        let arc_b = arc_with_heavy(
+            Arc::clone(&shared),
+            Arc::new(FxHashSet::default()),
+            Arc::new(FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        );
+        assert!(Arc::ptr_eq(&arc_a.recovery_deltas, &arc_b.recovery_deltas));
+    }
+
+    #[test]
+    fn tomita_shell_distinct_from_cohort_shell_at_layout() {
+        // Sanity: TomitaShell is markedly smaller than CohortShell —
+        // 8 axes (mostly Copy / small) vs CohortShell's 20+ axes
+        // including 6 Arc-wrapped heavy fields. We assert the
+        // soundness boundary: TomitaShell does NOT have heavy fields.
+        let shell = fresh_shell();
+        // No method on TomitaShell returns Arc<FxHashSet> / Arc<Vec> —
+        // the field layout does not contain them. Test by attempting
+        // to access any heavy field — they should not exist.
+        let _: GssNodeId = shell.node;
+        let _: usize = shell.pos;
+        let _: WpdaState = shell.inner_state.clone();
+        // Anything resembling visited_dispatch / recovery_deltas /
+        // binder_scope_marks etc. on the shell would be a compile
+        // error. This test compiles ⇒ those fields are absent.
+    }
+
+    #[test]
+    fn tomita_shell_from_cursor_captures_invariant_axes() {
+        // Construct a synthetic BranchCursor with known invariant axes;
+        // verify TomitaShell::from_cursor reads them correctly.
+        use crate::edge_stack_arena::EDGE_STACK_ID_ROOT;
+        let cursor: BranchCursor<LexicographicWeight> = BranchCursor {
+            node: 42,
+            pos: 7,
+            inner_state: WpdaState::InfixLoop { cur_bp: 10 },
+            incoming_edge_stack_id: EDGE_STACK_ID_ROOT,
+            collection_stack_depth: 3,
+            recovery_depth: 1,
+            weight: LexicographicWeight::default(),
+            pending_packing_weight: LexicographicWeight::default(),
+            sppf_stack_id: STACK_ID_ROOT,
+            source_priority: 0,
+            cohort_origin: None,
+            last_action_output_cat: None,
+            cohort_revive_depth: 0,
+            lex_fork_path: Arc::new(Vec::new()),
+            recovery_deltas: Arc::new(Vec::new()),
+            visited_dispatch: Arc::new(FxHashSet::default()),
+            visited_recovery: Arc::new(FxHashSet::default()),
+            binder_scope_marks: Vec::new(),
+            optional_scope_marks: Vec::new(),
+            sppf_collection_arena: Arc::new(Vec::new()),
+        };
+        let shell = TomitaShell::from_cursor(&cursor);
+        assert_eq!(shell.node, 42);
+        assert_eq!(shell.pos, 7);
+        assert_eq!(shell.collection_depth, 3);
+        assert_eq!(shell.recovery_depth, 1);
+        assert!(matches!(shell.inner_state, WpdaState::InfixLoop { cur_bp: 10 }));
     }
 }

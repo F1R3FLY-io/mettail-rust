@@ -984,33 +984,26 @@ mod tests {
         );
     }
 
-    #[test]
-    fn apply_obs_invariant_to_frontier_advance_updates_shell() {
-        use crate::tomita_frontier::{FrontierArc, FrontierNode};
-        use std::sync::Arc;
-        let shell = CohortShell::<LexicographicWeight> {
+    // Substage 1.5+2.5: tests updated to use TomitaShell (Option A
+    // soundness fix) instead of CohortShell.
+
+    fn fresh_tomita_shell() -> crate::tomita_frontier::TomitaShell<LexicographicWeight> {
+        crate::tomita_frontier::TomitaShell {
             node: 0,
+            pos: 0,
+            inner_state: WpdaState::Ready { min_bp: 0 },
             incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
             collection_depth: 0,
-            cohort_origin: None,
-            lex_alt_idx: 0,
-            weight_src_idx: 0,
-            weight_rule_idx: 0,
-            lex_fork_stamp: None,
-            binder_scope_marks: Arc::new(Vec::new()),
-            optional_scope_marks: Arc::new(Vec::new()),
-            sppf_collection_arena: Arc::new(Vec::new()),
-            visited_dispatch: Arc::new(rustc_hash::FxHashSet::default()),
-            visited_recovery: Arc::new(rustc_hash::FxHashSet::default()),
-            recovery_depth: 0,
-            recovery_deltas: Arc::new(Vec::new()),
-            inner_state: WpdaState::Ready { min_bp: 0 },
-            pos: 0,
             dispatch_key: crate::dispatch_cohort::DispatchKey::new(0, 0, 0),
             sppf_stack_baseline_id: crate::sppf_stack_arena::STACK_ID_ROOT,
-            _phantom_weight: std::marker::PhantomData,
-        };
-        let arc = FrontierArc::<LexicographicWeight>::new(
+            recovery_depth: 0,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    fn fresh_frontier_arc() -> crate::tomita_frontier::FrontierArc<LexicographicWeight> {
+        use std::sync::Arc;
+        crate::tomita_frontier::FrontierArc::<LexicographicWeight>::new(
             one(),
             one(),
             crate::sppf_stack_arena::STACK_ID_ROOT,
@@ -1022,7 +1015,20 @@ mod tests {
             0,
             0,
             0,
-        );
+            Arc::new(Vec::new()),
+            Arc::new(rustc_hash::FxHashSet::default()),
+            Arc::new(rustc_hash::FxHashSet::default()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+            Arc::new(Vec::new()),
+        )
+    }
+
+    #[test]
+    fn apply_obs_invariant_to_frontier_advance_updates_shell() {
+        use crate::tomita_frontier::FrontierNode;
+        let shell = fresh_tomita_shell();
+        let arc = fresh_frontier_arc();
         let mut node = FrontierNode::new(shell, arc, 0);
         let new_state = WpdaState::PrefixDispatch { pos: 5, cur_bp: 3 };
         let result = apply_obs_invariant_to_frontier(
@@ -1035,43 +1041,9 @@ mod tests {
 
     #[test]
     fn apply_obs_invariant_to_frontier_push_returns_err_at_substage_2() {
-        use crate::tomita_frontier::{FrontierArc, FrontierNode};
-        use std::sync::Arc;
-        let shell = CohortShell::<LexicographicWeight> {
-            node: 0,
-            incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
-            collection_depth: 0,
-            cohort_origin: None,
-            lex_alt_idx: 0,
-            weight_src_idx: 0,
-            weight_rule_idx: 0,
-            lex_fork_stamp: None,
-            binder_scope_marks: Arc::new(Vec::new()),
-            optional_scope_marks: Arc::new(Vec::new()),
-            sppf_collection_arena: Arc::new(Vec::new()),
-            visited_dispatch: Arc::new(rustc_hash::FxHashSet::default()),
-            visited_recovery: Arc::new(rustc_hash::FxHashSet::default()),
-            recovery_depth: 0,
-            recovery_deltas: Arc::new(Vec::new()),
-            inner_state: WpdaState::Ready { min_bp: 0 },
-            pos: 0,
-            dispatch_key: crate::dispatch_cohort::DispatchKey::new(0, 0, 0),
-            sppf_stack_baseline_id: crate::sppf_stack_arena::STACK_ID_ROOT,
-            _phantom_weight: std::marker::PhantomData,
-        };
-        let arc = FrontierArc::<LexicographicWeight>::new(
-            one(),
-            one(),
-            crate::sppf_stack_arena::STACK_ID_ROOT,
-            0,
-            None,
-            None,
-            0,
-            Arc::new(Vec::new()),
-            0,
-            0,
-            0,
-        );
+        use crate::tomita_frontier::FrontierNode;
+        let shell = fresh_tomita_shell();
+        let arc = fresh_frontier_arc();
         let mut node = FrontierNode::new(shell, arc, 0);
         let action = WpdaStepAction::<LexicographicWeight>::Push {
             symbol: ret_sym(),
