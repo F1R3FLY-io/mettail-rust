@@ -699,6 +699,27 @@ pub fn apply_obs_invariant_to_frontier<W: SemiringRef + Clone>(
             std::sync::Arc::make_mut(&mut node.shell).inner_state = new_state;
             Ok(())
         }
+        // Phase F.13 chain_10000 Exp 15 Substage 6 (2026-05-27):
+        // graduate terminal-state variants Accept/Error/Idle. These
+        // mutate only `inner_state` (terminal states tracked via
+        // WpdaState variants); per-arc state is unchanged. Idempotent
+        // wrt per-arc cursor_resolution_check downstream (Accept yields
+        // CursorOutcome::Resolved which is invariant across arcs at the
+        // same shell state).
+        WpdaStepAction::Accept => {
+            std::sync::Arc::make_mut(&mut node.shell).inner_state =
+                crate::wpda_runtime::WpdaState::Accepted;
+            Ok(())
+        }
+        WpdaStepAction::Error(message) => {
+            std::sync::Arc::make_mut(&mut node.shell).inner_state =
+                crate::wpda_runtime::WpdaState::Error { message };
+            Ok(())
+        }
+        WpdaStepAction::Idle => {
+            // Idle is a no-op transition; shell state preserved.
+            Ok(())
+        }
         other => Err(other),
     }
 }
