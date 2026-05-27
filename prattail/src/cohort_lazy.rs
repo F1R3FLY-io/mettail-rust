@@ -1029,7 +1029,7 @@ mod tests {
         use crate::tomita_frontier::FrontierNode;
         let shell = fresh_tomita_shell();
         let arc = fresh_frontier_arc();
-        let mut node = FrontierNode::new(shell, arc, 0);
+        let mut node = FrontierNode::new(shell, arc, 0, 0);
         let new_state = WpdaState::PrefixDispatch { pos: 5, cur_bp: 3 };
         let result = apply_obs_invariant_to_frontier(
             &mut node,
@@ -1044,7 +1044,7 @@ mod tests {
         use crate::tomita_frontier::FrontierNode;
         let shell = fresh_tomita_shell();
         let arc = fresh_frontier_arc();
-        let mut node = FrontierNode::new(shell, arc, 0);
+        let mut node = FrontierNode::new(shell, arc, 0, 0);
         let action = WpdaStepAction::<LexicographicWeight>::Push {
             symbol: ret_sym(),
             weight: one(),

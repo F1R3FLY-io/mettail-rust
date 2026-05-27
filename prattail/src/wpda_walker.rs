@@ -796,6 +796,16 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// each `engine.step` call so the codegen-emitted
     /// `emit_recovery_fork_cached` can read it.
     recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache<W>,
+    /// Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27): Tomita
+    /// frontier merge map. Populated at `step_fanout` ingest: every
+    /// drained frame becomes an arc in the map. Drained at the same
+    /// step's produce path via `materialize_branch_cursor_from_arc`.
+    /// Substage 3 round-trips through the map (per-cursor step path
+    /// unchanged); Substages 4+ start consuming the map structure for
+    /// shell-broadcast fast paths.
+    ///
+    /// See `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
+    pub tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap<W>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2636,6 +2646,9 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
+            // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
+            // walker-global Tomita frontier merge map. Fresh = empty.
+            tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2710,6 +2723,9 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
+            // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
+            // walker-global Tomita frontier merge map. Fresh = empty.
+            tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2779,6 +2795,9 @@ where
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
+            // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
+            // walker-global Tomita frontier merge map. Fresh = empty.
+            tomita_frontier_map: crate::tomita_frontier::TomitaFrontierMap::new(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2852,6 +2871,11 @@ where
         // parse — `tokens` and `infra.token_id_map` keying are
         // parse-local. Clear at reset boundary.
         self.recovery_cohort_cache.clear();
+        // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
+        // clear the Tomita frontier merge map at parse boundary.
+        // Per-parse map; cursor ids / arc state are tied to the prior
+        // parse's GSS and SPPF arenas.
+        self.tomita_frontier_map.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -7720,8 +7744,98 @@ where
             Vec::with_capacity(self.branch_cursors.len());
         // Track which entries in `new_cursors` are Resolved.
         let mut resolved_indices: Vec<usize> = Vec::new();
-        let drained: Vec<crate::cohort_lazy::Frame<W>> =
+        let drained_pre_tomita: Vec<crate::cohort_lazy::Frame<W>> =
             std::mem::take(&mut self.branch_cursors);
+        // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27): Tomita
+        // round-trip ingest pass through TomitaFrontierMap. Soundness
+        // fix Substage 1.5+2.5 + insertion-stamp drain order together
+        // preserve observational semantics (every cursor materializes
+        // back with its original heavy fields + arrives at the per-
+        // cursor loop in insertion order matching the pre-ingest
+        // sequence).
+        //
+        // Performance: per-cursor cost is ~6 Arc::clone + 1 TomitaKey
+        // hash + 1 FxHashMap lookup + 1 Vec::push at ingest, then 1
+        // Vec::sort + 1 materialize per arc at drain. For 1 cursor
+        // per TomitaKey (no merge), this is pure overhead; for N
+        // cursors merged into 1 frontier with N arcs, the cost is
+        // amortized.
+        //
+        // Substage 3 has no produce-path optimization — every arc
+        // routes through apply_action_to_cursor below. Substages 4+
+        // add per-frontier shell-broadcast fast paths.
+        self.tomita_frontier_map.clear();
+        self.tomita_frontier_map.begin_generation();
+        for frame in &drained_pre_tomita {
+            match frame {
+                crate::cohort_lazy::Frame::Concrete(c) => {
+                    let edge_top = self
+                        .incoming_edge_stack_arena
+                        .top(c.incoming_edge_stack_id);
+                    let key = crate::tomita_frontier::TomitaKey::new(
+                        c.inner_state.clone(),
+                        c.node,
+                        c.pos,
+                        edge_top,
+                        c.collection_stack_depth,
+                    );
+                    let shell = crate::tomita_frontier::TomitaShell::from_cursor(c);
+                    let arc = crate::tomita_frontier::FrontierArc::from_cursor(c);
+                    self.tomita_frontier_map.register_arc(key, shell, arc);
+                }
+                crate::cohort_lazy::Frame::Cohort(cf) => {
+                    // Materialize each member of the H12 cohort, then
+                    // ingest each materialized cursor as a separate arc.
+                    // The H12 cohort's shell is sound for materialization
+                    // (members satisfy ~_obs by construction at
+                    // pause_cohort_member); the resulting cursors are
+                    // independently sound for Tomita ingest.
+                    for member in &cf.members {
+                        let cursor = crate::cohort_lazy::materialize_branch_cursor(
+                            &cf.shell, member,
+                        );
+                        let edge_top = self
+                            .incoming_edge_stack_arena
+                            .top(cursor.incoming_edge_stack_id);
+                        let key = crate::tomita_frontier::TomitaKey::new(
+                            cursor.inner_state.clone(),
+                            cursor.node,
+                            cursor.pos,
+                            edge_top,
+                            cursor.collection_stack_depth,
+                        );
+                        let shell = crate::tomita_frontier::TomitaShell::from_cursor(
+                            &cursor,
+                        );
+                        let arc = crate::tomita_frontier::FrontierArc::from_cursor(
+                            &cursor,
+                        );
+                        self.tomita_frontier_map.register_arc(key, shell, arc);
+                    }
+                }
+            }
+        }
+        drop(drained_pre_tomita);
+        // Drain the map back into Concrete frames for the existing per-
+        // cursor step path. drain_current_generation sorts by per-frontier
+        // insertion-stamp so order is stable (HashMap iteration is hash-
+        // ordered, which permuted cursors and broke 3 ScriptedEngine Fork
+        // tests in an earlier attempt). Within a single frontier, arcs
+        // are in their Vec::push order (also insertion-stable). Each arc
+        // becomes one Concrete BranchCursor via
+        // materialize_branch_cursor_from_arc; heavy fields are restored
+        // from the arc (soundness fix Substage 1.5+2.5).
+        let drained_nodes = self.tomita_frontier_map.drain_current_generation();
+        let mut drained: Vec<crate::cohort_lazy::Frame<W>> =
+            Vec::with_capacity(drained_nodes.len());
+        for (_key, node) in drained_nodes {
+            for arc in &node.arcs {
+                let cursor = crate::tomita_frontier::materialize_branch_cursor_from_arc(
+                    &node.shell, arc,
+                );
+                drained.push(crate::cohort_lazy::Frame::Concrete(cursor));
+            }
+        }
         // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): observe
         // TomitaKey for every frame in the pre-step frontier. Concrete
         // frames contribute one observation; Cohort frames contribute one

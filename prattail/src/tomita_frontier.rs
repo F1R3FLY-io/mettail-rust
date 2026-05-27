@@ -356,6 +356,13 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
 /// per-cursor-divergent fields). The 6 heavy fields live PER-ARC on
 /// `FrontierArc`. See redesigned plan §2.4.1 and §3.1.
 ///
+/// **Substage 3 prerequisite**: `insertion_stamp` enforces stable drain
+/// order. The walker's existing tiebreak chain (source_priority,
+/// lex-min weight) is insufficient under ScriptedEngine fixtures whose
+/// per-cursor action is order-dependent — drain must yield frontier
+/// nodes in their original insertion order so the per-cursor loop's
+/// engine.step pairing is preserved.
+///
 /// The existing `Arc<CohortShell<W>>` continues to back H12 dispatch
 /// cohorts (which DO satisfy the construction-time `~_obs` equivalence
 /// at `dispatch_cohort::pause_cohort_member`); Tomita uses the strictly
@@ -365,23 +372,36 @@ pub struct FrontierNode<W: SemiringRef> {
     /// Shared shell — strictly TomitaKey-invariant axes.
     pub shell: Arc<TomitaShell<W>>,
     /// The arcs. Vec because arc count is small (median ~3 at
-    /// chain_500 LEFT-assoc per Substage 0 measurement).
+    /// chain_500 LEFT-assoc per Substage 0 measurement). Arc-insertion
+    /// order is preserved by `Vec::push` so the per-frontier sequence
+    /// remains stable.
     pub arcs: Vec<FrontierArc<W>>,
     /// Generation counter; incremented per `step_fanout` iteration.
     /// Frontier nodes whose generation lags the current map generation
     /// are evicted between steps (no live arcs).
     pub generation: u32,
+    /// Monotonic insertion stamp set when this frontier node was
+    /// first created. Drain sites sort by this stamp to yield nodes
+    /// in original insertion order (FxHashMap iteration is hash-order,
+    /// not insertion-order — order-dependent tests fail without this).
+    pub insertion_stamp: u64,
 }
 
 impl<W: SemiringRef> FrontierNode<W> {
     /// Construct a fresh frontier node from a TomitaShell + initial
     /// single arc. The shell is wrapped in `Arc` here so all later
     /// arc-insertions share the same shell.
-    pub fn new(shell: TomitaShell<W>, initial_arc: FrontierArc<W>, generation: u32) -> Self {
+    pub fn new(
+        shell: TomitaShell<W>,
+        initial_arc: FrontierArc<W>,
+        generation: u32,
+        insertion_stamp: u64,
+    ) -> Self {
         Self {
             shell: Arc::new(shell),
             arcs: vec![initial_arc],
             generation,
+            insertion_stamp,
         }
     }
 
@@ -413,6 +433,10 @@ pub struct TomitaFrontierMap<W: SemiringRef> {
     map: FxHashMap<TomitaKey, FrontierNode<W>>,
     /// Per-step generation counter.
     current_generation: u32,
+    /// Monotonic insertion-stamp counter (incremented on each fresh-key
+    /// register_arc). Stable order across drain — see FrontierNode
+    /// docstring for why this matters.
+    next_insertion_stamp: u64,
     /// Total `register_arc` calls (stats-only, walker-stats feature
     /// gated at use site). Not gated here so the field exists in both
     /// builds.
@@ -433,6 +457,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
         Self {
             map: FxHashMap::default(),
             current_generation: 0,
+            next_insertion_stamp: 0,
             total_registrations: 0,
             dedup_hits: 0,
         }
@@ -442,6 +467,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
     pub fn clear(&mut self) {
         self.map.clear();
         self.current_generation = 0;
+        self.next_insertion_stamp = 0;
         self.total_registrations = 0;
         self.dedup_hits = 0;
     }
@@ -484,7 +510,9 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                 node.arc_count()
             }
             None => {
-                let node = FrontierNode::new(shell_if_new, arc, gen);
+                let stamp = self.next_insertion_stamp;
+                self.next_insertion_stamp = self.next_insertion_stamp.saturating_add(1);
+                let node = FrontierNode::new(shell_if_new, arc, gen, stamp);
                 self.map.insert(key, node);
                 1
             }
@@ -508,19 +536,27 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
     }
 
     /// Drain frontier nodes whose generation matches the current one;
-    /// removes them from the map and yields ownership. Used by
-    /// Substage 4+'s per-frontier step dispatch loop.
+    /// removes them from the map and yields ownership in **insertion-
+    /// stamp order** (NOT HashMap iteration order — see FrontierNode
+    /// docstring for why this matters).
     pub fn drain_current_generation(
         &mut self,
     ) -> Vec<(TomitaKey, FrontierNode<W>)> {
         let cur = self.current_generation;
-        let keys: Vec<TomitaKey> = self
+        let mut keyed_stamps: Vec<(TomitaKey, u64)> = self
             .map
             .iter()
-            .filter_map(|(k, node)| if node.generation == cur { Some(k.clone()) } else { None })
+            .filter_map(|(k, node)| {
+                if node.generation == cur {
+                    Some((k.clone(), node.insertion_stamp))
+                } else {
+                    None
+                }
+            })
             .collect();
-        let mut out = Vec::with_capacity(keys.len());
-        for k in keys {
+        keyed_stamps.sort_by_key(|(_k, stamp)| *stamp);
+        let mut out = Vec::with_capacity(keyed_stamps.len());
+        for (k, _stamp) in keyed_stamps {
             if let Some(node) = self.map.remove(&k) {
                 out.push((k, node));
             }
@@ -815,7 +851,7 @@ mod tests {
 
     #[test]
     fn frontier_node_push_arc_increments_count() {
-        let mut node = FrontierNode::new(fresh_shell(), fresh_arc(), 0);
+        let mut node = FrontierNode::new(fresh_shell(), fresh_arc(), 0, 0);
         assert_eq!(node.arc_count(), 1);
         node.push_arc(fresh_arc(), 0);
         assert_eq!(node.arc_count(), 2);
@@ -823,7 +859,7 @@ mod tests {
 
     #[test]
     fn frontier_node_push_arc_updates_generation() {
-        let mut node = FrontierNode::new(fresh_shell(), fresh_arc(), 0);
+        let mut node = FrontierNode::new(fresh_shell(), fresh_arc(), 0, 0);
         assert_eq!(node.generation, 0);
         node.push_arc(fresh_arc(), 7);
         assert_eq!(node.generation, 7);
