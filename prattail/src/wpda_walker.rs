@@ -817,6 +817,24 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     ///
     /// See `prattail/docs/design/plans/exp15-cps-trampolined-walker.md`.
     pub cursor_store: crate::cursor_store::CursorStore<W>,
+
+    /// Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): tracks which
+    /// `(category_src_idx, rule_index_in_category)` pairs have already
+    /// had their chain region absorbed via the Earley outboard fast
+    /// path. The first `already_chained == true` event for a given
+    /// pair triggers a single `earley_outboard_chain` call that absorbs
+    /// the WHOLE remaining chain region; subsequent
+    /// `IterativeChainAbsorb` events for the same pair skip the trigger
+    /// (region already absorbed).
+    ///
+    /// This is the region-amortization that fixes the Exp 13 S1.c
+    /// rejection (which invoked Earley per iteration, regressing
+    /// chain_100 wall by +2.04%). Per Plan v6 H2 design at
+    /// `prattail/docs/design/plans/hybrid-earley-wpds-v6.md`.
+    ///
+    /// Reset at parse boundary via the walker's `reset` method.
+    pub chain_earley_invoked:
+        rustc_hash::FxHashSet<(u16, u16)>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2673,6 +2691,9 @@ where
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
+            // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley
+            // chain-region absorption tracker. Fresh = empty.
+            chain_earley_invoked: rustc_hash::FxHashSet::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2753,6 +2774,9 @@ where
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
+            // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley
+            // chain-region absorption tracker. Fresh = empty.
+            chain_earley_invoked: rustc_hash::FxHashSet::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2828,6 +2852,9 @@ where
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
+            // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley
+            // chain-region absorption tracker. Fresh = empty.
+            chain_earley_invoked: rustc_hash::FxHashSet::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2909,6 +2936,9 @@ where
         // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
         // clear the cursor store scaffolding at parse boundary.
         self.cursor_store.clear();
+        // Plan v6 H2 (2026-05-27): clear chain-region Earley absorption
+        // tracker at parse boundary.
+        self.chain_earley_invoked.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -5400,6 +5430,99 @@ where
                     // additional chain element. Counters are scoped
                     // per parse and reset at WpdaWalker::reset.
                     crate::stats_inc!(self, chain_region_iterations);
+
+                    // Plan v6 H2 (2026-05-27, shell-only): region-
+                    // amortized Earley absorption trigger detection.
+                    // On the FIRST already_chained event per (cat_src,
+                    // rule_idx) per parse, peek ahead to see if there's
+                    // a real chain region (≥ 4 atoms remaining) and if
+                    // so attempt the Earley outboard call. The Earley
+                    // result is currently LOGGED but NOT used to mutate
+                    // cursor state — full SPPF state reconciliation is
+                    // deferred to H3. This shell ships the trigger
+                    // machinery so we can empirically measure how often
+                    // the trigger fires + Earley succeeds at chain_500
+                    // BEFORE committing to the integration design.
+                    let (cat, rule) = (
+                        symbol.category_src_idx,
+                        symbol.rule_index_in_category,
+                    );
+                    if !self.chain_earley_invoked.contains(&(cat, rule)) {
+                        // Defensive peek-ahead: at least 4 atoms remaining
+                        // in the chain (cursor.pos is on the operator
+                        // about to be consumed by this arm; next atom is
+                        // at cursor.pos + 1).
+                        let probe_start = cursor.pos + 1;
+                        let mut remaining_atoms = 0usize;
+                        let mut probe = probe_start;
+                        loop {
+                            let atom_here = tokens.peek_kind(probe);
+                            if atom_here.is_none() {
+                                break;
+                            }
+                            remaining_atoms += 1;
+                            // Look for the next operator at probe+1.
+                            let op_next = tokens.peek_kind(probe + 1);
+                            if op_next.is_none() {
+                                break;
+                            }
+                            probe += 2;
+                            if remaining_atoms >= 4 {
+                                break;
+                            }
+                        }
+                        if remaining_atoms >= 4 {
+                            crate::stats_inc!(self, chain_earley_trigger_count);
+                            self.chain_earley_invoked.insert((cat, rule));
+                            // SHELL: invoke earley_outboard_chain and
+                            // log the result. We need to peek the next
+                            // atom kind so earley_outboard_chain can do
+                            // its full chain-end probe. The
+                            // earley_outboard_chain helper itself expects
+                            // cursor.pos to be on an atom; the cursor
+                            // here is on the operator (about to be
+                            // consumed by advance_cursor_pos below). For
+                            // the shell we construct a *probe cursor*
+                            // whose pos is the next atom position to
+                            // satisfy that contract without mutating
+                            // the real cursor.
+                            let mut probe_cursor = cursor.clone();
+                            probe_cursor.pos = cursor.pos + 1;
+                            match self.earley_outboard_chain(
+                                &probe_cursor,
+                                tokens,
+                                &symbol,
+                                weight.clone(),
+                            ) {
+                                Some((_root_sid, _acc_weight, chain_end)) => {
+                                    crate::stats_inc!(
+                                        self,
+                                        chain_earley_succeeded_count
+                                    );
+                                    let atoms = (chain_end
+                                        .saturating_sub(probe_start))
+                                        / 2
+                                        + 1;
+                                    crate::stats_add!(
+                                        self,
+                                        chain_earley_atoms_absorbed_sum,
+                                        atoms as u64
+                                    );
+                                    // H3 will replace cursor state with
+                                    // (root_sid, acc_weight, chain_end).
+                                    // Shell: ignore the result; let
+                                    // the normal per-iteration path
+                                    // run.
+                                }
+                                None => {
+                                    crate::stats_inc!(
+                                        self,
+                                        chain_earley_returned_none_count
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 self.emit_push_side_effects(cursor, &mut symbol);
                 if !already_chained {

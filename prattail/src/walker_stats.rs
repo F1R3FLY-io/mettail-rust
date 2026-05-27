@@ -515,6 +515,26 @@ pub struct WalkerStats {
     /// Phase F.13 chain_10000 COQ-S0 (2026-05-27): per-step samples
     /// counter.
     pub cohort_origin_per_step_samples: u64,
+
+    /// Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): chain-region
+    /// Earley absorption trigger fired this parse (one per
+    /// `(category_src_idx, rule_index_in_category)` pair where the
+    /// IterativeChainAbsorb arm detected a chain region of ≥ 4 atoms).
+    /// Region-amortized: should be == 1 per chain region (vs Exp 13
+    /// S1.c which invoked per-iteration).
+    pub chain_earley_trigger_count: u64,
+    /// Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley invocation
+    /// succeeded (returned Some root_sppf_id).
+    pub chain_earley_succeeded_count: u64,
+    /// Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley invocation
+    /// returned None (chain region too short or chart construction
+    /// declined).
+    pub chain_earley_returned_none_count: u64,
+    /// Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): sum of atom
+    /// counts that Earley absorbed (used to compute chain_end_pos
+    /// projection). Divide by `chain_earley_succeeded_count` for the
+    /// average chain length absorbed per Earley call.
+    pub chain_earley_atoms_absorbed_sum: u64,
 }
 
 /// Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27): bucket
@@ -1975,6 +1995,28 @@ impl fmt::Display for WalkerStats {
                 )?;
             }
         }
+        // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): chain-region
+        // Earley absorption trigger stats.
+        if self.chain_earley_trigger_count > 0 {
+            let avg_atoms = if self.chain_earley_succeeded_count > 0 {
+                (self.chain_earley_atoms_absorbed_sum as f64)
+                    / (self.chain_earley_succeeded_count as f64)
+            } else {
+                0.0
+            };
+            writeln!(
+                f,
+                "  chain_earley_absorption (Plan v6 H2):",
+            )?;
+            writeln!(
+                f,
+                "    trigger_count={} succeeded={} returned_none={} avg_atoms_absorbed={:.1}",
+                self.chain_earley_trigger_count,
+                self.chain_earley_succeeded_count,
+                self.chain_earley_returned_none_count,
+                avg_atoms,
+            )?;
+        }
         // Phase F.13 chain_10000 COQ-S0 (2026-05-27): cohort_origin
         // distinct count vs EquivKey collision rate.
         if !self.cohort_origin_dispatch_keys_seen.is_empty() {
@@ -2410,6 +2452,11 @@ mod tests {
             cohort_origin_distinct_per_step_max: 0,
             cohort_origin_distinct_per_step_sum: 0,
             cohort_origin_per_step_samples: 0,
+            // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27).
+            chain_earley_trigger_count: 0,
+            chain_earley_succeeded_count: 0,
+            chain_earley_returned_none_count: 0,
+            chain_earley_atoms_absorbed_sum: 0,
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));
