@@ -404,6 +404,24 @@ pub struct WalkerStats {
     /// left_assoc_chain_500. Populated by walker push sites under the
     /// `walker-stats` feature; zero-cost when disabled.
     pub edge_kind_projection: EdgeKindProjection,
+
+    /// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): TomitaKey
+    /// coarse-merge projection. Counterfactual measurement of what the
+    /// planned `TomitaFrontierMap` (Tomita 1985 / Scott-Johnstone 2010)
+    /// would dedup if the walker keyed cursors on
+    /// `(state, node, pos, edge_top, collection_depth)` per
+    /// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
+    /// §2.3. The gate to proceed past Substage 0 is `projected_dedup_rate()
+    /// >= 5.0` on left_assoc_chain_500.
+    pub tomita_key_projection: TomitaKeyProjection,
+
+    /// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
+    /// continuation size projection. Counterfactual measurement of the
+    /// `Continuation::ApplyAction` record size distribution under the
+    /// planned CPS rewrite (see
+    /// `prattail/docs/design/plans/exp15-cps-trampolined-walker.md` §3.1).
+    /// Gate: P50 ≤ 32 B AND P99 ≤ 64 B on left_assoc_chain_500.
+    pub continuation_size_projection: ContinuationSizeProjection,
 }
 
 /// Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
@@ -543,6 +561,263 @@ impl EdgeKindProjection {
         } else {
             (self.projection_dedup_hits as f64) / (self.observe_push_calls as f64)
         }
+    }
+}
+
+/// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): TomitaKey
+/// coarse-merge projection counters. Mirrors what `TomitaFrontierMap`
+/// would dedup if the walker keyed cursors on the 5-tuple
+/// `(state, node, pos, edge_top, collection_depth)` (per Tomita 1985 /
+/// Scott-Johnstone 2010 GLL-descriptor coarsening of the current 11-axis
+/// ConfigKey).
+///
+/// Plan ref: `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`
+/// §5 Substage 0. The gate is "projected dedup ratio ≥ 5×" on
+/// left_assoc_chain_500. If FAILS, downstream Exp 14 substages SKIP.
+///
+/// Per-step semantics: each `step_fanout` iteration observes the cursor
+/// population pre-step. For Concrete frames, observe once per cursor.
+/// For Cohort frames, observe N times (once per member) — all members
+/// share the same TomitaKey by construction of the cohort. Distinct
+/// TomitaKeys are counted PER STEP (different step generations should
+/// not merge because Tomita-merge is bounded by step boundaries via the
+/// generation counter in the planned TomitaFrontierMap).
+///
+/// Aggregate metric:
+/// `cumulative_cursors_ingested / cumulative_per_step_distinct_keys`
+/// = average per-step merge factor over the parse.
+#[derive(Default, Debug, Clone)]
+pub struct TomitaKeyProjection {
+    /// Per-step working set of distinct TomitaKey values; cleared at
+    /// each `step_fanout` entry via `begin_step`.
+    pub per_step_distinct_keys: FxHashMap<TomitaKey, u64>,
+    /// Total cursor observations across all steps (sum of per-step
+    /// frontier sizes; counts cohort members individually).
+    pub cumulative_cursors_ingested: u64,
+    /// Total distinct TomitaKeys summed across all steps (= sum of
+    /// per_step_distinct_keys.len() at each `end_step`).
+    pub cumulative_per_step_distinct_keys: u64,
+    /// Per-step max ingest count (peak frontier observed at any single
+    /// step, in cursor units).
+    pub max_cursors_per_step: u64,
+    /// Per-step max distinct-key count.
+    pub max_distinct_keys_per_step: u64,
+    /// Step count actually observed.
+    pub observed_steps: u64,
+}
+
+/// Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): the coarse
+/// merge key that the planned `TomitaFrontierMap` would use. Drops the
+/// four lex provenance axes plus `cohort_origin` plus `sppf_top` from
+/// the current `ConfigKey` 11-tuple. Cursors with the same TomitaKey
+/// but distinct ConfigKey would arc-merge under Intervention A of
+/// `exp14-tomita-per-arc-gss-merge.md` §2.3.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct TomitaKey {
+    pub state: crate::wpda_runtime::WpdaState,
+    pub node: crate::gss::GssNodeId,
+    pub pos: usize,
+    pub incoming_edge_top: Option<crate::gss::GssEdgeId>,
+    pub collection_depth: u8,
+}
+
+impl TomitaKeyProjection {
+    /// Reset to empty (called from walker reset).
+    pub fn clear(&mut self) {
+        self.per_step_distinct_keys.clear();
+        self.cumulative_cursors_ingested = 0;
+        self.cumulative_per_step_distinct_keys = 0;
+        self.max_cursors_per_step = 0;
+        self.max_distinct_keys_per_step = 0;
+        self.observed_steps = 0;
+    }
+
+    /// Begin a new step: clear the per-step distinct-key working set.
+    /// Call at the top of `step_fanout`.
+    pub fn begin_step(&mut self) {
+        self.per_step_distinct_keys.clear();
+    }
+
+    /// Observe one cursor with its TomitaKey + member-multiplicity
+    /// (1 for Concrete, N for a Cohort frame member-count). The
+    /// caller is expected to increment by the per-frame contribution.
+    pub fn observe(&mut self, key: TomitaKey, count: u64) {
+        if count == 0 {
+            return;
+        }
+        let entry = self
+            .per_step_distinct_keys
+            .entry(key)
+            .or_insert(0);
+        *entry = entry.saturating_add(count);
+        self.cumulative_cursors_ingested =
+            self.cumulative_cursors_ingested.saturating_add(count);
+    }
+
+    /// End the current step: roll per-step distinct count into cumulative.
+    /// Call after every frame in `step_fanout` is processed.
+    pub fn end_step(&mut self) {
+        let distinct = self.per_step_distinct_keys.len() as u64;
+        if distinct == 0 {
+            return;
+        }
+        let cursors_this_step: u64 = self
+            .per_step_distinct_keys
+            .values()
+            .copied()
+            .sum();
+        self.cumulative_per_step_distinct_keys = self
+            .cumulative_per_step_distinct_keys
+            .saturating_add(distinct);
+        if cursors_this_step > self.max_cursors_per_step {
+            self.max_cursors_per_step = cursors_this_step;
+        }
+        if distinct > self.max_distinct_keys_per_step {
+            self.max_distinct_keys_per_step = distinct;
+        }
+        self.observed_steps = self.observed_steps.saturating_add(1);
+        self.per_step_distinct_keys.clear();
+    }
+
+    /// Average per-step merge factor = average bucket size under TomitaKey
+    /// keying. Higher = more reduction. Gate: ≥ 5.0 per the plan.
+    pub fn projected_dedup_rate(&self) -> f64 {
+        if self.cumulative_per_step_distinct_keys == 0 {
+            0.0
+        } else {
+            (self.cumulative_cursors_ingested as f64)
+                / (self.cumulative_per_step_distinct_keys as f64)
+        }
+    }
+}
+
+/// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): CPS
+/// continuation record size projection. Counterfactual measurement of
+/// the size distribution `Continuation::ApplyAction { cursor_id, action }`
+/// records would have under the planned CPS rewrite (see
+/// `prattail/docs/design/plans/exp15-cps-trampolined-walker.md` §3.1).
+///
+/// Plan gate: P50 record size ≤ 32 B AND P99 ≤ 64 B on
+/// left_assoc_chain_500. If FAILS, the per-record cost will not deliver
+/// the projected 5.3× per-cursor reduction; downstream substages SKIP.
+///
+/// Histogram buckets (8 bands): 0-7, 8-15, 16-31, 32-63, 64-127, 128-255,
+/// 256-511, 512+. P50 ≤ 32 ⇔ cumulative count through band 3 ≥ 50 %;
+/// P99 ≤ 64 ⇔ cumulative through band 4 ≥ 99 %.
+///
+/// Separately tracks `step_continuations_emitted` (the count of small
+/// 8-byte `Continuation::Step { cursor_id }` records that the Fork-arm
+/// broadcast would enqueue) — these are NOT included in the ApplyAction
+/// size histogram because their size is uniformly 8 B by construction.
+#[derive(Default, Debug, Clone)]
+pub struct ContinuationSizeProjection {
+    /// Size histogram for `Continuation::ApplyAction` records (bytes).
+    pub apply_action_size_histogram: [u64; 8],
+    /// Sum of observed sizes (for mean).
+    pub apply_action_size_sum_bytes: u64,
+    /// Count of `ApplyAction` continuations observed.
+    pub apply_action_observations: u64,
+    /// Maximum observed `ApplyAction` size.
+    pub apply_action_size_max_bytes: u64,
+    /// Count of `Continuation::Step` records the Fork-arm broadcast
+    /// would enqueue (= sum of branches.len() over Fork actions).
+    pub step_continuations_emitted: u64,
+    /// Per-action-variant counts (17 variants in `WpdaStepAction` +
+    /// Other catch-all). Index matches `continuation_size_variant_index`
+    /// helper below.
+    pub action_variant_counts: [u64; 18],
+}
+
+/// Power-of-two-ish bucket for continuation size (matches the histogram
+/// bands documented on `ContinuationSizeProjection`).
+pub fn continuation_size_bucket(size_bytes: usize) -> usize {
+    match size_bytes {
+        0..=7 => 0,
+        8..=15 => 1,
+        16..=31 => 2,
+        32..=63 => 3,
+        64..=127 => 4,
+        128..=255 => 5,
+        256..=511 => 6,
+        _ => 7, // 512+
+    }
+}
+
+impl ContinuationSizeProjection {
+    /// Reset to empty (called from walker reset).
+    pub fn clear(&mut self) {
+        self.apply_action_size_histogram = [0; 8];
+        self.apply_action_size_sum_bytes = 0;
+        self.apply_action_observations = 0;
+        self.apply_action_size_max_bytes = 0;
+        self.step_continuations_emitted = 0;
+        self.action_variant_counts = [0; 18];
+    }
+
+    /// Record an ApplyAction observation: size in bytes + variant index
+    /// + number of Fork children (0 for non-Fork variants).
+    pub fn observe_apply_action(
+        &mut self,
+        size_bytes: usize,
+        variant_index: usize,
+        fork_children: usize,
+    ) {
+        let bucket = continuation_size_bucket(size_bytes);
+        self.apply_action_size_histogram[bucket] =
+            self.apply_action_size_histogram[bucket].saturating_add(1);
+        self.apply_action_size_sum_bytes = self
+            .apply_action_size_sum_bytes
+            .saturating_add(size_bytes as u64);
+        self.apply_action_observations =
+            self.apply_action_observations.saturating_add(1);
+        let size_u64 = size_bytes as u64;
+        if size_u64 > self.apply_action_size_max_bytes {
+            self.apply_action_size_max_bytes = size_u64;
+        }
+        if variant_index < self.action_variant_counts.len() {
+            self.action_variant_counts[variant_index] = self
+                .action_variant_counts[variant_index]
+                .saturating_add(1);
+        }
+        if fork_children > 0 {
+            self.step_continuations_emitted = self
+                .step_continuations_emitted
+                .saturating_add(fork_children as u64);
+        }
+    }
+
+    /// Mean ApplyAction continuation size in bytes (0 if no observations).
+    pub fn mean_apply_action_size(&self) -> f64 {
+        if self.apply_action_observations == 0 {
+            0.0
+        } else {
+            (self.apply_action_size_sum_bytes as f64)
+                / (self.apply_action_observations as f64)
+        }
+    }
+
+    /// Returns true iff the histogram indicates P50 ≤ p50_max AND P99 ≤
+    /// p99_max under the plan's bucketing. Each bound is mapped to a
+    /// bucket index via `continuation_size_bucket`.
+    pub fn passes_size_gate(&self, p50_max: usize, p99_max: usize) -> bool {
+        if self.apply_action_observations == 0 {
+            return false;
+        }
+        let total = self.apply_action_observations;
+        let p50_bucket = continuation_size_bucket(p50_max);
+        let p99_bucket = continuation_size_bucket(p99_max);
+        // Cumulative through p50_bucket.
+        let cum_p50: u64 = self.apply_action_size_histogram
+            [..=p50_bucket]
+            .iter()
+            .sum();
+        let cum_p99: u64 = self.apply_action_size_histogram
+            [..=p99_bucket]
+            .iter()
+            .sum();
+        let p50_ok = (cum_p50 as f64) / (total as f64) >= 0.50;
+        let p99_ok = (cum_p99 as f64) / (total as f64) >= 0.99;
+        p50_ok && p99_ok
     }
 }
 
@@ -1318,6 +1593,51 @@ impl fmt::Display for WalkerStats {
                 self.edge_kind_projection.projected_dedup_hit_ratio(),
             )?;
         }
+        // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27):
+        // TomitaKey projected merge gate. Shows the counterfactual
+        // per-step distinct-key count + merge factor under the planned
+        // TomitaFrontierMap keying.
+        if self.tomita_key_projection.observed_steps > 0 {
+            writeln!(f, "  tomita_key_projection (Exp 14 counterfactual):")?;
+            writeln!(
+                f,
+                "    observed_steps={} cumulative_cursors={} cumulative_distinct_keys={} avg_merge_factor={:.2}x max_cursors_per_step={} max_distinct_per_step={}",
+                self.tomita_key_projection.observed_steps,
+                self.tomita_key_projection.cumulative_cursors_ingested,
+                self.tomita_key_projection.cumulative_per_step_distinct_keys,
+                self.tomita_key_projection.projected_dedup_rate(),
+                self.tomita_key_projection.max_cursors_per_step,
+                self.tomita_key_projection.max_distinct_keys_per_step,
+            )?;
+        }
+        // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
+        // CPS continuation size projection. Shows the counterfactual
+        // record size distribution + gate status.
+        if self.continuation_size_projection.apply_action_observations > 0 {
+            writeln!(f, "  continuation_size_projection (Exp 15 counterfactual):")?;
+            let hist = self.continuation_size_projection.apply_action_size_histogram;
+            writeln!(
+                f,
+                "    apply_action observations={} mean={:.1}B max={}B step_continuations_emitted={}",
+                self.continuation_size_projection.apply_action_observations,
+                self.continuation_size_projection.mean_apply_action_size(),
+                self.continuation_size_projection.apply_action_size_max_bytes,
+                self.continuation_size_projection.step_continuations_emitted,
+            )?;
+            writeln!(
+                f,
+                "    apply_action size histogram [0-7,8-15,16-31,32-63,64-127,128-255,256-511,512+]: {:?}",
+                hist,
+            )?;
+            let p50_pass = self
+                .continuation_size_projection
+                .passes_size_gate(32, 64);
+            writeln!(
+                f,
+                "    gate (P50<=32 AND P99<=64): {}",
+                if p50_pass { "PASS" } else { "FAIL" },
+            )?;
+        }
         Ok(())
     }
 }
@@ -1522,6 +1842,10 @@ mod tests {
             binder_scope_names_len_samples: 0,
             // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26).
             edge_kind_projection: EdgeKindProjection::default(),
+            // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27).
+            tomita_key_projection: TomitaKeyProjection::default(),
+            // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27).
+            continuation_size_projection: ContinuationSizeProjection::default(),
         };
         let rendered = format!("{}", s);
         assert!(rendered.contains("apply_action_calls=9847"));

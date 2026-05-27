@@ -470,6 +470,94 @@ pub enum WpdaStepAction<W: SemiringRef> {
     Idle,
 }
 
+/// Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27): projects the
+/// size in bytes that a CPS `Continuation::ApplyAction { cursor_id,
+/// action }` record would occupy under the planned rewrite (see
+/// `prattail/docs/design/plans/exp15-cps-trampolined-walker.md` §3.1).
+/// Returns `(size_bytes, variant_index, fork_children)`.
+///
+/// Sizing model: continuation tag (1 B) + cursor_id (`u32`, 4 B) + action
+/// payload (per-variant size of the largest field set). `Box<WpdaStepAction>`
+/// is the planned in-CPS representation; for Fork variants, the per-branch
+/// `ForkBranch<W>` Vec heap allocation is **consumed at enqueue time** —
+/// the Continuation::ApplyAction record itself does NOT carry it (see
+/// §3.6 of the plan). Therefore Fork's record size accounts for the
+/// owning enum tag + cursor_id only; the broadcast emits N small
+/// `Continuation::Step { cursor_id }` records (8 B each) returned via
+/// `fork_children`.
+///
+/// Variant index follows the declaration order in `WpdaStepAction`:
+/// 0 Advance, 1 AdvanceWithEffect, 2 Push, 3 Pop, 4 Replace, 5 Fork,
+/// 6 ConsumeAndPush, 7 IterativeChainAbsorb, 8 ConsumeAndPop, 9 Consume,
+/// 10 ConsumeIdentAndReplace, 11 ConsumeAndReplace, 12 ReplaceAndPush,
+/// 13 ParsePredicate, 14 OptGroupAbsent, 15 OptGroupFinalize,
+/// 16 Accept | Error | Idle (terminal — 17 reserved for "Other").
+#[cfg(feature = "walker-stats")]
+fn project_continuation_record_for_action<W: SemiringRef>(
+    action: &WpdaStepAction<W>,
+) -> (usize, usize, usize) {
+    use std::mem::size_of;
+    let w_size = size_of::<W>();
+    let state_size = size_of::<WpdaState>();
+    let symbol_size = size_of::<StackSymbolV2>();
+    let tag = 1usize; // continuation enum discriminant
+    let cursor_id_size = size_of::<u32>();
+    let action_tag = 1usize; // WpdaStepAction discriminant
+    let header = tag + cursor_id_size + action_tag;
+    match action {
+        WpdaStepAction::Advance(_) => (header + state_size, 0, 0),
+        WpdaStepAction::AdvanceWithEffect { .. } => {
+            // BuilderDelta is an enum w/ payload up to ~32 B.
+            (header + state_size + 32, 1, 0)
+        }
+        WpdaStepAction::Push { .. } => {
+            (header + symbol_size + w_size + state_size, 2, 0)
+        }
+        WpdaStepAction::Pop { .. } => (header + w_size + state_size, 3, 0),
+        WpdaStepAction::Replace { .. } => {
+            (header + symbol_size + w_size + state_size, 4, 0)
+        }
+        WpdaStepAction::Fork { branches, .. } => {
+            // Per the plan, Fork's record DOES NOT carry the branches
+            // Vec; the broadcast at enqueue produces N Continuation::Step
+            // records (8 B each) and consumes the Vec inline. Record
+            // shape is just header + bool consume_trigger.
+            (header + 1, 5, branches.len())
+        }
+        WpdaStepAction::ConsumeAndPush { .. } => {
+            // +1 for TriggerMode (small enum).
+            (header + symbol_size + w_size + state_size + 1, 6, 0)
+        }
+        WpdaStepAction::IterativeChainAbsorb { .. } => {
+            (header + symbol_size + w_size + state_size, 7, 0)
+        }
+        WpdaStepAction::ConsumeAndPop { .. } => {
+            (header + w_size + state_size, 8, 0)
+        }
+        WpdaStepAction::Consume { .. } => (header + w_size + state_size, 9, 0),
+        WpdaStepAction::ConsumeIdentAndReplace { .. } => {
+            (header + symbol_size + w_size + state_size + 1, 10, 0)
+        }
+        WpdaStepAction::ConsumeAndReplace { .. } => {
+            (header + symbol_size + w_size + state_size, 11, 0)
+        }
+        WpdaStepAction::ReplaceAndPush { .. } => {
+            (header + symbol_size * 2 + w_size + state_size, 12, 0)
+        }
+        WpdaStepAction::ParsePredicate { .. } => {
+            (header + symbol_size + w_size + state_size, 13, 0)
+        }
+        WpdaStepAction::OptGroupAbsent { .. } => {
+            (header + symbol_size + w_size + state_size, 14, 0)
+        }
+        WpdaStepAction::OptGroupFinalize { .. } => {
+            (header + symbol_size + w_size + state_size, 15, 0)
+        }
+        WpdaStepAction::Accept | WpdaStepAction::Idle => (header, 16, 0),
+        WpdaStepAction::Error(msg) => (header + 24 + msg.len(), 16, 0),
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // WpdaWalker
 // ══════════════════════════════════════════════════════════════════════════════
@@ -7620,6 +7708,12 @@ where
         // pre-step cursor count for avg-cursors-per-step derivation.
         crate::stats_inc!(self, step_fanout_calls);
         crate::stats_add!(self, branch_cursors_sum, self.branch_cursors.len() as u64);
+        // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): begin
+        // per-step TomitaKey projection working-set.
+        #[cfg(feature = "walker-stats")]
+        {
+            self.stats.tomita_key_projection.begin_step();
+        }
         // Phase F.13 Stage L3.1 (2026-05-25): containers now hold Frame<W>
         // (Concrete-only before L3.4 enables cohort variants).
         let mut new_cursors: Vec<crate::cohort_lazy::Frame<W>> =
@@ -7628,6 +7722,46 @@ where
         let mut resolved_indices: Vec<usize> = Vec::new();
         let drained: Vec<crate::cohort_lazy::Frame<W>> =
             std::mem::take(&mut self.branch_cursors);
+        // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): observe
+        // TomitaKey for every frame in the pre-step frontier. Concrete
+        // frames contribute one observation; Cohort frames contribute one
+        // per member (all sharing the shell's TomitaKey by construction).
+        #[cfg(feature = "walker-stats")]
+        {
+            for frame in &drained {
+                match frame {
+                    crate::cohort_lazy::Frame::Concrete(c) => {
+                        let edge_top = self
+                            .incoming_edge_stack_arena
+                            .top(c.incoming_edge_stack_id);
+                        let key = crate::walker_stats::TomitaKey {
+                            state: c.inner_state.clone(),
+                            node: c.node,
+                            pos: c.pos,
+                            incoming_edge_top: edge_top,
+                            collection_depth: c.collection_stack_depth,
+                        };
+                        self.stats.tomita_key_projection.observe(key, 1);
+                    }
+                    crate::cohort_lazy::Frame::Cohort(cf) => {
+                        let edge_top = self
+                            .incoming_edge_stack_arena
+                            .top(cf.shell.incoming_edge_stack_id);
+                        let key = crate::walker_stats::TomitaKey {
+                            state: cf.shell.inner_state.clone(),
+                            node: cf.shell.node,
+                            pos: cf.shell.pos,
+                            incoming_edge_top: edge_top,
+                            collection_depth: cf.shell.collection_depth,
+                        };
+                        let member_count = cf.members.len() as u64;
+                        self.stats
+                            .tomita_key_projection
+                            .observe(key, member_count.max(1));
+                    }
+                }
+            }
+        }
         for frame in drained {
             // Phase F.13 Stage L3.2 (2026-05-25): Frame::Cohort dispatch.
             // L3.2 stub always materializes (step_cohort_frame returns N
@@ -7703,6 +7837,18 @@ where
                 cursor.pos,
                 tokens,
             );
+            // Phase F.13 chain_10000 Exp 15 Substage 0 (2026-05-27):
+            // observe the projected `Continuation::ApplyAction` record
+            // size for this action, plus the per-Fork child-count that
+            // would be enqueued as small `Continuation::Step` records.
+            #[cfg(feature = "walker-stats")]
+            {
+                let (size, variant_idx, fork_children) =
+                    project_continuation_record_for_action::<W>(&action);
+                self.stats
+                    .continuation_size_projection
+                    .observe_apply_action(size, variant_idx, fork_children);
+            }
             // Phase F.13 chain_10000 Plan C Substage 0 (2026-05-26):
             // sample BranchCursor field lengths into histograms. Used
             // post-parse to size SmallVec inline N (Plan C Substage 1).
@@ -8006,6 +8152,12 @@ where
             .collect();
         let s = WpdaState::AmbiguityFanout { branches: frontier };
         self.state = s.clone();
+        // Phase F.13 chain_10000 Exp 14 Substage 0 (2026-05-27): end of
+        // step — roll per-step TomitaKey distinct count into cumulative.
+        #[cfg(feature = "walker-stats")]
+        {
+            self.stats.tomita_key_projection.end_step();
+        }
         s
     }
 

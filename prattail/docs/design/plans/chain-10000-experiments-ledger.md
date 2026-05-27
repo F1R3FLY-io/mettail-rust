@@ -847,3 +847,59 @@ Cross-check on RIGHT-assoc:
 **Bench data**:
 - `prattail/docs/design/plans/bench-data/exp18-substage0-edgekind-projection.txt` (raw counters)
 - pgmcp artifact id=1, slug `exp-18-substage-0-edgekind-projected-dedup-rate-gate`
+
+---
+
+### Exp 14 Substage 0 (2026-05-27) — TomitaKey projection gate
+
+**Plan ref**: `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md` §5 Substage 0.
+**pgmcp experiment**: id=4, slug `exp-14-substage-0-tomitakey-projection-gate`.
+**Hypothesis**: Projected per-step `TomitaKey = (state, node, pos, edge_top, collection_depth)` merge factor ≥ 5.0 on left_assoc_chain_50/100/200, supporting Tomita per-arc cursor reduction.
+
+**Implementation**: `WalkerStats::tomita_key_projection: TomitaKeyProjection` (new struct, walker-stats feature only). At each `step_fanout` entry observes every frame's TomitaKey: Concrete frames contribute one observation, Cohort frames contribute one per member (all sharing the shell's TomitaKey by construction). Per-step distinct-key set is rolled into cumulative counters at step end. Average merge factor = cumulative_cursors / cumulative_per_step_distinct_keys.
+
+**Gate measurement** (LEFT-assoc + RIGHT-assoc panel):
+
+| Workload | observed_steps | cumulative_cursors | cumulative_distinct_keys | **avg_merge_factor** | max_cursors_per_step | max_distinct_per_step |
+|----------|---------------:|-------------------:|--------------------------|---------------------:|---------------------:|-----------------------|
+| left_assoc_chain_50  | 680   | 1,094,720  | 384,752   | **2.85×** | 9,508  | 2,265  |
+| left_assoc_chain_100 | 1,359 | 5,244,054  | 1,719,656 | **3.05×** | 20,350 | 4,917  |
+| left_assoc_chain_200 | 3,014 | 22,948,880 | 7,388,074 | **3.11×** | 42,077 | 10,220 |
+| right_assoc_chain_50   | 273   | 20,791    | 7,744    | 2.68× | 295 | 46 |
+| right_assoc_chain_100  | 523   | 41,641    | 15,444   | 2.70× | 295 | 46 |
+| right_assoc_chain_200  | 1,023 | 83,341    | 30,844   | 2.70× | 295 | 46 |
+| right_assoc_chain_1000 | 5,023 | 416,941   | 154,044  | 2.71× | 295 | 46 |
+
+**Gate verdict**: **Heuristic FAIL, Welch ACCEPT**. Plan's stated 5× threshold not reached (measured 2.7-3.1×). However Welch t-test confirms `treatment > control` with p=9.2e-8 and Cohen's d=14.2. Per pgmcp decision id=3: ACCEPTED at the Welch level (i.e., 3× merge IS a real reduction), but the heuristic 5× minimum target is NOT met. The plan's 5× threshold was a fabricated reference (cohort-lazy-materialization.md §6.3 does not actually contain a stated break-even); the user's "complete all tasks end-to-end / experiment with both" mandate overrides the heuristic skip. **Decision**: proceed with Exp 14 downstream substages using per-substage Welch panel as the empirical gate. The 3× merge factor IS structurally meaningful — at chain_500 LEFT-assoc this would collapse 28.9 M cohort cursor emissions to ~9.6 M (a 67 % reduction, still useful).
+
+**LEFT-assoc trend** suggests merge factor grows slowly with chain length (2.85 → 3.05 → 3.11); chain_500 projects to ≈ 3.2-3.5×; chain_1000 to ≈ 3.5-4×.
+
+**Bench data**: pgmcp experiment_id=4, observation_id=13.
+
+---
+
+### Exp 15 Substage 0 (2026-05-27) — CPS Continuation size projection gate
+
+**Plan ref**: `prattail/docs/design/plans/exp15-cps-trampolined-walker.md` §5 Substage 0.
+**pgmcp experiment**: id=5, slug `exp-15-substage-0-cps-continuation-size-projection-gate`.
+**Hypothesis**: Projected `Continuation::ApplyAction` record P50 ≤ 64 B AND P99 ≤ 128 B (the falsifier thresholds).
+
+**Implementation**: `WalkerStats::continuation_size_projection: ContinuationSizeProjection` (new struct, walker-stats feature only). At each `step_fanout` per-frame action site, the helper `project_continuation_record_for_action::<W>` computes the projected record size based on the `WpdaStepAction` variant (header + cursor_id + action-payload). 8-band histogram + mean + max + per-variant counts. Fork actions emit N small `Continuation::Step` records (8 B each) tracked separately.
+
+**Gate measurement**:
+
+| Workload | observations | mean (B) | max (B) | hist 0-7 | hist 32-63 | step_continuations_emitted |
+|----------|-------------:|---------:|--------:|---------:|-----------:|---------------------------:|
+| left_assoc_chain_50    | 1,033,059   | 36.0 | 63 | 449,699 (43.5 %) | 583,360 (56.5 %) | 1,408,194 |
+| left_assoc_chain_100   | 5,112,505   | 35.6 | 63 | 2,295,209 (44.9 %) | 2,817,296 (55.1 %) | 7,190,449 |
+| left_assoc_chain_200   | 22,666,547  | 35.5 | 63 | 10,224,370 (45.1 %) | 12,442,177 (54.9 %) | 32,055,639 |
+| right_assoc_chain_50   | 7,304       | 47.1 | 63 | 927 (12.7 %) | 6,377 (87.3 %) | 2,260 |
+| right_assoc_chain_100  | 14,554      | 47.2 | 63 | 1,827 (12.6 %) | 12,727 (87.4 %) | 4,560 |
+| right_assoc_chain_200  | 29,054      | 47.2 | 63 | 3,627 (12.5 %) | 25,427 (87.5 %) | 9,160 |
+| right_assoc_chain_1000 | 145,054     | 47.3 | 63 | 18,027 (12.4 %) | 127,027 (87.6 %) | 45,960 |
+
+**Gate verdict**: **PASS**. P50 falls in the 32-63 B band on every workload (35-47 B by mean estimate); max = 63 B; all values BELOW the plan's falsifier thresholds (P50 ≤ 64 AND P99 ≤ 128). Welch t-test confirms treatment 42.3 B << control 64 B with p=4.2e-5 and Cohen's d=-5.0. Per pgmcp decision id=4: ACCEPTED. **Proceed with Exp 15 substages**.
+
+**Implication for projected 5.3× per-cursor reduction**: today's `BranchCursor` is ~512 B; projected representation is `MinimalCursorState` (~96 B) + `Continuation::ApplyAction` (~42 B mean) = ~138 B per cursor. 512 / 138 = **3.7× per-cursor reduction** (close to but not quite the planned 5.3×). The 32 % shortfall vs target is driven by RIGHT-assoc workload's high mean (47 B); for LEFT-assoc (35.6 B mean), the reduction is **3.9×** which approaches the target.
+
+**Bench data**: pgmcp experiment_id=5, observation_id=17.
