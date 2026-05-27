@@ -107,6 +107,15 @@ pub mod visited_set_arena;
 /// (projected ~3.4 M revived cursors at chain_10000). See ledger +
 /// `phase-f13-stage-1-5-4-approach-p-realize-time-fanout.md`.
 pub mod cohort_continuation;
+/// Phase F.13 chain_10000 Exp 14 Substage 1 (2026-05-27): Tomita-style
+/// frontier merge map data structure. Coarsens the current 11-axis
+/// ConfigKey to a 5-axis TomitaKey = (state, node, pos, edge_top,
+/// collection_depth) and groups cursors with the same key under a
+/// shared CohortShell + N FrontierArc records. Substage 1 ships only
+/// the types + tests as dead code; downstream substages wire the
+/// ingest path at step_fanout. See
+/// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
+pub mod tomita_frontier;
 /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
 /// Synchronous analogue of `dispatch_cohort` for the
 /// `emit_recovery_fork` path — shares the WFST-produced
