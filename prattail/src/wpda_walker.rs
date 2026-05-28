@@ -833,6 +833,28 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
         (usize, u16, u16),
         (crate::sppf::SppfId, W, usize),
     >,
+
+    /// Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): half-open
+    /// `[start, end)` token-position intervals that have been Earley-
+    /// absorbed by H3 for a given `(cat, rule)`. When a cross-cat
+    /// dispatch (`allocate_fork_push_child`'s CrossCatDelegate branch)
+    /// would register a cohort at a `pos_after` that falls strictly
+    /// INSIDE an absorbed interval, the dispatch is suppressed (the
+    /// chain interior at that position is already fully parsed by the
+    /// single Earley absorption — a per-position cohort revive would
+    /// redundantly re-parse it, and at chain_10000 the ~N redundant
+    /// revives each intern fresh SPPF nodes → unbounded arena growth /
+    /// OOM at 4+ GB).
+    ///
+    /// Keyed by `(cat, rule)` so suppression only applies to the exact
+    /// iterative operator whose chain was absorbed. Non-chain workloads
+    /// never populate this map (H3 only fires for chains ≥ 4 atoms), so
+    /// the gauntlet + cross-cat eval suites see an empty map → zero
+    /// behavior change. Reset at parse boundary.
+    pub chain_absorbed_intervals: rustc_hash::FxHashMap<
+        (u16, u16),
+        Vec<(usize, usize)>,
+    >,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2692,6 +2714,9 @@ where
             // Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27):
             // Earley chain absorption result cache. Fresh = empty.
             chain_earley_cache: rustc_hash::FxHashMap::default(),
+            // Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): absorbed
+            // chain intervals. Fresh = empty.
+            chain_absorbed_intervals: rustc_hash::FxHashMap::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2775,6 +2800,9 @@ where
             // Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27):
             // Earley chain absorption result cache. Fresh = empty.
             chain_earley_cache: rustc_hash::FxHashMap::default(),
+            // Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): absorbed
+            // chain intervals. Fresh = empty.
+            chain_absorbed_intervals: rustc_hash::FxHashMap::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2853,6 +2881,9 @@ where
             // Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27):
             // Earley chain absorption result cache. Fresh = empty.
             chain_earley_cache: rustc_hash::FxHashMap::default(),
+            // Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): absorbed
+            // chain intervals. Fresh = empty.
+            chain_absorbed_intervals: rustc_hash::FxHashMap::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2937,6 +2968,8 @@ where
         // Plan v6 H3-bis cache (2026-05-27): clear Earley chain
         // absorption result cache at parse boundary.
         self.chain_earley_cache.clear();
+        // Plan v6 R4 (2026-05-28): clear absorbed chain intervals.
+        self.chain_absorbed_intervals.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -5530,6 +5563,18 @@ where
                                     chain_earley_atoms_absorbed_sum,
                                     atoms as u64
                                 );
+                                // R4 (2026-05-28): record the absorbed
+                                // interval [probe_start, chain_end) for
+                                // this (cat, rule). Cross-cat dispatches
+                                // at positions strictly inside this
+                                // interval are suppressed (the chain
+                                // interior is already fully parsed by
+                                // this single Earley absorption — see
+                                // allocate_fork_push_child suppression).
+                                self.chain_absorbed_intervals
+                                    .entry((cat, rule))
+                                    .or_default()
+                                    .push((probe_start, chain_end));
                                 // Plan v6 H3 (2026-05-27, ATTEMPT 1):
                                 // replace cursor state with Earley
                                 // result. Risk: post-chain state
@@ -11644,6 +11689,28 @@ where
     ///
     /// Per design in
     /// `prattail/docs/design/plans/phase-f13-exp13-earley-outboard.md`.
+    /// Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): true iff `pos`
+    /// falls strictly inside any Earley-absorbed chain interval
+    /// `[start, end)` recorded by H3. Used at the cross-cat cohort
+    /// register site to suppress redundant per-position dispatches whose
+    /// chain interior is already parsed by a single Earley absorption.
+    ///
+    /// O(total intervals) scan; intervals are few per parse (one per
+    /// distinct chain region per (cat, rule)), so this is cheap. The
+    /// `pos > start` (strict) lower bound keeps the chain HEAD position
+    /// (where H3 itself fires) dispatchable; only INTERIOR positions are
+    /// suppressed.
+    fn pos_in_absorbed_chain_interval(&self, pos: usize) -> bool {
+        for intervals in self.chain_absorbed_intervals.values() {
+            for &(start, end) in intervals {
+                if pos > start && pos < end {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     #[allow(dead_code)] // S1.b: unreachable; S1.c wires the trigger.
     fn earley_outboard_chain(
         &mut self,
@@ -11888,6 +11955,19 @@ where
         {
             let s = *source_src_idx;
             let b = *inner_cur_bp;
+            // R4 (2026-05-28): suppress cross-cat cohort registration at
+            // positions strictly inside an Earley-absorbed chain interval.
+            // The chain interior at `pos_after` has already been fully
+            // parsed by H3's single Earley absorption; a per-position
+            // cohort revive here would redundantly re-parse it (the OOM
+            // source at chain_10000 — ~N redundant revives each interning
+            // fresh SPPF nodes). Returning empty drops this redundant
+            // dispatch; the canonical parse is the Earley-absorbed chain.
+            // Non-chain workloads never populate chain_absorbed_intervals,
+            // so this is a no-op outside chain regions.
+            if self.pos_in_absorbed_chain_interval(pos_after) {
+                return Vec::new();
+            }
             let key = crate::dispatch_cohort::DispatchKey::new(pos_after, s, b);
             // COQ-S0 (2026-05-27): track distinct DispatchKey vs
             // EquivKey to confirm the cohort_origin pos discriminator
