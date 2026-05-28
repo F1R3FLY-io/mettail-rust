@@ -818,23 +818,21 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// See `prattail/docs/design/plans/exp15-cps-trampolined-walker.md`.
     pub cursor_store: crate::cursor_store::CursorStore<W>,
 
-    /// Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): tracks which
-    /// `(category_src_idx, rule_index_in_category)` pairs have already
-    /// had their chain region absorbed via the Earley outboard fast
-    /// path. The first `already_chained == true` event for a given
-    /// pair triggers a single `earley_outboard_chain` call that absorbs
-    /// the WHOLE remaining chain region; subsequent
-    /// `IterativeChainAbsorb` events for the same pair skip the trigger
-    /// (region already absorbed).
-    ///
-    /// This is the region-amortization that fixes the Exp 13 S1.c
-    /// rejection (which invoked Earley per iteration, regressing
-    /// chain_100 wall by +2.04%). Per Plan v6 H2 design at
-    /// `prattail/docs/design/plans/hybrid-earley-wpds-v6.md`.
+    /// Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27): cache
+    /// of Earley chain absorption results, keyed by
+    /// `(start_pos, category_src_idx, rule_index_in_category)`. Lets
+    /// cohort-revived cursors that hit the SAME chain region reuse the
+    /// prior cursor's Earley chart instead of rebuilding it
+    /// (chain_500 with no cache: 993 Earley calls = +73% wall over
+    /// pre-H3 baseline). With the cache, expected: ~1 Earley call per
+    /// (start_pos, cat, rule), additional cursors reuse the cached
+    /// (SppfId, weight, chain_end) triple.
     ///
     /// Reset at parse boundary via the walker's `reset` method.
-    pub chain_earley_invoked:
-        rustc_hash::FxHashSet<(u16, u16)>,
+    pub chain_earley_cache: rustc_hash::FxHashMap<
+        (usize, u16, u16),
+        (crate::sppf::SppfId, W, usize),
+    >,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -2691,9 +2689,9 @@ where
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
-            // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley
-            // chain-region absorption tracker. Fresh = empty.
-            chain_earley_invoked: rustc_hash::FxHashSet::default(),
+            // Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27):
+            // Earley chain absorption result cache. Fresh = empty.
+            chain_earley_cache: rustc_hash::FxHashMap::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2774,9 +2772,9 @@ where
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
-            // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley
-            // chain-region absorption tracker. Fresh = empty.
-            chain_earley_invoked: rustc_hash::FxHashSet::default(),
+            // Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27):
+            // Earley chain absorption result cache. Fresh = empty.
+            chain_earley_cache: rustc_hash::FxHashMap::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2852,9 +2850,9 @@ where
             // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
             // walker-global cursor store scaffolding. Fresh = empty.
             cursor_store: crate::cursor_store::CursorStore::new(),
-            // Phase F.13 chain_10000 Plan v6 H2 (2026-05-27): Earley
-            // chain-region absorption tracker. Fresh = empty.
-            chain_earley_invoked: rustc_hash::FxHashSet::default(),
+            // Phase F.13 chain_10000 Plan v6 H3-bis cache (2026-05-27):
+            // Earley chain absorption result cache. Fresh = empty.
+            chain_earley_cache: rustc_hash::FxHashMap::default(),
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // walker-global SPPF stack interning arena. Fresh = empty.
             sppf_stack_arena: crate::sppf_stack_arena::SppfStackArena::new(),
@@ -2936,9 +2934,9 @@ where
         // Phase F.13 chain_10000 Exp 15 Substage 2 (2026-05-27):
         // clear the cursor store scaffolding at parse boundary.
         self.cursor_store.clear();
-        // Plan v6 H2 (2026-05-27): clear chain-region Earley absorption
-        // tracker at parse boundary.
-        self.chain_earley_invoked.clear();
+        // Plan v6 H3-bis cache (2026-05-27): clear Earley chain
+        // absorption result cache at parse boundary.
+        self.chain_earley_cache.clear();
     }
 
     /// Read-only access to the deterministic-parse flag. Returns `true`
@@ -5448,22 +5446,15 @@ where
                 // the trigger fires + Earley succeeds at chain_500
                 // BEFORE committing to the integration design.
                 // H3-bis (2026-05-27): fires for EVERY cursor entering
-                // the chain region (with peek-ahead gate). H3 attempt 1
-                // (commit 406ba56) used `chain_earley_invoked` to dedup
-                // once per parse, but empirical chain_50 showed only
-                // -19% apply_action because cohort-revived cursors
-                // (~371K) never benefited — they hit IterativeChainAbsorb
-                // after the deterministic cursor's H3 fire had already
-                // inserted (cat, rule). H3-bis lets every cursor
-                // trigger; the SPPF arena dedups Symbols/Packings/
-                // Terminals across cursors so duplicate Earley
-                // emissions collapse via intern_*. Empirical chain_50
-                // (commit da471b5): -98.3% apply_action_calls.
-                //
-                // The walker's `chain_earley_invoked` field is retained
-                // as a future-caching hook (e.g., for caching
-                // (start_pos, cat, rule) -> SppfId across cursors when
-                // the cache hit rate justifies the bookkeeping).
+                // the chain region (with peek-ahead gate). The cache
+                // `chain_earley_cache` keyed on (start_pos, cat, rule)
+                // lets cohort-revived cursors that hit the SAME chain
+                // region reuse the prior cursor's Earley chart instead
+                // of rebuilding it (chain_500 w/o cache: 993 Earley
+                // calls = +73% wall regression). The SPPF arena
+                // additionally dedups Symbols/Packings/Terminals across
+                // cursors so cache misses that rebuild Earley still
+                // collapse to the same SppfId via intern_*.
                 {
                     // Defensive peek-ahead: at least 4 atoms remaining
                     // in the chain (cursor.pos is on the operator
@@ -5489,21 +5480,42 @@ where
                         }
                     }
                     if remaining_atoms >= 4 {
+                        let cat = symbol.category_src_idx;
+                        let rule = symbol.rule_index_in_category;
+                        let cache_key = (probe_start, cat, rule);
                         crate::stats_inc!(self, chain_earley_trigger_count);
-                        // SHELL: invoke earley_outboard_chain and log
-                        // the result. earley_outboard_chain expects
-                        // cursor.pos to be on an atom; cursor here is
-                        // on the operator (about to be consumed by
-                        // advance_cursor_pos below). Construct a probe
-                        // cursor with pos = cursor.pos + 1 (next atom).
-                        let mut probe_cursor = cursor.clone();
-                        probe_cursor.pos = cursor.pos + 1;
-                        match self.earley_outboard_chain(
-                            &probe_cursor,
-                            tokens,
-                            &symbol,
-                            weight.clone(),
-                        ) {
+
+                        // Cache lookup — if the same chain region was
+                        // absorbed by a prior cursor in this parse,
+                        // reuse the (SppfId, weight, chain_end) result.
+                        let cached = self.chain_earley_cache.get(&cache_key).cloned();
+                        let result = match cached {
+                            Some(triple) => Some(triple),
+                            None => {
+                                // Cache miss — invoke Earley.
+                                // earley_outboard_chain expects
+                                // cursor.pos to be on an atom; cursor
+                                // here is on the operator (about to
+                                // be consumed by advance_cursor_pos
+                                // below). Construct a probe cursor
+                                // with pos = cursor.pos + 1.
+                                let mut probe_cursor = cursor.clone();
+                                probe_cursor.pos = cursor.pos + 1;
+                                let res = self.earley_outboard_chain(
+                                    &probe_cursor,
+                                    tokens,
+                                    &symbol,
+                                    weight.clone(),
+                                );
+                                if let Some(ref triple) = res {
+                                    self.chain_earley_cache
+                                        .insert(cache_key, triple.clone());
+                                }
+                                res
+                            }
+                        };
+
+                        match result {
                             Some((root_sid, acc_weight, chain_end)) => {
                                 crate::stats_inc!(
                                     self,
