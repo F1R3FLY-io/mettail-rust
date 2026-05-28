@@ -8217,6 +8217,23 @@ where
                 //     cycle-defense insert (per-cursor cycle defense) —
                 //     similar to CategoryEntryRoot, can be graduated next
                 //     if it appears in the residual.
+                //
+                // Lazy redesign L2a (2026-05-27): CategoryEntryRoot added.
+                // Empirical chain_50: 100% of 391K residual Push calls are
+                // CategoryEntryRoot (cohort-revive root-sentinel pushes).
+                //
+                // NOTE (2026-05-27 baseline check): the 6 gen_calculator_op
+                // `len` eval-test failures are PRE-EXISTING at session-start
+                // 7b2c11f (verified: 1325 passed / 6 failed at baseline AND
+                // at c0a78f9 AND at HEAD — identical). L2a's CategoryEntryRoot
+                // broadcast is correctness-NEUTRAL (no NEW failures). The
+                // `len` cross-cat bug predates this session and is tracked
+                // separately. CategoryEntryRoot broadcast is RETAINED for
+                // its -36% apply_action win.
+                //
+                // Other convergent EdgeKinds still excluded (OptionalGroupAt
+                // scope-mark side effect; CrossCatProjection visited_dispatch
+                // — the latter handled per-arc below via needs_b12_defense).
                 let safe_for_fast_path = matches!(
                     kind,
                     crate::gss::EdgeKind::InfixContinuation { .. }
