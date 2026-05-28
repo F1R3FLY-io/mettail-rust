@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use mettail_languages::ambient::AmbientLanguage;
 use mettail_languages::calculator::CalculatorLanguage;
 use mettail_languages::lambda::LambdaLanguage;
-use mettail_languages::rhocalc::RhoCalcLanguage;
 use mettail_languages::mycalc::MyCalcLanguage;
+use mettail_languages::rhocalc::RhoCalcLanguage;
 
 /// Registry of available languages
 pub struct LanguageRegistry {

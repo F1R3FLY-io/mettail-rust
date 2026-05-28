@@ -330,6 +330,86 @@ pub fn merge_presentations(mut base: Presentation, overlay: Presentation) -> Res
     Ok(base)
 }
 
+pub fn merge_presentations_right_biased(
+    mut base: Presentation,
+    overlay: Presentation,
+) -> Result<Presentation> {
+    merge_types_right_biased(&mut base, overlay.types);
+    if let Some(literals) = overlay.literals {
+        base.literals = Some(literals);
+    }
+    merge_terms_right_biased(&mut base, overlay.terms);
+    merge_equations_right_biased(&mut base, overlay.equations);
+    merge_rewrites_right_biased(&mut base, overlay.rewrites);
+    if let Some(logic) = overlay.logic {
+        base.logic = Some(logic);
+    }
+    if overlay.semantics != crate::ntir::SemanticsTarget::Unknown {
+        base.semantics = overlay.semantics;
+    }
+    if overlay.context_template.is_some() {
+        base.context_template = overlay.context_template;
+    }
+    base.rust_island_snippets
+        .extend(overlay.rust_island_snippets);
+    base.proc_artifacts.extend(overlay.proc_artifacts);
+    merge_sources(&mut base.sources, &overlay.sources);
+    Ok(base)
+}
+
+fn merge_types_right_biased(pres: &mut Presentation, delta: Vec<mettail_ast::language::LangType>) {
+    for item in delta {
+        let name = item.name.to_string();
+        if let Some(idx) = pres.types.iter().position(|x| x.name == name) {
+            pres.types[idx] = item;
+        } else {
+            pres.types.push(item);
+        }
+    }
+}
+
+fn merge_terms_right_biased(
+    pres: &mut Presentation,
+    delta: Vec<mettail_ast::grammar::GrammarRule>,
+) {
+    for item in delta {
+        let label = item.label.to_string();
+        if let Some(idx) = pres.terms.iter().position(|x| x.label == label) {
+            pres.terms[idx] = item;
+        } else {
+            pres.terms.push(item);
+        }
+    }
+}
+
+fn merge_equations_right_biased(
+    pres: &mut Presentation,
+    delta: Vec<mettail_ast::language::Equation>,
+) {
+    for item in delta {
+        let name = item.name.to_string();
+        if let Some(idx) = pres.equations.iter().position(|x| x.name == name) {
+            pres.equations[idx] = item;
+        } else {
+            pres.equations.push(item);
+        }
+    }
+}
+
+fn merge_rewrites_right_biased(
+    pres: &mut Presentation,
+    delta: Vec<mettail_ast::language::RewriteRule>,
+) {
+    for item in delta {
+        let name = item.name.to_string();
+        if let Some(idx) = pres.rewrites.iter().position(|x| x.name == name) {
+            pres.rewrites[idx] = item;
+        } else {
+            pres.rewrites.push(item);
+        }
+    }
+}
+
 fn merge_sources(base: &mut crate::ntir::TheorySources, overlay: &crate::ntir::TheorySources) {
     merge_source_opt(&mut base.types, &overlay.types);
     merge_source_opt(&mut base.literals, &overlay.literals);

@@ -199,3 +199,83 @@ fn disjointness_conflict_on_duplicate_term_label() {
         "expected disjointness error, got: {msg}"
     );
 }
+
+#[test]
+fn extender_union_compiles_and_merges() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("union_ok.rho");
+    std::fs::write(
+        &path,
+        r#"module U {
+  export extender Left() {
+    empty
+    types { ![i32] as LeftTy }
+    terms { LeftTerm . LeftTy ::= "left" ; }
+  }
+  export extender Right() {
+    empty
+    types { ![i64] as RightTy }
+    terms { RightTerm . RightTy ::= "right" ; }
+  }
+  export extender Both(L, R) { L /\ R }
+  export language L = Both(Left(), Right())
+}
+"#,
+    )
+    .expect("write");
+
+    let ntir = compile_entry(path, Some("L")).expect("compile union");
+    let type_names: Vec<String> = ntir.types.iter().map(|t| t.name.to_string()).collect();
+    assert!(type_names.iter().any(|n| n == "LeftTy"));
+    assert!(type_names.iter().any(|n| n == "RightTy"));
+    let term_labels: Vec<String> = ntir.terms.iter().map(|r| r.label.to_string()).collect();
+    assert!(term_labels.iter().any(|n| n == "LeftTerm"));
+    assert!(term_labels.iter().any(|n| n == "RightTerm"));
+}
+
+#[test]
+fn extender_union_conflict_right_side_wins_silently() {
+    use mettail_ast::grammar::GrammarItem;
+    use quote::ToTokens;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("union_conflict.rho");
+    std::fs::write(
+        &path,
+        r#"module U {
+  export extender Left() {
+    empty
+    types { ![i32] as Num }
+    terms { Same . Num ::= "left" ; }
+  }
+  export extender Right() {
+    empty
+    types { ![i64] as Num }
+    terms { Same . Num ::= "right" ; }
+  }
+  export extender Both(L, R) { L /\ R }
+  export language L = Both(Left(), Right())
+}
+"#,
+    )
+    .expect("write");
+
+    let ntir = compile_entry(path, Some("L")).expect("compile union conflict");
+    assert_eq!(ntir.types.len(), 1);
+    assert_eq!(ntir.types[0].name.to_string(), "Num");
+    let native = ntir.types[0]
+        .native_type
+        .as_ref()
+        .map(ToTokens::to_token_stream)
+        .map(|ts| ts.to_string())
+        .unwrap_or_default();
+    assert_eq!(native, "i64");
+
+    assert_eq!(ntir.terms.len(), 1);
+    assert_eq!(ntir.terms[0].label.to_string(), "Same");
+    let has_right_terminal = ntir.terms[0]
+        .items
+        .iter()
+        .any(|item| matches!(item, GrammarItem::Terminal(t) if t == "right"));
+    assert!(has_right_terminal, "expected right-side term body to win");
+}

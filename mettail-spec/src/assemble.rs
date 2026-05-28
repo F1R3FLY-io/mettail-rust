@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::error::{Result, SpecError};
 use crate::eval::{evaluate_graph, resolve_language_path, EvaluatedGraph};
-use crate::fragments::{apply_suffix, merge_presentations};
+use crate::fragments::{apply_suffix, merge_presentations, merge_presentations_right_biased};
 use crate::island::{process_island, IslandArtifact};
 use crate::ntir::ProcArtifact;
 use crate::ntir::{Ntir, Presentation, SemanticsTarget};
@@ -127,9 +127,11 @@ pub(crate) fn eval_extender_expr(
 ) -> Result<Presentation> {
     match expr {
         ExtenderExpr::Empty => Ok(Presentation::empty()),
-        ExtenderExpr::Union(_, _) => Err(SpecError::Assemble {
-            message: "extender union (/\\) is not implemented in Phase 1".into(),
-        }),
+        ExtenderExpr::Union(lhs, rhs) => {
+            let left = eval_extender_expr(lhs, params, module)?;
+            let right = eval_extender_expr(rhs, params, module)?;
+            merge_presentations_right_biased(left, right)
+        },
         ExtenderExpr::Group(inner) => eval_extender_expr(inner, params, module),
         ExtenderExpr::Suffix { inner, kind, tokens, raw, .. } => {
             let mut pres = eval_extender_expr(inner, params, module)?;
