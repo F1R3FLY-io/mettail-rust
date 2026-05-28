@@ -159,17 +159,20 @@ fn island_capture_in_extender_body() {
 }
 
 #[test]
-fn context_insert_stub_replaces_marker() {
-    use mettail_spec::semantics::lower_context_stub;
+fn context_insert_replaces_marker_with_theory_body() {
+    use mettail_spec::semantics::insert_at_marker;
     use mettail_spec::surface::ContextTemplate;
 
     let template = ContextTemplate {
         raw: "use std::collections::HashMap;\nINSERT_HERE\n".to_string(),
         insert_offset: Some("use std::collections::HashMap;\n".len()),
     };
-    let out = lower_context_stub(&template);
-    assert!(out.contains("/* generated theory */"));
+    let theory = "use mettail_macros::language;\n\nlanguage! { name: L }\n";
+    let out = insert_at_marker(&template, theory, "INSERT_HERE").expect("splice");
+    assert!(out.contains("use std::collections::HashMap;"));
+    assert!(out.contains("language! { name: L }"));
     assert!(!out.contains("INSERT_HERE"));
+    assert!(!out.contains("/* generated theory */"));
 }
 
 #[test]

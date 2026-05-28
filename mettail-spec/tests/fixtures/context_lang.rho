@@ -1,0 +1,13 @@
+module WithCtx {
+  export extender Base() {
+    empty
+    semantics Rust
+    context {
+      use std::collections::HashMap;
+      INSERT_HERE
+    }
+    types { ![i32] as Int }
+    terms { Int . |- "0" : Int ; }
+  }
+  export language L = Base()
+}

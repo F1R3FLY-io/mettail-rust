@@ -76,8 +76,9 @@ fn run() -> Result<(), SpecError> {
                     println!("terms: {}", ntir.terms.len());
                     println!("equations: {}", ntir.equations.len());
                     println!("rewrites: {}", ntir.rewrites.len());
-                    if let Some(ctx) = &ntir.lowered_context {
-                        println!("context:\n{ctx}");
+                    if let Some(ctx) = &ntir.context_template {
+                        println!("context_template: insert_here={}", ctx.insert_offset.is_some());
+                        println!("context:\n{}", ctx.raw);
                     }
                 },
             }

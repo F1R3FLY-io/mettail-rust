@@ -55,3 +55,35 @@ fn rust_island_invalid_hole_errors() {
     };
     assert!(msg.contains("island") || msg.contains("Rust"), "got: {msg}");
 }
+
+#[test]
+fn rust_island_snippet_spliced_inside_context_insert_here() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("rust_island_ctx.rho");
+    std::fs::write(
+        &path,
+        r#"module M {
+  export extender E() {
+    { Rust`let x = ${42};` }
+    semantics Rust
+    context {
+      INSERT_HERE
+    }
+  }
+  export language L = E()
+}
+"#,
+    )
+    .expect("write");
+    let ntir = compile_entry(path, Some("L")).expect("compile rust island with context");
+    let src = mettail_spec::project_rust_source(&ntir).expect("project");
+    assert!(!src.contains("INSERT_HERE"));
+    assert!(src.contains("let x"));
+    assert!(src.contains("language!"));
+    let island_pos = src.find("let x").expect("island snippet");
+    let language_pos = src.find("language!").expect("language macro");
+    assert!(
+        island_pos < language_pos,
+        "island snippet must precede language! inside spliced body"
+    );
+}

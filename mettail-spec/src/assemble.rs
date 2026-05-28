@@ -7,7 +7,6 @@ use crate::island::{process_island, IslandArtifact};
 use crate::ntir::ProcArtifact;
 use crate::ntir::{Ntir, Presentation, SemanticsTarget};
 use crate::resolve::ResolvedGraph;
-use crate::semantics::lower_context_stub;
 use crate::surface::IslandToken;
 use crate::surface::{ContentItem, ExtenderExpr, LanguageExpr};
 
@@ -35,8 +34,7 @@ pub fn compile_language(
         })?;
 
     let pres = assemble_language_expr(graph, evaluated, &entry.file.imports, &lang_decl.expr)?;
-    let lowered_context = pres.context_template.as_ref().map(lower_context_stub);
-    Ok(pres.into_ntir(language_name.to_string(), lowered_context))
+    Ok(pres.into_ntir(language_name.to_string(), None))
 }
 
 pub fn assemble_language_expr(

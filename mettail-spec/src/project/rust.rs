@@ -7,65 +7,15 @@ use syn::parse::{ParseStream, Parser};
 use crate::assemble::{compile_entry, validate_ntir};
 use crate::error::{Result, SpecError};
 use crate::ntir::Ntir;
+use crate::semantics::{assemble_rust_theory_body, lower_rust_context};
 
 /// Emit a complete Rust module source containing `language! { … }`.
 pub fn project_rust_source(ntir: &Ntir) -> Result<String> {
-    if ntir.semantics != crate::ntir::SemanticsTarget::Rust {
-        return Err(SpecError::Assemble {
-            message: format!("Rust projection requires semantics Rust, got {:?}", ntir.semantics),
-        });
-    }
-
-    let mut out = String::new();
-
-    if let Some(ctx) = &ntir.lowered_context {
-        out.push_str(ctx);
-        if !ctx.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push('\n');
-    }
-
-    out.push_str("use mettail_macros::language;\n\n");
-    out.push_str("language! {\n");
-    out.push_str(&format!("    name: {},\n", ntir.name));
-    push_section(&mut out, "types", &ntir.sources.types);
-    push_section(&mut out, "literals", &ntir.sources.literals);
-    push_section(&mut out, "terms", &ntir.sources.terms);
-    push_section(&mut out, "equations", &ntir.sources.equations);
-    push_section(&mut out, "rewrites", &ntir.sources.rewrites);
-    push_logic_section(&mut out, &ntir.sources.logic);
-    out.push_str("}\n");
-    Ok(out)
-}
-
-fn push_section(out: &mut String, keyword: &str, body: &Option<String>) {
-    if let Some(src) = body {
-        if src.trim().is_empty() {
-            return;
-        }
-        out.push_str("    ");
-        out.push_str(keyword);
-        out.push_str(" { ");
-        out.push_str(src.trim());
-        if !src.trim_end().ends_with(';') {
-            out.push(';');
-        }
-        out.push_str(" }\n");
-    }
-}
-
-fn push_logic_section(out: &mut String, body: &Option<String>) {
-    if let Some(src) = body {
-        if src.trim().is_empty() {
-            return;
-        }
-        out.push_str("    logic { ");
-        out.push_str(src.trim());
-        if !src.trim_end().ends_with(';') {
-            out.push(';');
-        }
-        out.push_str(" }\n");
+    let theory = assemble_rust_theory_body(ntir)?;
+    match &ntir.context_template {
+        Some(tmpl) if tmpl.insert_offset.is_some() => lower_rust_context(tmpl, &theory),
+        Some(tmpl) => Ok(format!("{}\n\n{}", tmpl.raw.trim_end(), theory)),
+        None => Ok(theory),
     }
 }
 
