@@ -11825,13 +11825,28 @@ where
         );
 
         // Step 6: drive predict + scan + complete to a fixpoint per
-        // position. Standard Earley algorithm.
+        // position.
+        //
+        // Plan v6 R4 fix (2026-05-28): predict "Chain" ONLY at position
+        // 0, NOT at every position. The pre-fix per-position
+        // `chart.predict("Chain", pos)` seeded `Chain → •Chain op atom`
+        // at EVERY origin, making Earley explore sub-chains starting at
+        // every atom position — O(N²) sub-chains (Chain[i,j] for all
+        // i ≤ j) → O(N²) chart items (measured: max_set_items = N at
+        // every set) → 1.49 GB at chain_2000, OOM at chain_10000. For a
+        // LEFT-recursive `Chain → Chain op atom`, the recursive Chain is
+        // always at the LEFT, anchored at origin 0; it is never legitimately
+        // predicted at pos > 0. Predicting it only at 0 keeps the chart
+        // O(N) (only Chain[0,*] sub-chains), which is the correct
+        // deterministic-chain complexity. `Atom` IS still predicted at
+        // every position (atoms genuinely appear throughout the chain).
         chart.predict("Chain", 0);
+        chart.predict("Atom", 0);
         for pos in 0..chain_len_tokens {
             // Recursive predict: any rule needing Atom at pos must
-            // seed Atom rules.
+            // seed Atom rules. (Chain is NOT re-predicted here — see
+            // the R4 fix note above; it is anchored at origin 0.)
             chart.predict("Atom", pos);
-            chart.predict("Chain", pos);
             // Scan the actual token tag at this position.
             let token_kind = tokens
                 .peek_kind(chain_start + pos)
@@ -11845,6 +11860,28 @@ where
         }
         if !chart.recognizes("Chain") {
             return None;
+        }
+
+        // Plan v6 R4 diag (2026-05-28): chart-size instrumentation to
+        // pinpoint the O(N^2) Earley-chart bloat (chain_2000 = 1.49 GB
+        // actual RSS vs ~4 MB struct mem_attr). If total_chart_items
+        // scales O(N^2) the chart is the OOM source; if O(N) the bloat
+        // is elsewhere (SPPF emit / transient clones).
+        #[cfg(feature = "walker-stats")]
+        {
+            let mut max_set = 0usize;
+            let mut total = 0usize;
+            for p in 0..=chain_len_tokens {
+                let n = chart.items_at(p).len();
+                total += n;
+                if n > max_set {
+                    max_set = n;
+                }
+            }
+            eprintln!(
+                "EARLEY_CHART_DIAG: chain_len_tokens={} total_chart_items={} max_set_items={}",
+                chain_len_tokens, total, max_set
+            );
         }
 
         // Step 7: emit SPPF subforest. The walker's outer InfixOp
