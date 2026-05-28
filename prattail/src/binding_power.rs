@@ -131,17 +131,33 @@ impl InfixOperator {
     /// belongs in the codegen emit site (`emit_iter_eligible_fn` in
     /// `macros/src/gen/runtime/wpda_codegen/infix.rs`, Substage 6b).
     ///
-    /// **PILOT-ONLY GATE** (Exp 6 first-substage scope): in addition
-    /// to the conservative checks above, also requires
-    /// `self.label == "AddInt"` so only Calculator's `AddInt` rule
-    /// participates in the iterative path. Removed for Exp 7
-    /// broadening to all qualifying operators across grammars.
+    /// **PILOT GATE** (`label == "AddInt"`): restricts H3 iterative
+    /// chain-absorption to Calculator's `AddInt`.
+    ///
+    /// WALK-S1 (2026-05-28): an attempt to REMOVE this gate (broaden to
+    /// all left-assoc binary ops) produced a build whose
+    /// `test_left_assoc_chain_*` failed at ALL sizes ("no accepting
+    /// branch reached end of input"), so the gate was RESTORED to the
+    /// known-good baseline (chain_10000 = 111 MB, gauntlet 4217/0).
+    ///
+    /// Root cause is NOT yet proven. Static analysis argues the
+    /// broadening is INERT for a pure single-operator chain: the sole
+    /// consumer of `is_iterative_candidate` is the generated
+    /// `iter_eligible_<cat>` table, whose AddInt arm is byte-identical
+    /// with or without broadening; the InfixLoop singleton `__cands` is
+    /// built from grammar tiers (never from eligibility); and
+    /// `earley_outboard_chain` absorbs a single op-kind run. That points
+    /// to an incremental-build inconsistency rather than a real
+    /// multiple-operator defect. The definitive test is deferred to
+    /// WALK-S3, where enabling right-assoc `^` (PowInt) creates the
+    /// minimal AddInt+PowInt 2-operator case on a CLEAN build: if both
+    /// chains parse, broadening is confirmed inert; if not, the
+    /// multiple-eligible-operator interaction is real and gated here.
     pub fn is_iterative_candidate(&self) -> bool {
         !self.is_cross_category
             && !self.is_postfix
             && !self.is_mixfix
             && self.left_bp < self.right_bp
-            // PILOT-ONLY GATE — remove for Exp 7 broadening.
             && self.label == "AddInt"
     }
 }

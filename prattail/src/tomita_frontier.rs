@@ -552,13 +552,23 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                 // AND matching heavy-field Arc identities. If found,
                 // ⊕-aggregate the new arc's weight in place.
                 if let Some(idx) = node.arcs.iter().position(|existing| {
+                    // WALK-S1 (2026-05-28): evaluate all O(1) Arc::ptr_eq
+                    // discriminants FIRST so the two O(set-size) `im::OrdSet`
+                    // structural compares (visited_dispatch/visited_recovery)
+                    // only run when every cheaper pointer check has already
+                    // matched. Pure short-circuit reorder of a conjunction:
+                    // `&&` is commutative so the merge predicate is bit-for-
+                    // bit identical (gauntlet 4217/0 unchanged), it simply
+                    // skips the expensive set compares on the common
+                    // ptr-mismatch path. Correctness-neutral refactor — no
+                    // speedup is claimed here (the non-H3 Tomita-merge path
+                    // it touches is itself a target for H3 absorption in the
+                    // C1 work, see WALK-S3/S5).
                     existing.merge_disambiguator() == new_disambig
                         && Arc::ptr_eq(
                             &existing.recovery_deltas,
                             &arc.recovery_deltas,
                         )
-                        && existing.visited_dispatch == arc.visited_dispatch
-                        && existing.visited_recovery == arc.visited_recovery
                         && Arc::ptr_eq(
                             &existing.binder_scope_marks,
                             &arc.binder_scope_marks,
@@ -571,6 +581,8 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                             &existing.sppf_collection_arena,
                             &arc.sppf_collection_arena,
                         )
+                        && existing.visited_dispatch == arc.visited_dispatch
+                        && existing.visited_recovery == arc.visited_recovery
                 }) {
                     // Aggregate weight: existing.weight ← existing.weight ⊕ arc.weight.
                     let existing = &mut node.arcs[idx];
