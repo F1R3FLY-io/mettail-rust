@@ -11912,14 +11912,39 @@ where
         rule_weights.insert("chain_step".to_string(), iter_weight.clone());
         rule_weights.insert("chain_base".to_string(), W::one_ref());
         rule_weights.insert("atom".to_string(), W::one_ref());
-        let root = chart.emit_sppf_subforest(
-            &mut self.sppf,
-            "Chain",
-            outer_nt_tag,
-            &rule_label_to_meta,
-            &terminal_sppf_ids,
-            &rule_weights,
-        )?;
+        // chain_10000 stack-safety (2026-05-28): `emit_sppf_subforest`
+        // recurses ~chain_len/2 deep (emit_for_item → find_and_emit_sub →
+        // emit_for_item, one frame per chain level). At chain_10000 (~5000
+        // frames) this overflows the default ~2 MB thread stack. The Earley
+        // chart drive is iterative (worklist fixpoint) and realize/Drop are
+        // iterative, so emit is the ONLY deep recursion in the chain path.
+        // Run it on a scoped thread with a large stack — only TOUCHED stack
+        // pages count toward RSS, so the O(N) memory result is unaffected
+        // (chain_10000 stays ~112 MB). `W: SemiringRef` is `Send + Sync +
+        // 'static`, so the borrows cross the thread boundary with no extra
+        // bounds.
+        let sppf_mut = &mut self.sppf;
+        let chart_ref = &chart;
+        let rlm_ref = &rule_label_to_meta;
+        let tsi_ref: &[crate::sppf::SppfId] = &terminal_sppf_ids;
+        let rw_ref = &rule_weights;
+        let root = std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(512 * 1024 * 1024)
+                .spawn_scoped(scope, move || {
+                    chart_ref.emit_sppf_subforest(
+                        sppf_mut,
+                        "Chain",
+                        outer_nt_tag,
+                        rlm_ref,
+                        tsi_ref,
+                        rw_ref,
+                    )
+                })
+                .expect("spawn emit-sppf-subforest thread")
+                .join()
+                .expect("emit-sppf-subforest thread panicked")
+        })?;
 
         // Step 8: accumulated weight = iter_weight^(atom_count - 1).
         // Each chain_step Packing contributes iter_weight once; total
