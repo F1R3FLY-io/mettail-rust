@@ -162,7 +162,7 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     ))
 }.unwrap_proc(),
         _ => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let num_elems_1 = (reader.next_byte() % 4) as usize;
 let mut coll_1 = mettail_runtime::HashMapLit::default();
 for _ in 0..num_elems_1 {

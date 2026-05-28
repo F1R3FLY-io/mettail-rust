@@ -31,7 +31,7 @@ fn ledtest_metadata_populated() {
 #[test]
 fn unit_ledtest_pred_eqnum() {
     mettail_runtime::clear_var_cache();
-    let term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqNum");
     if let Ok(parsed) = Pred::parse(&displayed) {
@@ -44,7 +44,7 @@ fn unit_ledtest_pred_eqnum() {
 #[test]
 fn unit_ledtest_pred_nenum() {
     mettail_runtime::clear_var_cache();
-    let term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeNum");
     if let Ok(parsed) = Pred::parse(&displayed) {
@@ -57,7 +57,7 @@ fn unit_ledtest_pred_nenum() {
 #[test]
 fn unit_ledtest_num_addnum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddNum");
     if let Ok(parsed) = Num::parse(&displayed) {
@@ -70,7 +70,7 @@ fn unit_ledtest_num_addnum() {
 #[test]
 fn unit_ledtest_num_mulnum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulNum");
     if let Ok(parsed) = Num::parse(&displayed) {
@@ -83,7 +83,7 @@ fn unit_ledtest_num_mulnum() {
 #[test]
 fn unit_ledtest_num_negnum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::NegNum(Box::new(Num::NumLit(0i32)));
+    let term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegNum");
     if let Ok(parsed) = Num::parse(&displayed) {
@@ -96,7 +96,7 @@ fn unit_ledtest_num_negnum() {
 #[test]
 fn unit_ledtest_num_factnum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::FactNum(Box::new(Num::NumLit(0i32)));
+    let term = Num::FactNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FactNum");
     if let Ok(parsed) = Num::parse(&displayed) {
@@ -109,7 +109,7 @@ fn unit_ledtest_num_factnum() {
 #[test]
 fn unit_ledtest_pred_andpred() {
     mettail_runtime::clear_var_cache();
-    let term = Pred::AndPred(Box::new(Pred::BoolLit(false)), Box::new(Pred::BoolLit(false)));
+    let term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(false)), std::sync::Arc::new(Pred::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AndPred");
     if let Ok(parsed) = Pred::parse(&displayed) {
@@ -122,7 +122,7 @@ fn unit_ledtest_pred_andpred() {
 #[test]
 fn unit_ledtest_expr_castnum() {
     mettail_runtime::clear_var_cache();
-    let term = Expr::CastNum(Box::new(Num::NumLit(0i32)));
+    let term = Expr::CastNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastNum");
     if let Ok(parsed) = Expr::parse(&displayed) {
@@ -135,7 +135,7 @@ fn unit_ledtest_expr_castnum() {
 #[test]
 fn unit_ledtest_expr_castpred() {
     mettail_runtime::clear_var_cache();
-    let term = Expr::CastPred(Box::new(Pred::BoolLit(false)));
+    let term = Expr::CastPred(std::sync::Arc::new(Pred::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastPred");
     if let Ok(parsed) = Expr::parse(&displayed) {
@@ -148,7 +148,7 @@ fn unit_ledtest_expr_castpred() {
 #[test]
 fn unit_ledtest_num_exprtonum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::ExprToNum(Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Num::ExprToNum(std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ExprToNum");
     if let Ok(parsed) = Num::parse(&displayed) {
@@ -161,7 +161,7 @@ fn unit_ledtest_num_exprtonum() {
 #[test]
 fn unit_ledtest_expr_epar() {
     mettail_runtime::clear_var_cache();
-    let term = Expr::EPar(Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Expr::EPar(std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EPar");
     if let Ok(parsed) = Expr::parse(&displayed) {
@@ -174,7 +174,7 @@ fn unit_ledtest_expr_epar() {
 #[test]
 fn unit_ledtest_num_predtonum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::PredToNum(Box::new(Pred::BoolLit(false)));
+    let term = Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PredToNum");
     if let Ok(parsed) = Num::parse(&displayed) {

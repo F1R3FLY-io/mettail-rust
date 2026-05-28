@@ -699,8 +699,15 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                         _ => quote! { #nt },
                                     },
                                     None => {
+                                        // ARC refactor (2026-05-28): AST children are
+                                        // `Arc<Cat>`, and the eval frame receives the
+                                        // shared Arc extracted from the AST field — so
+                                        // the frame's storage type must be `Arc<Cat>`
+                                        // (was `Box<Cat>`). The user's rust_code binds
+                                        // `&Cat` via deref, which works identically for
+                                        // Arc.
                                         let ty_ident = *ty_id;
-                                        quote! { ::std::boxed::Box<#ty_ident> }
+                                        quote! { ::std::sync::Arc<#ty_ident> }
                                     }
                                 };
                                 let kind = match (target_native.is_some(), *is_optional) {

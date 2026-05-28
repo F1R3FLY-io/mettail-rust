@@ -40,7 +40,7 @@ fn calculator_bool_eq_int_cross_cat_infix_via_wpds() {
 
 #[test]
 fn lambda_lam_identity_via_wpds() {
-    // `lam x . x` → Term::Lam(Scope::new(Binder("x"), Box::new(Term::TVar(...))))
+    // `lam x . x` → Term::Lam(Scope::new(Binder("x"), std::sync::Arc::new(Term::TVar(...))))
     let result = Term::parse_via_wpda("lam x . x").expect("Term::Lam parses");
     match &result {
         Term::Lam(_) => {}

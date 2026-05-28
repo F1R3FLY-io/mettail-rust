@@ -44,7 +44,7 @@ use mettail_languages::class3opt::{Name, Proc};
 #[test]
 fn ast_pinputsopttagged_qs_none_empty_constructs_and_clones() {
     let pat = Vec::<mettail_runtime::Binder<String>>::new();
-    let body = Box::new(Proc::PZero);
+    let body = std::sync::Arc::new(Proc::PZero);
     let scope = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let term = Proc::PInputsOptTagged(Vec::new(), None, scope);
     let cloned = term.clone();
@@ -56,7 +56,7 @@ fn ast_pinputsopttagged_qs_none_empty_constructs_and_clones() {
 #[test]
 fn ast_pinputsopttagged_qs_some_empty_constructs_and_clones() {
     let pat = Vec::<mettail_runtime::Binder<String>>::new();
-    let body = Box::new(Proc::PZero);
+    let body = std::sync::Arc::new(Proc::PZero);
     let scope = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let term = Proc::PInputsOptTagged(Vec::new(), Some(Vec::new()), scope);
     let cloned = term.clone();
@@ -66,7 +66,7 @@ fn ast_pinputsopttagged_qs_some_empty_constructs_and_clones() {
 #[test]
 fn ast_pinputsopttagged_qs_some_nonempty_constructs_and_clones() {
     let pat = Vec::<mettail_runtime::Binder<String>>::new();
-    let body = Box::new(Proc::PZero);
+    let body = std::sync::Arc::new(Proc::PZero);
     let scope = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let term = Proc::PInputsOptTagged(
         Vec::new(),
@@ -83,7 +83,7 @@ fn ast_pinputsopttagged_qs_some_nonempty_constructs_and_clones() {
 #[test]
 fn ast_pinputsopttagged_qs_none_ne_qs_some() {
     let pat = Vec::<mettail_runtime::Binder<String>>::new();
-    let body = Box::new(Proc::PZero);
+    let body = std::sync::Arc::new(Proc::PZero);
     let scope_a = mettail_runtime::Scope::from_parts_unsafe(pat.clone(), body.clone());
     let scope_b = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let a = Proc::PInputsOptTagged(Vec::new(), None, scope_a);
@@ -94,7 +94,7 @@ fn ast_pinputsopttagged_qs_none_ne_qs_some() {
 #[test]
 fn ast_pinputsopttagged_qs_some_different_lengths_ne() {
     let pat = Vec::<mettail_runtime::Binder<String>>::new();
-    let body = Box::new(Proc::PZero);
+    let body = std::sync::Arc::new(Proc::PZero);
     let scope_a = mettail_runtime::Scope::from_parts_unsafe(pat.clone(), body.clone());
     let scope_b = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let a = Proc::PInputsOptTagged(Vec::new(), Some(vec![Proc::PZero]), scope_a);
@@ -112,7 +112,7 @@ fn ast_pinputsopttagged_qs_some_hash_consistent_with_eq() {
     use std::hash::{Hash, Hasher};
 
     let pat = Vec::<mettail_runtime::Binder<String>>::new();
-    let body = Box::new(Proc::PZero);
+    let body = std::sync::Arc::new(Proc::PZero);
     let scope_a = mettail_runtime::Scope::from_parts_unsafe(pat.clone(), body.clone());
     let scope_b = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let a = Proc::PInputsOptTagged(Vec::new(), Some(vec![Proc::PZero]), scope_a);
@@ -131,10 +131,10 @@ fn ast_pinputsopttagged_with_names_constructs_and_clones() {
     let pat = vec![mettail_runtime::Binder(
         mettail_runtime::FreeVar::fresh(Some("x".to_string())),
     )];
-    let body = Box::new(Proc::PZero);
+    let body = std::sync::Arc::new(Proc::PZero);
     let scope = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let term = Proc::PInputsOptTagged(
-        vec![Name::NQuote(Box::new(Proc::PZero))],
+        vec![Name::NQuote(std::sync::Arc::new(Proc::PZero))],
         Some(vec![Proc::PZero]),
         scope,
     );

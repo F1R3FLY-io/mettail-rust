@@ -29,7 +29,7 @@ fn basemath_metadata_populated() {
 #[test]
 fn unit_basemath_num_add() {
     mettail_runtime::clear_var_cache();
-    let term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Add");
     if let Ok(parsed) = Num::parse(&displayed) {
@@ -42,7 +42,7 @@ fn unit_basemath_num_add() {
 #[test]
 fn unit_basemath_num_sub() {
     mettail_runtime::clear_var_cache();
-    let term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Sub");
     if let Ok(parsed) = Num::parse(&displayed) {

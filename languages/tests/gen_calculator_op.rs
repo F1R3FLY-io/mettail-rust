@@ -246,7 +246,7 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_calculator_valuesmap_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ValuesMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::ValuesMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -258,7 +258,7 @@ fn eval_calculator_valuesmap_default_smoke() {
 #[test]
 fn eval_calculator_keysmap_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::KeysMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -270,7 +270,7 @@ fn eval_calculator_keysmap_default_smoke() {
 #[test]
 fn eval_calculator_mergemap_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Map::MergeMap(Box::new(Map::MapLit(Default::default())), Box::new(Map::MapLit(Default::default())));
+    let input_term = Map::MergeMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -282,7 +282,7 @@ fn eval_calculator_mergemap_default_default_smoke() {
 #[test]
 fn eval_calculator_lenmap_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -294,7 +294,7 @@ fn eval_calculator_lenmap_default_smoke() {
 #[test]
 fn eval_calculator_diffbag_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::DiffBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())));
+    let input_term = Bag::DiffBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -306,7 +306,7 @@ fn eval_calculator_diffbag_default_default_smoke() {
 #[test]
 fn eval_calculator_unionbag_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::UnionBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())));
+    let input_term = Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -318,7 +318,7 @@ fn eval_calculator_unionbag_default_default_smoke() {
 #[test]
 fn eval_calculator_deletelist_default_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(5i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -330,7 +330,7 @@ fn eval_calculator_deletelist_default_5_smoke() {
 #[test]
 fn eval_calculator_deletelist_default_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(3i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -342,7 +342,7 @@ fn eval_calculator_deletelist_default_3_smoke() {
 #[test]
 fn eval_calculator_deletelist_default_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -354,7 +354,7 @@ fn eval_calculator_deletelist_default_2_smoke() {
 #[test]
 fn eval_calculator_deletelist_default_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -366,7 +366,7 @@ fn eval_calculator_deletelist_default_1_smoke() {
 #[test]
 fn eval_calculator_deletelist_default_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -378,7 +378,7 @@ fn eval_calculator_deletelist_default_0_smoke() {
 #[test]
 fn eval_calculator_elemlist_default_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(5i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -390,7 +390,7 @@ fn eval_calculator_elemlist_default_5_smoke() {
 #[test]
 fn eval_calculator_elemlist_default_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(3i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -402,7 +402,7 @@ fn eval_calculator_elemlist_default_3_smoke() {
 #[test]
 fn eval_calculator_elemlist_default_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -414,7 +414,7 @@ fn eval_calculator_elemlist_default_2_smoke() {
 #[test]
 fn eval_calculator_elemlist_default_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -426,7 +426,7 @@ fn eval_calculator_elemlist_default_1_smoke() {
 #[test]
 fn eval_calculator_elemlist_default_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -438,7 +438,7 @@ fn eval_calculator_elemlist_default_0_smoke() {
 #[test]
 fn eval_calculator_lenlist_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenList(Box::new(List::ListLit(Default::default())));
+    let input_term = Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -450,7 +450,7 @@ fn eval_calculator_lenlist_default_smoke() {
 #[test]
 fn eval_calculator_concatlist_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::ListLit(Default::default())), Box::new(List::ListLit(Default::default())));
+    let input_term = List::ConcatList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -462,7 +462,7 @@ fn eval_calculator_concatlist_default_default_smoke() {
 #[test]
 fn eval_calculator_bitnotfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitNotFixed(Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::BitNotFixed(std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -474,7 +474,7 @@ fn eval_calculator_bitnotfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_bitnotfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitNotFixed(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -486,7 +486,7 @@ fn eval_calculator_bitnotfixed_default_smoke() {
 #[test]
 fn eval_calculator_bitorfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitOrFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::BitOrFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -498,7 +498,7 @@ fn eval_calculator_bitorfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_bitorfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitOrFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::BitOrFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -510,7 +510,7 @@ fn eval_calculator_bitorfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_bitorfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitOrFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::BitOrFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -522,7 +522,7 @@ fn eval_calculator_bitorfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_bitorfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitOrFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::BitOrFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -534,7 +534,7 @@ fn eval_calculator_bitorfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_bitandfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitAndFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::BitAndFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -546,7 +546,7 @@ fn eval_calculator_bitandfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_bitandfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitAndFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::BitAndFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -558,7 +558,7 @@ fn eval_calculator_bitandfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_bitandfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitAndFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::BitAndFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -570,7 +570,7 @@ fn eval_calculator_bitandfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_bitandfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitAndFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::BitAndFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -582,7 +582,7 @@ fn eval_calculator_bitandfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_negfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::NegFixed(Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::NegFixed(std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -594,7 +594,7 @@ fn eval_calculator_negfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_negfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::NegFixed(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -606,7 +606,7 @@ fn eval_calculator_negfixed_default_smoke() {
 #[test]
 fn eval_calculator_modfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::ModFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::ModFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -618,7 +618,7 @@ fn eval_calculator_modfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_modfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::ModFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::ModFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -630,7 +630,7 @@ fn eval_calculator_modfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_modfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::ModFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::ModFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -642,7 +642,7 @@ fn eval_calculator_modfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_modfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::ModFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::ModFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -654,7 +654,7 @@ fn eval_calculator_modfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_divfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::DivFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::DivFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -666,7 +666,7 @@ fn eval_calculator_divfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_divfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::DivFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::DivFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -678,7 +678,7 @@ fn eval_calculator_divfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_divfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::DivFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::DivFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -690,7 +690,7 @@ fn eval_calculator_divfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_divfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::DivFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::DivFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -702,7 +702,7 @@ fn eval_calculator_divfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_mulfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::MulFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::MulFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -714,7 +714,7 @@ fn eval_calculator_mulfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_mulfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::MulFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::MulFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -726,7 +726,7 @@ fn eval_calculator_mulfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_mulfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::MulFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::MulFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -738,7 +738,7 @@ fn eval_calculator_mulfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_mulfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::MulFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::MulFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -750,7 +750,7 @@ fn eval_calculator_mulfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_subfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::SubFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::SubFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -762,7 +762,7 @@ fn eval_calculator_subfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_subfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::SubFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::SubFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -774,7 +774,7 @@ fn eval_calculator_subfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_subfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::SubFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::SubFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -786,7 +786,7 @@ fn eval_calculator_subfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_subfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::SubFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::SubFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -798,7 +798,7 @@ fn eval_calculator_subfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_addfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::AddFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::AddFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -810,7 +810,7 @@ fn eval_calculator_addfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_addfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::AddFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::AddFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -822,7 +822,7 @@ fn eval_calculator_addfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_addfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::AddFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Fixed::AddFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -834,7 +834,7 @@ fn eval_calculator_addfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_addfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::AddFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::AddFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -846,7 +846,7 @@ fn eval_calculator_addfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_customop_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -859,7 +859,7 @@ fn eval_calculator_customop_3_5() {
 #[test]
 fn eval_calculator_customop_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -872,7 +872,7 @@ fn eval_calculator_customop_3_3() {
 #[test]
 fn eval_calculator_customop_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -885,7 +885,7 @@ fn eval_calculator_customop_3_2() {
 #[test]
 fn eval_calculator_customop_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -898,7 +898,7 @@ fn eval_calculator_customop_3_1() {
 #[test]
 fn eval_calculator_customop_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -911,7 +911,7 @@ fn eval_calculator_customop_3_0() {
 #[test]
 fn eval_calculator_customop_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -924,7 +924,7 @@ fn eval_calculator_customop_2_5() {
 #[test]
 fn eval_calculator_customop_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -937,7 +937,7 @@ fn eval_calculator_customop_2_3() {
 #[test]
 fn eval_calculator_customop_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -950,7 +950,7 @@ fn eval_calculator_customop_2_2() {
 #[test]
 fn eval_calculator_customop_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -963,7 +963,7 @@ fn eval_calculator_customop_2_1() {
 #[test]
 fn eval_calculator_customop_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -976,7 +976,7 @@ fn eval_calculator_customop_2_0() {
 #[test]
 fn eval_calculator_customop_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -989,7 +989,7 @@ fn eval_calculator_customop_1_5() {
 #[test]
 fn eval_calculator_customop_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1002,7 +1002,7 @@ fn eval_calculator_customop_1_3() {
 #[test]
 fn eval_calculator_customop_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1015,7 +1015,7 @@ fn eval_calculator_customop_1_2() {
 #[test]
 fn eval_calculator_customop_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1028,7 +1028,7 @@ fn eval_calculator_customop_1_1() {
 #[test]
 fn eval_calculator_customop_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1041,7 +1041,7 @@ fn eval_calculator_customop_1_0() {
 #[test]
 fn eval_calculator_customop_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1054,7 +1054,7 @@ fn eval_calculator_customop_0_5() {
 #[test]
 fn eval_calculator_customop_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1067,7 +1067,7 @@ fn eval_calculator_customop_0_3() {
 #[test]
 fn eval_calculator_customop_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1080,7 +1080,7 @@ fn eval_calculator_customop_0_2() {
 #[test]
 fn eval_calculator_customop_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1093,7 +1093,7 @@ fn eval_calculator_customop_0_1() {
 #[test]
 fn eval_calculator_customop_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1106,7 +1106,7 @@ fn eval_calculator_customop_0_0() {
 #[test]
 fn eval_calculator_lnfloat_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::LnFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1119,7 +1119,7 @@ fn eval_calculator_lnfloat_2_5() {
 #[test]
 fn eval_calculator_lnfloat_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::LnFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1132,7 +1132,7 @@ fn eval_calculator_lnfloat_2_0() {
 #[test]
 fn eval_calculator_lnfloat_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::LnFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1145,7 +1145,7 @@ fn eval_calculator_lnfloat_0_5() {
 #[test]
 fn eval_calculator_lnfloat_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::LnFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1158,7 +1158,7 @@ fn eval_calculator_lnfloat_1_0() {
 #[test]
 fn eval_calculator_lnfloat_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::LnFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1171,7 +1171,7 @@ fn eval_calculator_lnfloat_0_0() {
 #[test]
 fn eval_calculator_expfloat_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::ExpFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1184,7 +1184,7 @@ fn eval_calculator_expfloat_2_5() {
 #[test]
 fn eval_calculator_expfloat_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::ExpFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1197,7 +1197,7 @@ fn eval_calculator_expfloat_2_0() {
 #[test]
 fn eval_calculator_expfloat_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::ExpFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1210,7 +1210,7 @@ fn eval_calculator_expfloat_0_5() {
 #[test]
 fn eval_calculator_expfloat_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::ExpFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1223,7 +1223,7 @@ fn eval_calculator_expfloat_1_0() {
 #[test]
 fn eval_calculator_expfloat_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::ExpFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1236,7 +1236,7 @@ fn eval_calculator_expfloat_0_0() {
 #[test]
 fn eval_calculator_cosfloat_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::CosFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1249,7 +1249,7 @@ fn eval_calculator_cosfloat_2_5() {
 #[test]
 fn eval_calculator_cosfloat_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::CosFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1262,7 +1262,7 @@ fn eval_calculator_cosfloat_2_0() {
 #[test]
 fn eval_calculator_cosfloat_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::CosFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1275,7 +1275,7 @@ fn eval_calculator_cosfloat_0_5() {
 #[test]
 fn eval_calculator_cosfloat_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::CosFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1288,7 +1288,7 @@ fn eval_calculator_cosfloat_1_0() {
 #[test]
 fn eval_calculator_cosfloat_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::CosFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1301,7 +1301,7 @@ fn eval_calculator_cosfloat_0_0() {
 #[test]
 fn eval_calculator_sinfloat_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SinFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1314,7 +1314,7 @@ fn eval_calculator_sinfloat_2_5() {
 #[test]
 fn eval_calculator_sinfloat_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SinFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1327,7 +1327,7 @@ fn eval_calculator_sinfloat_2_0() {
 #[test]
 fn eval_calculator_sinfloat_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SinFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1340,7 +1340,7 @@ fn eval_calculator_sinfloat_0_5() {
 #[test]
 fn eval_calculator_sinfloat_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SinFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1353,7 +1353,7 @@ fn eval_calculator_sinfloat_1_0() {
 #[test]
 fn eval_calculator_sinfloat_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SinFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1366,7 +1366,7 @@ fn eval_calculator_sinfloat_0_0() {
 #[test]
 fn eval_calculator_negfloat_2_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1378,7 +1378,7 @@ fn eval_calculator_negfloat_2_5_smoke() {
 #[test]
 fn eval_calculator_negfloat_2_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1390,7 +1390,7 @@ fn eval_calculator_negfloat_2_0_smoke() {
 #[test]
 fn eval_calculator_negfloat_0_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1402,7 +1402,7 @@ fn eval_calculator_negfloat_0_5_smoke() {
 #[test]
 fn eval_calculator_negfloat_1_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1414,7 +1414,7 @@ fn eval_calculator_negfloat_1_0_smoke() {
 #[test]
 fn eval_calculator_negfloat_0_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1426,7 +1426,7 @@ fn eval_calculator_negfloat_0_0_smoke() {
 #[test]
 fn eval_calculator_powfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1439,7 +1439,7 @@ fn eval_calculator_powfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_powfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1452,7 +1452,7 @@ fn eval_calculator_powfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_powfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1465,7 +1465,7 @@ fn eval_calculator_powfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_powfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1478,7 +1478,7 @@ fn eval_calculator_powfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_powfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1491,7 +1491,7 @@ fn eval_calculator_powfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_powfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1504,7 +1504,7 @@ fn eval_calculator_powfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_powfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1517,7 +1517,7 @@ fn eval_calculator_powfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_powfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1530,7 +1530,7 @@ fn eval_calculator_powfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_powfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1543,7 +1543,7 @@ fn eval_calculator_powfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_powfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1556,7 +1556,7 @@ fn eval_calculator_powfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_powfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1569,7 +1569,7 @@ fn eval_calculator_powfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_powfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1582,7 +1582,7 @@ fn eval_calculator_powfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_powfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1595,7 +1595,7 @@ fn eval_calculator_powfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_powfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1608,7 +1608,7 @@ fn eval_calculator_powfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_powfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1621,7 +1621,7 @@ fn eval_calculator_powfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_powfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1634,7 +1634,7 @@ fn eval_calculator_powfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_powfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1647,7 +1647,7 @@ fn eval_calculator_powfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_powfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1660,7 +1660,7 @@ fn eval_calculator_powfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_powfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1673,7 +1673,7 @@ fn eval_calculator_powfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_powfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1686,7 +1686,7 @@ fn eval_calculator_powfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_divfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1699,7 +1699,7 @@ fn eval_calculator_divfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_divfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1712,7 +1712,7 @@ fn eval_calculator_divfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_divfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1725,7 +1725,7 @@ fn eval_calculator_divfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_divfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1738,7 +1738,7 @@ fn eval_calculator_divfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_divfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1751,7 +1751,7 @@ fn eval_calculator_divfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_divfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1764,7 +1764,7 @@ fn eval_calculator_divfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_divfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1777,7 +1777,7 @@ fn eval_calculator_divfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_divfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1790,7 +1790,7 @@ fn eval_calculator_divfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_divfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1803,7 +1803,7 @@ fn eval_calculator_divfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_divfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1816,7 +1816,7 @@ fn eval_calculator_divfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_divfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1829,7 +1829,7 @@ fn eval_calculator_divfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_divfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1842,7 +1842,7 @@ fn eval_calculator_divfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_divfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1855,7 +1855,7 @@ fn eval_calculator_divfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_divfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1868,7 +1868,7 @@ fn eval_calculator_divfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_divfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1881,7 +1881,7 @@ fn eval_calculator_divfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_divfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1894,7 +1894,7 @@ fn eval_calculator_divfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_mulfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1907,7 +1907,7 @@ fn eval_calculator_mulfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_mulfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1920,7 +1920,7 @@ fn eval_calculator_mulfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_mulfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1933,7 +1933,7 @@ fn eval_calculator_mulfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_mulfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1946,7 +1946,7 @@ fn eval_calculator_mulfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_mulfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1959,7 +1959,7 @@ fn eval_calculator_mulfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_mulfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1972,7 +1972,7 @@ fn eval_calculator_mulfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_mulfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1985,7 +1985,7 @@ fn eval_calculator_mulfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_mulfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1998,7 +1998,7 @@ fn eval_calculator_mulfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_mulfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2011,7 +2011,7 @@ fn eval_calculator_mulfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_mulfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2024,7 +2024,7 @@ fn eval_calculator_mulfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_mulfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2037,7 +2037,7 @@ fn eval_calculator_mulfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_mulfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2050,7 +2050,7 @@ fn eval_calculator_mulfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_mulfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2063,7 +2063,7 @@ fn eval_calculator_mulfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_mulfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2076,7 +2076,7 @@ fn eval_calculator_mulfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_mulfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2089,7 +2089,7 @@ fn eval_calculator_mulfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_mulfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2102,7 +2102,7 @@ fn eval_calculator_mulfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_mulfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2115,7 +2115,7 @@ fn eval_calculator_mulfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_mulfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2128,7 +2128,7 @@ fn eval_calculator_mulfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_mulfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2141,7 +2141,7 @@ fn eval_calculator_mulfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_mulfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2154,7 +2154,7 @@ fn eval_calculator_mulfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_subfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2167,7 +2167,7 @@ fn eval_calculator_subfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_subfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2180,7 +2180,7 @@ fn eval_calculator_subfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_subfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2193,7 +2193,7 @@ fn eval_calculator_subfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_subfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2206,7 +2206,7 @@ fn eval_calculator_subfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_subfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2219,7 +2219,7 @@ fn eval_calculator_subfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_subfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2232,7 +2232,7 @@ fn eval_calculator_subfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_subfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2245,7 +2245,7 @@ fn eval_calculator_subfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_subfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2258,7 +2258,7 @@ fn eval_calculator_subfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_subfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2271,7 +2271,7 @@ fn eval_calculator_subfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_subfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2284,7 +2284,7 @@ fn eval_calculator_subfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_subfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2297,7 +2297,7 @@ fn eval_calculator_subfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_subfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2310,7 +2310,7 @@ fn eval_calculator_subfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_subfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2323,7 +2323,7 @@ fn eval_calculator_subfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_subfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2336,7 +2336,7 @@ fn eval_calculator_subfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_subfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2349,7 +2349,7 @@ fn eval_calculator_subfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_subfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2362,7 +2362,7 @@ fn eval_calculator_subfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_subfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2375,7 +2375,7 @@ fn eval_calculator_subfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_subfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2388,7 +2388,7 @@ fn eval_calculator_subfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_subfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2401,7 +2401,7 @@ fn eval_calculator_subfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_subfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2414,7 +2414,7 @@ fn eval_calculator_subfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_addfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2427,7 +2427,7 @@ fn eval_calculator_addfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_addfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2440,7 +2440,7 @@ fn eval_calculator_addfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_addfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2453,7 +2453,7 @@ fn eval_calculator_addfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_addfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2466,7 +2466,7 @@ fn eval_calculator_addfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_addfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2479,7 +2479,7 @@ fn eval_calculator_addfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_addfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2492,7 +2492,7 @@ fn eval_calculator_addfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_addfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2505,7 +2505,7 @@ fn eval_calculator_addfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_addfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2518,7 +2518,7 @@ fn eval_calculator_addfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_addfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2531,7 +2531,7 @@ fn eval_calculator_addfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_addfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2544,7 +2544,7 @@ fn eval_calculator_addfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_addfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2557,7 +2557,7 @@ fn eval_calculator_addfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_addfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2570,7 +2570,7 @@ fn eval_calculator_addfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_addfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2583,7 +2583,7 @@ fn eval_calculator_addfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_addfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2596,7 +2596,7 @@ fn eval_calculator_addfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_addfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2609,7 +2609,7 @@ fn eval_calculator_addfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_addfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2622,7 +2622,7 @@ fn eval_calculator_addfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_addfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2635,7 +2635,7 @@ fn eval_calculator_addfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_addfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2648,7 +2648,7 @@ fn eval_calculator_addfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_addfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2661,7 +2661,7 @@ fn eval_calculator_addfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_addfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2674,7 +2674,7 @@ fn eval_calculator_addfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_fact_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2686,7 +2686,7 @@ fn eval_calculator_fact_5_smoke() {
 #[test]
 fn eval_calculator_fact_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2698,7 +2698,7 @@ fn eval_calculator_fact_3_smoke() {
 #[test]
 fn eval_calculator_fact_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2710,7 +2710,7 @@ fn eval_calculator_fact_2_smoke() {
 #[test]
 fn eval_calculator_fact_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2722,7 +2722,7 @@ fn eval_calculator_fact_1_smoke() {
 #[test]
 fn eval_calculator_fact_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2734,7 +2734,7 @@ fn eval_calculator_fact_0_smoke() {
 #[test]
 fn eval_calculator_neg_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2747,7 +2747,7 @@ fn eval_calculator_neg_5() {
 #[test]
 fn eval_calculator_neg_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2760,7 +2760,7 @@ fn eval_calculator_neg_3() {
 #[test]
 fn eval_calculator_neg_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2773,7 +2773,7 @@ fn eval_calculator_neg_2() {
 #[test]
 fn eval_calculator_neg_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2786,7 +2786,7 @@ fn eval_calculator_neg_1() {
 #[test]
 fn eval_calculator_neg_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2799,7 +2799,7 @@ fn eval_calculator_neg_0() {
 #[test]
 fn eval_calculator_bitnotint_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2812,7 +2812,7 @@ fn eval_calculator_bitnotint_5() {
 #[test]
 fn eval_calculator_bitnotint_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2825,7 +2825,7 @@ fn eval_calculator_bitnotint_3() {
 #[test]
 fn eval_calculator_bitnotint_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2838,7 +2838,7 @@ fn eval_calculator_bitnotint_2() {
 #[test]
 fn eval_calculator_bitnotint_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2851,7 +2851,7 @@ fn eval_calculator_bitnotint_1() {
 #[test]
 fn eval_calculator_bitnotint_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2864,7 +2864,7 @@ fn eval_calculator_bitnotint_0() {
 #[test]
 fn eval_calculator_bitorint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2877,7 +2877,7 @@ fn eval_calculator_bitorint_3_5() {
 #[test]
 fn eval_calculator_bitorint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2890,7 +2890,7 @@ fn eval_calculator_bitorint_3_3() {
 #[test]
 fn eval_calculator_bitorint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2903,7 +2903,7 @@ fn eval_calculator_bitorint_3_2() {
 #[test]
 fn eval_calculator_bitorint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2916,7 +2916,7 @@ fn eval_calculator_bitorint_3_1() {
 #[test]
 fn eval_calculator_bitorint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2929,7 +2929,7 @@ fn eval_calculator_bitorint_3_0() {
 #[test]
 fn eval_calculator_bitorint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2942,7 +2942,7 @@ fn eval_calculator_bitorint_2_5() {
 #[test]
 fn eval_calculator_bitorint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2955,7 +2955,7 @@ fn eval_calculator_bitorint_2_3() {
 #[test]
 fn eval_calculator_bitorint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2968,7 +2968,7 @@ fn eval_calculator_bitorint_2_2() {
 #[test]
 fn eval_calculator_bitorint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2981,7 +2981,7 @@ fn eval_calculator_bitorint_2_1() {
 #[test]
 fn eval_calculator_bitorint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2994,7 +2994,7 @@ fn eval_calculator_bitorint_2_0() {
 #[test]
 fn eval_calculator_bitorint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3007,7 +3007,7 @@ fn eval_calculator_bitorint_1_5() {
 #[test]
 fn eval_calculator_bitorint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3020,7 +3020,7 @@ fn eval_calculator_bitorint_1_3() {
 #[test]
 fn eval_calculator_bitorint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3033,7 +3033,7 @@ fn eval_calculator_bitorint_1_2() {
 #[test]
 fn eval_calculator_bitorint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3046,7 +3046,7 @@ fn eval_calculator_bitorint_1_1() {
 #[test]
 fn eval_calculator_bitorint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3059,7 +3059,7 @@ fn eval_calculator_bitorint_1_0() {
 #[test]
 fn eval_calculator_bitorint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3072,7 +3072,7 @@ fn eval_calculator_bitorint_0_5() {
 #[test]
 fn eval_calculator_bitorint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3085,7 +3085,7 @@ fn eval_calculator_bitorint_0_3() {
 #[test]
 fn eval_calculator_bitorint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3098,7 +3098,7 @@ fn eval_calculator_bitorint_0_2() {
 #[test]
 fn eval_calculator_bitorint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3111,7 +3111,7 @@ fn eval_calculator_bitorint_0_1() {
 #[test]
 fn eval_calculator_bitorint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3124,7 +3124,7 @@ fn eval_calculator_bitorint_0_0() {
 #[test]
 fn eval_calculator_bitandint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3137,7 +3137,7 @@ fn eval_calculator_bitandint_3_5() {
 #[test]
 fn eval_calculator_bitandint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3150,7 +3150,7 @@ fn eval_calculator_bitandint_3_3() {
 #[test]
 fn eval_calculator_bitandint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3163,7 +3163,7 @@ fn eval_calculator_bitandint_3_2() {
 #[test]
 fn eval_calculator_bitandint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3176,7 +3176,7 @@ fn eval_calculator_bitandint_3_1() {
 #[test]
 fn eval_calculator_bitandint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3189,7 +3189,7 @@ fn eval_calculator_bitandint_3_0() {
 #[test]
 fn eval_calculator_bitandint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3202,7 +3202,7 @@ fn eval_calculator_bitandint_2_5() {
 #[test]
 fn eval_calculator_bitandint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3215,7 +3215,7 @@ fn eval_calculator_bitandint_2_3() {
 #[test]
 fn eval_calculator_bitandint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3228,7 +3228,7 @@ fn eval_calculator_bitandint_2_2() {
 #[test]
 fn eval_calculator_bitandint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3241,7 +3241,7 @@ fn eval_calculator_bitandint_2_1() {
 #[test]
 fn eval_calculator_bitandint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3254,7 +3254,7 @@ fn eval_calculator_bitandint_2_0() {
 #[test]
 fn eval_calculator_bitandint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3267,7 +3267,7 @@ fn eval_calculator_bitandint_1_5() {
 #[test]
 fn eval_calculator_bitandint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3280,7 +3280,7 @@ fn eval_calculator_bitandint_1_3() {
 #[test]
 fn eval_calculator_bitandint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3293,7 +3293,7 @@ fn eval_calculator_bitandint_1_2() {
 #[test]
 fn eval_calculator_bitandint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3306,7 +3306,7 @@ fn eval_calculator_bitandint_1_1() {
 #[test]
 fn eval_calculator_bitandint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3319,7 +3319,7 @@ fn eval_calculator_bitandint_1_0() {
 #[test]
 fn eval_calculator_bitandint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3332,7 +3332,7 @@ fn eval_calculator_bitandint_0_5() {
 #[test]
 fn eval_calculator_bitandint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3345,7 +3345,7 @@ fn eval_calculator_bitandint_0_3() {
 #[test]
 fn eval_calculator_bitandint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3358,7 +3358,7 @@ fn eval_calculator_bitandint_0_2() {
 #[test]
 fn eval_calculator_bitandint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3371,7 +3371,7 @@ fn eval_calculator_bitandint_0_1() {
 #[test]
 fn eval_calculator_bitandint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3384,7 +3384,7 @@ fn eval_calculator_bitandint_0_0() {
 #[test]
 fn eval_calculator_powint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3397,7 +3397,7 @@ fn eval_calculator_powint_3_5() {
 #[test]
 fn eval_calculator_powint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3410,7 +3410,7 @@ fn eval_calculator_powint_3_3() {
 #[test]
 fn eval_calculator_powint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3423,7 +3423,7 @@ fn eval_calculator_powint_3_2() {
 #[test]
 fn eval_calculator_powint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3436,7 +3436,7 @@ fn eval_calculator_powint_3_1() {
 #[test]
 fn eval_calculator_powint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3449,7 +3449,7 @@ fn eval_calculator_powint_3_0() {
 #[test]
 fn eval_calculator_powint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3462,7 +3462,7 @@ fn eval_calculator_powint_2_5() {
 #[test]
 fn eval_calculator_powint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3475,7 +3475,7 @@ fn eval_calculator_powint_2_3() {
 #[test]
 fn eval_calculator_powint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3488,7 +3488,7 @@ fn eval_calculator_powint_2_2() {
 #[test]
 fn eval_calculator_powint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3501,7 +3501,7 @@ fn eval_calculator_powint_2_1() {
 #[test]
 fn eval_calculator_powint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3514,7 +3514,7 @@ fn eval_calculator_powint_2_0() {
 #[test]
 fn eval_calculator_powint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3527,7 +3527,7 @@ fn eval_calculator_powint_1_5() {
 #[test]
 fn eval_calculator_powint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3540,7 +3540,7 @@ fn eval_calculator_powint_1_3() {
 #[test]
 fn eval_calculator_powint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3553,7 +3553,7 @@ fn eval_calculator_powint_1_2() {
 #[test]
 fn eval_calculator_powint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3566,7 +3566,7 @@ fn eval_calculator_powint_1_1() {
 #[test]
 fn eval_calculator_powint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3579,7 +3579,7 @@ fn eval_calculator_powint_1_0() {
 #[test]
 fn eval_calculator_powint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3592,7 +3592,7 @@ fn eval_calculator_powint_0_5() {
 #[test]
 fn eval_calculator_powint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3605,7 +3605,7 @@ fn eval_calculator_powint_0_3() {
 #[test]
 fn eval_calculator_powint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3618,7 +3618,7 @@ fn eval_calculator_powint_0_2() {
 #[test]
 fn eval_calculator_powint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3631,7 +3631,7 @@ fn eval_calculator_powint_0_1() {
 #[test]
 fn eval_calculator_powint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3644,7 +3644,7 @@ fn eval_calculator_powint_0_0() {
 #[test]
 fn eval_calculator_modint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3657,7 +3657,7 @@ fn eval_calculator_modint_3_5() {
 #[test]
 fn eval_calculator_modint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3670,7 +3670,7 @@ fn eval_calculator_modint_3_3() {
 #[test]
 fn eval_calculator_modint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3683,7 +3683,7 @@ fn eval_calculator_modint_3_2() {
 #[test]
 fn eval_calculator_modint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3696,7 +3696,7 @@ fn eval_calculator_modint_3_1() {
 #[test]
 fn eval_calculator_modint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3709,7 +3709,7 @@ fn eval_calculator_modint_2_5() {
 #[test]
 fn eval_calculator_modint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3722,7 +3722,7 @@ fn eval_calculator_modint_2_3() {
 #[test]
 fn eval_calculator_modint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3735,7 +3735,7 @@ fn eval_calculator_modint_2_2() {
 #[test]
 fn eval_calculator_modint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3748,7 +3748,7 @@ fn eval_calculator_modint_2_1() {
 #[test]
 fn eval_calculator_modint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3761,7 +3761,7 @@ fn eval_calculator_modint_1_5() {
 #[test]
 fn eval_calculator_modint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3774,7 +3774,7 @@ fn eval_calculator_modint_1_3() {
 #[test]
 fn eval_calculator_modint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3787,7 +3787,7 @@ fn eval_calculator_modint_1_2() {
 #[test]
 fn eval_calculator_modint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3800,7 +3800,7 @@ fn eval_calculator_modint_1_1() {
 #[test]
 fn eval_calculator_modint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3813,7 +3813,7 @@ fn eval_calculator_modint_0_5() {
 #[test]
 fn eval_calculator_modint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3826,7 +3826,7 @@ fn eval_calculator_modint_0_3() {
 #[test]
 fn eval_calculator_modint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3839,7 +3839,7 @@ fn eval_calculator_modint_0_2() {
 #[test]
 fn eval_calculator_modint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3852,7 +3852,7 @@ fn eval_calculator_modint_0_1() {
 #[test]
 fn eval_calculator_divint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3865,7 +3865,7 @@ fn eval_calculator_divint_3_5() {
 #[test]
 fn eval_calculator_divint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3878,7 +3878,7 @@ fn eval_calculator_divint_3_3() {
 #[test]
 fn eval_calculator_divint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3891,7 +3891,7 @@ fn eval_calculator_divint_3_2() {
 #[test]
 fn eval_calculator_divint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3904,7 +3904,7 @@ fn eval_calculator_divint_3_1() {
 #[test]
 fn eval_calculator_divint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3917,7 +3917,7 @@ fn eval_calculator_divint_2_5() {
 #[test]
 fn eval_calculator_divint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3930,7 +3930,7 @@ fn eval_calculator_divint_2_3() {
 #[test]
 fn eval_calculator_divint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3943,7 +3943,7 @@ fn eval_calculator_divint_2_2() {
 #[test]
 fn eval_calculator_divint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3956,7 +3956,7 @@ fn eval_calculator_divint_2_1() {
 #[test]
 fn eval_calculator_divint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3969,7 +3969,7 @@ fn eval_calculator_divint_1_5() {
 #[test]
 fn eval_calculator_divint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3982,7 +3982,7 @@ fn eval_calculator_divint_1_3() {
 #[test]
 fn eval_calculator_divint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3995,7 +3995,7 @@ fn eval_calculator_divint_1_2() {
 #[test]
 fn eval_calculator_divint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4008,7 +4008,7 @@ fn eval_calculator_divint_1_1() {
 #[test]
 fn eval_calculator_divint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4021,7 +4021,7 @@ fn eval_calculator_divint_0_5() {
 #[test]
 fn eval_calculator_divint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4034,7 +4034,7 @@ fn eval_calculator_divint_0_3() {
 #[test]
 fn eval_calculator_divint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4047,7 +4047,7 @@ fn eval_calculator_divint_0_2() {
 #[test]
 fn eval_calculator_divint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4060,7 +4060,7 @@ fn eval_calculator_divint_0_1() {
 #[test]
 fn eval_calculator_mulint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4073,7 +4073,7 @@ fn eval_calculator_mulint_3_5() {
 #[test]
 fn eval_calculator_mulint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4086,7 +4086,7 @@ fn eval_calculator_mulint_3_3() {
 #[test]
 fn eval_calculator_mulint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4099,7 +4099,7 @@ fn eval_calculator_mulint_3_2() {
 #[test]
 fn eval_calculator_mulint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4112,7 +4112,7 @@ fn eval_calculator_mulint_3_1() {
 #[test]
 fn eval_calculator_mulint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4125,7 +4125,7 @@ fn eval_calculator_mulint_3_0() {
 #[test]
 fn eval_calculator_mulint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4138,7 +4138,7 @@ fn eval_calculator_mulint_2_5() {
 #[test]
 fn eval_calculator_mulint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4151,7 +4151,7 @@ fn eval_calculator_mulint_2_3() {
 #[test]
 fn eval_calculator_mulint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4164,7 +4164,7 @@ fn eval_calculator_mulint_2_2() {
 #[test]
 fn eval_calculator_mulint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4177,7 +4177,7 @@ fn eval_calculator_mulint_2_1() {
 #[test]
 fn eval_calculator_mulint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4190,7 +4190,7 @@ fn eval_calculator_mulint_2_0() {
 #[test]
 fn eval_calculator_mulint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4203,7 +4203,7 @@ fn eval_calculator_mulint_1_5() {
 #[test]
 fn eval_calculator_mulint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4216,7 +4216,7 @@ fn eval_calculator_mulint_1_3() {
 #[test]
 fn eval_calculator_mulint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4229,7 +4229,7 @@ fn eval_calculator_mulint_1_2() {
 #[test]
 fn eval_calculator_mulint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4242,7 +4242,7 @@ fn eval_calculator_mulint_1_1() {
 #[test]
 fn eval_calculator_mulint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4255,7 +4255,7 @@ fn eval_calculator_mulint_1_0() {
 #[test]
 fn eval_calculator_mulint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4268,7 +4268,7 @@ fn eval_calculator_mulint_0_5() {
 #[test]
 fn eval_calculator_mulint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4281,7 +4281,7 @@ fn eval_calculator_mulint_0_3() {
 #[test]
 fn eval_calculator_mulint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4294,7 +4294,7 @@ fn eval_calculator_mulint_0_2() {
 #[test]
 fn eval_calculator_mulint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4307,7 +4307,7 @@ fn eval_calculator_mulint_0_1() {
 #[test]
 fn eval_calculator_mulint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4320,7 +4320,7 @@ fn eval_calculator_mulint_0_0() {
 #[test]
 fn eval_calculator_subint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4333,7 +4333,7 @@ fn eval_calculator_subint_3_5() {
 #[test]
 fn eval_calculator_subint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4346,7 +4346,7 @@ fn eval_calculator_subint_3_3() {
 #[test]
 fn eval_calculator_subint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4359,7 +4359,7 @@ fn eval_calculator_subint_3_2() {
 #[test]
 fn eval_calculator_subint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4372,7 +4372,7 @@ fn eval_calculator_subint_3_1() {
 #[test]
 fn eval_calculator_subint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4385,7 +4385,7 @@ fn eval_calculator_subint_3_0() {
 #[test]
 fn eval_calculator_subint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4398,7 +4398,7 @@ fn eval_calculator_subint_2_5() {
 #[test]
 fn eval_calculator_subint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4411,7 +4411,7 @@ fn eval_calculator_subint_2_3() {
 #[test]
 fn eval_calculator_subint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4424,7 +4424,7 @@ fn eval_calculator_subint_2_2() {
 #[test]
 fn eval_calculator_subint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4437,7 +4437,7 @@ fn eval_calculator_subint_2_1() {
 #[test]
 fn eval_calculator_subint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4450,7 +4450,7 @@ fn eval_calculator_subint_2_0() {
 #[test]
 fn eval_calculator_subint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4463,7 +4463,7 @@ fn eval_calculator_subint_1_5() {
 #[test]
 fn eval_calculator_subint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4476,7 +4476,7 @@ fn eval_calculator_subint_1_3() {
 #[test]
 fn eval_calculator_subint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4489,7 +4489,7 @@ fn eval_calculator_subint_1_2() {
 #[test]
 fn eval_calculator_subint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4502,7 +4502,7 @@ fn eval_calculator_subint_1_1() {
 #[test]
 fn eval_calculator_subint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4515,7 +4515,7 @@ fn eval_calculator_subint_1_0() {
 #[test]
 fn eval_calculator_subint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4528,7 +4528,7 @@ fn eval_calculator_subint_0_5() {
 #[test]
 fn eval_calculator_subint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4541,7 +4541,7 @@ fn eval_calculator_subint_0_3() {
 #[test]
 fn eval_calculator_subint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4554,7 +4554,7 @@ fn eval_calculator_subint_0_2() {
 #[test]
 fn eval_calculator_subint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4567,7 +4567,7 @@ fn eval_calculator_subint_0_1() {
 #[test]
 fn eval_calculator_subint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4580,7 +4580,7 @@ fn eval_calculator_subint_0_0() {
 #[test]
 fn eval_calculator_addint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4593,7 +4593,7 @@ fn eval_calculator_addint_3_5() {
 #[test]
 fn eval_calculator_addint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4606,7 +4606,7 @@ fn eval_calculator_addint_3_3() {
 #[test]
 fn eval_calculator_addint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4619,7 +4619,7 @@ fn eval_calculator_addint_3_2() {
 #[test]
 fn eval_calculator_addint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4632,7 +4632,7 @@ fn eval_calculator_addint_3_1() {
 #[test]
 fn eval_calculator_addint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4645,7 +4645,7 @@ fn eval_calculator_addint_3_0() {
 #[test]
 fn eval_calculator_addint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4658,7 +4658,7 @@ fn eval_calculator_addint_2_5() {
 #[test]
 fn eval_calculator_addint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4671,7 +4671,7 @@ fn eval_calculator_addint_2_3() {
 #[test]
 fn eval_calculator_addint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4684,7 +4684,7 @@ fn eval_calculator_addint_2_2() {
 #[test]
 fn eval_calculator_addint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4697,7 +4697,7 @@ fn eval_calculator_addint_2_1() {
 #[test]
 fn eval_calculator_addint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4710,7 +4710,7 @@ fn eval_calculator_addint_2_0() {
 #[test]
 fn eval_calculator_addint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4723,7 +4723,7 @@ fn eval_calculator_addint_1_5() {
 #[test]
 fn eval_calculator_addint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4736,7 +4736,7 @@ fn eval_calculator_addint_1_3() {
 #[test]
 fn eval_calculator_addint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4749,7 +4749,7 @@ fn eval_calculator_addint_1_2() {
 #[test]
 fn eval_calculator_addint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4762,7 +4762,7 @@ fn eval_calculator_addint_1_1() {
 #[test]
 fn eval_calculator_addint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4775,7 +4775,7 @@ fn eval_calculator_addint_1_0() {
 #[test]
 fn eval_calculator_addint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4788,7 +4788,7 @@ fn eval_calculator_addint_0_5() {
 #[test]
 fn eval_calculator_addint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4801,7 +4801,7 @@ fn eval_calculator_addint_0_3() {
 #[test]
 fn eval_calculator_addint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4814,7 +4814,7 @@ fn eval_calculator_addint_0_2() {
 #[test]
 fn eval_calculator_addint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4827,7 +4827,7 @@ fn eval_calculator_addint_0_1() {
 #[test]
 fn eval_calculator_addint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4840,7 +4840,7 @@ fn eval_calculator_addint_0_0() {
 #[test]
 fn eval_calculator_bitnotbigint_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4852,7 +4852,7 @@ fn eval_calculator_bitnotbigint_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_bitnotbigint_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4864,7 +4864,7 @@ fn eval_calculator_bitnotbigint_default_smoke() {
 #[test]
 fn eval_calculator_bitorbigint_casterrbigint_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4876,7 +4876,7 @@ fn eval_calculator_bitorbigint_casterrbigint_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_bitorbigint_casterrbigint_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4888,7 +4888,7 @@ fn eval_calculator_bitorbigint_casterrbigint_default_smoke() {
 #[test]
 fn eval_calculator_bitorbigint_default_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4900,7 +4900,7 @@ fn eval_calculator_bitorbigint_default_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_bitorbigint_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4912,7 +4912,7 @@ fn eval_calculator_bitorbigint_default_default_smoke() {
 #[test]
 fn eval_calculator_bitandbigint_casterrbigint_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4924,7 +4924,7 @@ fn eval_calculator_bitandbigint_casterrbigint_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_bitandbigint_casterrbigint_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4936,7 +4936,7 @@ fn eval_calculator_bitandbigint_casterrbigint_default_smoke() {
 #[test]
 fn eval_calculator_bitandbigint_default_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4948,7 +4948,7 @@ fn eval_calculator_bitandbigint_default_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_bitandbigint_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4960,7 +4960,7 @@ fn eval_calculator_bitandbigint_default_default_smoke() {
 #[test]
 fn eval_calculator_negbigint_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4972,7 +4972,7 @@ fn eval_calculator_negbigint_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_negbigint_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4984,7 +4984,7 @@ fn eval_calculator_negbigint_default_smoke() {
 #[test]
 fn eval_calculator_subbigint_casterrbigint_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4996,7 +4996,7 @@ fn eval_calculator_subbigint_casterrbigint_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_subbigint_casterrbigint_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5008,7 +5008,7 @@ fn eval_calculator_subbigint_casterrbigint_default_smoke() {
 #[test]
 fn eval_calculator_subbigint_default_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5020,7 +5020,7 @@ fn eval_calculator_subbigint_default_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_subbigint_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5032,7 +5032,7 @@ fn eval_calculator_subbigint_default_default_smoke() {
 #[test]
 fn eval_calculator_addbigint_casterrbigint_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5044,7 +5044,7 @@ fn eval_calculator_addbigint_casterrbigint_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_addbigint_casterrbigint_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5056,7 +5056,7 @@ fn eval_calculator_addbigint_casterrbigint_default_smoke() {
 #[test]
 fn eval_calculator_addbigint_default_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5068,7 +5068,7 @@ fn eval_calculator_addbigint_default_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_addbigint_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5080,7 +5080,7 @@ fn eval_calculator_addbigint_default_default_smoke() {
 #[test]
 fn eval_calculator_bitnotuint32_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5093,7 +5093,7 @@ fn eval_calculator_bitnotuint32_5() {
 #[test]
 fn eval_calculator_bitnotuint32_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5106,7 +5106,7 @@ fn eval_calculator_bitnotuint32_3() {
 #[test]
 fn eval_calculator_bitnotuint32_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5119,7 +5119,7 @@ fn eval_calculator_bitnotuint32_2() {
 #[test]
 fn eval_calculator_bitnotuint32_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5132,7 +5132,7 @@ fn eval_calculator_bitnotuint32_1() {
 #[test]
 fn eval_calculator_bitnotuint32_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5145,7 +5145,7 @@ fn eval_calculator_bitnotuint32_0() {
 #[test]
 fn eval_calculator_bitoruint32_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5158,7 +5158,7 @@ fn eval_calculator_bitoruint32_3_5() {
 #[test]
 fn eval_calculator_bitoruint32_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5171,7 +5171,7 @@ fn eval_calculator_bitoruint32_3_3() {
 #[test]
 fn eval_calculator_bitoruint32_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5184,7 +5184,7 @@ fn eval_calculator_bitoruint32_3_2() {
 #[test]
 fn eval_calculator_bitoruint32_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5197,7 +5197,7 @@ fn eval_calculator_bitoruint32_3_1() {
 #[test]
 fn eval_calculator_bitoruint32_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5210,7 +5210,7 @@ fn eval_calculator_bitoruint32_3_0() {
 #[test]
 fn eval_calculator_bitoruint32_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5223,7 +5223,7 @@ fn eval_calculator_bitoruint32_2_5() {
 #[test]
 fn eval_calculator_bitoruint32_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5236,7 +5236,7 @@ fn eval_calculator_bitoruint32_2_3() {
 #[test]
 fn eval_calculator_bitoruint32_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5249,7 +5249,7 @@ fn eval_calculator_bitoruint32_2_2() {
 #[test]
 fn eval_calculator_bitoruint32_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5262,7 +5262,7 @@ fn eval_calculator_bitoruint32_2_1() {
 #[test]
 fn eval_calculator_bitoruint32_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5275,7 +5275,7 @@ fn eval_calculator_bitoruint32_2_0() {
 #[test]
 fn eval_calculator_bitoruint32_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5288,7 +5288,7 @@ fn eval_calculator_bitoruint32_1_5() {
 #[test]
 fn eval_calculator_bitoruint32_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5301,7 +5301,7 @@ fn eval_calculator_bitoruint32_1_3() {
 #[test]
 fn eval_calculator_bitoruint32_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5314,7 +5314,7 @@ fn eval_calculator_bitoruint32_1_2() {
 #[test]
 fn eval_calculator_bitoruint32_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5327,7 +5327,7 @@ fn eval_calculator_bitoruint32_1_1() {
 #[test]
 fn eval_calculator_bitoruint32_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5340,7 +5340,7 @@ fn eval_calculator_bitoruint32_1_0() {
 #[test]
 fn eval_calculator_bitoruint32_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5353,7 +5353,7 @@ fn eval_calculator_bitoruint32_0_5() {
 #[test]
 fn eval_calculator_bitoruint32_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5366,7 +5366,7 @@ fn eval_calculator_bitoruint32_0_3() {
 #[test]
 fn eval_calculator_bitoruint32_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5379,7 +5379,7 @@ fn eval_calculator_bitoruint32_0_2() {
 #[test]
 fn eval_calculator_bitoruint32_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5392,7 +5392,7 @@ fn eval_calculator_bitoruint32_0_1() {
 #[test]
 fn eval_calculator_bitoruint32_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5405,7 +5405,7 @@ fn eval_calculator_bitoruint32_0_0() {
 #[test]
 fn eval_calculator_bitanduint32_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5418,7 +5418,7 @@ fn eval_calculator_bitanduint32_3_5() {
 #[test]
 fn eval_calculator_bitanduint32_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5431,7 +5431,7 @@ fn eval_calculator_bitanduint32_3_3() {
 #[test]
 fn eval_calculator_bitanduint32_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5444,7 +5444,7 @@ fn eval_calculator_bitanduint32_3_2() {
 #[test]
 fn eval_calculator_bitanduint32_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5457,7 +5457,7 @@ fn eval_calculator_bitanduint32_3_1() {
 #[test]
 fn eval_calculator_bitanduint32_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5470,7 +5470,7 @@ fn eval_calculator_bitanduint32_3_0() {
 #[test]
 fn eval_calculator_bitanduint32_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5483,7 +5483,7 @@ fn eval_calculator_bitanduint32_2_5() {
 #[test]
 fn eval_calculator_bitanduint32_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5496,7 +5496,7 @@ fn eval_calculator_bitanduint32_2_3() {
 #[test]
 fn eval_calculator_bitanduint32_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5509,7 +5509,7 @@ fn eval_calculator_bitanduint32_2_2() {
 #[test]
 fn eval_calculator_bitanduint32_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5522,7 +5522,7 @@ fn eval_calculator_bitanduint32_2_1() {
 #[test]
 fn eval_calculator_bitanduint32_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5535,7 +5535,7 @@ fn eval_calculator_bitanduint32_2_0() {
 #[test]
 fn eval_calculator_bitanduint32_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5548,7 +5548,7 @@ fn eval_calculator_bitanduint32_1_5() {
 #[test]
 fn eval_calculator_bitanduint32_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5561,7 +5561,7 @@ fn eval_calculator_bitanduint32_1_3() {
 #[test]
 fn eval_calculator_bitanduint32_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5574,7 +5574,7 @@ fn eval_calculator_bitanduint32_1_2() {
 #[test]
 fn eval_calculator_bitanduint32_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5587,7 +5587,7 @@ fn eval_calculator_bitanduint32_1_1() {
 #[test]
 fn eval_calculator_bitanduint32_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5600,7 +5600,7 @@ fn eval_calculator_bitanduint32_1_0() {
 #[test]
 fn eval_calculator_bitanduint32_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5613,7 +5613,7 @@ fn eval_calculator_bitanduint32_0_5() {
 #[test]
 fn eval_calculator_bitanduint32_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5626,7 +5626,7 @@ fn eval_calculator_bitanduint32_0_3() {
 #[test]
 fn eval_calculator_bitanduint32_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5639,7 +5639,7 @@ fn eval_calculator_bitanduint32_0_2() {
 #[test]
 fn eval_calculator_bitanduint32_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5652,7 +5652,7 @@ fn eval_calculator_bitanduint32_0_1() {
 #[test]
 fn eval_calculator_bitanduint32_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5665,7 +5665,7 @@ fn eval_calculator_bitanduint32_0_0() {
 #[test]
 fn eval_calculator_adduint32_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5678,7 +5678,7 @@ fn eval_calculator_adduint32_3_5() {
 #[test]
 fn eval_calculator_adduint32_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5691,7 +5691,7 @@ fn eval_calculator_adduint32_3_3() {
 #[test]
 fn eval_calculator_adduint32_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5704,7 +5704,7 @@ fn eval_calculator_adduint32_3_2() {
 #[test]
 fn eval_calculator_adduint32_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5717,7 +5717,7 @@ fn eval_calculator_adduint32_3_1() {
 #[test]
 fn eval_calculator_adduint32_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(3u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(3u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5730,7 +5730,7 @@ fn eval_calculator_adduint32_3_0() {
 #[test]
 fn eval_calculator_adduint32_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5743,7 +5743,7 @@ fn eval_calculator_adduint32_2_5() {
 #[test]
 fn eval_calculator_adduint32_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5756,7 +5756,7 @@ fn eval_calculator_adduint32_2_3() {
 #[test]
 fn eval_calculator_adduint32_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5769,7 +5769,7 @@ fn eval_calculator_adduint32_2_2() {
 #[test]
 fn eval_calculator_adduint32_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5782,7 +5782,7 @@ fn eval_calculator_adduint32_2_1() {
 #[test]
 fn eval_calculator_adduint32_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(2u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(2u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5795,7 +5795,7 @@ fn eval_calculator_adduint32_2_0() {
 #[test]
 fn eval_calculator_adduint32_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5808,7 +5808,7 @@ fn eval_calculator_adduint32_1_5() {
 #[test]
 fn eval_calculator_adduint32_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5821,7 +5821,7 @@ fn eval_calculator_adduint32_1_3() {
 #[test]
 fn eval_calculator_adduint32_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5834,7 +5834,7 @@ fn eval_calculator_adduint32_1_2() {
 #[test]
 fn eval_calculator_adduint32_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5847,7 +5847,7 @@ fn eval_calculator_adduint32_1_1() {
 #[test]
 fn eval_calculator_adduint32_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(1u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5860,7 +5860,7 @@ fn eval_calculator_adduint32_1_0() {
 #[test]
 fn eval_calculator_adduint32_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(5u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(5u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5873,7 +5873,7 @@ fn eval_calculator_adduint32_0_5() {
 #[test]
 fn eval_calculator_adduint32_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(3u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(3u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5886,7 +5886,7 @@ fn eval_calculator_adduint32_0_3() {
 #[test]
 fn eval_calculator_adduint32_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(2u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(2u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5899,7 +5899,7 @@ fn eval_calculator_adduint32_0_2() {
 #[test]
 fn eval_calculator_adduint32_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(1u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5912,7 +5912,7 @@ fn eval_calculator_adduint32_0_1() {
 #[test]
 fn eval_calculator_adduint32_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5925,7 +5925,7 @@ fn eval_calculator_adduint32_0_0() {
 #[test]
 fn eval_calculator_addstr_hello_hello_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5937,7 +5937,7 @@ fn eval_calculator_addstr_hello_hello_smoke() {
 #[test]
 fn eval_calculator_addstr_hello_a_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5949,7 +5949,7 @@ fn eval_calculator_addstr_hello_a_smoke() {
 #[test]
 fn eval_calculator_addstr_hello_empty_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5961,7 +5961,7 @@ fn eval_calculator_addstr_hello_empty_smoke() {
 #[test]
 fn eval_calculator_addstr_a_hello_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5973,7 +5973,7 @@ fn eval_calculator_addstr_a_hello_smoke() {
 #[test]
 fn eval_calculator_addstr_a_a_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5985,7 +5985,7 @@ fn eval_calculator_addstr_a_a_smoke() {
 #[test]
 fn eval_calculator_addstr_a_empty_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5997,7 +5997,7 @@ fn eval_calculator_addstr_a_empty_smoke() {
 #[test]
 fn eval_calculator_addstr_empty_hello_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6009,7 +6009,7 @@ fn eval_calculator_addstr_empty_hello_smoke() {
 #[test]
 fn eval_calculator_addstr_empty_a_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6021,7 +6021,7 @@ fn eval_calculator_addstr_empty_a_smoke() {
 #[test]
 fn eval_calculator_addstr_empty_empty_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6033,7 +6033,7 @@ fn eval_calculator_addstr_empty_empty_smoke() {
 #[test]
 fn eval_calculator_concat_hello_hello_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6045,7 +6045,7 @@ fn eval_calculator_concat_hello_hello_smoke() {
 #[test]
 fn eval_calculator_concat_hello_a_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6057,7 +6057,7 @@ fn eval_calculator_concat_hello_a_smoke() {
 #[test]
 fn eval_calculator_concat_hello_empty_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6069,7 +6069,7 @@ fn eval_calculator_concat_hello_empty_smoke() {
 #[test]
 fn eval_calculator_concat_a_hello_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6081,7 +6081,7 @@ fn eval_calculator_concat_a_hello_smoke() {
 #[test]
 fn eval_calculator_concat_a_a_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6093,7 +6093,7 @@ fn eval_calculator_concat_a_a_smoke() {
 #[test]
 fn eval_calculator_concat_a_empty_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6105,7 +6105,7 @@ fn eval_calculator_concat_a_empty_smoke() {
 #[test]
 fn eval_calculator_concat_empty_hello_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6117,7 +6117,7 @@ fn eval_calculator_concat_empty_hello_smoke() {
 #[test]
 fn eval_calculator_concat_empty_a_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6129,7 +6129,7 @@ fn eval_calculator_concat_empty_a_smoke() {
 #[test]
 fn eval_calculator_concat_empty_empty_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6141,7 +6141,7 @@ fn eval_calculator_concat_empty_empty_smoke() {
 #[test]
 fn eval_calculator_len_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6154,7 +6154,7 @@ fn eval_calculator_len_hello() {
 #[test]
 fn eval_calculator_len_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6167,7 +6167,7 @@ fn eval_calculator_len_a() {
 #[test]
 fn eval_calculator_len_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::new())));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6180,7 +6180,7 @@ fn eval_calculator_len_empty() {
 #[test]
 fn eval_calculator_xor_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6193,7 +6193,7 @@ fn eval_calculator_xor_false_false() {
 #[test]
 fn eval_calculator_xor_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6206,7 +6206,7 @@ fn eval_calculator_xor_false_true() {
 #[test]
 fn eval_calculator_xor_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6219,7 +6219,7 @@ fn eval_calculator_xor_true_false() {
 #[test]
 fn eval_calculator_xor_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6232,7 +6232,7 @@ fn eval_calculator_xor_true_true() {
 #[test]
 fn eval_calculator_or_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6245,7 +6245,7 @@ fn eval_calculator_or_false_false() {
 #[test]
 fn eval_calculator_or_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6258,7 +6258,7 @@ fn eval_calculator_or_false_true() {
 #[test]
 fn eval_calculator_or_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6271,7 +6271,7 @@ fn eval_calculator_or_true_false() {
 #[test]
 fn eval_calculator_or_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6284,7 +6284,7 @@ fn eval_calculator_or_true_true() {
 #[test]
 fn eval_calculator_and_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6297,7 +6297,7 @@ fn eval_calculator_and_false_false() {
 #[test]
 fn eval_calculator_and_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6310,7 +6310,7 @@ fn eval_calculator_and_false_true() {
 #[test]
 fn eval_calculator_and_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6323,7 +6323,7 @@ fn eval_calculator_and_true_false() {
 #[test]
 fn eval_calculator_and_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6336,7 +6336,7 @@ fn eval_calculator_and_true_true() {
 #[test]
 fn eval_calculator_not_false_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6348,7 +6348,7 @@ fn eval_calculator_not_false_smoke() {
 #[test]
 fn eval_calculator_not_true_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6360,7 +6360,7 @@ fn eval_calculator_not_true_smoke() {
 #[test]
 fn eval_calculator_nefixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::NeFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6372,7 +6372,7 @@ fn eval_calculator_nefixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_nefixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::NeFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6384,7 +6384,7 @@ fn eval_calculator_nefixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_nefixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::NeFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6396,7 +6396,7 @@ fn eval_calculator_nefixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_nefixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::NeFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6408,7 +6408,7 @@ fn eval_calculator_nefixed_default_default_smoke() {
 #[test]
 fn eval_calculator_gteqfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6420,7 +6420,7 @@ fn eval_calculator_gteqfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_gteqfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6432,7 +6432,7 @@ fn eval_calculator_gteqfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_gteqfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6444,7 +6444,7 @@ fn eval_calculator_gteqfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_gteqfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6456,7 +6456,7 @@ fn eval_calculator_gteqfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_lteqfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6468,7 +6468,7 @@ fn eval_calculator_lteqfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_lteqfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6480,7 +6480,7 @@ fn eval_calculator_lteqfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_lteqfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6492,7 +6492,7 @@ fn eval_calculator_lteqfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_lteqfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6504,7 +6504,7 @@ fn eval_calculator_lteqfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_ltfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6516,7 +6516,7 @@ fn eval_calculator_ltfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_ltfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6528,7 +6528,7 @@ fn eval_calculator_ltfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_ltfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6540,7 +6540,7 @@ fn eval_calculator_ltfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_ltfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6552,7 +6552,7 @@ fn eval_calculator_ltfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_gtfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::GtFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6564,7 +6564,7 @@ fn eval_calculator_gtfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_gtfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6576,7 +6576,7 @@ fn eval_calculator_gtfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_gtfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::GtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6588,7 +6588,7 @@ fn eval_calculator_gtfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_gtfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6600,7 +6600,7 @@ fn eval_calculator_gtfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_eqfixed_casterrfixed_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::EqFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6612,7 +6612,7 @@ fn eval_calculator_eqfixed_casterrfixed_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_eqfixed_casterrfixed_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFixed(Box::new(Fixed::CastErrFixed), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::EqFixed(std::sync::Arc::new(Fixed::CastErrFixed), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6624,7 +6624,7 @@ fn eval_calculator_eqfixed_casterrfixed_default_smoke() {
 #[test]
 fn eval_calculator_eqfixed_default_casterrfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::CastErrFixed));
+    let input_term = Bool::EqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::CastErrFixed));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6636,7 +6636,7 @@ fn eval_calculator_eqfixed_default_casterrfixed_smoke() {
 #[test]
 fn eval_calculator_eqfixed_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::EqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6648,7 +6648,7 @@ fn eval_calculator_eqfixed_default_default_smoke() {
 #[test]
 fn eval_calculator_nestr_hello_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6661,7 +6661,7 @@ fn eval_calculator_nestr_hello_hello() {
 #[test]
 fn eval_calculator_nestr_hello_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6674,7 +6674,7 @@ fn eval_calculator_nestr_hello_a() {
 #[test]
 fn eval_calculator_nestr_hello_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6687,7 +6687,7 @@ fn eval_calculator_nestr_hello_empty() {
 #[test]
 fn eval_calculator_nestr_a_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6700,7 +6700,7 @@ fn eval_calculator_nestr_a_hello() {
 #[test]
 fn eval_calculator_nestr_a_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6713,7 +6713,7 @@ fn eval_calculator_nestr_a_a() {
 #[test]
 fn eval_calculator_nestr_a_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6726,7 +6726,7 @@ fn eval_calculator_nestr_a_empty() {
 #[test]
 fn eval_calculator_nestr_empty_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6739,7 +6739,7 @@ fn eval_calculator_nestr_empty_hello() {
 #[test]
 fn eval_calculator_nestr_empty_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6752,7 +6752,7 @@ fn eval_calculator_nestr_empty_a() {
 #[test]
 fn eval_calculator_nestr_empty_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6765,7 +6765,7 @@ fn eval_calculator_nestr_empty_empty() {
 #[test]
 fn eval_calculator_nebool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6778,7 +6778,7 @@ fn eval_calculator_nebool_false_false() {
 #[test]
 fn eval_calculator_nebool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6791,7 +6791,7 @@ fn eval_calculator_nebool_false_true() {
 #[test]
 fn eval_calculator_nebool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6804,7 +6804,7 @@ fn eval_calculator_nebool_true_false() {
 #[test]
 fn eval_calculator_nebool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6817,7 +6817,7 @@ fn eval_calculator_nebool_true_true() {
 #[test]
 fn eval_calculator_nefloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6830,7 +6830,7 @@ fn eval_calculator_nefloat_2_0_2_5() {
 #[test]
 fn eval_calculator_nefloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6843,7 +6843,7 @@ fn eval_calculator_nefloat_2_0_2_0() {
 #[test]
 fn eval_calculator_nefloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6856,7 +6856,7 @@ fn eval_calculator_nefloat_2_0_0_5() {
 #[test]
 fn eval_calculator_nefloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6869,7 +6869,7 @@ fn eval_calculator_nefloat_2_0_1_0() {
 #[test]
 fn eval_calculator_nefloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6882,7 +6882,7 @@ fn eval_calculator_nefloat_2_0_0_0() {
 #[test]
 fn eval_calculator_nefloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6895,7 +6895,7 @@ fn eval_calculator_nefloat_0_5_2_5() {
 #[test]
 fn eval_calculator_nefloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6908,7 +6908,7 @@ fn eval_calculator_nefloat_0_5_2_0() {
 #[test]
 fn eval_calculator_nefloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6921,7 +6921,7 @@ fn eval_calculator_nefloat_0_5_0_5() {
 #[test]
 fn eval_calculator_nefloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6934,7 +6934,7 @@ fn eval_calculator_nefloat_0_5_1_0() {
 #[test]
 fn eval_calculator_nefloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6947,7 +6947,7 @@ fn eval_calculator_nefloat_0_5_0_0() {
 #[test]
 fn eval_calculator_nefloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6960,7 +6960,7 @@ fn eval_calculator_nefloat_1_0_2_5() {
 #[test]
 fn eval_calculator_nefloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6973,7 +6973,7 @@ fn eval_calculator_nefloat_1_0_2_0() {
 #[test]
 fn eval_calculator_nefloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6986,7 +6986,7 @@ fn eval_calculator_nefloat_1_0_0_5() {
 #[test]
 fn eval_calculator_nefloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6999,7 +6999,7 @@ fn eval_calculator_nefloat_1_0_1_0() {
 #[test]
 fn eval_calculator_nefloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7012,7 +7012,7 @@ fn eval_calculator_nefloat_1_0_0_0() {
 #[test]
 fn eval_calculator_nefloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7025,7 +7025,7 @@ fn eval_calculator_nefloat_0_0_2_5() {
 #[test]
 fn eval_calculator_nefloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7038,7 +7038,7 @@ fn eval_calculator_nefloat_0_0_2_0() {
 #[test]
 fn eval_calculator_nefloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7051,7 +7051,7 @@ fn eval_calculator_nefloat_0_0_0_5() {
 #[test]
 fn eval_calculator_nefloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7064,7 +7064,7 @@ fn eval_calculator_nefloat_0_0_1_0() {
 #[test]
 fn eval_calculator_nefloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7077,7 +7077,7 @@ fn eval_calculator_nefloat_0_0_0_0() {
 #[test]
 fn eval_calculator_neint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7090,7 +7090,7 @@ fn eval_calculator_neint_3_5() {
 #[test]
 fn eval_calculator_neint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7103,7 +7103,7 @@ fn eval_calculator_neint_3_3() {
 #[test]
 fn eval_calculator_neint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7116,7 +7116,7 @@ fn eval_calculator_neint_3_2() {
 #[test]
 fn eval_calculator_neint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7129,7 +7129,7 @@ fn eval_calculator_neint_3_1() {
 #[test]
 fn eval_calculator_neint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7142,7 +7142,7 @@ fn eval_calculator_neint_3_0() {
 #[test]
 fn eval_calculator_neint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7155,7 +7155,7 @@ fn eval_calculator_neint_2_5() {
 #[test]
 fn eval_calculator_neint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7168,7 +7168,7 @@ fn eval_calculator_neint_2_3() {
 #[test]
 fn eval_calculator_neint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7181,7 +7181,7 @@ fn eval_calculator_neint_2_2() {
 #[test]
 fn eval_calculator_neint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7194,7 +7194,7 @@ fn eval_calculator_neint_2_1() {
 #[test]
 fn eval_calculator_neint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7207,7 +7207,7 @@ fn eval_calculator_neint_2_0() {
 #[test]
 fn eval_calculator_neint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7220,7 +7220,7 @@ fn eval_calculator_neint_1_5() {
 #[test]
 fn eval_calculator_neint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7233,7 +7233,7 @@ fn eval_calculator_neint_1_3() {
 #[test]
 fn eval_calculator_neint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7246,7 +7246,7 @@ fn eval_calculator_neint_1_2() {
 #[test]
 fn eval_calculator_neint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7259,7 +7259,7 @@ fn eval_calculator_neint_1_1() {
 #[test]
 fn eval_calculator_neint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7272,7 +7272,7 @@ fn eval_calculator_neint_1_0() {
 #[test]
 fn eval_calculator_neint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7285,7 +7285,7 @@ fn eval_calculator_neint_0_5() {
 #[test]
 fn eval_calculator_neint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7298,7 +7298,7 @@ fn eval_calculator_neint_0_3() {
 #[test]
 fn eval_calculator_neint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7311,7 +7311,7 @@ fn eval_calculator_neint_0_2() {
 #[test]
 fn eval_calculator_neint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7324,7 +7324,7 @@ fn eval_calculator_neint_0_1() {
 #[test]
 fn eval_calculator_neint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7337,7 +7337,7 @@ fn eval_calculator_neint_0_0() {
 #[test]
 fn eval_calculator_gteqstr_hello_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7350,7 +7350,7 @@ fn eval_calculator_gteqstr_hello_hello() {
 #[test]
 fn eval_calculator_gteqstr_hello_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7363,7 +7363,7 @@ fn eval_calculator_gteqstr_hello_a() {
 #[test]
 fn eval_calculator_gteqstr_hello_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7376,7 +7376,7 @@ fn eval_calculator_gteqstr_hello_empty() {
 #[test]
 fn eval_calculator_gteqstr_a_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7389,7 +7389,7 @@ fn eval_calculator_gteqstr_a_hello() {
 #[test]
 fn eval_calculator_gteqstr_a_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7402,7 +7402,7 @@ fn eval_calculator_gteqstr_a_a() {
 #[test]
 fn eval_calculator_gteqstr_a_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7415,7 +7415,7 @@ fn eval_calculator_gteqstr_a_empty() {
 #[test]
 fn eval_calculator_gteqstr_empty_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7428,7 +7428,7 @@ fn eval_calculator_gteqstr_empty_hello() {
 #[test]
 fn eval_calculator_gteqstr_empty_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7441,7 +7441,7 @@ fn eval_calculator_gteqstr_empty_a() {
 #[test]
 fn eval_calculator_gteqstr_empty_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7454,7 +7454,7 @@ fn eval_calculator_gteqstr_empty_empty() {
 #[test]
 fn eval_calculator_gteqbool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7467,7 +7467,7 @@ fn eval_calculator_gteqbool_false_false() {
 #[test]
 fn eval_calculator_gteqbool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7480,7 +7480,7 @@ fn eval_calculator_gteqbool_false_true() {
 #[test]
 fn eval_calculator_gteqbool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7493,7 +7493,7 @@ fn eval_calculator_gteqbool_true_false() {
 #[test]
 fn eval_calculator_gteqbool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7506,7 +7506,7 @@ fn eval_calculator_gteqbool_true_true() {
 #[test]
 fn eval_calculator_gteqfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7519,7 +7519,7 @@ fn eval_calculator_gteqfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_gteqfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7532,7 +7532,7 @@ fn eval_calculator_gteqfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_gteqfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7545,7 +7545,7 @@ fn eval_calculator_gteqfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_gteqfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7558,7 +7558,7 @@ fn eval_calculator_gteqfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_gteqfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7571,7 +7571,7 @@ fn eval_calculator_gteqfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_gteqfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7584,7 +7584,7 @@ fn eval_calculator_gteqfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_gteqfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7597,7 +7597,7 @@ fn eval_calculator_gteqfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_gteqfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7610,7 +7610,7 @@ fn eval_calculator_gteqfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_gteqfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7623,7 +7623,7 @@ fn eval_calculator_gteqfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_gteqfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7636,7 +7636,7 @@ fn eval_calculator_gteqfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_gteqfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7649,7 +7649,7 @@ fn eval_calculator_gteqfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_gteqfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7662,7 +7662,7 @@ fn eval_calculator_gteqfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_gteqfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7675,7 +7675,7 @@ fn eval_calculator_gteqfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_gteqfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7688,7 +7688,7 @@ fn eval_calculator_gteqfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_gteqfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7701,7 +7701,7 @@ fn eval_calculator_gteqfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_gteqfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7714,7 +7714,7 @@ fn eval_calculator_gteqfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_gteqfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7727,7 +7727,7 @@ fn eval_calculator_gteqfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_gteqfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7740,7 +7740,7 @@ fn eval_calculator_gteqfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_gteqfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7753,7 +7753,7 @@ fn eval_calculator_gteqfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_gteqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7766,7 +7766,7 @@ fn eval_calculator_gteqfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_gteqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7779,7 +7779,7 @@ fn eval_calculator_gteqint_3_5() {
 #[test]
 fn eval_calculator_gteqint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7792,7 +7792,7 @@ fn eval_calculator_gteqint_3_3() {
 #[test]
 fn eval_calculator_gteqint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7805,7 +7805,7 @@ fn eval_calculator_gteqint_3_2() {
 #[test]
 fn eval_calculator_gteqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7818,7 +7818,7 @@ fn eval_calculator_gteqint_3_1() {
 #[test]
 fn eval_calculator_gteqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7831,7 +7831,7 @@ fn eval_calculator_gteqint_3_0() {
 #[test]
 fn eval_calculator_gteqint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7844,7 +7844,7 @@ fn eval_calculator_gteqint_2_5() {
 #[test]
 fn eval_calculator_gteqint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7857,7 +7857,7 @@ fn eval_calculator_gteqint_2_3() {
 #[test]
 fn eval_calculator_gteqint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7870,7 +7870,7 @@ fn eval_calculator_gteqint_2_2() {
 #[test]
 fn eval_calculator_gteqint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7883,7 +7883,7 @@ fn eval_calculator_gteqint_2_1() {
 #[test]
 fn eval_calculator_gteqint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7896,7 +7896,7 @@ fn eval_calculator_gteqint_2_0() {
 #[test]
 fn eval_calculator_gteqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7909,7 +7909,7 @@ fn eval_calculator_gteqint_1_5() {
 #[test]
 fn eval_calculator_gteqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7922,7 +7922,7 @@ fn eval_calculator_gteqint_1_3() {
 #[test]
 fn eval_calculator_gteqint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7935,7 +7935,7 @@ fn eval_calculator_gteqint_1_2() {
 #[test]
 fn eval_calculator_gteqint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7948,7 +7948,7 @@ fn eval_calculator_gteqint_1_1() {
 #[test]
 fn eval_calculator_gteqint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7961,7 +7961,7 @@ fn eval_calculator_gteqint_1_0() {
 #[test]
 fn eval_calculator_gteqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7974,7 +7974,7 @@ fn eval_calculator_gteqint_0_5() {
 #[test]
 fn eval_calculator_gteqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -7987,7 +7987,7 @@ fn eval_calculator_gteqint_0_3() {
 #[test]
 fn eval_calculator_gteqint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8000,7 +8000,7 @@ fn eval_calculator_gteqint_0_2() {
 #[test]
 fn eval_calculator_gteqint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8013,7 +8013,7 @@ fn eval_calculator_gteqint_0_1() {
 #[test]
 fn eval_calculator_gteqint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8026,7 +8026,7 @@ fn eval_calculator_gteqint_0_0() {
 #[test]
 fn eval_calculator_lteqstr_hello_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8039,7 +8039,7 @@ fn eval_calculator_lteqstr_hello_hello() {
 #[test]
 fn eval_calculator_lteqstr_hello_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8052,7 +8052,7 @@ fn eval_calculator_lteqstr_hello_a() {
 #[test]
 fn eval_calculator_lteqstr_hello_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8065,7 +8065,7 @@ fn eval_calculator_lteqstr_hello_empty() {
 #[test]
 fn eval_calculator_lteqstr_a_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8078,7 +8078,7 @@ fn eval_calculator_lteqstr_a_hello() {
 #[test]
 fn eval_calculator_lteqstr_a_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8091,7 +8091,7 @@ fn eval_calculator_lteqstr_a_a() {
 #[test]
 fn eval_calculator_lteqstr_a_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8104,7 +8104,7 @@ fn eval_calculator_lteqstr_a_empty() {
 #[test]
 fn eval_calculator_lteqstr_empty_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8117,7 +8117,7 @@ fn eval_calculator_lteqstr_empty_hello() {
 #[test]
 fn eval_calculator_lteqstr_empty_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8130,7 +8130,7 @@ fn eval_calculator_lteqstr_empty_a() {
 #[test]
 fn eval_calculator_lteqstr_empty_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8143,7 +8143,7 @@ fn eval_calculator_lteqstr_empty_empty() {
 #[test]
 fn eval_calculator_lteqbool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8156,7 +8156,7 @@ fn eval_calculator_lteqbool_false_false() {
 #[test]
 fn eval_calculator_lteqbool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8169,7 +8169,7 @@ fn eval_calculator_lteqbool_false_true() {
 #[test]
 fn eval_calculator_lteqbool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8182,7 +8182,7 @@ fn eval_calculator_lteqbool_true_false() {
 #[test]
 fn eval_calculator_lteqbool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8195,7 +8195,7 @@ fn eval_calculator_lteqbool_true_true() {
 #[test]
 fn eval_calculator_lteqfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8208,7 +8208,7 @@ fn eval_calculator_lteqfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_lteqfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8221,7 +8221,7 @@ fn eval_calculator_lteqfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_lteqfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8234,7 +8234,7 @@ fn eval_calculator_lteqfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_lteqfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8247,7 +8247,7 @@ fn eval_calculator_lteqfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_lteqfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8260,7 +8260,7 @@ fn eval_calculator_lteqfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_lteqfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8273,7 +8273,7 @@ fn eval_calculator_lteqfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_lteqfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8286,7 +8286,7 @@ fn eval_calculator_lteqfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_lteqfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8299,7 +8299,7 @@ fn eval_calculator_lteqfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_lteqfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8312,7 +8312,7 @@ fn eval_calculator_lteqfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_lteqfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8325,7 +8325,7 @@ fn eval_calculator_lteqfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_lteqfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8338,7 +8338,7 @@ fn eval_calculator_lteqfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_lteqfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8351,7 +8351,7 @@ fn eval_calculator_lteqfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_lteqfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8364,7 +8364,7 @@ fn eval_calculator_lteqfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_lteqfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8377,7 +8377,7 @@ fn eval_calculator_lteqfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_lteqfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8390,7 +8390,7 @@ fn eval_calculator_lteqfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_lteqfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8403,7 +8403,7 @@ fn eval_calculator_lteqfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_lteqfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8416,7 +8416,7 @@ fn eval_calculator_lteqfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_lteqfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8429,7 +8429,7 @@ fn eval_calculator_lteqfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_lteqfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8442,7 +8442,7 @@ fn eval_calculator_lteqfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_lteqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8455,7 +8455,7 @@ fn eval_calculator_lteqfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_lteqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8468,7 +8468,7 @@ fn eval_calculator_lteqint_3_5() {
 #[test]
 fn eval_calculator_lteqint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8481,7 +8481,7 @@ fn eval_calculator_lteqint_3_3() {
 #[test]
 fn eval_calculator_lteqint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8494,7 +8494,7 @@ fn eval_calculator_lteqint_3_2() {
 #[test]
 fn eval_calculator_lteqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8507,7 +8507,7 @@ fn eval_calculator_lteqint_3_1() {
 #[test]
 fn eval_calculator_lteqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8520,7 +8520,7 @@ fn eval_calculator_lteqint_3_0() {
 #[test]
 fn eval_calculator_lteqint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8533,7 +8533,7 @@ fn eval_calculator_lteqint_2_5() {
 #[test]
 fn eval_calculator_lteqint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8546,7 +8546,7 @@ fn eval_calculator_lteqint_2_3() {
 #[test]
 fn eval_calculator_lteqint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8559,7 +8559,7 @@ fn eval_calculator_lteqint_2_2() {
 #[test]
 fn eval_calculator_lteqint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8572,7 +8572,7 @@ fn eval_calculator_lteqint_2_1() {
 #[test]
 fn eval_calculator_lteqint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8585,7 +8585,7 @@ fn eval_calculator_lteqint_2_0() {
 #[test]
 fn eval_calculator_lteqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8598,7 +8598,7 @@ fn eval_calculator_lteqint_1_5() {
 #[test]
 fn eval_calculator_lteqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8611,7 +8611,7 @@ fn eval_calculator_lteqint_1_3() {
 #[test]
 fn eval_calculator_lteqint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8624,7 +8624,7 @@ fn eval_calculator_lteqint_1_2() {
 #[test]
 fn eval_calculator_lteqint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8637,7 +8637,7 @@ fn eval_calculator_lteqint_1_1() {
 #[test]
 fn eval_calculator_lteqint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8650,7 +8650,7 @@ fn eval_calculator_lteqint_1_0() {
 #[test]
 fn eval_calculator_lteqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8663,7 +8663,7 @@ fn eval_calculator_lteqint_0_5() {
 #[test]
 fn eval_calculator_lteqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8676,7 +8676,7 @@ fn eval_calculator_lteqint_0_3() {
 #[test]
 fn eval_calculator_lteqint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8689,7 +8689,7 @@ fn eval_calculator_lteqint_0_2() {
 #[test]
 fn eval_calculator_lteqint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8702,7 +8702,7 @@ fn eval_calculator_lteqint_0_1() {
 #[test]
 fn eval_calculator_lteqint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8715,7 +8715,7 @@ fn eval_calculator_lteqint_0_0() {
 #[test]
 fn eval_calculator_ltstr_hello_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8728,7 +8728,7 @@ fn eval_calculator_ltstr_hello_hello() {
 #[test]
 fn eval_calculator_ltstr_hello_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8741,7 +8741,7 @@ fn eval_calculator_ltstr_hello_a() {
 #[test]
 fn eval_calculator_ltstr_hello_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8754,7 +8754,7 @@ fn eval_calculator_ltstr_hello_empty() {
 #[test]
 fn eval_calculator_ltstr_a_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8767,7 +8767,7 @@ fn eval_calculator_ltstr_a_hello() {
 #[test]
 fn eval_calculator_ltstr_a_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8780,7 +8780,7 @@ fn eval_calculator_ltstr_a_a() {
 #[test]
 fn eval_calculator_ltstr_a_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8793,7 +8793,7 @@ fn eval_calculator_ltstr_a_empty() {
 #[test]
 fn eval_calculator_ltstr_empty_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8806,7 +8806,7 @@ fn eval_calculator_ltstr_empty_hello() {
 #[test]
 fn eval_calculator_ltstr_empty_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8819,7 +8819,7 @@ fn eval_calculator_ltstr_empty_a() {
 #[test]
 fn eval_calculator_ltstr_empty_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8832,7 +8832,7 @@ fn eval_calculator_ltstr_empty_empty() {
 #[test]
 fn eval_calculator_ltbool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8845,7 +8845,7 @@ fn eval_calculator_ltbool_false_false() {
 #[test]
 fn eval_calculator_ltbool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8858,7 +8858,7 @@ fn eval_calculator_ltbool_false_true() {
 #[test]
 fn eval_calculator_ltbool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8871,7 +8871,7 @@ fn eval_calculator_ltbool_true_false() {
 #[test]
 fn eval_calculator_ltbool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8884,7 +8884,7 @@ fn eval_calculator_ltbool_true_true() {
 #[test]
 fn eval_calculator_ltfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8897,7 +8897,7 @@ fn eval_calculator_ltfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_ltfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8910,7 +8910,7 @@ fn eval_calculator_ltfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_ltfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8923,7 +8923,7 @@ fn eval_calculator_ltfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_ltfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8936,7 +8936,7 @@ fn eval_calculator_ltfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_ltfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8949,7 +8949,7 @@ fn eval_calculator_ltfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_ltfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8962,7 +8962,7 @@ fn eval_calculator_ltfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_ltfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8975,7 +8975,7 @@ fn eval_calculator_ltfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_ltfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -8988,7 +8988,7 @@ fn eval_calculator_ltfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_ltfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9001,7 +9001,7 @@ fn eval_calculator_ltfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_ltfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9014,7 +9014,7 @@ fn eval_calculator_ltfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_ltfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9027,7 +9027,7 @@ fn eval_calculator_ltfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_ltfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9040,7 +9040,7 @@ fn eval_calculator_ltfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_ltfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9053,7 +9053,7 @@ fn eval_calculator_ltfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_ltfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9066,7 +9066,7 @@ fn eval_calculator_ltfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_ltfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9079,7 +9079,7 @@ fn eval_calculator_ltfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_ltfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9092,7 +9092,7 @@ fn eval_calculator_ltfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_ltfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9105,7 +9105,7 @@ fn eval_calculator_ltfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_ltfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9118,7 +9118,7 @@ fn eval_calculator_ltfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_ltfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9131,7 +9131,7 @@ fn eval_calculator_ltfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_ltfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9144,7 +9144,7 @@ fn eval_calculator_ltfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_ltint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9157,7 +9157,7 @@ fn eval_calculator_ltint_3_5() {
 #[test]
 fn eval_calculator_ltint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9170,7 +9170,7 @@ fn eval_calculator_ltint_3_3() {
 #[test]
 fn eval_calculator_ltint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9183,7 +9183,7 @@ fn eval_calculator_ltint_3_2() {
 #[test]
 fn eval_calculator_ltint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9196,7 +9196,7 @@ fn eval_calculator_ltint_3_1() {
 #[test]
 fn eval_calculator_ltint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9209,7 +9209,7 @@ fn eval_calculator_ltint_3_0() {
 #[test]
 fn eval_calculator_ltint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9222,7 +9222,7 @@ fn eval_calculator_ltint_2_5() {
 #[test]
 fn eval_calculator_ltint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9235,7 +9235,7 @@ fn eval_calculator_ltint_2_3() {
 #[test]
 fn eval_calculator_ltint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9248,7 +9248,7 @@ fn eval_calculator_ltint_2_2() {
 #[test]
 fn eval_calculator_ltint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9261,7 +9261,7 @@ fn eval_calculator_ltint_2_1() {
 #[test]
 fn eval_calculator_ltint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9274,7 +9274,7 @@ fn eval_calculator_ltint_2_0() {
 #[test]
 fn eval_calculator_ltint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9287,7 +9287,7 @@ fn eval_calculator_ltint_1_5() {
 #[test]
 fn eval_calculator_ltint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9300,7 +9300,7 @@ fn eval_calculator_ltint_1_3() {
 #[test]
 fn eval_calculator_ltint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9313,7 +9313,7 @@ fn eval_calculator_ltint_1_2() {
 #[test]
 fn eval_calculator_ltint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9326,7 +9326,7 @@ fn eval_calculator_ltint_1_1() {
 #[test]
 fn eval_calculator_ltint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9339,7 +9339,7 @@ fn eval_calculator_ltint_1_0() {
 #[test]
 fn eval_calculator_ltint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9352,7 +9352,7 @@ fn eval_calculator_ltint_0_5() {
 #[test]
 fn eval_calculator_ltint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9365,7 +9365,7 @@ fn eval_calculator_ltint_0_3() {
 #[test]
 fn eval_calculator_ltint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9378,7 +9378,7 @@ fn eval_calculator_ltint_0_2() {
 #[test]
 fn eval_calculator_ltint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9391,7 +9391,7 @@ fn eval_calculator_ltint_0_1() {
 #[test]
 fn eval_calculator_ltint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9404,7 +9404,7 @@ fn eval_calculator_ltint_0_0() {
 #[test]
 fn eval_calculator_gtstr_hello_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9417,7 +9417,7 @@ fn eval_calculator_gtstr_hello_hello() {
 #[test]
 fn eval_calculator_gtstr_hello_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9430,7 +9430,7 @@ fn eval_calculator_gtstr_hello_a() {
 #[test]
 fn eval_calculator_gtstr_hello_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9443,7 +9443,7 @@ fn eval_calculator_gtstr_hello_empty() {
 #[test]
 fn eval_calculator_gtstr_a_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9456,7 +9456,7 @@ fn eval_calculator_gtstr_a_hello() {
 #[test]
 fn eval_calculator_gtstr_a_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9469,7 +9469,7 @@ fn eval_calculator_gtstr_a_a() {
 #[test]
 fn eval_calculator_gtstr_a_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9482,7 +9482,7 @@ fn eval_calculator_gtstr_a_empty() {
 #[test]
 fn eval_calculator_gtstr_empty_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9495,7 +9495,7 @@ fn eval_calculator_gtstr_empty_hello() {
 #[test]
 fn eval_calculator_gtstr_empty_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9508,7 +9508,7 @@ fn eval_calculator_gtstr_empty_a() {
 #[test]
 fn eval_calculator_gtstr_empty_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9521,7 +9521,7 @@ fn eval_calculator_gtstr_empty_empty() {
 #[test]
 fn eval_calculator_gtbool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9534,7 +9534,7 @@ fn eval_calculator_gtbool_false_false() {
 #[test]
 fn eval_calculator_gtbool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9547,7 +9547,7 @@ fn eval_calculator_gtbool_false_true() {
 #[test]
 fn eval_calculator_gtbool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9560,7 +9560,7 @@ fn eval_calculator_gtbool_true_false() {
 #[test]
 fn eval_calculator_gtbool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9573,7 +9573,7 @@ fn eval_calculator_gtbool_true_true() {
 #[test]
 fn eval_calculator_gtfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9586,7 +9586,7 @@ fn eval_calculator_gtfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_gtfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9599,7 +9599,7 @@ fn eval_calculator_gtfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_gtfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9612,7 +9612,7 @@ fn eval_calculator_gtfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_gtfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9625,7 +9625,7 @@ fn eval_calculator_gtfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_gtfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9638,7 +9638,7 @@ fn eval_calculator_gtfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_gtfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9651,7 +9651,7 @@ fn eval_calculator_gtfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_gtfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9664,7 +9664,7 @@ fn eval_calculator_gtfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_gtfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9677,7 +9677,7 @@ fn eval_calculator_gtfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_gtfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9690,7 +9690,7 @@ fn eval_calculator_gtfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_gtfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9703,7 +9703,7 @@ fn eval_calculator_gtfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_gtfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9716,7 +9716,7 @@ fn eval_calculator_gtfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_gtfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9729,7 +9729,7 @@ fn eval_calculator_gtfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_gtfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9742,7 +9742,7 @@ fn eval_calculator_gtfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_gtfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9755,7 +9755,7 @@ fn eval_calculator_gtfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_gtfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9768,7 +9768,7 @@ fn eval_calculator_gtfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_gtfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9781,7 +9781,7 @@ fn eval_calculator_gtfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_gtfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9794,7 +9794,7 @@ fn eval_calculator_gtfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_gtfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9807,7 +9807,7 @@ fn eval_calculator_gtfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_gtfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9820,7 +9820,7 @@ fn eval_calculator_gtfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_gtfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9833,7 +9833,7 @@ fn eval_calculator_gtfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_gtint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9846,7 +9846,7 @@ fn eval_calculator_gtint_3_5() {
 #[test]
 fn eval_calculator_gtint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9859,7 +9859,7 @@ fn eval_calculator_gtint_3_3() {
 #[test]
 fn eval_calculator_gtint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9872,7 +9872,7 @@ fn eval_calculator_gtint_3_2() {
 #[test]
 fn eval_calculator_gtint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9885,7 +9885,7 @@ fn eval_calculator_gtint_3_1() {
 #[test]
 fn eval_calculator_gtint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9898,7 +9898,7 @@ fn eval_calculator_gtint_3_0() {
 #[test]
 fn eval_calculator_gtint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9911,7 +9911,7 @@ fn eval_calculator_gtint_2_5() {
 #[test]
 fn eval_calculator_gtint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9924,7 +9924,7 @@ fn eval_calculator_gtint_2_3() {
 #[test]
 fn eval_calculator_gtint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9937,7 +9937,7 @@ fn eval_calculator_gtint_2_2() {
 #[test]
 fn eval_calculator_gtint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9950,7 +9950,7 @@ fn eval_calculator_gtint_2_1() {
 #[test]
 fn eval_calculator_gtint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9963,7 +9963,7 @@ fn eval_calculator_gtint_2_0() {
 #[test]
 fn eval_calculator_gtint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9976,7 +9976,7 @@ fn eval_calculator_gtint_1_5() {
 #[test]
 fn eval_calculator_gtint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -9989,7 +9989,7 @@ fn eval_calculator_gtint_1_3() {
 #[test]
 fn eval_calculator_gtint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10002,7 +10002,7 @@ fn eval_calculator_gtint_1_2() {
 #[test]
 fn eval_calculator_gtint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10015,7 +10015,7 @@ fn eval_calculator_gtint_1_1() {
 #[test]
 fn eval_calculator_gtint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10028,7 +10028,7 @@ fn eval_calculator_gtint_1_0() {
 #[test]
 fn eval_calculator_gtint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10041,7 +10041,7 @@ fn eval_calculator_gtint_0_5() {
 #[test]
 fn eval_calculator_gtint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10054,7 +10054,7 @@ fn eval_calculator_gtint_0_3() {
 #[test]
 fn eval_calculator_gtint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10067,7 +10067,7 @@ fn eval_calculator_gtint_0_2() {
 #[test]
 fn eval_calculator_gtint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10080,7 +10080,7 @@ fn eval_calculator_gtint_0_1() {
 #[test]
 fn eval_calculator_gtint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10093,7 +10093,7 @@ fn eval_calculator_gtint_0_0() {
 #[test]
 fn eval_calculator_eqstr_hello_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10106,7 +10106,7 @@ fn eval_calculator_eqstr_hello_hello() {
 #[test]
 fn eval_calculator_eqstr_hello_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10119,7 +10119,7 @@ fn eval_calculator_eqstr_hello_a() {
 #[test]
 fn eval_calculator_eqstr_hello_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::from("hello"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::from("hello"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10132,7 +10132,7 @@ fn eval_calculator_eqstr_hello_empty() {
 #[test]
 fn eval_calculator_eqstr_a_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10145,7 +10145,7 @@ fn eval_calculator_eqstr_a_hello() {
 #[test]
 fn eval_calculator_eqstr_a_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10158,7 +10158,7 @@ fn eval_calculator_eqstr_a_a() {
 #[test]
 fn eval_calculator_eqstr_a_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10171,7 +10171,7 @@ fn eval_calculator_eqstr_a_empty() {
 #[test]
 fn eval_calculator_eqstr_empty_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10184,7 +10184,7 @@ fn eval_calculator_eqstr_empty_hello() {
 #[test]
 fn eval_calculator_eqstr_empty_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10197,7 +10197,7 @@ fn eval_calculator_eqstr_empty_a() {
 #[test]
 fn eval_calculator_eqstr_empty_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10210,7 +10210,7 @@ fn eval_calculator_eqstr_empty_empty() {
 #[test]
 fn eval_calculator_eqbool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10223,7 +10223,7 @@ fn eval_calculator_eqbool_false_false() {
 #[test]
 fn eval_calculator_eqbool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10236,7 +10236,7 @@ fn eval_calculator_eqbool_false_true() {
 #[test]
 fn eval_calculator_eqbool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10249,7 +10249,7 @@ fn eval_calculator_eqbool_true_false() {
 #[test]
 fn eval_calculator_eqbool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10262,7 +10262,7 @@ fn eval_calculator_eqbool_true_true() {
 #[test]
 fn eval_calculator_eqfloat_2_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10275,7 +10275,7 @@ fn eval_calculator_eqfloat_2_0_2_5() {
 #[test]
 fn eval_calculator_eqfloat_2_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10288,7 +10288,7 @@ fn eval_calculator_eqfloat_2_0_2_0() {
 #[test]
 fn eval_calculator_eqfloat_2_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10301,7 +10301,7 @@ fn eval_calculator_eqfloat_2_0_0_5() {
 #[test]
 fn eval_calculator_eqfloat_2_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10314,7 +10314,7 @@ fn eval_calculator_eqfloat_2_0_1_0() {
 #[test]
 fn eval_calculator_eqfloat_2_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10327,7 +10327,7 @@ fn eval_calculator_eqfloat_2_0_0_0() {
 #[test]
 fn eval_calculator_eqfloat_0_5_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10340,7 +10340,7 @@ fn eval_calculator_eqfloat_0_5_2_5() {
 #[test]
 fn eval_calculator_eqfloat_0_5_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10353,7 +10353,7 @@ fn eval_calculator_eqfloat_0_5_2_0() {
 #[test]
 fn eval_calculator_eqfloat_0_5_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10366,7 +10366,7 @@ fn eval_calculator_eqfloat_0_5_0_5() {
 #[test]
 fn eval_calculator_eqfloat_0_5_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10379,7 +10379,7 @@ fn eval_calculator_eqfloat_0_5_1_0() {
 #[test]
 fn eval_calculator_eqfloat_0_5_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10392,7 +10392,7 @@ fn eval_calculator_eqfloat_0_5_0_0() {
 #[test]
 fn eval_calculator_eqfloat_1_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10405,7 +10405,7 @@ fn eval_calculator_eqfloat_1_0_2_5() {
 #[test]
 fn eval_calculator_eqfloat_1_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10418,7 +10418,7 @@ fn eval_calculator_eqfloat_1_0_2_0() {
 #[test]
 fn eval_calculator_eqfloat_1_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10431,7 +10431,7 @@ fn eval_calculator_eqfloat_1_0_0_5() {
 #[test]
 fn eval_calculator_eqfloat_1_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10444,7 +10444,7 @@ fn eval_calculator_eqfloat_1_0_1_0() {
 #[test]
 fn eval_calculator_eqfloat_1_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10457,7 +10457,7 @@ fn eval_calculator_eqfloat_1_0_0_0() {
 #[test]
 fn eval_calculator_eqfloat_0_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10470,7 +10470,7 @@ fn eval_calculator_eqfloat_0_0_2_5() {
 #[test]
 fn eval_calculator_eqfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10483,7 +10483,7 @@ fn eval_calculator_eqfloat_0_0_2_0() {
 #[test]
 fn eval_calculator_eqfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10496,7 +10496,7 @@ fn eval_calculator_eqfloat_0_0_0_5() {
 #[test]
 fn eval_calculator_eqfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10509,7 +10509,7 @@ fn eval_calculator_eqfloat_0_0_1_0() {
 #[test]
 fn eval_calculator_eqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10522,7 +10522,7 @@ fn eval_calculator_eqfloat_0_0_0_0() {
 #[test]
 fn eval_calculator_eqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10535,7 +10535,7 @@ fn eval_calculator_eqint_3_5() {
 #[test]
 fn eval_calculator_eqint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10548,7 +10548,7 @@ fn eval_calculator_eqint_3_3() {
 #[test]
 fn eval_calculator_eqint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10561,7 +10561,7 @@ fn eval_calculator_eqint_3_2() {
 #[test]
 fn eval_calculator_eqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10574,7 +10574,7 @@ fn eval_calculator_eqint_3_1() {
 #[test]
 fn eval_calculator_eqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10587,7 +10587,7 @@ fn eval_calculator_eqint_3_0() {
 #[test]
 fn eval_calculator_eqint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10600,7 +10600,7 @@ fn eval_calculator_eqint_2_5() {
 #[test]
 fn eval_calculator_eqint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10613,7 +10613,7 @@ fn eval_calculator_eqint_2_3() {
 #[test]
 fn eval_calculator_eqint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10626,7 +10626,7 @@ fn eval_calculator_eqint_2_2() {
 #[test]
 fn eval_calculator_eqint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10639,7 +10639,7 @@ fn eval_calculator_eqint_2_1() {
 #[test]
 fn eval_calculator_eqint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10652,7 +10652,7 @@ fn eval_calculator_eqint_2_0() {
 #[test]
 fn eval_calculator_eqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10665,7 +10665,7 @@ fn eval_calculator_eqint_1_5() {
 #[test]
 fn eval_calculator_eqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10678,7 +10678,7 @@ fn eval_calculator_eqint_1_3() {
 #[test]
 fn eval_calculator_eqint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10691,7 +10691,7 @@ fn eval_calculator_eqint_1_2() {
 #[test]
 fn eval_calculator_eqint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10704,7 +10704,7 @@ fn eval_calculator_eqint_1_1() {
 #[test]
 fn eval_calculator_eqint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10717,7 +10717,7 @@ fn eval_calculator_eqint_1_0() {
 #[test]
 fn eval_calculator_eqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10730,7 +10730,7 @@ fn eval_calculator_eqint_0_5() {
 #[test]
 fn eval_calculator_eqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10743,7 +10743,7 @@ fn eval_calculator_eqint_0_3() {
 #[test]
 fn eval_calculator_eqint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10756,7 +10756,7 @@ fn eval_calculator_eqint_0_2() {
 #[test]
 fn eval_calculator_eqint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10769,7 +10769,7 @@ fn eval_calculator_eqint_0_1() {
 #[test]
 fn eval_calculator_eqint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10782,7 +10782,7 @@ fn eval_calculator_eqint_0_0() {
 #[test]
 fn eval_calculator_tern_0_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10795,7 +10795,7 @@ fn eval_calculator_tern_0_3_5() {
 #[test]
 fn eval_calculator_tern_0_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10808,7 +10808,7 @@ fn eval_calculator_tern_0_3_3() {
 #[test]
 fn eval_calculator_tern_0_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10821,7 +10821,7 @@ fn eval_calculator_tern_0_3_2() {
 #[test]
 fn eval_calculator_tern_0_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10834,7 +10834,7 @@ fn eval_calculator_tern_0_3_1() {
 #[test]
 fn eval_calculator_tern_0_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10847,7 +10847,7 @@ fn eval_calculator_tern_0_3_0() {
 #[test]
 fn eval_calculator_tern_0_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10860,7 +10860,7 @@ fn eval_calculator_tern_0_2_5() {
 #[test]
 fn eval_calculator_tern_0_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10873,7 +10873,7 @@ fn eval_calculator_tern_0_2_3() {
 #[test]
 fn eval_calculator_tern_0_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10886,7 +10886,7 @@ fn eval_calculator_tern_0_2_2() {
 #[test]
 fn eval_calculator_tern_0_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10899,7 +10899,7 @@ fn eval_calculator_tern_0_2_1() {
 #[test]
 fn eval_calculator_tern_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10912,7 +10912,7 @@ fn eval_calculator_tern_0_2_0() {
 #[test]
 fn eval_calculator_tern_0_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10925,7 +10925,7 @@ fn eval_calculator_tern_0_1_5() {
 #[test]
 fn eval_calculator_tern_0_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10938,7 +10938,7 @@ fn eval_calculator_tern_0_1_3() {
 #[test]
 fn eval_calculator_tern_0_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10951,7 +10951,7 @@ fn eval_calculator_tern_0_1_2() {
 #[test]
 fn eval_calculator_tern_0_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10964,7 +10964,7 @@ fn eval_calculator_tern_0_1_1() {
 #[test]
 fn eval_calculator_tern_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10977,7 +10977,7 @@ fn eval_calculator_tern_0_1_0() {
 #[test]
 fn eval_calculator_tern_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -10990,7 +10990,7 @@ fn eval_calculator_tern_0_0_5() {
 #[test]
 fn eval_calculator_tern_0_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11003,7 +11003,7 @@ fn eval_calculator_tern_0_0_3() {
 #[test]
 fn eval_calculator_tern_0_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11016,7 +11016,7 @@ fn eval_calculator_tern_0_0_2() {
 #[test]
 fn eval_calculator_tern_0_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11029,7 +11029,7 @@ fn eval_calculator_tern_0_0_1() {
 #[test]
 fn eval_calculator_tern_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11042,7 +11042,7 @@ fn eval_calculator_tern_0_0_0() {
 #[test]
 fn eval_calculator_bitnotbigrat_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::Err));
+    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11054,7 +11054,7 @@ fn eval_calculator_bitnotbigrat_err_smoke() {
 #[test]
 fn eval_calculator_bitnotbigrat_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11066,7 +11066,7 @@ fn eval_calculator_bitnotbigrat_default_smoke() {
 #[test]
 fn eval_calculator_bitorbigrat_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::Err), Box::new(BigRat::Err));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11078,7 +11078,7 @@ fn eval_calculator_bitorbigrat_err_err_smoke() {
 #[test]
 fn eval_calculator_bitorbigrat_err_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::Err), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11090,7 +11090,7 @@ fn eval_calculator_bitorbigrat_err_default_smoke() {
 #[test]
 fn eval_calculator_bitorbigrat_default_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::Err));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11102,7 +11102,7 @@ fn eval_calculator_bitorbigrat_default_err_smoke() {
 #[test]
 fn eval_calculator_bitorbigrat_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11114,7 +11114,7 @@ fn eval_calculator_bitorbigrat_default_default_smoke() {
 #[test]
 fn eval_calculator_bitandbigrat_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::Err), Box::new(BigRat::Err));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11126,7 +11126,7 @@ fn eval_calculator_bitandbigrat_err_err_smoke() {
 #[test]
 fn eval_calculator_bitandbigrat_err_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::Err), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11138,7 +11138,7 @@ fn eval_calculator_bitandbigrat_err_default_smoke() {
 #[test]
 fn eval_calculator_bitandbigrat_default_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::Err));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11150,7 +11150,7 @@ fn eval_calculator_bitandbigrat_default_err_smoke() {
 #[test]
 fn eval_calculator_bitandbigrat_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11162,7 +11162,7 @@ fn eval_calculator_bitandbigrat_default_default_smoke() {
 #[test]
 fn eval_calculator_negbigrat_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::Err));
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11174,7 +11174,7 @@ fn eval_calculator_negbigrat_err_smoke() {
 #[test]
 fn eval_calculator_negbigrat_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11186,7 +11186,7 @@ fn eval_calculator_negbigrat_default_smoke() {
 #[test]
 fn eval_calculator_divbigrat_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::Err), Box::new(BigRat::Err));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11198,7 +11198,7 @@ fn eval_calculator_divbigrat_err_err_smoke() {
 #[test]
 fn eval_calculator_divbigrat_err_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::Err), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11210,7 +11210,7 @@ fn eval_calculator_divbigrat_err_default_smoke() {
 #[test]
 fn eval_calculator_divbigrat_default_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::Err));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11222,7 +11222,7 @@ fn eval_calculator_divbigrat_default_err_smoke() {
 #[test]
 fn eval_calculator_divbigrat_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11234,7 +11234,7 @@ fn eval_calculator_divbigrat_default_default_smoke() {
 #[test]
 fn eval_calculator_mulbigrat_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::Err), Box::new(BigRat::Err));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11246,7 +11246,7 @@ fn eval_calculator_mulbigrat_err_err_smoke() {
 #[test]
 fn eval_calculator_mulbigrat_err_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::Err), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11258,7 +11258,7 @@ fn eval_calculator_mulbigrat_err_default_smoke() {
 #[test]
 fn eval_calculator_mulbigrat_default_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::Err));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11270,7 +11270,7 @@ fn eval_calculator_mulbigrat_default_err_smoke() {
 #[test]
 fn eval_calculator_mulbigrat_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11282,7 +11282,7 @@ fn eval_calculator_mulbigrat_default_default_smoke() {
 #[test]
 fn eval_calculator_addbigrat_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::Err), Box::new(BigRat::Err));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11294,7 +11294,7 @@ fn eval_calculator_addbigrat_err_err_smoke() {
 #[test]
 fn eval_calculator_addbigrat_err_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::Err), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::Err), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11306,7 +11306,7 @@ fn eval_calculator_addbigrat_err_default_smoke() {
 #[test]
 fn eval_calculator_addbigrat_default_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::Err));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::Err));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11318,7 +11318,7 @@ fn eval_calculator_addbigrat_default_err_smoke() {
 #[test]
 fn eval_calculator_addbigrat_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11330,7 +11330,7 @@ fn eval_calculator_addbigrat_default_default_smoke() {
 #[test]
 fn eval_calculator_fraction_casterrbigint_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11342,7 +11342,7 @@ fn eval_calculator_fraction_casterrbigint_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_fraction_casterrbigint_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::CastErrBigInt), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::CastErrBigInt), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11354,7 +11354,7 @@ fn eval_calculator_fraction_casterrbigint_default_smoke() {
 #[test]
 fn eval_calculator_fraction_default_casterrbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11366,7 +11366,7 @@ fn eval_calculator_fraction_default_casterrbigint_smoke() {
 #[test]
 fn eval_calculator_fraction_default_default_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11382,7 +11382,7 @@ fn eval_calculator_fraction_default_default_smoke() {
 #[test]
 fn nested_calculator_valuesmap_mergemap_default_default_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ValuesMap(Box::new(Map::MergeMap(Box::new(Map::MapLit(Default::default())), Box::new(Map::MapLit(Default::default())))));
+    let input_term = List::ValuesMap(std::sync::Arc::new(Map::MergeMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11394,7 +11394,7 @@ fn nested_calculator_valuesmap_mergemap_default_default_in_slot0__smoke() {
 #[test]
 fn nested_calculator_keysmap_mergemap_default_default_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::KeysMap(Box::new(Map::MergeMap(Box::new(Map::MapLit(Default::default())), Box::new(Map::MapLit(Default::default())))));
+    let input_term = List::KeysMap(std::sync::Arc::new(Map::MergeMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11406,7 +11406,7 @@ fn nested_calculator_keysmap_mergemap_default_default_in_slot0__smoke() {
 #[test]
 fn nested_calculator_hasmap_elemlist_default_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::HasMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)))));
+    let input_term = Bool::HasMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11418,7 +11418,7 @@ fn nested_calculator_hasmap_elemlist_default_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_hasmap_elemlist_default_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::HasMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)))));
+    let input_term = Bool::HasMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11430,7 +11430,7 @@ fn nested_calculator_hasmap_elemlist_default_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_hasmap_elemlist_default_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::HasMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)))));
+    let input_term = Bool::HasMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11442,7 +11442,7 @@ fn nested_calculator_hasmap_elemlist_default_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletemap_elemlist_default_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Map::DeleteMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)))));
+    let input_term = Map::DeleteMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11454,7 +11454,7 @@ fn nested_calculator_deletemap_elemlist_default_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletemap_elemlist_default_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Map::DeleteMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)))));
+    let input_term = Map::DeleteMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11466,7 +11466,7 @@ fn nested_calculator_deletemap_elemlist_default_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletemap_elemlist_default_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Map::DeleteMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)))));
+    let input_term = Map::DeleteMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11478,7 +11478,7 @@ fn nested_calculator_deletemap_elemlist_default_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_getmap_elemlist_default_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11490,7 +11490,7 @@ fn nested_calculator_getmap_elemlist_default_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_getmap_elemlist_default_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11502,7 +11502,7 @@ fn nested_calculator_getmap_elemlist_default_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_getmap_elemlist_default_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11514,7 +11514,7 @@ fn nested_calculator_getmap_elemlist_default_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_lenmap_mergemap_default_default_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenMap(Box::new(Map::MergeMap(Box::new(Map::MapLit(Default::default())), Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::LenMap(std::sync::Arc::new(Map::MergeMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11526,7 +11526,7 @@ fn nested_calculator_lenmap_mergemap_default_default_in_slot0__smoke() {
 #[test]
 fn nested_calculator_countbag_elemlist_default_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Bag::BagLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::CountBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11538,7 +11538,7 @@ fn nested_calculator_countbag_elemlist_default_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_countbag_elemlist_default_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Bag::BagLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::CountBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11550,7 +11550,7 @@ fn nested_calculator_countbag_elemlist_default_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_countbag_elemlist_default_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Bag::BagLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::CountBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11562,7 +11562,7 @@ fn nested_calculator_countbag_elemlist_default_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_diffbag_unionbag_default_default_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::DiffBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::UnionBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())))));
+    let input_term = Bag::DiffBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11574,7 +11574,7 @@ fn nested_calculator_diffbag_unionbag_default_default_in_slot1__smoke() {
 #[test]
 fn nested_calculator_diffbag_unionbag_default_default_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::DiffBag(Box::new(Bag::UnionBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())))), Box::new(Bag::BagLit(Default::default())));
+    let input_term = Bag::DiffBag(std::sync::Arc::new(Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())))), std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11586,7 +11586,7 @@ fn nested_calculator_diffbag_unionbag_default_default_in_slot0__smoke() {
 #[test]
 fn nested_calculator_removebag_elemlist_default_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::RemoveBag(Box::new(Bag::BagLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(2i32)))));
+    let input_term = Bag::RemoveBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11598,7 +11598,7 @@ fn nested_calculator_removebag_elemlist_default_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_removebag_elemlist_default_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::RemoveBag(Box::new(Bag::BagLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)))));
+    let input_term = Bag::RemoveBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11610,7 +11610,7 @@ fn nested_calculator_removebag_elemlist_default_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_removebag_elemlist_default_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::RemoveBag(Box::new(Bag::BagLit(Default::default())), Box::new(Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)))));
+    let input_term = Bag::RemoveBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11622,7 +11622,7 @@ fn nested_calculator_removebag_elemlist_default_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_unionbag_diffbag_default_default_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::UnionBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::DiffBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())))));
+    let input_term = Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::DiffBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11634,7 +11634,7 @@ fn nested_calculator_unionbag_diffbag_default_default_in_slot1__smoke() {
 #[test]
 fn nested_calculator_unionbag_diffbag_default_default_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::UnionBag(Box::new(Bag::DiffBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())))), Box::new(Bag::BagLit(Default::default())));
+    let input_term = Bag::UnionBag(std::sync::Arc::new(Bag::DiffBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())))), std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11646,7 +11646,7 @@ fn nested_calculator_unionbag_diffbag_default_default_in_slot0__smoke() {
 #[test]
 fn nested_calculator_deletelist_lenmap_default_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11658,7 +11658,7 @@ fn nested_calculator_deletelist_lenmap_default_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_lenlist_default_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11670,7 +11670,7 @@ fn nested_calculator_deletelist_lenlist_default_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_customop_0_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11682,7 +11682,7 @@ fn nested_calculator_deletelist_customop_0_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_customop_0_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11694,7 +11694,7 @@ fn nested_calculator_deletelist_customop_0_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_customop_0_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11706,7 +11706,7 @@ fn nested_calculator_deletelist_customop_0_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_fact_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::Fact(Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::Fact(std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11718,7 +11718,7 @@ fn nested_calculator_deletelist_fact_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_fact_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::Fact(Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::Fact(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11730,7 +11730,7 @@ fn nested_calculator_deletelist_fact_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_fact_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::Fact(Box::new(Int::NumLit(0i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::Fact(std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11742,7 +11742,7 @@ fn nested_calculator_deletelist_fact_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_neg_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11754,7 +11754,7 @@ fn nested_calculator_deletelist_neg_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_neg_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11766,7 +11766,7 @@ fn nested_calculator_deletelist_neg_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_neg_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11778,7 +11778,7 @@ fn nested_calculator_deletelist_neg_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitnotint_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitNotInt(Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitNotInt(std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11790,7 +11790,7 @@ fn nested_calculator_deletelist_bitnotint_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitnotint_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitNotInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitNotInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11802,7 +11802,7 @@ fn nested_calculator_deletelist_bitnotint_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitnotint_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitNotInt(Box::new(Int::NumLit(0i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitNotInt(std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11814,7 +11814,7 @@ fn nested_calculator_deletelist_bitnotint_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitorint_0_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11826,7 +11826,7 @@ fn nested_calculator_deletelist_bitorint_0_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitorint_0_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11838,7 +11838,7 @@ fn nested_calculator_deletelist_bitorint_0_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitorint_0_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11850,7 +11850,7 @@ fn nested_calculator_deletelist_bitorint_0_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitandint_0_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11862,7 +11862,7 @@ fn nested_calculator_deletelist_bitandint_0_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitandint_0_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11874,7 +11874,7 @@ fn nested_calculator_deletelist_bitandint_0_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_bitandint_0_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11886,7 +11886,7 @@ fn nested_calculator_deletelist_bitandint_0_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_powint_0_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11898,7 +11898,7 @@ fn nested_calculator_deletelist_powint_0_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_powint_0_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11910,7 +11910,7 @@ fn nested_calculator_deletelist_powint_0_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_powint_0_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11922,7 +11922,7 @@ fn nested_calculator_deletelist_powint_0_0_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_modint_0_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11934,7 +11934,7 @@ fn nested_calculator_deletelist_modint_0_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_modint_0_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11946,7 +11946,7 @@ fn nested_calculator_deletelist_modint_0_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_divint_0_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11958,7 +11958,7 @@ fn nested_calculator_deletelist_divint_0_2_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_divint_0_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11970,7 +11970,7 @@ fn nested_calculator_deletelist_divint_0_1_in_slot1__smoke() {
 #[test]
 fn nested_calculator_deletelist_mulint_0_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11986,7 +11986,7 @@ fn nested_calculator_deletelist_mulint_0_2_in_slot1__smoke() {
 #[test]
 fn edge_calculator_gtbool_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -11999,7 +11999,7 @@ fn edge_calculator_gtbool_bool_false_false() {
 #[test]
 fn edge_calculator_gtbool_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12012,7 +12012,7 @@ fn edge_calculator_gtbool_bool_true_false() {
 #[test]
 fn edge_calculator_gtbool_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12025,7 +12025,7 @@ fn edge_calculator_gtbool_bool_false_true() {
 #[test]
 fn edge_calculator_gtbool_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12038,7 +12038,7 @@ fn edge_calculator_gtbool_bool_true_true() {
 #[test]
 fn edge_calculator_ltbool_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12051,7 +12051,7 @@ fn edge_calculator_ltbool_bool_false_false() {
 #[test]
 fn edge_calculator_ltbool_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12064,7 +12064,7 @@ fn edge_calculator_ltbool_bool_true_false() {
 #[test]
 fn edge_calculator_ltbool_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12077,7 +12077,7 @@ fn edge_calculator_ltbool_bool_false_true() {
 #[test]
 fn edge_calculator_ltbool_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12090,7 +12090,7 @@ fn edge_calculator_ltbool_bool_true_true() {
 #[test]
 fn edge_calculator_and_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12103,7 +12103,7 @@ fn edge_calculator_and_bool_false_false() {
 #[test]
 fn edge_calculator_and_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12116,7 +12116,7 @@ fn edge_calculator_and_bool_true_false() {
 #[test]
 fn edge_calculator_and_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12129,7 +12129,7 @@ fn edge_calculator_and_bool_false_true() {
 #[test]
 fn edge_calculator_and_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12142,7 +12142,7 @@ fn edge_calculator_and_bool_true_true() {
 #[test]
 fn edge_calculator_or_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12155,7 +12155,7 @@ fn edge_calculator_or_bool_false_false() {
 #[test]
 fn edge_calculator_or_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12168,7 +12168,7 @@ fn edge_calculator_or_bool_true_false() {
 #[test]
 fn edge_calculator_or_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12181,7 +12181,7 @@ fn edge_calculator_or_bool_false_true() {
 #[test]
 fn edge_calculator_or_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12194,7 +12194,7 @@ fn edge_calculator_or_bool_true_true() {
 #[test]
 fn edge_calculator_xor_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12207,7 +12207,7 @@ fn edge_calculator_xor_bool_false_false() {
 #[test]
 fn edge_calculator_xor_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12220,7 +12220,7 @@ fn edge_calculator_xor_bool_true_false() {
 #[test]
 fn edge_calculator_xor_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12233,7 +12233,7 @@ fn edge_calculator_xor_bool_false_true() {
 #[test]
 fn edge_calculator_xor_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12246,7 +12246,7 @@ fn edge_calculator_xor_bool_true_true() {
 #[test]
 fn edge_calculator_len_empty_str_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::new())));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12259,7 +12259,7 @@ fn edge_calculator_len_empty_str_empty() {
 #[test]
 fn edge_calculator_addstr_empty_str_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12271,7 +12271,7 @@ fn edge_calculator_addstr_empty_str_empty() {
 #[test]
 fn edge_calculator_powint_exp0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12284,7 +12284,7 @@ fn edge_calculator_powint_exp0() {
 #[test]
 fn edge_calculator_powfloat_exp0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12301,7 +12301,7 @@ fn edge_calculator_powfloat_exp0() {
 #[test]
 fn cross_cat_calculator_cast_procint_from_int_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcInt(Box::new(Int::NumLit(1i32)));
+    let input_term = Proc::ProcInt(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12313,7 +12313,7 @@ fn cross_cat_calculator_cast_procint_from_int_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procfloat_from_float_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Proc::ProcFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12325,7 +12325,7 @@ fn cross_cat_calculator_cast_procfloat_from_float_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procbool_from_bool_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBool(Box::new(Bool::BoolLit(true)));
+    let input_term = Proc::ProcBool(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12337,7 +12337,7 @@ fn cross_cat_calculator_cast_procbool_from_bool_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procstr_from_str_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcStr(Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Proc::ProcStr(std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12349,7 +12349,7 @@ fn cross_cat_calculator_cast_procstr_from_str_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_proclist_from_list_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcList(Box::new(List::ListLit(Default::default())));
+    let input_term = Proc::ProcList(std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12361,7 +12361,7 @@ fn cross_cat_calculator_cast_proclist_from_list_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procbag_from_bag_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBag(Box::new(Bag::BagLit(Default::default())));
+    let input_term = Proc::ProcBag(std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12373,7 +12373,7 @@ fn cross_cat_calculator_cast_procbag_from_bag_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procmap_from_map_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = Proc::ProcMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12385,7 +12385,7 @@ fn cross_cat_calculator_cast_procmap_from_map_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procuint32_from_uint32_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)));
+    let input_term = Proc::ProcUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12397,7 +12397,7 @@ fn cross_cat_calculator_cast_procuint32_from_uint32_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procbigint_from_bigint_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigInt(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = Proc::ProcBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12409,7 +12409,7 @@ fn cross_cat_calculator_cast_procbigint_from_bigint_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procbigrat_from_bigrat_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12421,7 +12421,7 @@ fn cross_cat_calculator_cast_procbigrat_from_bigrat_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_procfixed_from_fixed_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcFixed(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Proc::ProcFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12433,7 +12433,7 @@ fn cross_cat_calculator_cast_procfixed_from_fixed_to_proc() {
 #[test]
 fn cross_cat_calculator_cast_inttobigint_from_int_to_bigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12445,7 +12445,7 @@ fn cross_cat_calculator_cast_inttobigint_from_int_to_bigint() {
 #[test]
 fn cross_cat_calculator_cast_inttobigrat_from_int_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12457,7 +12457,7 @@ fn cross_cat_calculator_cast_inttobigrat_from_int_to_bigrat() {
 #[test]
 fn cross_cat_calculator_cast_len_from_str_to_int() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12470,7 +12470,7 @@ fn cross_cat_calculator_cast_len_from_str_to_int() {
 #[test]
 fn cross_cat_calculator_cast_lenlist_from_list_to_int() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenList(Box::new(List::ListLit(Default::default())));
+    let input_term = Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12482,7 +12482,7 @@ fn cross_cat_calculator_cast_lenlist_from_list_to_int() {
 #[test]
 fn cross_cat_calculator_cast_lenmap_from_map_to_int() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12494,7 +12494,7 @@ fn cross_cat_calculator_cast_lenmap_from_map_to_int() {
 #[test]
 fn cross_cat_calculator_cast_keysmap_from_map_to_list() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::KeysMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12506,7 +12506,7 @@ fn cross_cat_calculator_cast_keysmap_from_map_to_list() {
 #[test]
 fn cross_cat_calculator_cast_valuesmap_from_map_to_list() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ValuesMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::ValuesMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12518,7 +12518,7 @@ fn cross_cat_calculator_cast_valuesmap_from_map_to_list() {
 #[test]
 fn cross_cat_calculator_cast_booltouint32_from_bool_to_uint32() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)));
+    let input_term = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12530,7 +12530,7 @@ fn cross_cat_calculator_cast_booltouint32_from_bool_to_uint32() {
 #[test]
 fn cross_cat_calculator_cast_booltobigint_from_bool_to_bigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)));
+    let input_term = BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12542,7 +12542,7 @@ fn cross_cat_calculator_cast_booltobigint_from_bool_to_bigint() {
 #[test]
 fn cross_cat_calculator_cast_booltobigrat_from_bool_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)));
+    let input_term = BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12554,7 +12554,7 @@ fn cross_cat_calculator_cast_booltobigrat_from_bool_to_bigrat() {
 #[test]
 fn cross_cat_calculator_cast_uint32tobigint_from_uint32_to_bigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)));
+    let input_term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12566,7 +12566,7 @@ fn cross_cat_calculator_cast_uint32tobigint_from_uint32_to_bigint() {
 #[test]
 fn cross_cat_calculator_cast_uint32tobigrat_from_uint32_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)));
+    let input_term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12578,7 +12578,7 @@ fn cross_cat_calculator_cast_uint32tobigrat_from_uint32_to_bigrat() {
 #[test]
 fn cross_cat_calculator_cast_floattobigrat_from_float_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12590,7 +12590,7 @@ fn cross_cat_calculator_cast_floattobigrat_from_float_to_bigrat() {
 #[test]
 fn cross_cat_calculator_cast_biginttobigrat_from_bigint_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12602,7 +12602,7 @@ fn cross_cat_calculator_cast_biginttobigrat_from_bigint_to_bigrat() {
 #[test]
 fn cross_cat_calculator_cast_fixedtobigrat_from_fixed_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12614,7 +12614,7 @@ fn cross_cat_calculator_cast_fixedtobigrat_from_fixed_to_bigrat() {
 #[test]
 fn cross_cat_calculator_roundtrip_bigint_to_proc_via_procbigint_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12626,7 +12626,7 @@ fn cross_cat_calculator_roundtrip_bigint_to_proc_via_procbigint_bigintcast() {
 #[test]
 fn cross_cat_calculator_roundtrip_bigrat_to_proc_via_procbigrat_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12638,7 +12638,7 @@ fn cross_cat_calculator_roundtrip_bigrat_to_proc_via_procbigrat_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procint_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12650,7 +12650,7 @@ fn cross_cat_calculator_chain_procint_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procint_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12662,7 +12662,7 @@ fn cross_cat_calculator_chain_procint_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procfloat_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12674,7 +12674,7 @@ fn cross_cat_calculator_chain_procfloat_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procfloat_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12686,7 +12686,7 @@ fn cross_cat_calculator_chain_procfloat_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procbool_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcBool(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcBool(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12698,7 +12698,7 @@ fn cross_cat_calculator_chain_procbool_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procbool_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcBool(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcBool(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12710,7 +12710,7 @@ fn cross_cat_calculator_chain_procbool_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procstr_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcStr(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcStr(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12722,7 +12722,7 @@ fn cross_cat_calculator_chain_procstr_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procstr_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcStr(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcStr(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12734,7 +12734,7 @@ fn cross_cat_calculator_chain_procstr_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_proclist_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcList(Box::new(List::ListLit(Default::default())))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12746,7 +12746,7 @@ fn cross_cat_calculator_chain_proclist_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_proclist_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcList(Box::new(List::ListLit(Default::default())))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12758,7 +12758,7 @@ fn cross_cat_calculator_chain_proclist_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procbag_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcBag(Box::new(Bag::BagLit(Default::default())))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcBag(std::sync::Arc::new(Bag::BagLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12770,7 +12770,7 @@ fn cross_cat_calculator_chain_procbag_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procbag_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcBag(Box::new(Bag::BagLit(Default::default())))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcBag(std::sync::Arc::new(Bag::BagLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12782,7 +12782,7 @@ fn cross_cat_calculator_chain_procbag_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procmap_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12794,7 +12794,7 @@ fn cross_cat_calculator_chain_procmap_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procmap_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12806,7 +12806,7 @@ fn cross_cat_calculator_chain_procmap_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procuint32_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12818,7 +12818,7 @@ fn cross_cat_calculator_chain_procuint32_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procuint32_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12830,7 +12830,7 @@ fn cross_cat_calculator_chain_procuint32_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procbigint_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12842,7 +12842,7 @@ fn cross_cat_calculator_chain_procbigint_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_procbigrat_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12854,7 +12854,7 @@ fn cross_cat_calculator_chain_procbigrat_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procfixed_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BigintCast(Box::new(Proc::ProcFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = BigInt::BigintCast(std::sync::Arc::new(Proc::ProcFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12866,7 +12866,7 @@ fn cross_cat_calculator_chain_procfixed_bigintcast() {
 #[test]
 fn cross_cat_calculator_chain_procfixed_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigratCast(Box::new(Proc::ProcFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = BigRat::BigratCast(std::sync::Arc::new(Proc::ProcFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12878,7 +12878,7 @@ fn cross_cat_calculator_chain_procfixed_bigratcast() {
 #[test]
 fn cross_cat_calculator_chain_inttobigint_procbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = Proc::ProcBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12890,7 +12890,7 @@ fn cross_cat_calculator_chain_inttobigint_procbigint() {
 #[test]
 fn cross_cat_calculator_chain_inttobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12902,7 +12902,7 @@ fn cross_cat_calculator_chain_inttobigint_biginttobigrat() {
 #[test]
 fn cross_cat_calculator_chain_inttobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12914,7 +12914,7 @@ fn cross_cat_calculator_chain_inttobigrat_procbigrat() {
 #[test]
 fn cross_cat_calculator_chain_len_procint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Proc::ProcInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12926,7 +12926,7 @@ fn cross_cat_calculator_chain_len_procint() {
 #[test]
 fn cross_cat_calculator_chain_len_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12938,7 +12938,7 @@ fn cross_cat_calculator_chain_len_inttobigint() {
 #[test]
 fn cross_cat_calculator_chain_len_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12950,7 +12950,7 @@ fn cross_cat_calculator_chain_len_inttobigrat() {
 #[test]
 fn cross_cat_calculator_chain_lenlist_procint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Proc::ProcInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12962,7 +12962,7 @@ fn cross_cat_calculator_chain_lenlist_procint() {
 #[test]
 fn cross_cat_calculator_chain_lenlist_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12974,7 +12974,7 @@ fn cross_cat_calculator_chain_lenlist_inttobigint() {
 #[test]
 fn cross_cat_calculator_chain_lenlist_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12986,7 +12986,7 @@ fn cross_cat_calculator_chain_lenlist_inttobigrat() {
 #[test]
 fn cross_cat_calculator_chain_lenmap_procint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Proc::ProcInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -12998,7 +12998,7 @@ fn cross_cat_calculator_chain_lenmap_procint() {
 #[test]
 fn cross_cat_calculator_chain_lenmap_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13010,7 +13010,7 @@ fn cross_cat_calculator_chain_lenmap_inttobigint() {
 #[test]
 fn cross_cat_calculator_chain_lenmap_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13022,7 +13022,7 @@ fn cross_cat_calculator_chain_lenmap_inttobigrat() {
 #[test]
 fn cross_cat_calculator_chain_keysmap_proclist() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Proc::ProcList(std::sync::Arc::new(List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13034,7 +13034,7 @@ fn cross_cat_calculator_chain_keysmap_proclist() {
 #[test]
 fn cross_cat_calculator_chain_keysmap_lenlist() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::LenList(std::sync::Arc::new(List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13046,7 +13046,7 @@ fn cross_cat_calculator_chain_keysmap_lenlist() {
 #[test]
 fn cross_cat_calculator_chain_booltouint32_procuint32() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::ProcUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13058,7 +13058,7 @@ fn cross_cat_calculator_chain_booltouint32_procuint32() {
 #[test]
 fn cross_cat_calculator_chain_booltouint32_uint32tobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13070,7 +13070,7 @@ fn cross_cat_calculator_chain_booltouint32_uint32tobigint() {
 #[test]
 fn cross_cat_calculator_chain_booltouint32_uint32tobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13082,7 +13082,7 @@ fn cross_cat_calculator_chain_booltouint32_uint32tobigrat() {
 #[test]
 fn cross_cat_calculator_chain_booltobigint_procbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::ProcBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13094,7 +13094,7 @@ fn cross_cat_calculator_chain_booltobigint_procbigint() {
 #[test]
 fn cross_cat_calculator_chain_booltobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13106,7 +13106,7 @@ fn cross_cat_calculator_chain_booltobigint_biginttobigrat() {
 #[test]
 fn cross_cat_calculator_chain_booltobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13118,7 +13118,7 @@ fn cross_cat_calculator_chain_booltobigrat_procbigrat() {
 #[test]
 fn cross_cat_calculator_chain_uint32tobigint_procbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::ProcBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13130,7 +13130,7 @@ fn cross_cat_calculator_chain_uint32tobigint_procbigint() {
 #[test]
 fn cross_cat_calculator_chain_uint32tobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13142,7 +13142,7 @@ fn cross_cat_calculator_chain_uint32tobigint_biginttobigrat() {
 #[test]
 fn cross_cat_calculator_chain_uint32tobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13154,7 +13154,7 @@ fn cross_cat_calculator_chain_uint32tobigrat_procbigrat() {
 #[test]
 fn cross_cat_calculator_chain_floattobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13166,7 +13166,7 @@ fn cross_cat_calculator_chain_floattobigrat_procbigrat() {
 #[test]
 fn cross_cat_calculator_chain_biginttobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13178,7 +13178,7 @@ fn cross_cat_calculator_chain_biginttobigrat_procbigrat() {
 #[test]
 fn cross_cat_calculator_chain_fixedtobigrat_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ProcBigRat(Box::new(BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13190,7 +13190,7 @@ fn cross_cat_calculator_chain_fixedtobigrat_procbigrat() {
 #[test]
 fn cross_cat_calculator_eval_fraction_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13202,7 +13202,7 @@ fn cross_cat_calculator_eval_fraction_smoke() {
 #[test]
 fn cross_cat_calculator_eval_eqint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13215,7 +13215,7 @@ fn cross_cat_calculator_eval_eqint() {
 #[test]
 fn cross_cat_calculator_eval_eqfloat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13228,7 +13228,7 @@ fn cross_cat_calculator_eval_eqfloat() {
 #[test]
 fn cross_cat_calculator_eval_eqstr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13241,7 +13241,7 @@ fn cross_cat_calculator_eval_eqstr() {
 #[test]
 fn cross_cat_calculator_eval_gtint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13254,7 +13254,7 @@ fn cross_cat_calculator_eval_gtint() {
 #[test]
 fn cross_cat_calculator_eval_gtfloat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13267,7 +13267,7 @@ fn cross_cat_calculator_eval_gtfloat() {
 #[test]
 fn cross_cat_calculator_eval_gtstr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13280,7 +13280,7 @@ fn cross_cat_calculator_eval_gtstr() {
 #[test]
 fn cross_cat_calculator_eval_ltint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13293,7 +13293,7 @@ fn cross_cat_calculator_eval_ltint() {
 #[test]
 fn cross_cat_calculator_eval_ltfloat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13306,7 +13306,7 @@ fn cross_cat_calculator_eval_ltfloat() {
 #[test]
 fn cross_cat_calculator_eval_ltstr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13319,7 +13319,7 @@ fn cross_cat_calculator_eval_ltstr() {
 #[test]
 fn cross_cat_calculator_eval_lteqint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13332,7 +13332,7 @@ fn cross_cat_calculator_eval_lteqint() {
 #[test]
 fn cross_cat_calculator_eval_lteqfloat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13345,7 +13345,7 @@ fn cross_cat_calculator_eval_lteqfloat() {
 #[test]
 fn cross_cat_calculator_eval_lteqstr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13358,7 +13358,7 @@ fn cross_cat_calculator_eval_lteqstr() {
 #[test]
 fn cross_cat_calculator_eval_gteqint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13371,7 +13371,7 @@ fn cross_cat_calculator_eval_gteqint() {
 #[test]
 fn cross_cat_calculator_eval_gteqfloat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13384,7 +13384,7 @@ fn cross_cat_calculator_eval_gteqfloat() {
 #[test]
 fn cross_cat_calculator_eval_gteqstr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13397,7 +13397,7 @@ fn cross_cat_calculator_eval_gteqstr() {
 #[test]
 fn cross_cat_calculator_eval_neint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13410,7 +13410,7 @@ fn cross_cat_calculator_eval_neint() {
 #[test]
 fn cross_cat_calculator_eval_nefloat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13423,7 +13423,7 @@ fn cross_cat_calculator_eval_nefloat() {
 #[test]
 fn cross_cat_calculator_eval_nestr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::from("a"))), Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::from("a"))), std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13436,7 +13436,7 @@ fn cross_cat_calculator_eval_nestr() {
 #[test]
 fn cross_cat_calculator_eval_eqfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::EqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13448,7 +13448,7 @@ fn cross_cat_calculator_eval_eqfixed_smoke() {
 #[test]
 fn cross_cat_calculator_eval_gtfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13460,7 +13460,7 @@ fn cross_cat_calculator_eval_gtfixed_smoke() {
 #[test]
 fn cross_cat_calculator_eval_ltfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13472,7 +13472,7 @@ fn cross_cat_calculator_eval_ltfixed_smoke() {
 #[test]
 fn cross_cat_calculator_eval_lteqfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13484,7 +13484,7 @@ fn cross_cat_calculator_eval_lteqfixed_smoke() {
 #[test]
 fn cross_cat_calculator_eval_gteqfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13496,7 +13496,7 @@ fn cross_cat_calculator_eval_gteqfixed_smoke() {
 #[test]
 fn cross_cat_calculator_eval_nefixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::NeFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13508,7 +13508,7 @@ fn cross_cat_calculator_eval_nefixed_smoke() {
 #[test]
 fn cross_cat_calculator_eval_len() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13521,7 +13521,7 @@ fn cross_cat_calculator_eval_len() {
 #[test]
 fn cross_cat_calculator_eval_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenList(Box::new(List::ListLit(Default::default())));
+    let input_term = Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13533,7 +13533,7 @@ fn cross_cat_calculator_eval_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_eval_elemlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13545,7 +13545,7 @@ fn cross_cat_calculator_eval_elemlist_smoke() {
 #[test]
 fn cross_cat_calculator_eval_deletelist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(1i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13557,7 +13557,7 @@ fn cross_cat_calculator_eval_deletelist_smoke() {
 #[test]
 fn cross_cat_calculator_eval_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13569,7 +13569,7 @@ fn cross_cat_calculator_eval_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_eval_keysmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::KeysMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13581,7 +13581,7 @@ fn cross_cat_calculator_eval_keysmap_smoke() {
 #[test]
 fn cross_cat_calculator_eval_valuesmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ValuesMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::ValuesMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13593,7 +13593,7 @@ fn cross_cat_calculator_eval_valuesmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13605,7 +13605,7 @@ fn cross_cat_calculator_castop_getmap_procint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13617,7 +13617,7 @@ fn cross_cat_calculator_castop_getmap_procfloat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procbool_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcBool(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcBool(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13629,7 +13629,7 @@ fn cross_cat_calculator_castop_getmap_procbool_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procstr_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcStr(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcStr(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13641,7 +13641,7 @@ fn cross_cat_calculator_castop_getmap_procstr_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_proclist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13653,7 +13653,7 @@ fn cross_cat_calculator_castop_getmap_proclist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procbag_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcBag(Box::new(Bag::BagLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcBag(std::sync::Arc::new(Bag::BagLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13665,7 +13665,7 @@ fn cross_cat_calculator_castop_getmap_procbag_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13677,7 +13677,7 @@ fn cross_cat_calculator_castop_getmap_procmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procuint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcUInt32(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13689,7 +13689,7 @@ fn cross_cat_calculator_castop_getmap_procuint32_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13701,7 +13701,7 @@ fn cross_cat_calculator_castop_getmap_procbigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13713,7 +13713,7 @@ fn cross_cat_calculator_castop_getmap_procbigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_getmap_procfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Map::MapLit(Default::default())), Box::new(Proc::ProcFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Proc::ProcFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13725,7 +13725,7 @@ fn cross_cat_calculator_castop_getmap_procfixed_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13737,7 +13737,7 @@ fn cross_cat_calculator_castop_addbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_subbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13749,7 +13749,7 @@ fn cross_cat_calculator_castop_subbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13761,7 +13761,7 @@ fn cross_cat_calculator_castop_negbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13773,7 +13773,7 @@ fn cross_cat_calculator_castop_bitandbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))), Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13785,7 +13785,7 @@ fn cross_cat_calculator_castop_bitorbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotbigint_inttobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13797,7 +13797,7 @@ fn cross_cat_calculator_castop_bitnotbigint_inttobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13809,7 +13809,7 @@ fn cross_cat_calculator_castop_addbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_mulbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13821,7 +13821,7 @@ fn cross_cat_calculator_castop_mulbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_divbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13833,7 +13833,7 @@ fn cross_cat_calculator_castop_divbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13845,7 +13845,7 @@ fn cross_cat_calculator_castop_negbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13857,7 +13857,7 @@ fn cross_cat_calculator_castop_bitandbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))), Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13869,7 +13869,7 @@ fn cross_cat_calculator_castop_bitorbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotbigrat_inttobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i32)))));
+    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13881,7 +13881,7 @@ fn cross_cat_calculator_castop_bitnotbigrat_inttobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_tern_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13893,7 +13893,7 @@ fn cross_cat_calculator_castop_tern_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13905,7 +13905,7 @@ fn cross_cat_calculator_castop_addint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_subint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13917,7 +13917,7 @@ fn cross_cat_calculator_castop_subint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_mulint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13929,7 +13929,7 @@ fn cross_cat_calculator_castop_mulint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_divint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13941,7 +13941,7 @@ fn cross_cat_calculator_castop_divint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_modint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13953,7 +13953,7 @@ fn cross_cat_calculator_castop_modint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_powint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13965,7 +13965,7 @@ fn cross_cat_calculator_castop_powint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13977,7 +13977,7 @@ fn cross_cat_calculator_castop_bitandint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -13989,7 +13989,7 @@ fn cross_cat_calculator_castop_bitorint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotint_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14001,7 +14001,7 @@ fn cross_cat_calculator_castop_bitnotint_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_neg_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14013,7 +14013,7 @@ fn cross_cat_calculator_castop_neg_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_fact_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14025,7 +14025,7 @@ fn cross_cat_calculator_castop_fact_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_customop_len_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))), Box::new(Int::Len(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))), std::sync::Arc::new(Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14037,7 +14037,7 @@ fn cross_cat_calculator_castop_customop_len_smoke() {
 #[test]
 fn cross_cat_calculator_castop_tern_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14049,7 +14049,7 @@ fn cross_cat_calculator_castop_tern_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14061,7 +14061,7 @@ fn cross_cat_calculator_castop_addint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_subint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14073,7 +14073,7 @@ fn cross_cat_calculator_castop_subint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_mulint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14085,7 +14085,7 @@ fn cross_cat_calculator_castop_mulint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_divint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14097,7 +14097,7 @@ fn cross_cat_calculator_castop_divint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_modint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14109,7 +14109,7 @@ fn cross_cat_calculator_castop_modint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_powint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14121,7 +14121,7 @@ fn cross_cat_calculator_castop_powint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14133,7 +14133,7 @@ fn cross_cat_calculator_castop_bitandint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14145,7 +14145,7 @@ fn cross_cat_calculator_castop_bitorint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotint_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14157,7 +14157,7 @@ fn cross_cat_calculator_castop_bitnotint_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_neg_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14169,7 +14169,7 @@ fn cross_cat_calculator_castop_neg_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_fact_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14181,7 +14181,7 @@ fn cross_cat_calculator_castop_fact_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_customop_lenlist_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))), Box::new(Int::LenList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))), std::sync::Arc::new(Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14193,7 +14193,7 @@ fn cross_cat_calculator_castop_customop_lenlist_smoke() {
 #[test]
 fn cross_cat_calculator_castop_tern_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14205,7 +14205,7 @@ fn cross_cat_calculator_castop_tern_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14217,7 +14217,7 @@ fn cross_cat_calculator_castop_addint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_subint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14229,7 +14229,7 @@ fn cross_cat_calculator_castop_subint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_mulint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14241,7 +14241,7 @@ fn cross_cat_calculator_castop_mulint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_divint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::DivInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::DivInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14253,7 +14253,7 @@ fn cross_cat_calculator_castop_divint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_modint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::ModInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::ModInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14265,7 +14265,7 @@ fn cross_cat_calculator_castop_modint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_powint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::PowInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::PowInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14277,7 +14277,7 @@ fn cross_cat_calculator_castop_powint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitAndInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::BitAndInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14289,7 +14289,7 @@ fn cross_cat_calculator_castop_bitandint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitOrInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::BitOrInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14301,7 +14301,7 @@ fn cross_cat_calculator_castop_bitorint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotint_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14313,7 +14313,7 @@ fn cross_cat_calculator_castop_bitnotint_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_neg_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14325,7 +14325,7 @@ fn cross_cat_calculator_castop_neg_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_fact_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Fact(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::Fact(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14337,7 +14337,7 @@ fn cross_cat_calculator_castop_fact_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_customop_lenmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CustomOp(Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::LenMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Int::CustomOp(std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14349,7 +14349,7 @@ fn cross_cat_calculator_castop_customop_lenmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_concatlist_keysmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))), Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = List::ConcatList(std::sync::Arc::new(List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14361,7 +14361,7 @@ fn cross_cat_calculator_castop_concatlist_keysmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_deletelist_keysmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::KeysMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(1i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14373,7 +14373,7 @@ fn cross_cat_calculator_castop_deletelist_keysmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_concatlist_valuesmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::ValuesMap(Box::new(Map::MapLit(Default::default())))), Box::new(List::ValuesMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = List::ConcatList(std::sync::Arc::new(List::ValuesMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(List::ValuesMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14385,7 +14385,7 @@ fn cross_cat_calculator_castop_concatlist_valuesmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_deletelist_valuesmap_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ValuesMap(Box::new(Map::MapLit(Default::default())))), Box::new(Int::NumLit(1i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ValuesMap(std::sync::Arc::new(Map::MapLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14397,7 +14397,7 @@ fn cross_cat_calculator_castop_deletelist_valuesmap_smoke() {
 #[test]
 fn cross_cat_calculator_castop_adduint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))), Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14409,7 +14409,7 @@ fn cross_cat_calculator_castop_adduint32_booltouint32_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitanduint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))), Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14421,7 +14421,7 @@ fn cross_cat_calculator_castop_bitanduint32_booltouint32_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitoruint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))), Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14433,7 +14433,7 @@ fn cross_cat_calculator_castop_bitoruint32_booltouint32_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotuint32_booltouint32_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14445,7 +14445,7 @@ fn cross_cat_calculator_castop_bitnotuint32_booltouint32_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14457,7 +14457,7 @@ fn cross_cat_calculator_castop_addbigint_booltobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_subbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14469,7 +14469,7 @@ fn cross_cat_calculator_castop_subbigint_booltobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14481,7 +14481,7 @@ fn cross_cat_calculator_castop_negbigint_booltobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14493,7 +14493,7 @@ fn cross_cat_calculator_castop_bitandbigint_booltobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))), Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14505,7 +14505,7 @@ fn cross_cat_calculator_castop_bitorbigint_booltobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotbigint_booltobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14517,7 +14517,7 @@ fn cross_cat_calculator_castop_bitnotbigint_booltobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14529,7 +14529,7 @@ fn cross_cat_calculator_castop_addbigrat_booltobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_mulbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14541,7 +14541,7 @@ fn cross_cat_calculator_castop_mulbigrat_booltobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_divbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14553,7 +14553,7 @@ fn cross_cat_calculator_castop_divbigrat_booltobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14565,7 +14565,7 @@ fn cross_cat_calculator_castop_negbigrat_booltobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14577,7 +14577,7 @@ fn cross_cat_calculator_castop_bitandbigrat_booltobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))), Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14589,7 +14589,7 @@ fn cross_cat_calculator_castop_bitorbigrat_booltobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotbigrat_booltobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14601,7 +14601,7 @@ fn cross_cat_calculator_castop_bitnotbigrat_booltobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::AddBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))), std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14613,7 +14613,7 @@ fn cross_cat_calculator_castop_addbigint_uint32tobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_subbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::SubBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))), std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14625,7 +14625,7 @@ fn cross_cat_calculator_castop_subbigint_uint32tobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14637,7 +14637,7 @@ fn cross_cat_calculator_castop_negbigint_uint32tobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitandbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitAndBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))), std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14649,7 +14649,7 @@ fn cross_cat_calculator_castop_bitandbigint_uint32tobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitorbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitOrBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))), Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))), std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14661,7 +14661,7 @@ fn cross_cat_calculator_castop_bitorbigint_uint32tobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_bitnotbigint_uint32tobigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14673,7 +14673,7 @@ fn cross_cat_calculator_castop_bitnotbigint_uint32tobigint_smoke() {
 #[test]
 fn cross_cat_calculator_castop_addbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))), Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))), std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14685,7 +14685,7 @@ fn cross_cat_calculator_castop_addbigrat_uint32tobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_mulbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))), Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))), std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14697,7 +14697,7 @@ fn cross_cat_calculator_castop_mulbigrat_uint32tobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_divbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))), Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))), std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14709,7 +14709,7 @@ fn cross_cat_calculator_castop_divbigrat_uint32tobigrat_smoke() {
 #[test]
 fn cross_cat_calculator_castop_negbigrat_uint32tobigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14725,7 +14725,7 @@ fn cross_cat_calculator_castop_negbigrat_uint32tobigrat_smoke() {
 #[test]
 fn wfst_calculator_dispatch_fraction_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14737,7 +14737,7 @@ fn wfst_calculator_dispatch_fraction_eval() {
 #[test]
 fn wfst_calculator_dispatch_negbigrat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14749,7 +14749,7 @@ fn wfst_calculator_dispatch_negbigrat_eval() {
 #[test]
 fn wfst_calculator_dispatch_bitnotbigrat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14761,7 +14761,7 @@ fn wfst_calculator_dispatch_bitnotbigrat_eval() {
 #[test]
 fn wfst_calculator_dispatch_eqint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14773,7 +14773,7 @@ fn wfst_calculator_dispatch_eqint_eval() {
 #[test]
 fn wfst_calculator_dispatch_eqfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14785,7 +14785,7 @@ fn wfst_calculator_dispatch_eqfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_eqstr_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14797,7 +14797,7 @@ fn wfst_calculator_dispatch_eqstr_eval() {
 #[test]
 fn wfst_calculator_dispatch_eqfixed_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::EqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14809,7 +14809,7 @@ fn wfst_calculator_dispatch_eqfixed_eval() {
 #[test]
 fn wfst_calculator_dispatch_not_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14821,7 +14821,7 @@ fn wfst_calculator_dispatch_not_eval() {
 #[test]
 fn wfst_calculator_dispatch_len_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::new())));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14833,7 +14833,7 @@ fn wfst_calculator_dispatch_len_eval() {
 #[test]
 fn wfst_calculator_dispatch_bitnotuint32_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14845,7 +14845,7 @@ fn wfst_calculator_dispatch_bitnotuint32_eval() {
 #[test]
 fn wfst_calculator_dispatch_negbigint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14857,7 +14857,7 @@ fn wfst_calculator_dispatch_negbigint_eval() {
 #[test]
 fn wfst_calculator_dispatch_bitnotbigint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14869,7 +14869,7 @@ fn wfst_calculator_dispatch_bitnotbigint_eval() {
 #[test]
 fn wfst_calculator_dispatch_bitnotint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14881,7 +14881,7 @@ fn wfst_calculator_dispatch_bitnotint_eval() {
 #[test]
 fn wfst_calculator_dispatch_neg_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14893,7 +14893,7 @@ fn wfst_calculator_dispatch_neg_eval() {
 #[test]
 fn wfst_calculator_dispatch_negfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14905,7 +14905,7 @@ fn wfst_calculator_dispatch_negfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_sinfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::SinFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14917,7 +14917,7 @@ fn wfst_calculator_dispatch_sinfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_cosfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::CosFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14929,7 +14929,7 @@ fn wfst_calculator_dispatch_cosfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_expfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::ExpFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14941,7 +14941,7 @@ fn wfst_calculator_dispatch_expfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_lnfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::LnFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14953,7 +14953,7 @@ fn wfst_calculator_dispatch_lnfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_negfixed_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::NegFixed(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14965,7 +14965,7 @@ fn wfst_calculator_dispatch_negfixed_eval() {
 #[test]
 fn wfst_calculator_dispatch_bitnotfixed_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitNotFixed(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14977,7 +14977,7 @@ fn wfst_calculator_dispatch_bitnotfixed_eval() {
 #[test]
 fn wfst_calculator_dispatch_concatlist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::ListLit(Default::default())), Box::new(List::ListLit(Default::default())));
+    let input_term = List::ConcatList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14989,7 +14989,7 @@ fn wfst_calculator_dispatch_concatlist_eval() {
 #[test]
 fn wfst_calculator_dispatch_lenlist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenList(Box::new(List::ListLit(Default::default())));
+    let input_term = Int::LenList(std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15001,7 +15001,7 @@ fn wfst_calculator_dispatch_lenlist_eval() {
 #[test]
 fn wfst_calculator_dispatch_elemlist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15013,7 +15013,7 @@ fn wfst_calculator_dispatch_elemlist_eval() {
 #[test]
 fn wfst_calculator_dispatch_deletelist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::DeleteList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)));
+    let input_term = List::DeleteList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15025,7 +15025,7 @@ fn wfst_calculator_dispatch_deletelist_eval() {
 #[test]
 fn wfst_calculator_dispatch_unionbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::UnionBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())));
+    let input_term = Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15037,7 +15037,7 @@ fn wfst_calculator_dispatch_unionbag_eval() {
 #[test]
 fn wfst_calculator_dispatch_diffbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::DiffBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())));
+    let input_term = Bag::DiffBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15049,7 +15049,7 @@ fn wfst_calculator_dispatch_diffbag_eval() {
 #[test]
 fn wfst_calculator_dispatch_lenmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::LenMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = Int::LenMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15061,7 +15061,7 @@ fn wfst_calculator_dispatch_lenmap_eval() {
 #[test]
 fn wfst_calculator_dispatch_mergemap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Map::MergeMap(Box::new(Map::MapLit(Default::default())), Box::new(Map::MapLit(Default::default())));
+    let input_term = Map::MergeMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15073,7 +15073,7 @@ fn wfst_calculator_dispatch_mergemap_eval() {
 #[test]
 fn wfst_calculator_dispatch_keysmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::KeysMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::KeysMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15085,7 +15085,7 @@ fn wfst_calculator_dispatch_keysmap_eval() {
 #[test]
 fn wfst_calculator_dispatch_valuesmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ValuesMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = List::ValuesMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15097,7 +15097,7 @@ fn wfst_calculator_dispatch_valuesmap_eval() {
 #[test]
 fn wfst_calculator_dispatch_addbigrat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15109,7 +15109,7 @@ fn wfst_calculator_dispatch_addbigrat_eval() {
 #[test]
 fn wfst_calculator_dispatch_mulbigrat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15121,7 +15121,7 @@ fn wfst_calculator_dispatch_mulbigrat_eval() {
 #[test]
 fn wfst_calculator_dispatch_divbigrat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15133,7 +15133,7 @@ fn wfst_calculator_dispatch_divbigrat_eval() {
 #[test]
 fn wfst_calculator_dispatch_bitandbigrat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15145,7 +15145,7 @@ fn wfst_calculator_dispatch_bitandbigrat_eval() {
 #[test]
 fn wfst_calculator_dispatch_bitorbigrat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15157,7 +15157,7 @@ fn wfst_calculator_dispatch_bitorbigrat_eval() {
 #[test]
 fn wfst_calculator_dispatch_tern_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15169,7 +15169,7 @@ fn wfst_calculator_dispatch_tern_eval() {
 #[test]
 fn wfst_calculator_dispatch_eqbool_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15181,7 +15181,7 @@ fn wfst_calculator_dispatch_eqbool_eval() {
 #[test]
 fn wfst_calculator_dispatch_gtint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15193,7 +15193,7 @@ fn wfst_calculator_dispatch_gtint_eval() {
 #[test]
 fn wfst_calculator_dispatch_gtfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15205,7 +15205,7 @@ fn wfst_calculator_dispatch_gtfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_gtbool_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15217,7 +15217,7 @@ fn wfst_calculator_dispatch_gtbool_eval() {
 #[test]
 fn wfst_calculator_dispatch_gtstr_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15229,7 +15229,7 @@ fn wfst_calculator_dispatch_gtstr_eval() {
 #[test]
 fn wfst_calculator_dispatch_ltint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15241,7 +15241,7 @@ fn wfst_calculator_dispatch_ltint_eval() {
 #[test]
 fn wfst_calculator_dispatch_ltfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15253,7 +15253,7 @@ fn wfst_calculator_dispatch_ltfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_ltbool_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15265,7 +15265,7 @@ fn wfst_calculator_dispatch_ltbool_eval() {
 #[test]
 fn wfst_calculator_dispatch_ltstr_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15277,7 +15277,7 @@ fn wfst_calculator_dispatch_ltstr_eval() {
 #[test]
 fn wfst_calculator_dispatch_lteqint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15289,7 +15289,7 @@ fn wfst_calculator_dispatch_lteqint_eval() {
 #[test]
 fn wfst_calculator_dispatch_lteqfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15301,7 +15301,7 @@ fn wfst_calculator_dispatch_lteqfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_lteqbool_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15313,7 +15313,7 @@ fn wfst_calculator_dispatch_lteqbool_eval() {
 #[test]
 fn wfst_calculator_dispatch_lteqstr_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15325,7 +15325,7 @@ fn wfst_calculator_dispatch_lteqstr_eval() {
 #[test]
 fn wfst_calculator_dispatch_gteqint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15337,7 +15337,7 @@ fn wfst_calculator_dispatch_gteqint_eval() {
 #[test]
 fn wfst_calculator_dispatch_gteqfloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15349,7 +15349,7 @@ fn wfst_calculator_dispatch_gteqfloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_gteqbool_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15361,7 +15361,7 @@ fn wfst_calculator_dispatch_gteqbool_eval() {
 #[test]
 fn wfst_calculator_dispatch_gteqstr_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15373,7 +15373,7 @@ fn wfst_calculator_dispatch_gteqstr_eval() {
 #[test]
 fn wfst_calculator_dispatch_neint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15385,7 +15385,7 @@ fn wfst_calculator_dispatch_neint_eval() {
 #[test]
 fn wfst_calculator_dispatch_nefloat_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15397,7 +15397,7 @@ fn wfst_calculator_dispatch_nefloat_eval() {
 #[test]
 fn wfst_calculator_dispatch_nebool_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15409,7 +15409,7 @@ fn wfst_calculator_dispatch_nebool_eval() {
 #[test]
 fn wfst_calculator_dispatch_nestr_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15421,7 +15421,7 @@ fn wfst_calculator_dispatch_nestr_eval() {
 #[test]
 fn wfst_calculator_dispatch_gtfixed_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::GtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15433,7 +15433,7 @@ fn wfst_calculator_dispatch_gtfixed_eval() {
 #[test]
 fn wfst_calculator_dispatch_ltfixed_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::LtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15973,7 +15973,7 @@ fn prec_calculator_paren_override_mulint_bitorint__1___2__bitor_3() {
 #[test]
 fn wpda_calculator_elemlist_default_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(List::ListLit(Default::default())), Box::new(Int::NumLit(0i32)));
+    let input_term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15985,7 +15985,7 @@ fn wpda_calculator_elemlist_default_0() {
 #[test]
 fn wpda_calculator_len_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::new())));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15997,7 +15997,7 @@ fn wpda_calculator_len_empty() {
 #[test]
 fn wpda_calculator_len_a() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16009,7 +16009,7 @@ fn wpda_calculator_len_a() {
 #[test]
 fn wpda_calculator_len_hello() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(Box::new(Str::StringLit(String::from("hello"))));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::from("hello"))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16021,7 +16021,7 @@ fn wpda_calculator_len_hello() {
 #[test]
 fn wpda_calculator_bitnotuint32_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16033,7 +16033,7 @@ fn wpda_calculator_bitnotuint32_0() {
 #[test]
 fn wpda_calculator_negbigint_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16045,7 +16045,7 @@ fn wpda_calculator_negbigint_default() {
 #[test]
 fn wpda_calculator_fraction_default_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16057,7 +16057,7 @@ fn wpda_calculator_fraction_default_default() {
 #[test]
 fn wpda_calculator_fraction_default_casterrbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::CastErrBigInt));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::CastErrBigInt));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16069,7 +16069,7 @@ fn wpda_calculator_fraction_default_casterrbigint() {
 #[test]
 fn wpda_calculator_negfixed_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::NegFixed(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16081,7 +16081,7 @@ fn wpda_calculator_negfixed_default() {
 #[test]
 fn wpda_calculator_negfloat_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16093,7 +16093,7 @@ fn wpda_calculator_negfloat_0_0() {
 #[test]
 fn wpda_calculator_negfloat_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16105,7 +16105,7 @@ fn wpda_calculator_negfloat_1_0() {
 #[test]
 fn wpda_calculator_eqint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16117,7 +16117,7 @@ fn wpda_calculator_eqint_0_0() {
 #[test]
 fn wpda_calculator_eqint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16129,7 +16129,7 @@ fn wpda_calculator_eqint_0_1() {
 #[test]
 fn wpda_calculator_eqint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16141,7 +16141,7 @@ fn wpda_calculator_eqint_0_2() {
 #[test]
 fn wpda_calculator_eqint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16153,7 +16153,7 @@ fn wpda_calculator_eqint_0_3() {
 #[test]
 fn wpda_calculator_eqint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16165,7 +16165,7 @@ fn wpda_calculator_eqint_0_5() {
 #[test]
 fn wpda_calculator_eqint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16177,7 +16177,7 @@ fn wpda_calculator_eqint_1_0() {
 #[test]
 fn wpda_calculator_eqint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16189,7 +16189,7 @@ fn wpda_calculator_eqint_1_1() {
 #[test]
 fn wpda_calculator_eqint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16201,7 +16201,7 @@ fn wpda_calculator_eqint_1_2() {
 #[test]
 fn wpda_calculator_eqint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16213,7 +16213,7 @@ fn wpda_calculator_eqint_1_3() {
 #[test]
 fn wpda_calculator_eqint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16225,7 +16225,7 @@ fn wpda_calculator_eqint_1_5() {
 #[test]
 fn wpda_calculator_eqint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16237,7 +16237,7 @@ fn wpda_calculator_eqint_2_0() {
 #[test]
 fn wpda_calculator_eqint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16249,7 +16249,7 @@ fn wpda_calculator_eqint_2_1() {
 #[test]
 fn wpda_calculator_eqint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16261,7 +16261,7 @@ fn wpda_calculator_eqint_2_2() {
 #[test]
 fn wpda_calculator_eqint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16273,7 +16273,7 @@ fn wpda_calculator_eqint_2_3() {
 #[test]
 fn wpda_calculator_eqint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16285,7 +16285,7 @@ fn wpda_calculator_eqint_2_5() {
 #[test]
 fn wpda_calculator_eqint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16297,7 +16297,7 @@ fn wpda_calculator_eqint_3_0() {
 #[test]
 fn wpda_calculator_eqint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16309,7 +16309,7 @@ fn wpda_calculator_eqint_3_1() {
 #[test]
 fn wpda_calculator_eqint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16321,7 +16321,7 @@ fn wpda_calculator_eqint_3_2() {
 #[test]
 fn wpda_calculator_eqint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16333,7 +16333,7 @@ fn wpda_calculator_eqint_3_3() {
 #[test]
 fn wpda_calculator_eqint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16345,7 +16345,7 @@ fn wpda_calculator_eqint_3_5() {
 #[test]
 fn wpda_calculator_eqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16357,7 +16357,7 @@ fn wpda_calculator_eqfloat_0_0_0_0() {
 #[test]
 fn wpda_calculator_eqfloat_0_0_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16369,7 +16369,7 @@ fn wpda_calculator_eqfloat_0_0_1_0() {
 #[test]
 fn wpda_calculator_eqfloat_0_0_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16381,7 +16381,7 @@ fn wpda_calculator_eqfloat_0_0_0_5() {
 #[test]
 fn wpda_calculator_eqfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16393,7 +16393,7 @@ fn wpda_calculator_eqfloat_0_0_2_0() {
 #[test]
 fn wpda_calculator_concat_empty_empty() {
     mettail_runtime::clear_var_cache();
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16405,7 +16405,7 @@ fn wpda_calculator_concat_empty_empty() {
 #[test]
 fn wpda_calculator_concatlist_default_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = List::ConcatList(Box::new(List::ListLit(Default::default())), Box::new(List::ListLit(Default::default())));
+    let input_term = List::ConcatList(std::sync::Arc::new(List::ListLit(Default::default())), std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16417,7 +16417,7 @@ fn wpda_calculator_concatlist_default_default() {
 #[test]
 fn wpda_calculator_unionbag_default_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bag::UnionBag(Box::new(Bag::BagLit(Default::default())), Box::new(Bag::BagLit(Default::default())));
+    let input_term = Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(Default::default())), std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16429,7 +16429,7 @@ fn wpda_calculator_unionbag_default_default() {
 #[test]
 fn wpda_calculator_mergemap_default_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = Map::MergeMap(Box::new(Map::MapLit(Default::default())), Box::new(Map::MapLit(Default::default())));
+    let input_term = Map::MergeMap(std::sync::Arc::new(Map::MapLit(Default::default())), std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16446,7 +16446,7 @@ fn wpda_calculator_mergemap_default_default() {
 fn type_pres_calculator_fraction_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::Fraction(Box::new(BigInt::NumLit(Default::default())), Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16468,7 +16468,7 @@ fn type_pres_calculator_fraction_default_default() {
 fn type_pres_calculator_addbigrat_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::AddBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16490,7 +16490,7 @@ fn type_pres_calculator_addbigrat_default_default() {
 fn type_pres_calculator_mulbigrat_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::MulBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16512,7 +16512,7 @@ fn type_pres_calculator_mulbigrat_default_default() {
 fn type_pres_calculator_divbigrat_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::DivBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16534,7 +16534,7 @@ fn type_pres_calculator_divbigrat_default_default() {
 fn type_pres_calculator_negbigrat_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::NegBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16556,7 +16556,7 @@ fn type_pres_calculator_negbigrat_default() {
 fn type_pres_calculator_bitandbigrat_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::BitAndBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16578,7 +16578,7 @@ fn type_pres_calculator_bitandbigrat_default_default() {
 fn type_pres_calculator_bitorbigrat_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::BitOrBigRat(Box::new(BigRat::RatLit(Default::default())), Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16600,7 +16600,7 @@ fn type_pres_calculator_bitorbigrat_default_default() {
 fn type_pres_calculator_bitnotbigrat_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category BigRat
-    let input_term = BigRat::BitNotBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16622,7 +16622,7 @@ fn type_pres_calculator_bitnotbigrat_default() {
 fn type_pres_calculator_tern_0_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16644,7 +16644,7 @@ fn type_pres_calculator_tern_0_0_0() {
 fn type_pres_calculator_eqint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16666,7 +16666,7 @@ fn type_pres_calculator_eqint_0_0() {
 fn type_pres_calculator_eqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16688,7 +16688,7 @@ fn type_pres_calculator_eqfloat_0_0_0_0() {
 fn type_pres_calculator_eqbool_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::EqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16710,7 +16710,7 @@ fn type_pres_calculator_eqbool_true_true() {
 fn type_pres_calculator_eqstr_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::EqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16732,7 +16732,7 @@ fn type_pres_calculator_eqstr_empty_empty() {
 fn type_pres_calculator_gtint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16754,7 +16754,7 @@ fn type_pres_calculator_gtint_0_0() {
 fn type_pres_calculator_gtfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16776,7 +16776,7 @@ fn type_pres_calculator_gtfloat_0_0_0_0() {
 fn type_pres_calculator_gtbool_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16798,7 +16798,7 @@ fn type_pres_calculator_gtbool_true_true() {
 fn type_pres_calculator_gtstr_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16820,7 +16820,7 @@ fn type_pres_calculator_gtstr_empty_empty() {
 fn type_pres_calculator_ltint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16842,7 +16842,7 @@ fn type_pres_calculator_ltint_0_0() {
 fn type_pres_calculator_ltfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16864,7 +16864,7 @@ fn type_pres_calculator_ltfloat_0_0_0_0() {
 fn type_pres_calculator_ltbool_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16886,7 +16886,7 @@ fn type_pres_calculator_ltbool_true_true() {
 fn type_pres_calculator_ltstr_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16908,7 +16908,7 @@ fn type_pres_calculator_ltstr_empty_empty() {
 fn type_pres_calculator_lteqint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16930,7 +16930,7 @@ fn type_pres_calculator_lteqint_0_0() {
 fn type_pres_calculator_lteqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16952,7 +16952,7 @@ fn type_pres_calculator_lteqfloat_0_0_0_0() {
 fn type_pres_calculator_lteqbool_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16974,7 +16974,7 @@ fn type_pres_calculator_lteqbool_true_true() {
 fn type_pres_calculator_lteqstr_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16996,7 +16996,7 @@ fn type_pres_calculator_lteqstr_empty_empty() {
 fn type_pres_calculator_gteqint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17018,7 +17018,7 @@ fn type_pres_calculator_gteqint_0_0() {
 fn type_pres_calculator_gteqfloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17040,7 +17040,7 @@ fn type_pres_calculator_gteqfloat_0_0_0_0() {
 fn type_pres_calculator_gteqbool_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtEqBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17062,7 +17062,7 @@ fn type_pres_calculator_gteqbool_true_true() {
 fn type_pres_calculator_gteqstr_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17084,7 +17084,7 @@ fn type_pres_calculator_gteqstr_empty_empty() {
 fn type_pres_calculator_neint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17106,7 +17106,7 @@ fn type_pres_calculator_neint_0_0() {
 fn type_pres_calculator_nefloat_0_0_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let input_term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17128,7 +17128,7 @@ fn type_pres_calculator_nefloat_0_0_0_0() {
 fn type_pres_calculator_nebool_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::NeBool(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17150,7 +17150,7 @@ fn type_pres_calculator_nebool_true_true() {
 fn type_pres_calculator_nestr_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::NeStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17172,7 +17172,7 @@ fn type_pres_calculator_nestr_empty_empty() {
 fn type_pres_calculator_eqfixed_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::EqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::EqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17194,7 +17194,7 @@ fn type_pres_calculator_eqfixed_default_default() {
 fn type_pres_calculator_gtfixed_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17216,7 +17216,7 @@ fn type_pres_calculator_gtfixed_default_default() {
 fn type_pres_calculator_ltfixed_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17238,7 +17238,7 @@ fn type_pres_calculator_ltfixed_default_default() {
 fn type_pres_calculator_lteqfixed_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::LtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17260,7 +17260,7 @@ fn type_pres_calculator_lteqfixed_default_default() {
 fn type_pres_calculator_gteqfixed_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::GtEqFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17282,7 +17282,7 @@ fn type_pres_calculator_gteqfixed_default_default() {
 fn type_pres_calculator_nefixed_default_default() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::NeFixed(Box::new(Fixed::FixedLit(Default::default())), Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Bool::NeFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17304,7 +17304,7 @@ fn type_pres_calculator_nefixed_default_default() {
 fn type_pres_calculator_not_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17326,7 +17326,7 @@ fn type_pres_calculator_not_true() {
 fn type_pres_calculator_and_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17348,7 +17348,7 @@ fn type_pres_calculator_and_true_true() {
 fn type_pres_calculator_or_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17370,7 +17370,7 @@ fn type_pres_calculator_or_true_true() {
 fn type_pres_calculator_xor_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::Xor(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17392,7 +17392,7 @@ fn type_pres_calculator_xor_true_true() {
 fn type_pres_calculator_len_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::Len(Box::new(Str::StringLit(String::new())));
+    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17414,7 +17414,7 @@ fn type_pres_calculator_len_empty() {
 fn type_pres_calculator_concat_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Str
-    let input_term = Str::Concat(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17436,7 +17436,7 @@ fn type_pres_calculator_concat_empty_empty() {
 fn type_pres_calculator_addstr_empty_empty() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Str
-    let input_term = Str::AddStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17458,7 +17458,7 @@ fn type_pres_calculator_addstr_empty_empty() {
 fn type_pres_calculator_adduint32_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category UInt32
-    let input_term = UInt32::AddUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17480,7 +17480,7 @@ fn type_pres_calculator_adduint32_0_0() {
 fn type_pres_calculator_bitanduint32_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category UInt32
-    let input_term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17502,7 +17502,7 @@ fn type_pres_calculator_bitanduint32_0_0() {
 fn type_pres_calculator_bitoruint32_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category UInt32
-    let input_term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17524,7 +17524,7 @@ fn type_pres_calculator_bitoruint32_0_0() {
 fn type_pres_calculator_bitnotuint32_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category UInt32
-    let input_term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(0u32)));
+    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

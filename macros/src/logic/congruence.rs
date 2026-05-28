@@ -426,7 +426,7 @@ fn generate_binding_congruence(
                 let body = scope.unsafe_body(),
                 #body_rw_rel((**body).clone(), body_rewritten),
                 let rhs = #category::#constructor(
-                    mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone()))
+                    mettail_runtime::Scope::from_parts_unsafe(binder.clone(), std::sync::Arc::new(body_rewritten.clone()))
                 );
         })
     } else {
@@ -438,7 +438,7 @@ fn generate_binding_congruence(
         let recon_args: Vec<TokenStream> = vars.iter().enumerate()
             .map(|(i, v)| {
                 if i == field_idx {
-                    quote! { mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())) }
+                    quote! { mettail_runtime::Scope::from_parts_unsafe(binder.clone(), std::sync::Arc::new(body_rewritten.clone())) }
                 } else {
                     quote! { #v.clone() }
                 }
@@ -558,7 +558,7 @@ fn generate_consolidated_simple_congruence(
             .map(|i| {
                 if i == entry.field_idx {
                     if entry.is_boxed {
-                        quote! { Box::new(t.clone()) }
+                        quote! { std::sync::Arc::new(t.clone()) }
                     } else {
                         quote! { t.clone() }
                     }

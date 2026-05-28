@@ -566,7 +566,7 @@ fn generate_edge_values_for_divisor(
             safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language);
-        parts.push(format!("Box::new({})", construction?));
+        parts.push(format!("std::sync::Arc::new({})", construction?));
     }
     for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
         parts.push("None".to_string());
@@ -621,7 +621,7 @@ where
     for (i, pi) in param_info.iter().enumerate() {
         let raw = value_fn(i, pi)?;
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
-        parts.push(format!("Box::new({})", construction));
+        parts.push(format!("std::sync::Arc::new({})", construction));
     }
     for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
         parts.push("None".to_string());
@@ -654,7 +654,7 @@ fn generate_bool_combo(
             safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
-        parts.push(format!("Box::new({})", construction));
+        parts.push(format!("std::sync::Arc::new({})", construction));
     }
     for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
         parts.push("None".to_string());
@@ -683,7 +683,7 @@ fn generate_empty_string_combo(
             safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
-        parts.push(format!("Box::new({})", construction));
+        parts.push(format!("std::sync::Arc::new({})", construction));
     }
     for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
         parts.push("None".to_string());
@@ -713,7 +713,7 @@ fn generate_int_boundary(
             safe_value_for_type(language, &pi.native_type)?
         };
         let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
-        parts.push(format!("Box::new({})", construction));
+        parts.push(format!("std::sync::Arc::new({})", construction));
     }
     for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
         parts.push("None".to_string());

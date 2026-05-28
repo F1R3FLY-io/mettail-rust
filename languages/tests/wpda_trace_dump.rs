@@ -18,14 +18,14 @@ use mettail_prattail::wpda_walker::RichTracingConsumer;
 fn diagnose_display_int_abuts_else_keyword_separated() {
     // Direct construction (mirrors optional_group_smoke.rs:181-185).
     let inner = Int::IfElse(
-        Box::new(Bool::BoolLit(true)),
-        Box::new(Int::NumLit(456913875)),
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(456913875)),
         None,
     );
     let outer = Int::IfElse(
-        Box::new(Bool::BoolLit(false)),
-        Box::new(inner),
-        Some(Box::new(Int::NumLit(1894040589))),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(inner),
+        Some(std::sync::Arc::new(Int::NumLit(1894040589))),
     );
     let displayed = format!("{}", outer);
     eprintln!("[trace-dump] displayed: {:?}", displayed);

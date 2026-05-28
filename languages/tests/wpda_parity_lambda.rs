@@ -19,7 +19,7 @@ use mettail_prattail::automata::TokenKind;
 
 #[test]
 fn wpds_parse_lam_identity() {
-    // `lam x . x` → Term::Lam(Scope::new(Binder("x"), Box::new(Term::TVar(...))))
+    // `lam x . x` → Term::Lam(Scope::new(Binder("x"), std::sync::Arc::new(Term::TVar(...))))
     let kinds = vec![
         TokenKind::Fixed("lam ".to_string()),
         TokenKind::Ident,
@@ -45,7 +45,7 @@ fn wpds_parse_lam_identity() {
 
 #[test]
 fn wpds_parse_lam_with_distinct_binder_and_body() {
-    // `lam x . y` → Term::Lam(Scope::new(Binder("x"), Box::new(Term::TVar("y"))))
+    // `lam x . y` → Term::Lam(Scope::new(Binder("x"), std::sync::Arc::new(Term::TVar("y"))))
     // Verifies the binder ident is captured separately from the body's free var.
     let kinds = vec![
         TokenKind::Fixed("lam ".to_string()),

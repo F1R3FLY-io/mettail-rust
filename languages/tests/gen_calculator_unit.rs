@@ -31,7 +31,7 @@ fn calculator_metadata_populated() {
 #[test]
 fn unit_calculator_proc_procint() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcInt(Box::new(Int::NumLit(0i32)));
+    let term = Proc::ProcInt(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -44,7 +44,7 @@ fn unit_calculator_proc_procint() {
 #[test]
 fn unit_calculator_proc_procfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Proc::ProcFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcFloat");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -57,7 +57,7 @@ fn unit_calculator_proc_procfloat() {
 #[test]
 fn unit_calculator_proc_procbool() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcBool(Box::new(Bool::BoolLit(false)));
+    let term = Proc::ProcBool(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBool");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -70,7 +70,7 @@ fn unit_calculator_proc_procbool() {
 #[test]
 fn unit_calculator_proc_procstr() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcStr(Box::new(Str::StringLit(String::new())));
+    let term = Proc::ProcStr(std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcStr");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -83,7 +83,7 @@ fn unit_calculator_proc_procstr() {
 #[test]
 fn unit_calculator_proc_proclist() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcList(Box::new(List::ListLit(Vec::new())));
+    let term = Proc::ProcList(std::sync::Arc::new(List::ListLit(Vec::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcList");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -96,7 +96,7 @@ fn unit_calculator_proc_proclist() {
 #[test]
 fn unit_calculator_proc_procbag() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())));
+    let term = Proc::ProcBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -109,7 +109,7 @@ fn unit_calculator_proc_procbag() {
 #[test]
 fn unit_calculator_proc_procmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term = Proc::ProcMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -122,7 +122,7 @@ fn unit_calculator_proc_procmap() {
 #[test]
 fn unit_calculator_proc_procuint32() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcUInt32(Box::new(UInt32::NumLit(0u32)));
+    let term = Proc::ProcUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcUInt32");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -135,7 +135,7 @@ fn unit_calculator_proc_procuint32() {
 #[test]
 fn unit_calculator_proc_procbigint() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = Proc::ProcBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBigInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -148,7 +148,7 @@ fn unit_calculator_proc_procbigint() {
 #[test]
 fn unit_calculator_proc_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBigRat");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -161,7 +161,7 @@ fn unit_calculator_proc_procbigrat() {
 #[test]
 fn unit_calculator_proc_procfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Proc::ProcFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcFixed");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -258,7 +258,7 @@ fn unit_calculator_bigint_casterrbigint() {
 #[test]
 fn unit_calculator_bigint_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::IntToBigInt(Box::new(Int::NumLit(0i32)));
+    let term = BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -271,7 +271,7 @@ fn unit_calculator_bigint_inttobigint() {
 #[test]
 fn unit_calculator_bigrat_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::IntToBigRat(Box::new(Int::NumLit(0i32)));
+    let term = BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -284,7 +284,7 @@ fn unit_calculator_bigrat_inttobigrat() {
 #[test]
 fn unit_calculator_bigrat_fraction() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::Fraction(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Fraction");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -297,7 +297,7 @@ fn unit_calculator_bigrat_fraction() {
 #[test]
 fn unit_calculator_bigrat_addbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::AddBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -310,7 +310,7 @@ fn unit_calculator_bigrat_addbigrat() {
 #[test]
 fn unit_calculator_bigrat_mulbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::MulBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -323,7 +323,7 @@ fn unit_calculator_bigrat_mulbigrat() {
 #[test]
 fn unit_calculator_bigrat_divbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::DivBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -336,7 +336,7 @@ fn unit_calculator_bigrat_divbigrat() {
 #[test]
 fn unit_calculator_bigrat_negbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::NegBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegBigRat");
     if let Ok(alts) = BigRat::parse_via_wpda_all(&displayed) {
@@ -352,7 +352,7 @@ fn unit_calculator_bigrat_negbigrat() {
 #[test]
 fn unit_calculator_bigrat_bitandbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BitAndBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -365,7 +365,7 @@ fn unit_calculator_bigrat_bitandbigrat() {
 #[test]
 fn unit_calculator_bigrat_bitorbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BitOrBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -378,7 +378,7 @@ fn unit_calculator_bigrat_bitorbigrat() {
 #[test]
 fn unit_calculator_bigrat_bitnotbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BitNotBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -391,7 +391,7 @@ fn unit_calculator_bigrat_bitnotbigrat() {
 #[test]
 fn unit_calculator_int_tern() {
     mettail_runtime::clear_var_cache();
-    let term = Int::Tern(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Tern");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -404,7 +404,7 @@ fn unit_calculator_int_tern() {
 #[test]
 fn unit_calculator_bool_eqint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -417,7 +417,7 @@ fn unit_calculator_bool_eqint() {
 #[test]
 fn unit_calculator_bool_eqfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -430,7 +430,7 @@ fn unit_calculator_bool_eqfloat() {
 #[test]
 fn unit_calculator_bool_eqbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -443,7 +443,7 @@ fn unit_calculator_bool_eqbool() {
 #[test]
 fn unit_calculator_bool_eqstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -456,7 +456,7 @@ fn unit_calculator_bool_eqstr() {
 #[test]
 fn unit_calculator_bool_gtint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -469,7 +469,7 @@ fn unit_calculator_bool_gtint() {
 #[test]
 fn unit_calculator_bool_gtfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -482,7 +482,7 @@ fn unit_calculator_bool_gtfloat() {
 #[test]
 fn unit_calculator_bool_gtbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -495,7 +495,7 @@ fn unit_calculator_bool_gtbool() {
 #[test]
 fn unit_calculator_bool_gtstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -508,7 +508,7 @@ fn unit_calculator_bool_gtstr() {
 #[test]
 fn unit_calculator_bool_ltint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -521,7 +521,7 @@ fn unit_calculator_bool_ltint() {
 #[test]
 fn unit_calculator_bool_ltfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -534,7 +534,7 @@ fn unit_calculator_bool_ltfloat() {
 #[test]
 fn unit_calculator_bool_ltbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -547,7 +547,7 @@ fn unit_calculator_bool_ltbool() {
 #[test]
 fn unit_calculator_bool_ltstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -560,7 +560,7 @@ fn unit_calculator_bool_ltstr() {
 #[test]
 fn unit_calculator_bool_lteqint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -573,7 +573,7 @@ fn unit_calculator_bool_lteqint() {
 #[test]
 fn unit_calculator_bool_lteqfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -586,7 +586,7 @@ fn unit_calculator_bool_lteqfloat() {
 #[test]
 fn unit_calculator_bool_lteqbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -599,7 +599,7 @@ fn unit_calculator_bool_lteqbool() {
 #[test]
 fn unit_calculator_bool_lteqstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -612,7 +612,7 @@ fn unit_calculator_bool_lteqstr() {
 #[test]
 fn unit_calculator_bool_gteqint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -625,7 +625,7 @@ fn unit_calculator_bool_gteqint() {
 #[test]
 fn unit_calculator_bool_gteqfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -638,7 +638,7 @@ fn unit_calculator_bool_gteqfloat() {
 #[test]
 fn unit_calculator_bool_gteqbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -651,7 +651,7 @@ fn unit_calculator_bool_gteqbool() {
 #[test]
 fn unit_calculator_bool_gteqstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -664,7 +664,7 @@ fn unit_calculator_bool_gteqstr() {
 #[test]
 fn unit_calculator_bool_neint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -677,7 +677,7 @@ fn unit_calculator_bool_neint() {
 #[test]
 fn unit_calculator_bool_nefloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -690,7 +690,7 @@ fn unit_calculator_bool_nefloat() {
 #[test]
 fn unit_calculator_bool_nebool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeBool(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -703,7 +703,7 @@ fn unit_calculator_bool_nebool() {
 #[test]
 fn unit_calculator_bool_nestr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -716,7 +716,7 @@ fn unit_calculator_bool_nestr() {
 #[test]
 fn unit_calculator_bool_eqfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::EqFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -729,7 +729,7 @@ fn unit_calculator_bool_eqfixed() {
 #[test]
 fn unit_calculator_bool_gtfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::GtFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -742,7 +742,7 @@ fn unit_calculator_bool_gtfixed() {
 #[test]
 fn unit_calculator_bool_ltfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -755,7 +755,7 @@ fn unit_calculator_bool_ltfixed() {
 #[test]
 fn unit_calculator_bool_lteqfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -768,7 +768,7 @@ fn unit_calculator_bool_lteqfixed() {
 #[test]
 fn unit_calculator_bool_gteqfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -781,7 +781,7 @@ fn unit_calculator_bool_gteqfixed() {
 #[test]
 fn unit_calculator_bool_nefixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::NeFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -794,7 +794,7 @@ fn unit_calculator_bool_nefixed() {
 #[test]
 fn unit_calculator_bool_not() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Not(Box::new(Bool::BoolLit(false)));
+    let term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Not");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -807,7 +807,7 @@ fn unit_calculator_bool_not() {
 #[test]
 fn unit_calculator_bool_and() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for And");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -820,7 +820,7 @@ fn unit_calculator_bool_and() {
 #[test]
 fn unit_calculator_bool_or() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Or");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -833,7 +833,7 @@ fn unit_calculator_bool_or() {
 #[test]
 fn unit_calculator_bool_xor() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Xor(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Xor");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -846,7 +846,7 @@ fn unit_calculator_bool_xor() {
 #[test]
 fn unit_calculator_int_len() {
     mettail_runtime::clear_var_cache();
-    let term = Int::Len(Box::new(Str::StringLit(String::new())));
+    let term = Int::Len(std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Len");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -859,7 +859,7 @@ fn unit_calculator_int_len() {
 #[test]
 fn unit_calculator_str_concat() {
     mettail_runtime::clear_var_cache();
-    let term = Str::Concat(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Concat");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -872,7 +872,7 @@ fn unit_calculator_str_concat() {
 #[test]
 fn unit_calculator_str_addstr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::AddStr(Box::new(Str::StringLit(String::new())), Box::new(Str::StringLit(String::new())));
+    let term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddStr");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -885,7 +885,7 @@ fn unit_calculator_str_addstr() {
 #[test]
 fn unit_calculator_uint32_adduint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::AddUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -898,7 +898,7 @@ fn unit_calculator_uint32_adduint32() {
 #[test]
 fn unit_calculator_uint32_bitanduint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::BitAndUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -911,7 +911,7 @@ fn unit_calculator_uint32_bitanduint32() {
 #[test]
 fn unit_calculator_uint32_bitoruint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::BitOrUInt32(Box::new(UInt32::NumLit(0u32)), Box::new(UInt32::NumLit(0u32)));
+    let term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -924,7 +924,7 @@ fn unit_calculator_uint32_bitoruint32() {
 #[test]
 fn unit_calculator_uint32_bitnotuint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::BitNotUInt32(Box::new(UInt32::NumLit(0u32)));
+    let term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -937,7 +937,7 @@ fn unit_calculator_uint32_bitnotuint32() {
 #[test]
 fn unit_calculator_bigint_addbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::AddBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -950,7 +950,7 @@ fn unit_calculator_bigint_addbigint() {
 #[test]
 fn unit_calculator_bigint_subbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::SubBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -963,7 +963,7 @@ fn unit_calculator_bigint_subbigint() {
 #[test]
 fn unit_calculator_bigint_negbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::NegBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegBigInt");
     if let Ok(alts) = BigInt::parse_via_wpda_all(&displayed) {
@@ -979,7 +979,7 @@ fn unit_calculator_bigint_negbigint() {
 #[test]
 fn unit_calculator_bigint_bitandbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BitAndBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -992,7 +992,7 @@ fn unit_calculator_bigint_bitandbigint() {
 #[test]
 fn unit_calculator_bigint_bitorbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BitOrBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -1005,7 +1005,7 @@ fn unit_calculator_bigint_bitorbigint() {
 #[test]
 fn unit_calculator_bigint_bitnotbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BitNotBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -1018,7 +1018,7 @@ fn unit_calculator_bigint_bitnotbigint() {
 #[test]
 fn unit_calculator_int_addint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1031,7 +1031,7 @@ fn unit_calculator_int_addint() {
 #[test]
 fn unit_calculator_int_subint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1044,7 +1044,7 @@ fn unit_calculator_int_subint() {
 #[test]
 fn unit_calculator_int_mulint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1057,7 +1057,7 @@ fn unit_calculator_int_mulint() {
 #[test]
 fn unit_calculator_int_divint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::DivInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1070,7 +1070,7 @@ fn unit_calculator_int_divint() {
 #[test]
 fn unit_calculator_int_modint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::ModInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ModInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1083,7 +1083,7 @@ fn unit_calculator_int_modint() {
 #[test]
 fn unit_calculator_int_powint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::PowInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PowInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1096,7 +1096,7 @@ fn unit_calculator_int_powint() {
 #[test]
 fn unit_calculator_int_bitandint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BitAndInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1109,7 +1109,7 @@ fn unit_calculator_int_bitandint() {
 #[test]
 fn unit_calculator_int_bitorint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BitOrInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1122,7 +1122,7 @@ fn unit_calculator_int_bitorint() {
 #[test]
 fn unit_calculator_int_bitnotint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BitNotInt(Box::new(Int::NumLit(0i32)));
+    let term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1135,7 +1135,7 @@ fn unit_calculator_int_bitnotint() {
 #[test]
 fn unit_calculator_int_neg() {
     mettail_runtime::clear_var_cache();
-    let term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Neg");
     if let Ok(alts) = Int::parse_via_wpda_all(&displayed) {
@@ -1151,7 +1151,7 @@ fn unit_calculator_int_neg() {
 #[test]
 fn unit_calculator_int_fact() {
     mettail_runtime::clear_var_cache();
-    let term = Int::Fact(Box::new(Int::NumLit(0i32)));
+    let term = Int::Fact(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Fact");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1164,7 +1164,7 @@ fn unit_calculator_int_fact() {
 #[test]
 fn unit_calculator_float_addfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::AddFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1177,7 +1177,7 @@ fn unit_calculator_float_addfloat() {
 #[test]
 fn unit_calculator_float_subfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::SubFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1190,7 +1190,7 @@ fn unit_calculator_float_subfloat() {
 #[test]
 fn unit_calculator_float_mulfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::MulFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1203,7 +1203,7 @@ fn unit_calculator_float_mulfloat() {
 #[test]
 fn unit_calculator_float_divfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::DivFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1216,7 +1216,7 @@ fn unit_calculator_float_divfloat() {
 #[test]
 fn unit_calculator_float_powfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::PowFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PowFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1229,7 +1229,7 @@ fn unit_calculator_float_powfloat() {
 #[test]
 fn unit_calculator_float_negfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::NegFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegFloat");
     if let Ok(alts) = Float::parse_via_wpda_all(&displayed) {
@@ -1245,7 +1245,7 @@ fn unit_calculator_float_negfloat() {
 #[test]
 fn unit_calculator_float_sinfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::SinFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SinFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1258,7 +1258,7 @@ fn unit_calculator_float_sinfloat() {
 #[test]
 fn unit_calculator_float_cosfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::CosFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CosFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1271,7 +1271,7 @@ fn unit_calculator_float_cosfloat() {
 #[test]
 fn unit_calculator_float_expfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::ExpFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ExpFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1284,7 +1284,7 @@ fn unit_calculator_float_expfloat() {
 #[test]
 fn unit_calculator_float_lnfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::LnFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LnFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1297,7 +1297,7 @@ fn unit_calculator_float_lnfloat() {
 #[test]
 fn unit_calculator_float_inttofloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::IntToFloat(Box::new(Int::NumLit(0i32)));
+    let term = Float::IntToFloat(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1310,7 +1310,7 @@ fn unit_calculator_float_inttofloat() {
 #[test]
 fn unit_calculator_float_booltofloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::BoolToFloat(Box::new(Bool::BoolLit(false)));
+    let term = Float::BoolToFloat(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1323,7 +1323,7 @@ fn unit_calculator_float_booltofloat() {
 #[test]
 fn unit_calculator_float_strtofloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::StrToFloat(Box::new(Str::StringLit(String::new())));
+    let term = Float::StrToFloat(std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrToFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1336,7 +1336,7 @@ fn unit_calculator_float_strtofloat() {
 #[test]
 fn unit_calculator_int_floattoint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::FloatToInt(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Int::FloatToInt(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1349,7 +1349,7 @@ fn unit_calculator_int_floattoint() {
 #[test]
 fn unit_calculator_int_booltoint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BoolToInt(Box::new(Bool::BoolLit(false)));
+    let term = Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1362,7 +1362,7 @@ fn unit_calculator_int_booltoint() {
 #[test]
 fn unit_calculator_int_strtoint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::StrToInt(Box::new(Str::StringLit(String::new())));
+    let term = Int::StrToInt(std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1375,7 +1375,7 @@ fn unit_calculator_int_strtoint() {
 #[test]
 fn unit_calculator_str_booltostr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::BoolToStr(Box::new(Bool::BoolLit(false)));
+    let term = Str::BoolToStr(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -1388,7 +1388,7 @@ fn unit_calculator_str_booltostr() {
 #[test]
 fn unit_calculator_str_inttostr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::IntToStr(Box::new(Int::NumLit(0i32)));
+    let term = Str::IntToStr(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -1401,7 +1401,7 @@ fn unit_calculator_str_inttostr() {
 #[test]
 fn unit_calculator_str_floattostr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::FloatToStr(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Str::FloatToStr(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -1414,7 +1414,7 @@ fn unit_calculator_str_floattostr() {
 #[test]
 fn unit_calculator_bool_inttobool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::IntToBool(Box::new(Int::NumLit(0i32)));
+    let term = Bool::IntToBool(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1427,7 +1427,7 @@ fn unit_calculator_bool_inttobool() {
 #[test]
 fn unit_calculator_bool_floattobool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::FloatToBool(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::FloatToBool(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1440,7 +1440,7 @@ fn unit_calculator_bool_floattobool() {
 #[test]
 fn unit_calculator_bool_strtobool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::StrToBool(Box::new(Str::StringLit(String::new())));
+    let term = Bool::StrToBool(std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1453,7 +1453,7 @@ fn unit_calculator_bool_strtobool() {
 #[test]
 fn unit_calculator_int_intid() {
     mettail_runtime::clear_var_cache();
-    let term = Int::IntId(Box::new(Int::NumLit(0i32)));
+    let term = Int::IntId(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntId");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1466,7 +1466,7 @@ fn unit_calculator_int_intid() {
 #[test]
 fn unit_calculator_float_floatid() {
     mettail_runtime::clear_var_cache();
-    let term = Float::FloatId(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::FloatId(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatId");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1479,7 +1479,7 @@ fn unit_calculator_float_floatid() {
 #[test]
 fn unit_calculator_bool_boolid() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::BoolId(Box::new(Bool::BoolLit(false)));
+    let term = Bool::BoolId(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolId");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1492,7 +1492,7 @@ fn unit_calculator_bool_boolid() {
 #[test]
 fn unit_calculator_str_strid() {
     mettail_runtime::clear_var_cache();
-    let term = Str::StrId(Box::new(Str::StringLit(String::new())));
+    let term = Str::StrId(std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrId");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -1505,7 +1505,7 @@ fn unit_calculator_str_strid() {
 #[test]
 fn unit_calculator_int_customop() {
     mettail_runtime::clear_var_cache();
-    let term = Int::CustomOp(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CustomOp");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1518,7 +1518,7 @@ fn unit_calculator_int_customop() {
 #[test]
 fn unit_calculator_fixed_addfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::AddFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::AddFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1531,7 +1531,7 @@ fn unit_calculator_fixed_addfixed() {
 #[test]
 fn unit_calculator_fixed_subfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::SubFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::SubFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1544,7 +1544,7 @@ fn unit_calculator_fixed_subfixed() {
 #[test]
 fn unit_calculator_fixed_mulfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::MulFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::MulFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1557,7 +1557,7 @@ fn unit_calculator_fixed_mulfixed() {
 #[test]
 fn unit_calculator_fixed_divfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::DivFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::DivFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1570,7 +1570,7 @@ fn unit_calculator_fixed_divfixed() {
 #[test]
 fn unit_calculator_fixed_modfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::ModFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::ModFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ModFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1583,7 +1583,7 @@ fn unit_calculator_fixed_modfixed() {
 #[test]
 fn unit_calculator_fixed_negfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::NegFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegFixed");
     if let Ok(alts) = Fixed::parse_via_wpda_all(&displayed) {
@@ -1599,7 +1599,7 @@ fn unit_calculator_fixed_negfixed() {
 #[test]
 fn unit_calculator_fixed_bitandfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::BitAndFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::BitAndFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1612,7 +1612,7 @@ fn unit_calculator_fixed_bitandfixed() {
 #[test]
 fn unit_calculator_fixed_bitorfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::BitOrFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::BitOrFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1625,7 +1625,7 @@ fn unit_calculator_fixed_bitorfixed() {
 #[test]
 fn unit_calculator_fixed_bitnotfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::BitNotFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1638,7 +1638,7 @@ fn unit_calculator_fixed_bitnotfixed() {
 #[test]
 fn unit_calculator_bool_proctobool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::ProcToBool(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Bool::ProcToBool(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1651,7 +1651,7 @@ fn unit_calculator_bool_proctobool() {
 #[test]
 fn unit_calculator_str_proctostr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::ProcToStr(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Str::ProcToStr(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
@@ -1664,7 +1664,7 @@ fn unit_calculator_str_proctostr() {
 #[test]
 fn unit_calculator_int_intbin() {
     mettail_runtime::clear_var_cache();
-    let term = Int::IntBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
+    let term = Int::IntBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntBin");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1677,7 +1677,7 @@ fn unit_calculator_int_intbin() {
 #[test]
 fn unit_calculator_uint32_uintbin() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::UIntBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
+    let term = UInt32::UIntBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UIntBin");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -1690,7 +1690,7 @@ fn unit_calculator_uint32_uintbin() {
 #[test]
 fn unit_calculator_float_floatbin() {
     mettail_runtime::clear_var_cache();
-    let term = Float::FloatBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
+    let term = Float::FloatBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatBin");
     if let Ok(parsed) = Float::parse(&displayed) {
@@ -1703,7 +1703,7 @@ fn unit_calculator_float_floatbin() {
 #[test]
 fn unit_calculator_fixed_fixedbin() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::FixedBin(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Int::NumLit(0i32)));
+    let term = Fixed::FixedBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedBin");
     if let Ok(parsed) = Fixed::parse(&displayed) {
@@ -1716,7 +1716,7 @@ fn unit_calculator_fixed_fixedbin() {
 #[test]
 fn unit_calculator_bigint_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BigintCast(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = BigInt::BigintCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigintCast");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -1729,7 +1729,7 @@ fn unit_calculator_bigint_bigintcast() {
 #[test]
 fn unit_calculator_bigrat_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BigratCast(Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigratCast");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -1742,7 +1742,7 @@ fn unit_calculator_bigrat_bigratcast() {
 #[test]
 fn unit_calculator_list_concatlist() {
     mettail_runtime::clear_var_cache();
-    let term = List::ConcatList(Box::new(List::ListLit(Vec::new())), Box::new(List::ListLit(Vec::new())));
+    let term = List::ConcatList(std::sync::Arc::new(List::ListLit(Vec::new())), std::sync::Arc::new(List::ListLit(Vec::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ConcatList");
     if let Ok(parsed) = List::parse(&displayed) {
@@ -1755,7 +1755,7 @@ fn unit_calculator_list_concatlist() {
 #[test]
 fn unit_calculator_int_lenlist() {
     mettail_runtime::clear_var_cache();
-    let term = Int::LenList(Box::new(List::ListLit(Vec::new())));
+    let term = Int::LenList(std::sync::Arc::new(List::ListLit(Vec::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LenList");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1768,7 +1768,7 @@ fn unit_calculator_int_lenlist() {
 #[test]
 fn unit_calculator_proc_elemlist() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ElemList(Box::new(List::ListLit(Vec::new())), Box::new(Int::NumLit(0i32)));
+    let term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Vec::new())), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ElemList");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -1781,7 +1781,7 @@ fn unit_calculator_proc_elemlist() {
 #[test]
 fn unit_calculator_list_deletelist() {
     mettail_runtime::clear_var_cache();
-    let term = List::DeleteList(Box::new(List::ListLit(Vec::new())), Box::new(Int::NumLit(0i32)));
+    let term = List::DeleteList(std::sync::Arc::new(List::ListLit(Vec::new())), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteList");
     if let Ok(parsed) = List::parse(&displayed) {
@@ -1794,7 +1794,7 @@ fn unit_calculator_list_deletelist() {
 #[test]
 fn unit_calculator_bag_unionbag() {
     mettail_runtime::clear_var_cache();
-    let term = Bag::UnionBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Bag::BagLit(mettail_runtime::HashBag::new())));
+    let term = Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UnionBag");
     if let Ok(parsed) = Bag::parse(&displayed) {
@@ -1807,7 +1807,7 @@ fn unit_calculator_bag_unionbag() {
 #[test]
 fn unit_calculator_bag_removebag() {
     mettail_runtime::clear_var_cache();
-    let term = Bag::RemoveBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Bag::RemoveBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for RemoveBag");
     if let Ok(parsed) = Bag::parse(&displayed) {
@@ -1820,7 +1820,7 @@ fn unit_calculator_bag_removebag() {
 #[test]
 fn unit_calculator_bag_diffbag() {
     mettail_runtime::clear_var_cache();
-    let term = Bag::DiffBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Bag::BagLit(mettail_runtime::HashBag::new())));
+    let term = Bag::DiffBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DiffBag");
     if let Ok(parsed) = Bag::parse(&displayed) {
@@ -1833,7 +1833,7 @@ fn unit_calculator_bag_diffbag() {
 #[test]
 fn unit_calculator_int_countbag() {
     mettail_runtime::clear_var_cache();
-    let term = Int::CountBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Int::CountBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CountBag");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1846,7 +1846,7 @@ fn unit_calculator_int_countbag() {
 #[test]
 fn unit_calculator_int_lenmap() {
     mettail_runtime::clear_var_cache();
-    let term = Int::LenMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term = Int::LenMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LenMap");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -1859,7 +1859,7 @@ fn unit_calculator_int_lenmap() {
 #[test]
 fn unit_calculator_proc_getmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::GetMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GetMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -1872,7 +1872,7 @@ fn unit_calculator_proc_getmap() {
 #[test]
 fn unit_calculator_map_putmap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::PutMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Map::PutMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PutMap");
     if let Ok(parsed) = Map::parse(&displayed) {
@@ -1885,7 +1885,7 @@ fn unit_calculator_map_putmap() {
 #[test]
 fn unit_calculator_map_deletemap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::DeleteMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Map::DeleteMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteMap");
     if let Ok(parsed) = Map::parse(&displayed) {
@@ -1898,7 +1898,7 @@ fn unit_calculator_map_deletemap() {
 #[test]
 fn unit_calculator_map_mergemap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::MergeMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term = Map::MergeMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MergeMap");
     if let Ok(parsed) = Map::parse(&displayed) {
@@ -1911,7 +1911,7 @@ fn unit_calculator_map_mergemap() {
 #[test]
 fn unit_calculator_bool_hasmap() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::HasMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())), Box::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Bool::HasMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for HasMap");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -1924,7 +1924,7 @@ fn unit_calculator_bool_hasmap() {
 #[test]
 fn unit_calculator_list_keysmap() {
     mettail_runtime::clear_var_cache();
-    let term = List::KeysMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term = List::KeysMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for KeysMap");
     if let Ok(parsed) = List::parse(&displayed) {
@@ -1937,7 +1937,7 @@ fn unit_calculator_list_keysmap() {
 #[test]
 fn unit_calculator_list_valuesmap() {
     mettail_runtime::clear_var_cache();
-    let term = List::ValuesMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term = List::ValuesMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ValuesMap");
     if let Ok(parsed) = List::parse(&displayed) {
@@ -1950,7 +1950,7 @@ fn unit_calculator_list_valuesmap() {
 #[test]
 fn unit_calculator_uint32_booltouint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(false)));
+    let term = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -1963,7 +1963,7 @@ fn unit_calculator_uint32_booltouint32() {
 #[test]
 fn unit_calculator_bigint_booltobigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(false)));
+    let term = BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -1976,7 +1976,7 @@ fn unit_calculator_bigint_booltobigint() {
 #[test]
 fn unit_calculator_bigrat_booltobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(false)));
+    let term = BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -1989,7 +1989,7 @@ fn unit_calculator_bigrat_booltobigrat() {
 #[test]
 fn unit_calculator_bigint_uint32tobigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(0u32)));
+    let term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -2002,7 +2002,7 @@ fn unit_calculator_bigint_uint32tobigint() {
 #[test]
 fn unit_calculator_bigrat_uint32tobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(0u32)));
+    let term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -2015,7 +2015,7 @@ fn unit_calculator_bigrat_uint32tobigrat() {
 #[test]
 fn unit_calculator_bigrat_floattobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -2028,7 +2028,7 @@ fn unit_calculator_bigrat_floattobigrat() {
 #[test]
 fn unit_calculator_bigrat_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigIntToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -2041,7 +2041,7 @@ fn unit_calculator_bigrat_biginttobigrat() {
 #[test]
 fn unit_calculator_bigrat_fixedtobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {

@@ -11,7 +11,7 @@ fn probe_display_neg_numlit_zero() {
     // the AST. `Neg(NumLit(0))` displays as `"-0"`, distinguishable from
     // `NumLit(0)` which displays as `"0"`.
     let inner = Int::NumLit(0i32);
-    let neg_zero = Int::Neg(Box::new(inner));
+    let neg_zero = Int::Neg(std::sync::Arc::new(inner));
     let displayed = format!("{}", neg_zero);
     eprintln!("Display(Neg(NumLit(0))) = {:?}", displayed);
     assert_eq!(
@@ -196,7 +196,7 @@ fn probe_fork_parse_dash_0_emits_alternatives() {
 fn probe_display_roundtrip_neg_numlit_3() {
     // Confirm Display(Neg(NumLit(3))) == "-3" (no W3 suppression for non-zero)
     let three = Int::NumLit(3i32);
-    let neg = Int::Neg(Box::new(three));
+    let neg = Int::Neg(std::sync::Arc::new(three));
     let s = format!("{}", neg);
     eprintln!("Display(Neg(NumLit(3))) = {:?}", s);
     assert_eq!(s, "-3");
@@ -206,8 +206,8 @@ fn probe_display_roundtrip_neg_numlit_3() {
 fn probe_display_roundtrip_double_neg_numlit_3() {
     // Display(Neg(Neg(NumLit(3))))?
     let three = Int::NumLit(3i32);
-    let neg = Int::Neg(Box::new(three));
-    let neg_neg = Int::Neg(Box::new(neg));
+    let neg = Int::Neg(std::sync::Arc::new(three));
+    let neg_neg = Int::Neg(std::sync::Arc::new(neg));
     let s = format!("{}", neg_neg);
     eprintln!("Display(Neg(Neg(NumLit(3)))) = {:?}", s);
 }
@@ -216,8 +216,8 @@ fn probe_display_roundtrip_double_neg_numlit_3() {
 fn probe_display_roundtrip_double_neg_zero() {
     // Display(Neg(Neg(NumLit(0))))? Is W3 chain-walking active?
     let zero = Int::NumLit(0i32);
-    let neg = Int::Neg(Box::new(zero));
-    let neg_neg = Int::Neg(Box::new(neg));
+    let neg = Int::Neg(std::sync::Arc::new(zero));
+    let neg_neg = Int::Neg(std::sync::Arc::new(neg));
     let s = format!("{}", neg_neg);
     eprintln!("Display(Neg(Neg(NumLit(0)))) = {:?}", s);
 }

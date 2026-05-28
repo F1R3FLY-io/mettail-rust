@@ -38,7 +38,7 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_mixedmath_neg_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -51,7 +51,7 @@ fn eval_mixedmath_neg_5() {
 #[test]
 fn eval_mixedmath_neg_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -64,7 +64,7 @@ fn eval_mixedmath_neg_3() {
 #[test]
 fn eval_mixedmath_neg_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -77,7 +77,7 @@ fn eval_mixedmath_neg_2() {
 #[test]
 fn eval_mixedmath_neg_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -90,7 +90,7 @@ fn eval_mixedmath_neg_1() {
 #[test]
 fn eval_mixedmath_neg_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -103,7 +103,7 @@ fn eval_mixedmath_neg_0() {
 #[test]
 fn eval_mixedmath_mulint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -116,7 +116,7 @@ fn eval_mixedmath_mulint_3_5() {
 #[test]
 fn eval_mixedmath_mulint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -129,7 +129,7 @@ fn eval_mixedmath_mulint_3_3() {
 #[test]
 fn eval_mixedmath_mulint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -142,7 +142,7 @@ fn eval_mixedmath_mulint_3_2() {
 #[test]
 fn eval_mixedmath_mulint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -155,7 +155,7 @@ fn eval_mixedmath_mulint_3_1() {
 #[test]
 fn eval_mixedmath_mulint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -168,7 +168,7 @@ fn eval_mixedmath_mulint_3_0() {
 #[test]
 fn eval_mixedmath_mulint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -181,7 +181,7 @@ fn eval_mixedmath_mulint_2_5() {
 #[test]
 fn eval_mixedmath_mulint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -194,7 +194,7 @@ fn eval_mixedmath_mulint_2_3() {
 #[test]
 fn eval_mixedmath_mulint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -207,7 +207,7 @@ fn eval_mixedmath_mulint_2_2() {
 #[test]
 fn eval_mixedmath_mulint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -220,7 +220,7 @@ fn eval_mixedmath_mulint_2_1() {
 #[test]
 fn eval_mixedmath_mulint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -233,7 +233,7 @@ fn eval_mixedmath_mulint_2_0() {
 #[test]
 fn eval_mixedmath_mulint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -246,7 +246,7 @@ fn eval_mixedmath_mulint_1_5() {
 #[test]
 fn eval_mixedmath_mulint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -259,7 +259,7 @@ fn eval_mixedmath_mulint_1_3() {
 #[test]
 fn eval_mixedmath_mulint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -272,7 +272,7 @@ fn eval_mixedmath_mulint_1_2() {
 #[test]
 fn eval_mixedmath_mulint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -285,7 +285,7 @@ fn eval_mixedmath_mulint_1_1() {
 #[test]
 fn eval_mixedmath_mulint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -298,7 +298,7 @@ fn eval_mixedmath_mulint_1_0() {
 #[test]
 fn eval_mixedmath_mulint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -311,7 +311,7 @@ fn eval_mixedmath_mulint_0_5() {
 #[test]
 fn eval_mixedmath_mulint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -324,7 +324,7 @@ fn eval_mixedmath_mulint_0_3() {
 #[test]
 fn eval_mixedmath_mulint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -337,7 +337,7 @@ fn eval_mixedmath_mulint_0_2() {
 #[test]
 fn eval_mixedmath_mulint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -350,7 +350,7 @@ fn eval_mixedmath_mulint_0_1() {
 #[test]
 fn eval_mixedmath_mulint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -363,7 +363,7 @@ fn eval_mixedmath_mulint_0_0() {
 #[test]
 fn eval_mixedmath_subint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -376,7 +376,7 @@ fn eval_mixedmath_subint_3_5() {
 #[test]
 fn eval_mixedmath_subint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -389,7 +389,7 @@ fn eval_mixedmath_subint_3_3() {
 #[test]
 fn eval_mixedmath_subint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -402,7 +402,7 @@ fn eval_mixedmath_subint_3_2() {
 #[test]
 fn eval_mixedmath_subint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -415,7 +415,7 @@ fn eval_mixedmath_subint_3_1() {
 #[test]
 fn eval_mixedmath_subint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -428,7 +428,7 @@ fn eval_mixedmath_subint_3_0() {
 #[test]
 fn eval_mixedmath_subint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -441,7 +441,7 @@ fn eval_mixedmath_subint_2_5() {
 #[test]
 fn eval_mixedmath_subint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -454,7 +454,7 @@ fn eval_mixedmath_subint_2_3() {
 #[test]
 fn eval_mixedmath_subint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -467,7 +467,7 @@ fn eval_mixedmath_subint_2_2() {
 #[test]
 fn eval_mixedmath_subint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -480,7 +480,7 @@ fn eval_mixedmath_subint_2_1() {
 #[test]
 fn eval_mixedmath_subint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -493,7 +493,7 @@ fn eval_mixedmath_subint_2_0() {
 #[test]
 fn eval_mixedmath_subint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -506,7 +506,7 @@ fn eval_mixedmath_subint_1_5() {
 #[test]
 fn eval_mixedmath_subint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -519,7 +519,7 @@ fn eval_mixedmath_subint_1_3() {
 #[test]
 fn eval_mixedmath_subint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -532,7 +532,7 @@ fn eval_mixedmath_subint_1_2() {
 #[test]
 fn eval_mixedmath_subint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -545,7 +545,7 @@ fn eval_mixedmath_subint_1_1() {
 #[test]
 fn eval_mixedmath_subint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -558,7 +558,7 @@ fn eval_mixedmath_subint_1_0() {
 #[test]
 fn eval_mixedmath_subint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -571,7 +571,7 @@ fn eval_mixedmath_subint_0_5() {
 #[test]
 fn eval_mixedmath_subint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -584,7 +584,7 @@ fn eval_mixedmath_subint_0_3() {
 #[test]
 fn eval_mixedmath_subint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -597,7 +597,7 @@ fn eval_mixedmath_subint_0_2() {
 #[test]
 fn eval_mixedmath_subint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -610,7 +610,7 @@ fn eval_mixedmath_subint_0_1() {
 #[test]
 fn eval_mixedmath_subint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -623,7 +623,7 @@ fn eval_mixedmath_subint_0_0() {
 #[test]
 fn eval_mixedmath_addint_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -636,7 +636,7 @@ fn eval_mixedmath_addint_3_5() {
 #[test]
 fn eval_mixedmath_addint_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -649,7 +649,7 @@ fn eval_mixedmath_addint_3_3() {
 #[test]
 fn eval_mixedmath_addint_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -662,7 +662,7 @@ fn eval_mixedmath_addint_3_2() {
 #[test]
 fn eval_mixedmath_addint_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -675,7 +675,7 @@ fn eval_mixedmath_addint_3_1() {
 #[test]
 fn eval_mixedmath_addint_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(3i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -688,7 +688,7 @@ fn eval_mixedmath_addint_3_0() {
 #[test]
 fn eval_mixedmath_addint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -701,7 +701,7 @@ fn eval_mixedmath_addint_2_5() {
 #[test]
 fn eval_mixedmath_addint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -714,7 +714,7 @@ fn eval_mixedmath_addint_2_3() {
 #[test]
 fn eval_mixedmath_addint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -727,7 +727,7 @@ fn eval_mixedmath_addint_2_2() {
 #[test]
 fn eval_mixedmath_addint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -740,7 +740,7 @@ fn eval_mixedmath_addint_2_1() {
 #[test]
 fn eval_mixedmath_addint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -753,7 +753,7 @@ fn eval_mixedmath_addint_2_0() {
 #[test]
 fn eval_mixedmath_addint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -766,7 +766,7 @@ fn eval_mixedmath_addint_1_5() {
 #[test]
 fn eval_mixedmath_addint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -779,7 +779,7 @@ fn eval_mixedmath_addint_1_3() {
 #[test]
 fn eval_mixedmath_addint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -792,7 +792,7 @@ fn eval_mixedmath_addint_1_2() {
 #[test]
 fn eval_mixedmath_addint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -805,7 +805,7 @@ fn eval_mixedmath_addint_1_1() {
 #[test]
 fn eval_mixedmath_addint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -818,7 +818,7 @@ fn eval_mixedmath_addint_1_0() {
 #[test]
 fn eval_mixedmath_addint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -831,7 +831,7 @@ fn eval_mixedmath_addint_0_5() {
 #[test]
 fn eval_mixedmath_addint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -844,7 +844,7 @@ fn eval_mixedmath_addint_0_3() {
 #[test]
 fn eval_mixedmath_addint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -857,7 +857,7 @@ fn eval_mixedmath_addint_0_2() {
 #[test]
 fn eval_mixedmath_addint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -870,7 +870,7 @@ fn eval_mixedmath_addint_0_1() {
 #[test]
 fn eval_mixedmath_addint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -883,7 +883,7 @@ fn eval_mixedmath_addint_0_0() {
 #[test]
 fn eval_mixedmath_not_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -896,7 +896,7 @@ fn eval_mixedmath_not_false() {
 #[test]
 fn eval_mixedmath_not_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -909,7 +909,7 @@ fn eval_mixedmath_not_true() {
 #[test]
 fn eval_mixedmath_or_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -922,7 +922,7 @@ fn eval_mixedmath_or_false_false() {
 #[test]
 fn eval_mixedmath_or_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -935,7 +935,7 @@ fn eval_mixedmath_or_false_true() {
 #[test]
 fn eval_mixedmath_or_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -948,7 +948,7 @@ fn eval_mixedmath_or_true_false() {
 #[test]
 fn eval_mixedmath_or_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -961,7 +961,7 @@ fn eval_mixedmath_or_true_true() {
 #[test]
 fn eval_mixedmath_and_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -974,7 +974,7 @@ fn eval_mixedmath_and_false_false() {
 #[test]
 fn eval_mixedmath_and_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -987,7 +987,7 @@ fn eval_mixedmath_and_false_true() {
 #[test]
 fn eval_mixedmath_and_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1000,7 +1000,7 @@ fn eval_mixedmath_and_true_false() {
 #[test]
 fn eval_mixedmath_and_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1017,7 +1017,7 @@ fn eval_mixedmath_and_true_true() {
 #[test]
 fn nested_mixedmath_neg_mulint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1030,7 +1030,7 @@ fn nested_mixedmath_neg_mulint_0_2_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_mulint_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1043,7 +1043,7 @@ fn nested_mixedmath_neg_mulint_0_1_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_mulint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1056,7 +1056,7 @@ fn nested_mixedmath_neg_mulint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_subint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1069,7 +1069,7 @@ fn nested_mixedmath_neg_subint_0_2_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_subint_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1082,7 +1082,7 @@ fn nested_mixedmath_neg_subint_0_1_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_subint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1095,7 +1095,7 @@ fn nested_mixedmath_neg_subint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_addint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1108,7 +1108,7 @@ fn nested_mixedmath_neg_addint_0_2_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_addint_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1121,7 +1121,7 @@ fn nested_mixedmath_neg_addint_0_1_in_slot0() {
 #[test]
 fn nested_mixedmath_neg_addint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1134,7 +1134,7 @@ fn nested_mixedmath_neg_addint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_neg_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1147,7 +1147,7 @@ fn nested_mixedmath_mulint_neg_2_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_neg_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1160,7 +1160,7 @@ fn nested_mixedmath_mulint_neg_1_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_neg_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1173,7 +1173,7 @@ fn nested_mixedmath_mulint_neg_0_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1186,7 +1186,7 @@ fn nested_mixedmath_mulint_subint_0_2_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1199,7 +1199,7 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1212,7 +1212,7 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1225,7 +1225,7 @@ fn nested_mixedmath_mulint_addint_0_2_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1238,7 +1238,7 @@ fn nested_mixedmath_mulint_addint_0_1_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1251,7 +1251,7 @@ fn nested_mixedmath_mulint_addint_0_0_in_slot1() {
 #[test]
 fn nested_mixedmath_mulint_neg_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1264,7 +1264,7 @@ fn nested_mixedmath_mulint_neg_2_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_neg_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1277,7 +1277,7 @@ fn nested_mixedmath_mulint_neg_1_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_neg_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1290,7 +1290,7 @@ fn nested_mixedmath_mulint_neg_0_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1303,7 +1303,7 @@ fn nested_mixedmath_mulint_subint_0_2_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1316,7 +1316,7 @@ fn nested_mixedmath_mulint_subint_0_1_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_subint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1329,7 +1329,7 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1342,7 +1342,7 @@ fn nested_mixedmath_mulint_addint_0_2_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1355,7 +1355,7 @@ fn nested_mixedmath_mulint_addint_0_1_in_slot0() {
 #[test]
 fn nested_mixedmath_mulint_addint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1368,7 +1368,7 @@ fn nested_mixedmath_mulint_addint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_neg_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1381,7 +1381,7 @@ fn nested_mixedmath_subint_neg_2_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_neg_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1394,7 +1394,7 @@ fn nested_mixedmath_subint_neg_1_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_neg_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1407,7 +1407,7 @@ fn nested_mixedmath_subint_neg_0_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_mulint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1420,7 +1420,7 @@ fn nested_mixedmath_subint_mulint_0_2_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_mulint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1433,7 +1433,7 @@ fn nested_mixedmath_subint_mulint_0_1_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_mulint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1446,7 +1446,7 @@ fn nested_mixedmath_subint_mulint_0_0_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_addint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1459,7 +1459,7 @@ fn nested_mixedmath_subint_addint_0_2_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_addint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1472,7 +1472,7 @@ fn nested_mixedmath_subint_addint_0_1_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_addint_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(1i32)), Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1485,7 +1485,7 @@ fn nested_mixedmath_subint_addint_0_0_in_slot1() {
 #[test]
 fn nested_mixedmath_subint_neg_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1498,7 +1498,7 @@ fn nested_mixedmath_subint_neg_2_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_neg_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1511,7 +1511,7 @@ fn nested_mixedmath_subint_neg_1_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_neg_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1524,7 +1524,7 @@ fn nested_mixedmath_subint_neg_0_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_mulint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1537,7 +1537,7 @@ fn nested_mixedmath_subint_mulint_0_2_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_mulint_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1550,7 +1550,7 @@ fn nested_mixedmath_subint_mulint_0_1_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_mulint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1563,7 +1563,7 @@ fn nested_mixedmath_subint_mulint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_addint_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1576,7 +1576,7 @@ fn nested_mixedmath_subint_addint_0_2_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_addint_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1589,7 +1589,7 @@ fn nested_mixedmath_subint_addint_0_1_in_slot0() {
 #[test]
 fn nested_mixedmath_subint_addint_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1602,7 +1602,7 @@ fn nested_mixedmath_subint_addint_0_0_in_slot0() {
 #[test]
 fn nested_mixedmath_addint_neg_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1615,7 +1615,7 @@ fn nested_mixedmath_addint_neg_2_in_slot1() {
 #[test]
 fn nested_mixedmath_addint_neg_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1628,7 +1628,7 @@ fn nested_mixedmath_addint_neg_1_in_slot1() {
 #[test]
 fn nested_mixedmath_addint_neg_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::Neg(Box::new(Int::NumLit(0i32)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1641,7 +1641,7 @@ fn nested_mixedmath_addint_neg_0_in_slot1() {
 #[test]
 fn nested_mixedmath_addint_mulint_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1654,7 +1654,7 @@ fn nested_mixedmath_addint_mulint_0_2_in_slot1() {
 #[test]
 fn nested_mixedmath_addint_mulint_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1671,7 +1671,7 @@ fn nested_mixedmath_addint_mulint_0_1_in_slot1() {
 #[test]
 fn edge_mixedmath_and_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1684,7 +1684,7 @@ fn edge_mixedmath_and_bool_false_false() {
 #[test]
 fn edge_mixedmath_and_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1697,7 +1697,7 @@ fn edge_mixedmath_and_bool_true_false() {
 #[test]
 fn edge_mixedmath_and_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1710,7 +1710,7 @@ fn edge_mixedmath_and_bool_false_true() {
 #[test]
 fn edge_mixedmath_and_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1723,7 +1723,7 @@ fn edge_mixedmath_and_bool_true_true() {
 #[test]
 fn edge_mixedmath_or_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1736,7 +1736,7 @@ fn edge_mixedmath_or_bool_false_false() {
 #[test]
 fn edge_mixedmath_or_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1749,7 +1749,7 @@ fn edge_mixedmath_or_bool_true_false() {
 #[test]
 fn edge_mixedmath_or_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1762,7 +1762,7 @@ fn edge_mixedmath_or_bool_false_true() {
 #[test]
 fn edge_mixedmath_or_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1775,7 +1775,7 @@ fn edge_mixedmath_or_bool_true_true() {
 #[test]
 fn edge_mixedmath_not_bool_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1788,7 +1788,7 @@ fn edge_mixedmath_not_bool_false() {
 #[test]
 fn edge_mixedmath_not_bool_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1805,7 +1805,7 @@ fn edge_mixedmath_not_bool_true() {
 #[test]
 fn cross_cat_mixedmath_cast_booltoint_from_bool_to_int() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BoolToInt(Box::new(Bool::BoolLit(true)));
+    let input_term = Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1817,7 +1817,7 @@ fn cross_cat_mixedmath_cast_booltoint_from_bool_to_int() {
 #[test]
 fn cross_cat_mixedmath_castop_addint_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1829,7 +1829,7 @@ fn cross_cat_mixedmath_castop_addint_booltoint_smoke() {
 #[test]
 fn cross_cat_mixedmath_castop_subint_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1841,7 +1841,7 @@ fn cross_cat_mixedmath_castop_subint_booltoint_smoke() {
 #[test]
 fn cross_cat_mixedmath_castop_mulint_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1853,7 +1853,7 @@ fn cross_cat_mixedmath_castop_mulint_booltoint_smoke() {
 #[test]
 fn cross_cat_mixedmath_castop_neg_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1865,7 +1865,7 @@ fn cross_cat_mixedmath_castop_neg_booltoint_smoke() {
 #[test]
 fn cross_cat_mixedmath_mixed_addint_cast_booltoint_lhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1877,7 +1877,7 @@ fn cross_cat_mixedmath_mixed_addint_cast_booltoint_lhs_smoke() {
 #[test]
 fn cross_cat_mixedmath_mixed_addint_cast_booltoint_rhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1889,7 +1889,7 @@ fn cross_cat_mixedmath_mixed_addint_cast_booltoint_rhs_smoke() {
 #[test]
 fn cross_cat_mixedmath_composite_addint_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1901,7 +1901,7 @@ fn cross_cat_mixedmath_composite_addint_booltoint_smoke() {
 #[test]
 fn cross_cat_mixedmath_composite_subint_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1913,7 +1913,7 @@ fn cross_cat_mixedmath_composite_subint_booltoint_smoke() {
 #[test]
 fn cross_cat_mixedmath_composite_mulint_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1925,7 +1925,7 @@ fn cross_cat_mixedmath_composite_mulint_booltoint_smoke() {
 #[test]
 fn cross_cat_mixedmath_composite_neg_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1941,7 +1941,7 @@ fn cross_cat_mixedmath_composite_neg_booltoint_smoke() {
 #[test]
 fn wfst_mixedmath_dispatch_not_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1953,7 +1953,7 @@ fn wfst_mixedmath_dispatch_not_eval() {
 #[test]
 fn wfst_mixedmath_dispatch_neg_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1965,7 +1965,7 @@ fn wfst_mixedmath_dispatch_neg_eval() {
 #[test]
 fn wfst_mixedmath_dispatch_and_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1977,7 +1977,7 @@ fn wfst_mixedmath_dispatch_and_eval() {
 #[test]
 fn wfst_mixedmath_dispatch_or_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1989,7 +1989,7 @@ fn wfst_mixedmath_dispatch_or_eval() {
 #[test]
 fn wfst_mixedmath_dispatch_addint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2001,7 +2001,7 @@ fn wfst_mixedmath_dispatch_addint_eval() {
 #[test]
 fn wfst_mixedmath_dispatch_subint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2013,7 +2013,7 @@ fn wfst_mixedmath_dispatch_subint_eval() {
 #[test]
 fn wfst_mixedmath_dispatch_mulint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2150,7 +2150,7 @@ fn assoc_mixedmath_mulint_left() {
 #[test]
 fn wpda_mixedmath_not_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2162,7 +2162,7 @@ fn wpda_mixedmath_not_true() {
 #[test]
 fn wpda_mixedmath_not_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2174,7 +2174,7 @@ fn wpda_mixedmath_not_false() {
 #[test]
 fn wpda_mixedmath_and_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2186,7 +2186,7 @@ fn wpda_mixedmath_and_true_true() {
 #[test]
 fn wpda_mixedmath_and_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2198,7 +2198,7 @@ fn wpda_mixedmath_and_true_false() {
 #[test]
 fn wpda_mixedmath_and_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2210,7 +2210,7 @@ fn wpda_mixedmath_and_false_true() {
 #[test]
 fn wpda_mixedmath_and_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2222,7 +2222,7 @@ fn wpda_mixedmath_and_false_false() {
 #[test]
 fn wpda_mixedmath_or_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2234,7 +2234,7 @@ fn wpda_mixedmath_or_true_true() {
 #[test]
 fn wpda_mixedmath_or_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2246,7 +2246,7 @@ fn wpda_mixedmath_or_true_false() {
 #[test]
 fn wpda_mixedmath_or_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2258,7 +2258,7 @@ fn wpda_mixedmath_or_false_true() {
 #[test]
 fn wpda_mixedmath_or_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2270,7 +2270,7 @@ fn wpda_mixedmath_or_false_false() {
 #[test]
 fn wpda_mixedmath_neg_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2282,7 +2282,7 @@ fn wpda_mixedmath_neg_0() {
 #[test]
 fn wpda_mixedmath_neg_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(1i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2294,7 +2294,7 @@ fn wpda_mixedmath_neg_1() {
 #[test]
 fn wpda_mixedmath_neg_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(2i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2306,7 +2306,7 @@ fn wpda_mixedmath_neg_2() {
 #[test]
 fn wpda_mixedmath_neg_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(3i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2318,7 +2318,7 @@ fn wpda_mixedmath_neg_3() {
 #[test]
 fn wpda_mixedmath_neg_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(Box::new(Int::NumLit(5i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2330,7 +2330,7 @@ fn wpda_mixedmath_neg_5() {
 #[test]
 fn wpda_mixedmath_addint_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2342,7 +2342,7 @@ fn wpda_mixedmath_addint_0_0() {
 #[test]
 fn wpda_mixedmath_addint_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2354,7 +2354,7 @@ fn wpda_mixedmath_addint_0_1() {
 #[test]
 fn wpda_mixedmath_addint_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2366,7 +2366,7 @@ fn wpda_mixedmath_addint_0_2() {
 #[test]
 fn wpda_mixedmath_addint_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2378,7 +2378,7 @@ fn wpda_mixedmath_addint_0_3() {
 #[test]
 fn wpda_mixedmath_addint_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2390,7 +2390,7 @@ fn wpda_mixedmath_addint_0_5() {
 #[test]
 fn wpda_mixedmath_addint_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2402,7 +2402,7 @@ fn wpda_mixedmath_addint_1_0() {
 #[test]
 fn wpda_mixedmath_addint_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2414,7 +2414,7 @@ fn wpda_mixedmath_addint_1_1() {
 #[test]
 fn wpda_mixedmath_addint_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2426,7 +2426,7 @@ fn wpda_mixedmath_addint_1_2() {
 #[test]
 fn wpda_mixedmath_addint_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2438,7 +2438,7 @@ fn wpda_mixedmath_addint_1_3() {
 #[test]
 fn wpda_mixedmath_addint_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(1i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2450,7 +2450,7 @@ fn wpda_mixedmath_addint_1_5() {
 #[test]
 fn wpda_mixedmath_addint_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2462,7 +2462,7 @@ fn wpda_mixedmath_addint_2_0() {
 #[test]
 fn wpda_mixedmath_addint_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(1i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2474,7 +2474,7 @@ fn wpda_mixedmath_addint_2_1() {
 #[test]
 fn wpda_mixedmath_addint_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(2i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2486,7 +2486,7 @@ fn wpda_mixedmath_addint_2_2() {
 #[test]
 fn wpda_mixedmath_addint_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(3i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2498,7 +2498,7 @@ fn wpda_mixedmath_addint_2_3() {
 #[test]
 fn wpda_mixedmath_addint_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(Box::new(Int::NumLit(2i32)), Box::new(Int::NumLit(5i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(2i32)), std::sync::Arc::new(Int::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2515,7 +2515,7 @@ fn wpda_mixedmath_addint_2_5() {
 fn type_pres_mixedmath_and_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::And(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2537,7 +2537,7 @@ fn type_pres_mixedmath_and_true_true() {
 fn type_pres_mixedmath_or_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::Or(Box::new(Bool::BoolLit(true)), Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2559,7 +2559,7 @@ fn type_pres_mixedmath_or_true_true() {
 fn type_pres_mixedmath_not_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Bool
-    let input_term = Bool::Not(Box::new(Bool::BoolLit(true)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2581,7 +2581,7 @@ fn type_pres_mixedmath_not_true() {
 fn type_pres_mixedmath_addint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2603,7 +2603,7 @@ fn type_pres_mixedmath_addint_0_0() {
 fn type_pres_mixedmath_subint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2625,7 +2625,7 @@ fn type_pres_mixedmath_subint_0_0() {
 fn type_pres_mixedmath_mulint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2647,7 +2647,7 @@ fn type_pres_mixedmath_mulint_0_0() {
 fn type_pres_mixedmath_neg_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

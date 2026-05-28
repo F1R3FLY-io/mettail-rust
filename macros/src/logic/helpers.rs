@@ -427,11 +427,11 @@ pub fn generate_consolidated_congruence_rules(
         // Rebuild with new lam
         lam_rebuild_arms.push(quote! {
             #category::#apply_variant(_, arg) =>
-                #category::#apply_variant(Box::new(new_lam.clone()), arg.clone()),
+                #category::#apply_variant(std::sync::Arc::new(new_lam.clone()), arg.clone()),
         });
         lam_rebuild_arms.push(quote! {
             #category::#mapply_variant(_, args) =>
-                #category::#mapply_variant(Box::new(new_lam.clone()), args.clone()),
+                #category::#mapply_variant(std::sync::Arc::new(new_lam.clone()), args.clone()),
         });
     }
 
@@ -472,7 +472,7 @@ pub fn generate_consolidated_congruence_rules(
         rules.push(quote! {
             #rw_cat(t.clone(), match t {
                 #category::#apply_variant(lam, _) =>
-                    #category::#apply_variant(lam.clone(), Box::new(new_arg.clone())),
+                    #category::#apply_variant(lam.clone(), std::sync::Arc::new(new_arg.clone())),
                 _ => unreachable!(),
             }) <--
                 #cat_lower(t),

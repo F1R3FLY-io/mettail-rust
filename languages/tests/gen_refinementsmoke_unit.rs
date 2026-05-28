@@ -29,7 +29,7 @@ fn refinementsmoke_metadata_populated() {
 #[test]
 fn unit_refinementsmoke_posint_inttoposint() {
     mettail_runtime::clear_var_cache();
-    let term = PosInt::IntToPosInt(Box::new(Int::NumLit(0i32)));
+    let term = PosInt::IntToPosInt(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToPosInt");
     if let Ok(parsed) = PosInt::parse(&displayed) {

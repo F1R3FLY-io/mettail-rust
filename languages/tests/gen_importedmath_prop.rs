@@ -139,18 +139,18 @@ fn build_num_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Num {
     match choice {
         0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_num(),
         1 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
-            let f1 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Num::Add(f0, f1)
         },
         2 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
-            let f1 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Num::Sub(f0, f1)
         },
         _ => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
-            let f1 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Num::Div(f0, f1)
         },
     }

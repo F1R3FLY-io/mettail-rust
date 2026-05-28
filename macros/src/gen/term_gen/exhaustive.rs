@@ -400,7 +400,7 @@ fn generate_simple_constructor_case(
                 let mut __all = Some(true);
                 #(let __ = (&#arg_vars,);)*
                 terms.push(#cat_name::#label(
-                    #(Box::new(#arg_vars.clone()),)*
+                    #(std::sync::Arc::new(#arg_vars.clone()),)*
                     #(#none_args),*
                 ));
                 let _ = __all;
@@ -456,7 +456,7 @@ fn generate_unary_case(
             }
         } else {
             quote! {
-                #cat_name::#label(Box::new(arg1.clone()))
+                #cat_name::#label(std::sync::Arc::new(arg1.clone()))
             }
         };
 
@@ -498,8 +498,8 @@ fn generate_binary_case(
                             for arg1 in args1 {
                                 for arg2 in args2 {
                                     terms.push(#cat_name::#label(
-                                        Box::new(arg1.clone()),
-                                        Box::new(arg2.clone())
+                                        std::sync::Arc::new(arg1.clone()),
+                                        std::sync::Arc::new(arg2.clone())
                                     ));
                                 }
                             }
@@ -531,7 +531,7 @@ fn generate_nary_case(
     let constructor_args: Vec<TokenStream> = (0..n)
         .map(|i| {
             let argi = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
-            quote! { Box::new(#argi.clone()) }
+            quote! { std::sync::Arc::new(#argi.clone()) }
         })
         .collect();
 
@@ -701,7 +701,7 @@ fn generate_simple_binder_case(
                 // 1-binder scope
                 let binder_var = mettail_runtime::get_or_create_var(&binder_name);
                 let binder = mettail_runtime::Binder(binder_var);
-                let scope = mettail_runtime::Scope::new(vec![binder], Box::new(body.clone()));
+                let scope = mettail_runtime::Scope::new(vec![binder], std::sync::Arc::new(body.clone()));
                 terms.push(#cat_name::#label(scope));
             }
 
@@ -711,7 +711,7 @@ fn generate_simple_binder_case(
                 let binder = mettail_runtime::Binder(binder_var);
                 let binder2_var = mettail_runtime::get_or_create_var(&binder2_name);
                 let binder2 = mettail_runtime::Binder(binder2_var);
-                let scope = mettail_runtime::Scope::new(vec![binder, binder2], Box::new(body.clone()));
+                let scope = mettail_runtime::Scope::new(vec![binder, binder2], std::sync::Arc::new(body.clone()));
                 terms.push(#cat_name::#label(scope));
             }
         }
@@ -740,7 +740,7 @@ fn generate_simple_binder_case(
             for body in bodies_with_binder {
                 let binder_var = mettail_runtime::get_or_create_var(&binder_name);
                 let binder = mettail_runtime::Binder(binder_var);
-                let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+                let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
                 terms.push(#cat_name::#label(scope));
             }
         }
@@ -794,12 +794,12 @@ fn generate_binder_with_one_arg(
                         let binder_var = mettail_runtime::get_or_create_var(&binder_name);
                         let binder = mettail_runtime::Binder(binder_var);
                         // Scope::new will close free binder_var in body to bound variable
-                        let scope = mettail_runtime::Scope::new(binder, Box::new(body.clone()));
+                        let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body.clone()));
 
                         // Check depth constraint
                         // This is approximate since we don't track individual body depths
                         terms.push(#cat_name::#label(
-                            Box::new(arg1.clone()),
+                            std::sync::Arc::new(arg1.clone()),
                             scope
                         ));
                     }
@@ -837,7 +837,7 @@ fn generate_binder_with_multiple_args(
     let constructor_args: Vec<TokenStream> = (0..n)
         .map(|i| {
             let arg_i = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
-            quote! { Box::new(#arg_i.clone()) }
+            quote! { std::sync::Arc::new(#arg_i.clone()) }
         })
         .collect();
 
@@ -846,7 +846,7 @@ fn generate_binder_with_multiple_args(
         for body in &bodies_with_binder {
             let binder_var = mettail_runtime::get_or_create_var(&binder_name);
             let binder = mettail_runtime::Binder(binder_var);
-            let scope = mettail_runtime::Scope::new(binder, Box::new(body.clone()));
+            let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body.clone()));
             terms.push(#cat_name::#label(
                 #(#constructor_args,)*
                 scope

@@ -541,7 +541,7 @@ fn generate_random_simple_constructor(
                     quote! { panic!("Non-exported category") }
                 } else {
                     quote! {
-                        Box::new(#cat::generate_random_at_depth_internal(
+                        std::sync::Arc::new(#cat::generate_random_at_depth_internal(
                             vars, depth - 1, max_collection_width, rng, binding_depth,
                         ))
                     }
@@ -570,7 +570,7 @@ fn generate_random_unary(
 
     quote! {
         let arg = #arg_cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth);
-        #cat_name::#label(Box::new(arg))
+        #cat_name::#label(std::sync::Arc::new(arg))
     }
 }
 
@@ -611,13 +611,13 @@ fn generate_random_binary(
                 )
             };
             // Var is depth 0, so second arg can be depth - 1
-            let arg2 = Box::new(#arg2_cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth));
+            let arg2 = std::sync::Arc::new(#arg2_cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth));
             #cat_name::#label(arg1, arg2)
         }
     } else if is_arg2_var {
         // Second arg is Var, first is recursive
         quote! {
-            let arg1 = Box::new(#arg1_cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth));
+            let arg1 = std::sync::Arc::new(#arg1_cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth));
             let arg2 = if !vars.is_empty() {
                 let idx = rng.gen_range(0..vars.len());
                 mettail_runtime::OrdVar(
@@ -646,7 +646,7 @@ fn generate_random_binary(
 
             let arg1 = #arg1_cat::generate_random_at_depth_internal(vars, d1, max_collection_width, rng, binding_depth);
             let arg2 = #arg2_cat::generate_random_at_depth_internal(vars, d2, max_collection_width, rng, binding_depth);
-            #cat_name::#label(Box::new(arg1), Box::new(arg2))
+            #cat_name::#label(std::sync::Arc::new(arg1), std::sync::Arc::new(arg2))
         }
     }
 }
@@ -663,7 +663,7 @@ fn generate_random_nary(
             return quote! { panic!("Non-exported category") };
         }
         quote! {
-            Box::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
+            std::sync::Arc::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
         }
     }).collect();
 
@@ -721,7 +721,7 @@ fn generate_random_binder_constructor(
 /// Generate random multi-binder constructor (e.g., ^[x,y].body)
 ///
 /// Generates 1-3 random binder names, creates `Vec<Binder>`, and wraps with
-/// `Scope::new(binders, Box::new(body))`.
+/// `Scope::new(binders, std::sync::Arc::new(body))`.
 fn generate_random_multi_binder_constructor(
     cat_name: &Ident,
     rule: &GrammarRule,
@@ -786,7 +786,7 @@ fn generate_random_multi_binder_constructor(
             .into_iter()
             .map(|s| mettail_runtime::Binder(mettail_runtime::get_or_create_var(&s)))
             .collect();
-        let scope = mettail_runtime::Scope::new(binders, Box::new(body));
+        let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
     };
 
     if other_args.is_empty() {
@@ -809,7 +809,7 @@ fn generate_random_multi_binder_constructor(
             };
             let arg1 = #arg_cat::generate_random_at_depth_internal(vars, d1, max_collection_width, rng, binding_depth);
             #scope_construction
-            #cat_name::#label(Box::new(arg1), scope)
+            #cat_name::#label(std::sync::Arc::new(arg1), scope)
         }
     } else {
         // Multiple args: simplified
@@ -818,7 +818,7 @@ fn generate_random_multi_binder_constructor(
                 return quote! { panic!("Non-exported category") };
             }
             quote! {
-                Box::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
+                std::sync::Arc::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
             }
         }).collect();
 
@@ -855,7 +855,7 @@ fn generate_random_simple_binder(
 
         let binder_var = mettail_runtime::get_or_create_var(&binder_name);
         let binder = mettail_runtime::Binder(binder_var);
-        let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+        let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
 
         #cat_name::#label(scope)
     }
@@ -896,9 +896,9 @@ fn generate_random_binder_with_one_arg(
 
         let binder_var = mettail_runtime::get_or_create_var(&binder_name);
         let binder = mettail_runtime::Binder(binder_var);
-        let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+        let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
 
-        #cat_name::#label(Box::new(arg1), scope)
+        #cat_name::#label(std::sync::Arc::new(arg1), scope)
     }
 }
 
@@ -918,7 +918,7 @@ fn generate_random_binder_with_multiple_args(
             return quote! { panic!("Non-exported category") };
         }
         quote! {
-            Box::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
+            std::sync::Arc::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
         }
     }).collect();
 
@@ -937,7 +937,7 @@ fn generate_random_binder_with_multiple_args(
 
         let binder_var = mettail_runtime::get_or_create_var(&binder_name);
         let binder = mettail_runtime::Binder(binder_var);
-        let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+        let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
 
         #cat_name::#label(#(#arg_generations,)* scope)
     }

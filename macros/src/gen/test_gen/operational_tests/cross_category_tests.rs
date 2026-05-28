@@ -109,7 +109,7 @@ pub fn generate_cross_category_tests(
 
         if let Some(leaf) = leaf_map.get(&cast.param_category) {
             let construction = format!(
-                "{}::{}(Box::new({}))",
+                "{}::{}(std::sync::Arc::new({}))",
                 cast.result_category, cast.label, leaf.construction
             );
 
@@ -158,11 +158,11 @@ pub fn generate_cross_category_tests(
         if let Some(leaf) = leaf_map.get(&forward.param_category) {
             // Build A → B → A: reverse(forward(leaf))
             let inner = format!(
-                "{}::{}(Box::new({}))",
+                "{}::{}(std::sync::Arc::new({}))",
                 forward.result_category, forward.label, leaf.construction
             );
             let outer = format!(
-                "{}::{}(Box::new({}))",
+                "{}::{}(std::sync::Arc::new({}))",
                 reverse.result_category, reverse.label, inner
             );
 
@@ -204,7 +204,7 @@ pub fn generate_cross_category_tests(
 
             for hop in chain {
                 current = format!(
-                    "{}::{}(Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}))",
                     hop.result_category, hop.label, current
                 );
                 labels.push(hop.label.to_lowercase());
@@ -247,7 +247,7 @@ pub fn generate_cross_category_tests(
 
         for (_pname, pcat) in &cross.params {
             if let Some(leaf) = leaf_map.get(pcat.as_str()) {
-                parts.push(format!("Box::new({})", leaf.construction));
+                parts.push(format!("std::sync::Arc::new({})", leaf.construction));
             } else {
                 all_filled = false;
                 break;
@@ -349,7 +349,7 @@ pub fn generate_cross_category_tests(
             // for params of other categories, use direct leaf
             if let Some(source_leaf) = leaf_map.get(&cast.param_category) {
                 let cast_term = format!(
-                    "{}::{}(Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}))",
                     cast.result_category, cast.label, source_leaf.construction
                 );
 
@@ -358,9 +358,9 @@ pub fn generate_cross_category_tests(
 
                 for (_pname, pcat) in &eval_params {
                     if pcat == result_cat {
-                        eval_parts.push(format!("Box::new({})", cast_term));
+                        eval_parts.push(format!("std::sync::Arc::new({})", cast_term));
                     } else if let Some(leaf) = leaf_map.get(pcat.as_str()) {
-                        eval_parts.push(format!("Box::new({})", leaf.construction));
+                        eval_parts.push(format!("std::sync::Arc::new({})", leaf.construction));
                     } else {
                         all_filled = false;
                         break;
@@ -460,7 +460,7 @@ pub fn generate_cross_category_tests(
             };
 
             let cast_term = format!(
-                "{}::{}(Box::new({}))",
+                "{}::{}(std::sync::Arc::new({}))",
                 cast.result_category, cast.label, source_leaf.construction
             );
 
@@ -472,7 +472,7 @@ pub fn generate_cross_category_tests(
 
             // Mixed test: cast value as first param, native as second
             let construction_lhs = format!(
-                "{}::{}(Box::new({}), Box::new({}){})",
+                "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}){})",
                 result_cat, eval_rule.label, cast_term, native_leaf.construction, optional_tail
             );
 
@@ -496,7 +496,7 @@ pub fn generate_cross_category_tests(
 
             // Mixed test: native as first param, cast value as second
             let construction_rhs = format!(
-                "{}::{}(Box::new({}), Box::new({}){})",
+                "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}){})",
                 result_cat, eval_rule.label, native_leaf.construction, cast_term, optional_tail
             );
 
@@ -560,13 +560,13 @@ pub fn generate_cross_category_tests(
             // Build: each param is a Cast wrapping a leaf
             if let Some(leaf) = leaf_map.get(&cast.param_category) {
                 let cast_term = format!(
-                    "{}::{}(Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}))",
                     cast.result_category, cast.label, leaf.construction
                 );
 
                 let mut eval_parts: Vec<String> = eval_params
                     .iter()
-                    .map(|_| format!("Box::new({})", cast_term))
+                    .map(|_| format!("std::sync::Arc::new({})", cast_term))
                     .collect();
 
                 // Opt-Group: append `None` per Optional inner Simple.

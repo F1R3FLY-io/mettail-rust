@@ -178,7 +178,7 @@ fn wpds_parse_accepts_bool_via_cross_cat_projection_in_int_slot() {
     // Int slot. Post-Stage-1.1 (cross-cat-projection), the parser
     // INTENTIONALLY accepts via the auto-injected `BoolToInt` cast
     // constructor: `BooleanLit("true")` lexes to `Bool::BoolLit(true)`,
-    // which projects to `Int::BoolToInt(Box::new(Bool::BoolLit(true)))`
+    // which projects to `Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))`
     // via the user-defined `BoolToInt . v:Bool |- v : Int` rule (or its
     // auto-injected equivalent).
     //

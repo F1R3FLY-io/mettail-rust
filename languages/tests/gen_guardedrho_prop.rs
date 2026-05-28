@@ -188,7 +188,7 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     ))
 }.unwrap_proc(),
         2 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::CastInt(f0)
         },
         3 => {
@@ -200,21 +200,21 @@ bag.insert(build_proc_from_tape(reader, child_depth));
 Proc::PPar(bag)
         },
         4 => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::POutput(f0, f1)
         },
         5 => {
-            let pre_0 = Box::new(build_name_from_tape(reader, child_depth));
+            let pre_0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             let pred_1 = mettail_runtime::BehavioralPred::Top;
             let binder_name = format!("a{}", reader.next_byte() % 8);
 let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
 let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
             Proc::PGuardedInput(pre_0, pred_1, scope)
         },
         _ => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             Proc::PDrop(f0)
         },
     }
@@ -255,7 +255,7 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     ))
 }.unwrap_name(),
         _ => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Name::NQuote(f0)
         },
     }

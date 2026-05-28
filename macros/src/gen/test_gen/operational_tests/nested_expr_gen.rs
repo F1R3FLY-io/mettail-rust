@@ -184,11 +184,11 @@ pub fn generate_nested_tests(
         for (slot_idx, (_pname, pcat)) in outer.params.iter().enumerate() {
             if slot_idx == wi.inner_slot {
                 // Use the inner ground term
-                construction_parts.push(format!("Box::new({})", inner_gt.construction_code));
+                construction_parts.push(format!("std::sync::Arc::new({})", inner_gt.construction_code));
             } else {
                 // Use a simple leaf for this category
                 if let Some(leaf) = simple_leaves.get(pcat.as_str()) {
-                    construction_parts.push(format!("Box::new({})", leaf.construction));
+                    construction_parts.push(format!("std::sync::Arc::new({})", leaf.construction));
                 } else {
                     all_slots_filled = false;
                     break;

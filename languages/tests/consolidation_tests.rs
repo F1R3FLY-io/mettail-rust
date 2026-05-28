@@ -30,24 +30,24 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
 
     leaf.prop_recursive(max_depth, 64, 4, |inner| {
         prop_oneof![
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::AddInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::SubInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::MulInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::DivInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::ModInt(Box::new(a), Box::new(b))),
-            inner.clone().prop_map(|a| Int::Neg(Box::new(a))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::PowInt(Box::new(a), Box::new(b))),
-            inner.clone().prop_map(|a| Int::Fact(Box::new(a))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::AddInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::SubInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::MulInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::DivInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::ModInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            inner.clone().prop_map(|a| Int::Neg(std::sync::Arc::new(a))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::PowInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            inner.clone().prop_map(|a| Int::Fact(std::sync::Arc::new(a))),
             (inner.clone(), inner.clone(), inner.clone()).prop_map(|(c, t, e)| Int::Tern(
-                Box::new(c),
-                Box::new(t),
-                Box::new(e)
+                std::sync::Arc::new(c),
+                std::sync::Arc::new(t),
+                std::sync::Arc::new(e)
             )),
             (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::BitAndInt(Box::new(a), Box::new(b))),
+                .prop_map(|(a, b)| Int::BitAndInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
             (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::BitOrInt(Box::new(a), Box::new(b))),
-            inner.clone().prop_map(|a| Int::BitNotInt(Box::new(a))),
+                .prop_map(|(a, b)| Int::BitOrInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            inner.clone().prop_map(|a| Int::BitNotInt(std::sync::Arc::new(a))),
         ]
     })
 }
@@ -205,28 +205,28 @@ fn vi_extract(t: &Int) -> Vec<(Int, usize)> {
 /// Rebuild a term by replacing the field at the given variant index.
 fn vi_rebuild(t: &Int, vi: usize, new_val: Int) -> Int {
     match (t, vi) {
-        (Int::AddInt(_, x1), 0) => Int::AddInt(Box::new(new_val), x1.clone()),
-        (Int::AddInt(x0, _), 1) => Int::AddInt(x0.clone(), Box::new(new_val)),
-        (Int::SubInt(_, x1), 2) => Int::SubInt(Box::new(new_val), x1.clone()),
-        (Int::SubInt(x0, _), 3) => Int::SubInt(x0.clone(), Box::new(new_val)),
-        (Int::MulInt(_, x1), 4) => Int::MulInt(Box::new(new_val), x1.clone()),
-        (Int::MulInt(x0, _), 5) => Int::MulInt(x0.clone(), Box::new(new_val)),
-        (Int::DivInt(_, x1), 6) => Int::DivInt(Box::new(new_val), x1.clone()),
-        (Int::DivInt(x0, _), 7) => Int::DivInt(x0.clone(), Box::new(new_val)),
-        (Int::ModInt(_, x1), 8) => Int::ModInt(Box::new(new_val), x1.clone()),
-        (Int::ModInt(x0, _), 9) => Int::ModInt(x0.clone(), Box::new(new_val)),
-        (Int::Neg(_), 10) => Int::Neg(Box::new(new_val)),
-        (Int::PowInt(_, x1), 11) => Int::PowInt(Box::new(new_val), x1.clone()),
-        (Int::PowInt(x0, _), 12) => Int::PowInt(x0.clone(), Box::new(new_val)),
-        (Int::Fact(_), 13) => Int::Fact(Box::new(new_val)),
-        (Int::Tern(_, x1, x2), 14) => Int::Tern(Box::new(new_val), x1.clone(), x2.clone()),
-        (Int::Tern(x0, _, x2), 15) => Int::Tern(x0.clone(), Box::new(new_val), x2.clone()),
-        (Int::Tern(x0, x1, _), 16) => Int::Tern(x0.clone(), x1.clone(), Box::new(new_val)),
-        (Int::BitAndInt(_, x1), 17) => Int::BitAndInt(Box::new(new_val), x1.clone()),
-        (Int::BitAndInt(x0, _), 18) => Int::BitAndInt(x0.clone(), Box::new(new_val)),
-        (Int::BitOrInt(_, x1), 19) => Int::BitOrInt(Box::new(new_val), x1.clone()),
-        (Int::BitOrInt(x0, _), 20) => Int::BitOrInt(x0.clone(), Box::new(new_val)),
-        (Int::BitNotInt(_), 21) => Int::BitNotInt(Box::new(new_val)),
+        (Int::AddInt(_, x1), 0) => Int::AddInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::AddInt(x0, _), 1) => Int::AddInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::SubInt(_, x1), 2) => Int::SubInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::SubInt(x0, _), 3) => Int::SubInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::MulInt(_, x1), 4) => Int::MulInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::MulInt(x0, _), 5) => Int::MulInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::DivInt(_, x1), 6) => Int::DivInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::DivInt(x0, _), 7) => Int::DivInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::ModInt(_, x1), 8) => Int::ModInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::ModInt(x0, _), 9) => Int::ModInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::Neg(_), 10) => Int::Neg(std::sync::Arc::new(new_val)),
+        (Int::PowInt(_, x1), 11) => Int::PowInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::PowInt(x0, _), 12) => Int::PowInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::Fact(_), 13) => Int::Fact(std::sync::Arc::new(new_val)),
+        (Int::Tern(_, x1, x2), 14) => Int::Tern(std::sync::Arc::new(new_val), x1.clone(), x2.clone()),
+        (Int::Tern(x0, _, x2), 15) => Int::Tern(x0.clone(), std::sync::Arc::new(new_val), x2.clone()),
+        (Int::Tern(x0, x1, _), 16) => Int::Tern(x0.clone(), x1.clone(), std::sync::Arc::new(new_val)),
+        (Int::BitAndInt(_, x1), 17) => Int::BitAndInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::BitAndInt(x0, _), 18) => Int::BitAndInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::BitOrInt(_, x1), 19) => Int::BitOrInt(std::sync::Arc::new(new_val), x1.clone()),
+        (Int::BitOrInt(x0, _), 20) => Int::BitOrInt(x0.clone(), std::sync::Arc::new(new_val)),
+        (Int::BitNotInt(_), 21) => Int::BitNotInt(std::sync::Arc::new(new_val)),
         _ => unreachable!("invalid variant index {} for {:?}", vi, classify_int(t)),
     }
 }
@@ -511,18 +511,18 @@ proptest! {
 fn test_variant_index_injectivity() {
     // Collect all (constructor, field_position, vi) triples from representative terms
     let terms: Vec<Int> = vec![
-        Int::AddInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::SubInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::MulInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::DivInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::ModInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::Neg(Box::new(Int::NumLit(0))),
-        Int::PowInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::Fact(Box::new(Int::NumLit(0))),
-        Int::Tern(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2))),
-        Int::BitAndInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::BitOrInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::BitNotInt(Box::new(Int::NumLit(0))),
+        Int::AddInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::SubInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::MulInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::DivInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::ModInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::Neg(std::sync::Arc::new(Int::NumLit(0))),
+        Int::PowInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::Fact(std::sync::Arc::new(Int::NumLit(0))),
+        Int::Tern(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2))),
+        Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
+        Int::BitNotInt(std::sync::Arc::new(Int::NumLit(0))),
     ];
 
     let mut all_vis: Vec<(String, usize, usize)> = Vec::new(); // (ctor, field_pos, vi)
@@ -560,8 +560,8 @@ fn test_leaf_produces_no_subterms() {
 /// Test pair extraction for mismatched constructors.
 #[test]
 fn test_pair_mismatch_is_empty() {
-    let add = Int::AddInt(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2)));
-    let sub = Int::SubInt(Box::new(Int::NumLit(3)), Box::new(Int::NumLit(4)));
+    let add = Int::AddInt(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2)));
+    let sub = Int::SubInt(std::sync::Arc::new(Int::NumLit(3)), std::sync::Arc::new(Int::NumLit(4)));
 
     assert!(pair_extract_per_constructor(&add, &sub).is_empty());
     assert!(pair_extract_consolidated(&add, &sub).is_empty());

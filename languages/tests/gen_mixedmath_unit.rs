@@ -29,7 +29,7 @@ fn mixedmath_metadata_populated() {
 #[test]
 fn unit_mixedmath_bool_and() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::And(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for And");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -42,7 +42,7 @@ fn unit_mixedmath_bool_and() {
 #[test]
 fn unit_mixedmath_bool_or() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Or(Box::new(Bool::BoolLit(false)), Box::new(Bool::BoolLit(false)));
+    let term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Or");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -55,7 +55,7 @@ fn unit_mixedmath_bool_or() {
 #[test]
 fn unit_mixedmath_bool_not() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Not(Box::new(Bool::BoolLit(false)));
+    let term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Not");
     if let Ok(parsed) = Bool::parse(&displayed) {
@@ -68,7 +68,7 @@ fn unit_mixedmath_bool_not() {
 #[test]
 fn unit_mixedmath_int_addint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::AddInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -81,7 +81,7 @@ fn unit_mixedmath_int_addint() {
 #[test]
 fn unit_mixedmath_int_subint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::SubInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -94,7 +94,7 @@ fn unit_mixedmath_int_subint() {
 #[test]
 fn unit_mixedmath_int_mulint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::MulInt(Box::new(Int::NumLit(0i32)), Box::new(Int::NumLit(0i32)));
+    let term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -107,7 +107,7 @@ fn unit_mixedmath_int_mulint() {
 #[test]
 fn unit_mixedmath_int_neg() {
     mettail_runtime::clear_var_cache();
-    let term = Int::Neg(Box::new(Int::NumLit(0i32)));
+    let term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Neg");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -120,7 +120,7 @@ fn unit_mixedmath_int_neg() {
 #[test]
 fn unit_mixedmath_int_booltoint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BoolToInt(Box::new(Bool::BoolLit(false)));
+    let term = Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {

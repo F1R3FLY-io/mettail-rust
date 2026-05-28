@@ -1060,3 +1060,40 @@ Per this amendment, **Exp 14 Substage 7 and Exp 15 Substage 7 SHIP**:
 - Bench-protocol amendment recorded in `chain-10000-experiments-ledger.md` (this entry).
 
 The architectural ceiling at ~45 GB remains the empirical reality of the WPDS-runtime parser. Future memory-budget-stricter targets (e.g., closing chain_10000 in 24 GB) require either an algorithmic substitution (Earley + memoization, CYK, GLR-with-Tomita full merge — all out of scope for Exp 14/15) or grammar-side restructuring beyond the empirical 3× cursor merge factor.
+
+### Exp 19 (2026-05-28) — DEFINITIVE root cause via heaptrack: O(N²) AST clone, NOT the parser. Arc-share refactor.
+
+**The "~45 GB architectural ceiling" conclusion above is SUPERSEDED.** It was measured *before* this session's hybrid Earley+WPDS work (H3 chain absorption + R4 cohort suppression + Earley-chart O(N²)→O(N) fix) collapsed the cursor explosion. With the cursor bottleneck removed, the *underlying* bottleneck was exposed and then identified definitively by heaptrack — it is **not** the parser at all.
+
+**This session's preceding fixes (shipped):**
+- H3 `earley_outboard_chain` absorbs left-assoc chains, emits SPPF directly; R4 (`pos_in_absorbed_chain_interval`) suppresses redundant cross-cat cohort dispatch inside absorbed intervals → apply_action 99.77M → 10,567 at chain_500; cohort_cursors_emitted → 372.
+- Earley chart fix (`earley_outboard_chain` Step 6): `chart.predict("Chain", pos)` was seeded at EVERY position → O(N²) chart. Now predicted only at position 0 → `max_set_items` N → constant 4; chain_2000 wall 882s → **4.34s** (200×).
+
+**heaptrack on chain_1000 (post-fixes, parse-only `Int::parse_structured`):**
+- peak heap = **299.55 MB**; **~288 MB (96%) = `calculator::clone_iterative::assemble`** = `<BigInt as Clone>::clone` / `<UInt32 as Clone>::clone` invoked by `ActionArg::into_term::<T>`.
+- call counts: **996004 ≈ N²** and **498501 ≈ N²/2 (the triangular sum 1+2+…+N)**.
+- fires via TWO paths, both N²: (1) walker eager action-firing `step_fanout→…→fire_action_via_transient→action_fn→into_term`; (2) realize `realize_root_to_terms_with_weights→action_fn→into_term`.
+
+**Mechanism:** generated AST nodes held recursive children as `Box<T>` (`enums.rs:287/310/…`), so `T::clone()` DEEP-copied the whole subtree (`iterative_clone.rs`). `into_term`'s `Arc::try_unwrap`-else-`(*arc).clone()` fell to the deep clone whenever the term Arc was shared (always — realize memo / cartesian combos / transient builder hold sibling refs). At chain step k the accumulated left operand is a k-deep tree; deep-clone O(k); Σ = **O(N²)**. Extrapolated: chain_10000 ≈ 300 MB × 100 = ~30 GB — i.e. the prior "~45 GB ceiling" was 96% AST-clone, ~4% genuine parser state.
+
+**Falsified hypotheses (data, not opinion):** NOT cohort `visited_*` im::OrdSet (walker-stats: 0.07 MB / 81 Arcs at chain_1000). NOT the Earley chart (O(N) after the fix; RSS unchanged when wall dropped 200× — proving memory lives in the AST layer the chart never fed). NOT SPPF nodes (deduped, O(N), ~1 MB).
+
+**Fix (Arc-share refactor — in progress, this entry's experiment):** recursive AST children `Box<Cat>` → `std::sync::Arc<Cat>` in codegen (`enums.rs`). Then derived `Clone` is `Arc::clone` per child — O(1), non-recursive (stops at the Arc boundary). The generated semantic actions extract the SHARED `Arc` via new `ActionArg::into_term_arc` and store it directly, so building `Add(left,right)` shares `left`'s subtree (O(1)) instead of deep-cloning it. `moniker` supports `BoundTerm for Arc<T>` (bound/mod.rs:313, needs `T: Clone` — satisfied). `iterative_drop` reworked to `Arc::into_inner` (descend only on unique ownership → keeps Drop stack-safe + O(1) for shared subtrees). The old iterative-clone machinery is obsolete (Arc::clone never recurses) and its generation is disabled.
+
+**Projected chain_10000 after the refactor: ~100–250 MB** (AST O(N) ≈ 1 MB of Arc nodes + O(N) parser state, tens of MB) + a scoped large-stack thread at the parse entry for the ~N-deep emit/realize recursion. The < 500 MB target — declared "genuinely unachievable for this parser architecture" above — is achievable, and WITHOUT an algorithm substitution: the parser was never the problem.
+
+#### Exp 19 EMPIRICAL RESULT (2026-05-28) — TARGET ACHIEVED, ceiling overturned
+
+Measured on the release binary AFTER the full Box→Arc refactor (codegen + all hand-written sources):
+
+| chain | RSS before (O(N²)) | RSS after (Arc, O(N)) | wall before | wall after |
+|-------|-------------------:|----------------------:|------------:|-----------:|
+| 1000  | 300 MB             | **14.8 MB** (20×↓)    | 1.07 s      | 0.06 s     |
+| 2000  | 1.53 GB            | **26.5 MB** (57×↓)    | 4.34 s      | 0.11 s     |
+| 10000 | ~30 GB (OOM)       | **112 MB** (~270×↓)   | OOM         | 0.74 s     |
+
+**chain_10000 = 112 MB < 500 MB — PRIMARY GOAL ACHIEVED.** Memory scales O(N) (14.8 → 26.5 → 112 MB across 1000/2000/10000; was 5.5×/2× = quadratic, now ~linear). The prior "≥ 44.7 GB architectural ceiling requiring a fundamentally different parser algorithm" is **DEFINITIVELY FALSIFIED** — that figure was ~96% O(N²) AST deep-clone, exposed (not caused) by this session's H3/R4/chart fixes, and eliminated by the Arc representation change with NO parser-algorithm substitution.
+
+Correctness gates ALL GREEN: prattail gauntlet **4217/0**; `gen_calculator_op` **1325/6** (the 6 are the known pre-existing `len` cross-cat failures — unchanged); `gen_rhocalc_op` **532/0**; `h3_chain_correctness` **4/4** (incl. the decisive `1+2+3+4+5=15` eval). Eval semantics preserved under Arc sharing (Hash/Eq/semantic_hash deref transparently; `-3!` outer-discriminant tagging untouched; binder ops CoW via moniker `Arc::make_mut`).
+
+Secondary (stack depth): `emit_sppf_subforest` recurses ~chain_len/2 deep; chain_10000 (~5000) overflows the default ~2 MB test-thread stack — runs to completion under a large stack (`RUST_MIN_STACK`/scoped thread). Memory is unaffected (only touched stack pages count). The scoped-thread fix makes it hermetic.

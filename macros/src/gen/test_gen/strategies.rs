@@ -1051,7 +1051,7 @@ fn generate_direct_recursive_build(
                     // the prior None-only emission.
                     let field_cat_lower = field_cat.to_lowercase();
                     code.push_str(&format!(
-                        "            let f{i}: Option<Box<{fc}>> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some(Box::new(build_{fcl}_from_tape(reader, child_depth))) }};\n",
+                        "            let f{i}: Option<std::sync::Arc<{fc}>> = if reader.next_byte() & 1 == 0 {{ None }} else {{ Some(std::sync::Arc::new(build_{fcl}_from_tape(reader, child_depth))) }};\n",
                         i = i,
                         fc = field_cat,
                         fcl = field_cat_lower,
@@ -1059,7 +1059,7 @@ fn generate_direct_recursive_build(
                     field_exprs.push(format!("f{}", i));
                 } else if is_known {
                     code.push_str(&format!(
-                        "            let f{i} = Box::new(build_{fc}_from_tape(reader, child_depth));\n",
+                        "            let f{i} = std::sync::Arc::new(build_{fc}_from_tape(reader, child_depth));\n",
                         i = i,
                         fc = field_cat_lower,
                     ));
@@ -1080,7 +1080,7 @@ fn generate_direct_recursive_build(
                 } else {
                     // Unknown category — shouldn't happen for known languages
                     code.push_str(&format!(
-                        "            let f{} = Box::new(build_{}_from_tape(reader, 0));\n",
+                        "            let f{} = std::sync::Arc::new(build_{}_from_tape(reader, 0));\n",
                         i, cat_lower,
                     ));
                     field_exprs.push(format!("f{}", i));
@@ -1239,7 +1239,7 @@ fn generate_binder_direct_build(
 
         if is_known && !field.is_collection {
             code.push_str(&format!(
-                "            let pre_{i} = Box::new(build_{fc}_from_tape(reader, child_depth));\n",
+                "            let pre_{i} = std::sync::Arc::new(build_{fc}_from_tape(reader, child_depth));\n",
                 i = i,
                 fc = field_cat_lower,
             ));
@@ -1293,7 +1293,7 @@ fn generate_binder_direct_build(
                              }})\n\
                              .collect();\n\
                          let body = build_{bc}_from_tape(reader, child_depth);\n\
-                         let scope = mettail_runtime::Scope::new(binders, Box::new(body));\n",
+                         let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));\n",
             vp = var_prefix,
             bc = body_cat_lower,
         ));
@@ -1302,7 +1302,7 @@ fn generate_binder_direct_build(
             "            let binder_name = format!(\"{vp}{{}}\", reader.next_byte() % 8);\n\
                          let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));\n\
                          let body = build_{bc}_from_tape(reader, child_depth);\n\
-                         let scope = mettail_runtime::Scope::new(binder, Box::new(body));\n",
+                         let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));\n",
             vp = var_prefix,
             bc = body_cat_lower,
         ));

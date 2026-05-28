@@ -410,42 +410,42 @@ pub(crate) fn rho_try_bigrat_unary(a: &RhoProc) -> Option<mettail_runtime::Canon
 
 pub(crate) fn rho_proc_int_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_int_bin(a, w) {
-        Some(n) => RhoProc::CastInt(Box::new(RhoInt::NumLit(n))),
+        Some(n) => RhoProc::CastInt(std::sync::Arc::new(RhoInt::NumLit(n))),
         None => RhoProc::Err,
     }
 }
 
 pub(crate) fn rho_proc_uint_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_uint_bin(a, w) {
-        Some(n) => RhoProc::CastUInt32(Box::new(RhoUInt32::NumLit(n))),
+        Some(n) => RhoProc::CastUInt32(std::sync::Arc::new(RhoUInt32::NumLit(n))),
         None => RhoProc::Err,
     }
 }
 
 pub(crate) fn rho_proc_float_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_float_bin(a, w) {
-        Some(cf) => RhoProc::CastFloat(Box::new(RhoFloat::FloatLit(cf))),
+        Some(cf) => RhoProc::CastFloat(std::sync::Arc::new(RhoFloat::FloatLit(cf))),
         None => RhoProc::Err,
     }
 }
 
 pub(crate) fn rho_proc_fixed_bin<W: CastWidth>(a: &RhoProc, w: W) -> RhoProc {
     match rho_try_fixed_bin(a, w) {
-        Some(fp) => RhoProc::CastFixed(Box::new(RhoFixed::FixedLit(fp))),
+        Some(fp) => RhoProc::CastFixed(std::sync::Arc::new(RhoFixed::FixedLit(fp))),
         None => RhoProc::Err,
     }
 }
 
 pub(crate) fn rho_proc_bigint_unary(a: &RhoProc) -> RhoProc {
     match rho_try_bigint_unary(a) {
-        Some(n) => RhoProc::CastBigInt(Box::new(RhoBigInt::NumLit(n))),
+        Some(n) => RhoProc::CastBigInt(std::sync::Arc::new(RhoBigInt::NumLit(n))),
         None => RhoProc::Err,
     }
 }
 
 pub(crate) fn rho_proc_bigrat_unary(a: &RhoProc) -> RhoProc {
     match rho_try_bigrat_unary(a) {
-        Some(r) => RhoProc::CastBigRat(Box::new(RhoBigRat::RatLit(r))),
+        Some(r) => RhoProc::CastBigRat(std::sync::Arc::new(RhoBigRat::RatLit(r))),
         None => RhoProc::Err,
     }
 }

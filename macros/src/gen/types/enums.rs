@@ -140,7 +140,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                 proc_macro2::Span::call_site()
             );
             variants.push(quote! {
-                #lam_variant(mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#cat_name>>)
+                #lam_variant(mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#cat_name>>)
             });
 
             // Multi-binder lambda: MLam{Domain}
@@ -149,7 +149,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                 proc_macro2::Span::call_site()
             );
             variants.push(quote! {
-                #mlam_variant(mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#cat_name>>)
+                #mlam_variant(mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#cat_name>>)
             });
 
             // Application variant: Apply{Domain}
@@ -159,7 +159,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                 proc_macro2::Span::call_site()
             );
             variants.push(quote! {
-                #apply_variant(Box<#cat_name>, Box<#domain_name>)
+                #apply_variant(std::sync::Arc<#cat_name>, std::sync::Arc<#domain_name>)
             });
 
             // Multi-application variant: MApply{Domain}
@@ -168,20 +168,28 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
                 proc_macro2::Span::call_site()
             );
             variants.push(quote! {
-                #mapply_variant(Box<#cat_name>, Vec<#domain_name>)
+                #mapply_variant(std::sync::Arc<#cat_name>, Vec<#domain_name>)
             });
         }
 
         // Float categories use canonical wrapper payload (Eq/Hash/Ord).
         // NOTE: Debug is NOT derived — it is manually implemented via an iterative work-stack
         // in gen/syntax/debug.rs to avoid stack overflow on deeply nested terms.
-        // NOTE: Clone is NOT derived — it is manually implemented via an iterative
-        // work-stack in gen/term_ops/iterative_clone.rs to avoid stack overflow
-        // on deeply nested terms.
+        // NOTE: Clone IS derived (ARC refactor, 2026-05-28). Recursive AST
+        // children are now `std::sync::Arc<Cat>` (was `Box<Cat>`), so derived
+        // `Clone` is `Arc::clone` per child — O(1) and NON-recursive (it stops
+        // at the Arc boundary, never descending the subtree). This collapses
+        // the former O(N²) deep-clone (`into_term` cloned the whole accumulated
+        // subtree at every chain step; heaptrack: 96% of peak heap at
+        // chain_1000) to O(N) sharing. The old iterative work-stack clone in
+        // gen/term_ops/iterative_clone.rs existed solely to avoid stack
+        // overflow on deep `Box` chains — obsolete now that Arc::clone does not
+        // recurse; its generation is disabled in gen/mod.rs.
         // NOTE: PartialEq, Eq, PartialOrd, Ord, Hash are NOT derived — they are manually
         // implemented via iterative work-stacks in gen/term_ops/iterative_cmp.rs and
-        // gen/term_ops/iterative_hash.rs to avoid stack overflow on deeply nested terms.
-        let derives = quote! { #[derive(mettail_runtime::BoundTerm)] };
+        // gen/term_ops/iterative_hash.rs to avoid stack overflow on deeply nested terms
+        // (these still traverse the full tree, so iterative stack-safety is retained).
+        let derives = quote! { #[derive(Clone, mettail_runtime::BoundTerm)] };
         quote! {
             #derives
             pub enum #cat_name {
@@ -284,7 +292,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
             },
             FieldType::NonTerminal(ident, _) => {
                 // Single non-terminal field
-                quote! { #label(Box<#ident>) }
+                quote! { #label(std::sync::Arc<#ident>) }
             },
             FieldType::Collection { coll_type, element_type } => {
                 // Single collection field
@@ -307,7 +315,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                     quote! { mettail_runtime::OrdVar }
                 },
                 FieldType::NonTerminal(ident, _) => {
-                    quote! { Box<#ident> }
+                    quote! { std::sync::Arc<#ident> }
                 },
                 FieldType::Collection { coll_type, element_type } => {
                     let coll_type_ident = match coll_type {
@@ -346,7 +354,7 @@ fn generate_variant_from_term_context(
                 if let TypeExpr::Arrow { codomain, .. } = ty {
                     let body_type = type_expr_to_rust_type(codomain);
                     fields.push(quote! {
-                        mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#body_type>>
+                        mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body_type>>
                     });
                 }
             },
@@ -356,7 +364,7 @@ fn generate_variant_from_term_context(
                 if let TypeExpr::Arrow { codomain, .. } = ty {
                     let body_type = type_expr_to_rust_type(codomain);
                     fields.push(quote! {
-                        mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#body_type>>
+                        mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body_type>>
                     });
                 }
             },
@@ -402,13 +410,13 @@ fn generate_variant_from_term_context(
                                 TypeExpr::Collection { .. } | TypeExpr::Map { .. } => {
                                     vec![quote! { Option<#inner_ty> }]
                                 }
-                                _ => vec![quote! { Option<Box<#inner_ty>> }],
+                                _ => vec![quote! { Option<std::sync::Arc<#inner_ty>> }],
                             }
                         },
                         TermParam::Abstraction { ty, .. } => {
                             if let TypeExpr::Arrow { codomain, .. } = ty {
                                 let body = type_expr_to_rust_type(codomain);
-                                vec![quote! { Option<mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#body>>> }]
+                                vec![quote! { Option<mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body>>> }]
                             } else {
                                 vec![]
                             }
@@ -416,7 +424,7 @@ fn generate_variant_from_term_context(
                         TermParam::MultiAbstraction { ty, .. } => {
                             if let TypeExpr::Arrow { codomain, .. } = ty {
                                 let body = type_expr_to_rust_type(codomain);
-                                vec![quote! { Option<mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#body>>> }]
+                                vec![quote! { Option<mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body>>> }]
                             } else {
                                 vec![]
                             }
@@ -475,7 +483,7 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
         if i == body_idx {
             // This is the body - generate Scope
             fields.push(quote! {
-                mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#body_cat>>
+                mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body_cat>>
             });
         } else {
             // Regular field (comes before or after, but not binder or body)
@@ -484,7 +492,7 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                     fields.push(quote! { mettail_runtime::Var<String> });
                 },
                 GrammarItem::NonTerminal { ident: cat, .. } => {
-                    fields.push(quote! { Box<#cat> });
+                    fields.push(quote! { std::sync::Arc<#cat> });
                 },
                 GrammarItem::Collection { coll_type, element_type, .. } => {
                     // Collection becomes a field with the appropriate collection type
@@ -541,7 +549,7 @@ fn type_expr_to_field_type(
                         })
                         .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 })
                 },
-                NonTerminalKind::Category => quote! { Box<#ident> },
+                NonTerminalKind::Category => quote! { std::sync::Arc<#ident> },
             }
         },
         TypeExpr::Collection { coll_type, element } => {

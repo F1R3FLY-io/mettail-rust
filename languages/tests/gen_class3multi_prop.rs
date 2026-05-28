@@ -187,7 +187,7 @@ mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
 })
 .collect();
 let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binders, Box::new(body));
+let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
             Proc::TaggedInputs(pre_0, pre_1, scope)
         },
     }
@@ -228,7 +228,7 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     ))
 }.unwrap_name(),
         _ => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Name::NQuote(f0)
         },
     }

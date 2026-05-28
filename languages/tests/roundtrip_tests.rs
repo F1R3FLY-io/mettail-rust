@@ -40,37 +40,37 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
             prop_oneof![
                 // AddInt: left + right
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::AddInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::AddInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // SubInt: left - right
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::SubInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::SubInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // MulInt: left * right
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::MulInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::MulInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // DivInt: left / right
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::DivInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::DivInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // ModInt: left % right
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::ModInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::ModInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // Neg: -operand
-                inner.clone().prop_map(|a| { Int::Neg(Box::new(a)) }),
+                inner.clone().prop_map(|a| { Int::Neg(std::sync::Arc::new(a)) }),
                 // PowInt: base ^ exponent
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::PowInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::PowInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // Fact: operand!
-                inner.clone().prop_map(|a| { Int::Fact(Box::new(a)) }),
+                inner.clone().prop_map(|a| { Int::Fact(std::sync::Arc::new(a)) }),
                 // Tern: cond ? then : else
                 (inner.clone(), inner.clone(), inner.clone())
-                    .prop_map(|(c, t, e)| { Int::Tern(Box::new(c), Box::new(t), Box::new(e)) }),
+                    .prop_map(|(c, t, e)| { Int::Tern(std::sync::Arc::new(c), std::sync::Arc::new(t), std::sync::Arc::new(e)) }),
                 // BitAndInt: a & b
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::BitAndInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::BitAndInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // BitOrInt: a | b
                 (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::BitOrInt(Box::new(a), Box::new(b)) }),
+                    .prop_map(|(a, b)| { Int::BitOrInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
                 // BitNotInt: ~a
-                inner.clone().prop_map(|a| { Int::BitNotInt(Box::new(a)) }),
+                inner.clone().prop_map(|a| { Int::BitNotInt(std::sync::Arc::new(a)) }),
             ]
         },
     )
@@ -143,7 +143,7 @@ fn roundtrip_depth0_literals() {
 
 #[test]
 fn roundtrip_simple_binary_ops() {
-    let ops: Vec<(&str, fn(Box<Int>, Box<Int>) -> Int)> = vec![
+    let ops: Vec<(&str, fn(std::sync::Arc<Int>, std::sync::Arc<Int>) -> Int)> = vec![
         ("+", |a, b| Int::AddInt(a, b)),
         ("-", |a, b| Int::SubInt(a, b)),
         ("*", |a, b| Int::MulInt(a, b)),
@@ -156,7 +156,7 @@ fn roundtrip_simple_binary_ops() {
 
     for (op_name, constructor) in &ops {
         mettail_runtime::clear_var_cache();
-        let term = constructor(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2)));
+        let term = constructor(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2)));
         let displayed = format!("{}", term);
         mettail_runtime::clear_var_cache();
         let parsed = Int::parse(&displayed);
@@ -174,7 +174,7 @@ fn roundtrip_simple_binary_ops() {
 fn roundtrip_unary_ops() {
     // Neg
     mettail_runtime::clear_var_cache();
-    let term = Int::Neg(Box::new(Int::NumLit(5)));
+    let term = Int::Neg(std::sync::Arc::new(Int::NumLit(5)));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);
@@ -187,7 +187,7 @@ fn roundtrip_unary_ops() {
 
     // Fact
     mettail_runtime::clear_var_cache();
-    let term = Int::Fact(Box::new(Int::NumLit(5)));
+    let term = Int::Fact(std::sync::Arc::new(Int::NumLit(5)));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);
@@ -200,7 +200,7 @@ fn roundtrip_unary_ops() {
 
     // BitNotInt: ~operand
     mettail_runtime::clear_var_cache();
-    let term = Int::BitNotInt(Box::new(Int::NumLit(5)));
+    let term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(5)));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);
@@ -216,7 +216,7 @@ fn roundtrip_unary_ops() {
 fn roundtrip_ternary() {
     mettail_runtime::clear_var_cache();
     let term =
-        Int::Tern(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(42)), Box::new(Int::NumLit(0)));
+        Int::Tern(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(42)), std::sync::Arc::new(Int::NumLit(0)));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);
@@ -233,8 +233,8 @@ fn roundtrip_nested_expressions() {
     // (1 + 2) - 3
     mettail_runtime::clear_var_cache();
     let term = Int::SubInt(
-        Box::new(Int::AddInt(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2)))),
-        Box::new(Int::NumLit(3)),
+        std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2)))),
+        std::sync::Arc::new(Int::NumLit(3)),
     );
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
@@ -248,7 +248,7 @@ fn roundtrip_nested_expressions() {
 
     // -(3 + 4)
     mettail_runtime::clear_var_cache();
-    let term = Int::Neg(Box::new(Int::AddInt(Box::new(Int::NumLit(3)), Box::new(Int::NumLit(4)))));
+    let term = Int::Neg(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(3)), std::sync::Arc::new(Int::NumLit(4)))));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);

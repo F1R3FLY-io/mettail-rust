@@ -908,7 +908,7 @@ fn generate_var_visit_arm(
                         if let Some(name) = &fv.pretty_name {
                             if let Some(replacement) = env_map.get(name) {
                                 break 'find #cat::#cast_label(
-                                    Box::new(replacement.clone())
+                                    std::sync::Arc::new(replacement.clone())
                                 );
                             }
                         }
@@ -1631,12 +1631,12 @@ fn generate_regular_assemble_arm(
         .map(|(i, field)| {
             let result_ident = format_ident!("field_{}", i);
             if field.is_optional {
-                // Already Option<Box<T>> or Option<Container> from extract; pass through.
+                // Already Option<Arc<T>> or Option<Container> from extract; pass through.
                 quote! { #result_ident }
             } else if field.is_collection {
                 quote! { #result_ident }
             } else {
-                quote! { Box::new(#result_ident) }
+                quote! { std::sync::Arc::new(#result_ident) }
             }
         })
         .collect();
@@ -1690,11 +1690,11 @@ fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
         let slot_name = format_ident!("f{}_slot", i);
         let some_flag = format_ident!("f{}_some", i);
         return quote! {
-            let #result_ident: Option<Box<_>> = if #some_flag {
+            let #result_ident: Option<std::sync::Arc<_>> = if #some_flag {
                 match results[#slot_name].take()
                     .expect("iterative subst: missing optional inner")
                 {
-                    AnySubstTerm::#wrap(v) => Some(Box::new(v)),
+                    AnySubstTerm::#wrap(v) => Some(std::sync::Arc::new(v)),
                     _ => unreachable!("iterative subst: wrong category in optional slot"),
                 }
             } else {
@@ -1912,7 +1912,7 @@ fn generate_binder_assemble_arm(
                 AnySubstTerm::#body_wrap(v) => v,
                 _ => unreachable!("iterative subst: wrong category in binder body slot"),
             };
-            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
             results[slot] = Some(AnySubstTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
@@ -1946,7 +1946,7 @@ fn generate_multi_binder_assemble_arm(
                     "iterative subst: wrong category in multi-binder body slot"
                 ),
             };
-            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
             results[slot] = Some(AnySubstTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
@@ -2098,7 +2098,7 @@ fn emit_pre_field_constructs(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream>
             if field.is_collection {
                 quote! { #result_ident, }
             } else {
-                quote! { Box::new(#result_ident), }
+                quote! { std::sync::Arc::new(#result_ident), }
             }
         })
         .collect()

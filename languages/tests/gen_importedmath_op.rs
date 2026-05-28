@@ -32,7 +32,7 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_importedmath_div_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -45,7 +45,7 @@ fn eval_importedmath_div_3_5() {
 #[test]
 fn eval_importedmath_div_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -58,7 +58,7 @@ fn eval_importedmath_div_3_3() {
 #[test]
 fn eval_importedmath_div_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -71,7 +71,7 @@ fn eval_importedmath_div_3_2() {
 #[test]
 fn eval_importedmath_div_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -84,7 +84,7 @@ fn eval_importedmath_div_3_1() {
 #[test]
 fn eval_importedmath_div_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -97,7 +97,7 @@ fn eval_importedmath_div_2_5() {
 #[test]
 fn eval_importedmath_div_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -110,7 +110,7 @@ fn eval_importedmath_div_2_3() {
 #[test]
 fn eval_importedmath_div_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -123,7 +123,7 @@ fn eval_importedmath_div_2_2() {
 #[test]
 fn eval_importedmath_div_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -136,7 +136,7 @@ fn eval_importedmath_div_2_1() {
 #[test]
 fn eval_importedmath_div_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -149,7 +149,7 @@ fn eval_importedmath_div_1_5() {
 #[test]
 fn eval_importedmath_div_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -162,7 +162,7 @@ fn eval_importedmath_div_1_3() {
 #[test]
 fn eval_importedmath_div_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -175,7 +175,7 @@ fn eval_importedmath_div_1_2() {
 #[test]
 fn eval_importedmath_div_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -188,7 +188,7 @@ fn eval_importedmath_div_1_1() {
 #[test]
 fn eval_importedmath_div_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -201,7 +201,7 @@ fn eval_importedmath_div_0_5() {
 #[test]
 fn eval_importedmath_div_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -214,7 +214,7 @@ fn eval_importedmath_div_0_3() {
 #[test]
 fn eval_importedmath_div_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -227,7 +227,7 @@ fn eval_importedmath_div_0_2() {
 #[test]
 fn eval_importedmath_div_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -240,7 +240,7 @@ fn eval_importedmath_div_0_1() {
 #[test]
 fn eval_importedmath_sub_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -253,7 +253,7 @@ fn eval_importedmath_sub_3_5() {
 #[test]
 fn eval_importedmath_sub_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -266,7 +266,7 @@ fn eval_importedmath_sub_3_3() {
 #[test]
 fn eval_importedmath_sub_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -279,7 +279,7 @@ fn eval_importedmath_sub_3_2() {
 #[test]
 fn eval_importedmath_sub_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -292,7 +292,7 @@ fn eval_importedmath_sub_3_1() {
 #[test]
 fn eval_importedmath_sub_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -305,7 +305,7 @@ fn eval_importedmath_sub_3_0() {
 #[test]
 fn eval_importedmath_sub_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -318,7 +318,7 @@ fn eval_importedmath_sub_2_5() {
 #[test]
 fn eval_importedmath_sub_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -331,7 +331,7 @@ fn eval_importedmath_sub_2_3() {
 #[test]
 fn eval_importedmath_sub_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -344,7 +344,7 @@ fn eval_importedmath_sub_2_2() {
 #[test]
 fn eval_importedmath_sub_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -357,7 +357,7 @@ fn eval_importedmath_sub_2_1() {
 #[test]
 fn eval_importedmath_sub_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -370,7 +370,7 @@ fn eval_importedmath_sub_2_0() {
 #[test]
 fn eval_importedmath_sub_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -383,7 +383,7 @@ fn eval_importedmath_sub_1_5() {
 #[test]
 fn eval_importedmath_sub_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -396,7 +396,7 @@ fn eval_importedmath_sub_1_3() {
 #[test]
 fn eval_importedmath_sub_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -409,7 +409,7 @@ fn eval_importedmath_sub_1_2() {
 #[test]
 fn eval_importedmath_sub_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -422,7 +422,7 @@ fn eval_importedmath_sub_1_1() {
 #[test]
 fn eval_importedmath_sub_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -435,7 +435,7 @@ fn eval_importedmath_sub_1_0() {
 #[test]
 fn eval_importedmath_sub_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -448,7 +448,7 @@ fn eval_importedmath_sub_0_5() {
 #[test]
 fn eval_importedmath_sub_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -461,7 +461,7 @@ fn eval_importedmath_sub_0_3() {
 #[test]
 fn eval_importedmath_sub_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -474,7 +474,7 @@ fn eval_importedmath_sub_0_2() {
 #[test]
 fn eval_importedmath_sub_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -487,7 +487,7 @@ fn eval_importedmath_sub_0_1() {
 #[test]
 fn eval_importedmath_sub_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -500,7 +500,7 @@ fn eval_importedmath_sub_0_0() {
 #[test]
 fn eval_importedmath_add_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -513,7 +513,7 @@ fn eval_importedmath_add_3_5() {
 #[test]
 fn eval_importedmath_add_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -526,7 +526,7 @@ fn eval_importedmath_add_3_3() {
 #[test]
 fn eval_importedmath_add_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -539,7 +539,7 @@ fn eval_importedmath_add_3_2() {
 #[test]
 fn eval_importedmath_add_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -552,7 +552,7 @@ fn eval_importedmath_add_3_1() {
 #[test]
 fn eval_importedmath_add_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -565,7 +565,7 @@ fn eval_importedmath_add_3_0() {
 #[test]
 fn eval_importedmath_add_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -578,7 +578,7 @@ fn eval_importedmath_add_2_5() {
 #[test]
 fn eval_importedmath_add_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -591,7 +591,7 @@ fn eval_importedmath_add_2_3() {
 #[test]
 fn eval_importedmath_add_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -604,7 +604,7 @@ fn eval_importedmath_add_2_2() {
 #[test]
 fn eval_importedmath_add_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -617,7 +617,7 @@ fn eval_importedmath_add_2_1() {
 #[test]
 fn eval_importedmath_add_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -630,7 +630,7 @@ fn eval_importedmath_add_2_0() {
 #[test]
 fn eval_importedmath_add_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -643,7 +643,7 @@ fn eval_importedmath_add_1_5() {
 #[test]
 fn eval_importedmath_add_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -656,7 +656,7 @@ fn eval_importedmath_add_1_3() {
 #[test]
 fn eval_importedmath_add_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -669,7 +669,7 @@ fn eval_importedmath_add_1_2() {
 #[test]
 fn eval_importedmath_add_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -682,7 +682,7 @@ fn eval_importedmath_add_1_1() {
 #[test]
 fn eval_importedmath_add_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -695,7 +695,7 @@ fn eval_importedmath_add_1_0() {
 #[test]
 fn eval_importedmath_add_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -708,7 +708,7 @@ fn eval_importedmath_add_0_5() {
 #[test]
 fn eval_importedmath_add_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -721,7 +721,7 @@ fn eval_importedmath_add_0_3() {
 #[test]
 fn eval_importedmath_add_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -734,7 +734,7 @@ fn eval_importedmath_add_0_2() {
 #[test]
 fn eval_importedmath_add_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -747,7 +747,7 @@ fn eval_importedmath_add_0_1() {
 #[test]
 fn eval_importedmath_add_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -764,7 +764,7 @@ fn eval_importedmath_add_0_0() {
 #[test]
 fn nested_importedmath_div_sub_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -777,7 +777,7 @@ fn nested_importedmath_div_sub_0_2_in_slot1() {
 #[test]
 fn nested_importedmath_div_sub_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -790,7 +790,7 @@ fn nested_importedmath_div_sub_0_1_in_slot1() {
 #[test]
 fn nested_importedmath_div_add_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -803,7 +803,7 @@ fn nested_importedmath_div_add_0_2_in_slot1() {
 #[test]
 fn nested_importedmath_div_add_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -816,7 +816,7 @@ fn nested_importedmath_div_add_0_1_in_slot1() {
 #[test]
 fn nested_importedmath_div_sub_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -829,7 +829,7 @@ fn nested_importedmath_div_sub_0_2_in_slot0() {
 #[test]
 fn nested_importedmath_div_sub_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -842,7 +842,7 @@ fn nested_importedmath_div_sub_0_1_in_slot0() {
 #[test]
 fn nested_importedmath_div_add_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -855,7 +855,7 @@ fn nested_importedmath_div_add_0_2_in_slot0() {
 #[test]
 fn nested_importedmath_div_add_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -868,7 +868,7 @@ fn nested_importedmath_div_add_0_1_in_slot0() {
 #[test]
 fn nested_importedmath_sub_div_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -881,7 +881,7 @@ fn nested_importedmath_sub_div_0_2_in_slot1() {
 #[test]
 fn nested_importedmath_sub_div_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -894,7 +894,7 @@ fn nested_importedmath_sub_div_0_1_in_slot1() {
 #[test]
 fn nested_importedmath_sub_add_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -907,7 +907,7 @@ fn nested_importedmath_sub_add_0_2_in_slot1() {
 #[test]
 fn nested_importedmath_sub_add_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -920,7 +920,7 @@ fn nested_importedmath_sub_add_0_1_in_slot1() {
 #[test]
 fn nested_importedmath_sub_add_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -933,7 +933,7 @@ fn nested_importedmath_sub_add_0_0_in_slot1() {
 #[test]
 fn nested_importedmath_sub_div_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -946,7 +946,7 @@ fn nested_importedmath_sub_div_0_2_in_slot0() {
 #[test]
 fn nested_importedmath_sub_div_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -959,7 +959,7 @@ fn nested_importedmath_sub_div_0_1_in_slot0() {
 #[test]
 fn nested_importedmath_sub_add_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -972,7 +972,7 @@ fn nested_importedmath_sub_add_0_2_in_slot0() {
 #[test]
 fn nested_importedmath_sub_add_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -985,7 +985,7 @@ fn nested_importedmath_sub_add_0_1_in_slot0() {
 #[test]
 fn nested_importedmath_sub_add_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -998,7 +998,7 @@ fn nested_importedmath_sub_add_0_0_in_slot0() {
 #[test]
 fn nested_importedmath_add_div_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1011,7 +1011,7 @@ fn nested_importedmath_add_div_0_2_in_slot1() {
 #[test]
 fn nested_importedmath_add_div_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1024,7 +1024,7 @@ fn nested_importedmath_add_div_0_1_in_slot1() {
 #[test]
 fn nested_importedmath_add_sub_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1037,7 +1037,7 @@ fn nested_importedmath_add_sub_0_2_in_slot1() {
 #[test]
 fn nested_importedmath_add_sub_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1050,7 +1050,7 @@ fn nested_importedmath_add_sub_0_1_in_slot1() {
 #[test]
 fn nested_importedmath_add_sub_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1063,7 +1063,7 @@ fn nested_importedmath_add_sub_0_0_in_slot1() {
 #[test]
 fn nested_importedmath_add_div_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1076,7 +1076,7 @@ fn nested_importedmath_add_div_0_2_in_slot0() {
 #[test]
 fn nested_importedmath_add_div_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1089,7 +1089,7 @@ fn nested_importedmath_add_div_0_1_in_slot0() {
 #[test]
 fn nested_importedmath_add_sub_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1102,7 +1102,7 @@ fn nested_importedmath_add_sub_0_2_in_slot0() {
 #[test]
 fn nested_importedmath_add_sub_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1115,7 +1115,7 @@ fn nested_importedmath_add_sub_0_1_in_slot0() {
 #[test]
 fn nested_importedmath_add_sub_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1132,7 +1132,7 @@ fn nested_importedmath_add_sub_0_0_in_slot0() {
 #[test]
 fn wfst_importedmath_dispatch_add_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1144,7 +1144,7 @@ fn wfst_importedmath_dispatch_add_eval() {
 #[test]
 fn wfst_importedmath_dispatch_sub_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1156,7 +1156,7 @@ fn wfst_importedmath_dispatch_sub_eval() {
 #[test]
 fn wfst_importedmath_dispatch_div_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Div(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Div(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1293,7 +1293,7 @@ fn assoc_importedmath_div_left() {
 #[test]
 fn wpda_importedmath_add_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1305,7 +1305,7 @@ fn wpda_importedmath_add_0_0() {
 #[test]
 fn wpda_importedmath_add_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1317,7 +1317,7 @@ fn wpda_importedmath_add_0_1() {
 #[test]
 fn wpda_importedmath_add_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1329,7 +1329,7 @@ fn wpda_importedmath_add_0_2() {
 #[test]
 fn wpda_importedmath_add_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1341,7 +1341,7 @@ fn wpda_importedmath_add_0_3() {
 #[test]
 fn wpda_importedmath_add_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1353,7 +1353,7 @@ fn wpda_importedmath_add_0_5() {
 #[test]
 fn wpda_importedmath_add_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1365,7 +1365,7 @@ fn wpda_importedmath_add_1_0() {
 #[test]
 fn wpda_importedmath_add_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1377,7 +1377,7 @@ fn wpda_importedmath_add_1_1() {
 #[test]
 fn wpda_importedmath_add_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1389,7 +1389,7 @@ fn wpda_importedmath_add_1_2() {
 #[test]
 fn wpda_importedmath_add_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1401,7 +1401,7 @@ fn wpda_importedmath_add_1_3() {
 #[test]
 fn wpda_importedmath_add_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1413,7 +1413,7 @@ fn wpda_importedmath_add_1_5() {
 #[test]
 fn wpda_importedmath_add_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1425,7 +1425,7 @@ fn wpda_importedmath_add_2_0() {
 #[test]
 fn wpda_importedmath_add_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1437,7 +1437,7 @@ fn wpda_importedmath_add_2_1() {
 #[test]
 fn wpda_importedmath_add_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1449,7 +1449,7 @@ fn wpda_importedmath_add_2_2() {
 #[test]
 fn wpda_importedmath_add_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1461,7 +1461,7 @@ fn wpda_importedmath_add_2_3() {
 #[test]
 fn wpda_importedmath_add_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1473,7 +1473,7 @@ fn wpda_importedmath_add_2_5() {
 #[test]
 fn wpda_importedmath_add_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1485,7 +1485,7 @@ fn wpda_importedmath_add_3_0() {
 #[test]
 fn wpda_importedmath_add_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1497,7 +1497,7 @@ fn wpda_importedmath_add_3_1() {
 #[test]
 fn wpda_importedmath_add_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1509,7 +1509,7 @@ fn wpda_importedmath_add_3_2() {
 #[test]
 fn wpda_importedmath_add_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1521,7 +1521,7 @@ fn wpda_importedmath_add_3_3() {
 #[test]
 fn wpda_importedmath_add_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1533,7 +1533,7 @@ fn wpda_importedmath_add_3_5() {
 #[test]
 fn wpda_importedmath_sub_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1545,7 +1545,7 @@ fn wpda_importedmath_sub_0_0() {
 #[test]
 fn wpda_importedmath_sub_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1557,7 +1557,7 @@ fn wpda_importedmath_sub_0_1() {
 #[test]
 fn wpda_importedmath_sub_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1569,7 +1569,7 @@ fn wpda_importedmath_sub_0_2() {
 #[test]
 fn wpda_importedmath_sub_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1581,7 +1581,7 @@ fn wpda_importedmath_sub_0_3() {
 #[test]
 fn wpda_importedmath_sub_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1593,7 +1593,7 @@ fn wpda_importedmath_sub_0_5() {
 #[test]
 fn wpda_importedmath_sub_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1605,7 +1605,7 @@ fn wpda_importedmath_sub_1_0() {
 #[test]
 fn wpda_importedmath_sub_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1617,7 +1617,7 @@ fn wpda_importedmath_sub_1_1() {
 #[test]
 fn wpda_importedmath_sub_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1629,7 +1629,7 @@ fn wpda_importedmath_sub_1_2() {
 #[test]
 fn wpda_importedmath_sub_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1641,7 +1641,7 @@ fn wpda_importedmath_sub_1_3() {
 #[test]
 fn wpda_importedmath_sub_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1653,7 +1653,7 @@ fn wpda_importedmath_sub_1_5() {
 #[test]
 fn wpda_importedmath_sub_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1665,7 +1665,7 @@ fn wpda_importedmath_sub_2_0() {
 #[test]
 fn wpda_importedmath_sub_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1677,7 +1677,7 @@ fn wpda_importedmath_sub_2_1() {
 #[test]
 fn wpda_importedmath_sub_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1689,7 +1689,7 @@ fn wpda_importedmath_sub_2_2() {
 #[test]
 fn wpda_importedmath_sub_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1701,7 +1701,7 @@ fn wpda_importedmath_sub_2_3() {
 #[test]
 fn wpda_importedmath_sub_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1713,7 +1713,7 @@ fn wpda_importedmath_sub_2_5() {
 #[test]
 fn wpda_importedmath_sub_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1725,7 +1725,7 @@ fn wpda_importedmath_sub_3_0() {
 #[test]
 fn wpda_importedmath_sub_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1737,7 +1737,7 @@ fn wpda_importedmath_sub_3_1() {
 #[test]
 fn wpda_importedmath_sub_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1749,7 +1749,7 @@ fn wpda_importedmath_sub_3_2() {
 #[test]
 fn wpda_importedmath_sub_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1761,7 +1761,7 @@ fn wpda_importedmath_sub_3_3() {
 #[test]
 fn wpda_importedmath_sub_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1778,7 +1778,7 @@ fn wpda_importedmath_sub_3_5() {
 fn type_pres_importedmath_add_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Num
-    let input_term = Num::Add(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1800,7 +1800,7 @@ fn type_pres_importedmath_add_0_0() {
 fn type_pres_importedmath_sub_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Num
-    let input_term = Num::Sub(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = ImportedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

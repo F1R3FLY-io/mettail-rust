@@ -1792,8 +1792,8 @@ fn debug_display_chained_comparison() {
     mettail_runtime::clear_var_cache();
     let x = mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x")));
     let y_var = mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("y")));
-    let inner = Bool::NeBool(Box::new(Bool::BVar(x.clone())), Box::new(Bool::BoolLit(true)));
-    let outer = Bool::GtBool(Box::new(inner), Box::new(Bool::BVar(y_var)));
+    let inner = Bool::NeBool(std::sync::Arc::new(Bool::BVar(x.clone())), std::sync::Arc::new(Bool::BoolLit(true)));
+    let outer = Bool::GtBool(std::sync::Arc::new(inner), std::sync::Arc::new(Bool::BVar(y_var)));
     let displayed = format!("{}", outer);
     println!("GtBool(NeBool(x, true), y) displays as: '{}'", displayed);
 
@@ -1832,9 +1832,9 @@ fn test_bool_display_roundtrip_nested_lt() {
 
     // LtBool(LtBool(true,true), LtBool(true,true))
     let a = || Bool::BoolLit(true);
-    let inner_left = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let inner_right = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let term = Bool::LtBool(Box::new(inner_left), Box::new(inner_right));
+    let inner_left = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let inner_right = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let term = Bool::LtBool(std::sync::Arc::new(inner_left), std::sync::Arc::new(inner_right));
 
     let displayed = format!("{}", term);
     eprintln!("displayed: {:?}", displayed);
@@ -1853,13 +1853,13 @@ fn test_bool_display_roundtrip_deep_lt() {
 
     // LtBool(LtBool(LtBool(true,true), LtBool(true,true)), LtBool(LtBool(true,true), LtBool(true,true)))
     let a = || Bool::BoolLit(true);
-    let l1 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let l2 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let l3 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let l4 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let left = Bool::LtBool(Box::new(l1), Box::new(l2));
-    let right = Bool::LtBool(Box::new(l3), Box::new(l4));
-    let term = Bool::LtBool(Box::new(left), Box::new(right));
+    let l1 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let l2 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let l3 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let l4 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let left = Bool::LtBool(std::sync::Arc::new(l1), std::sync::Arc::new(l2));
+    let right = Bool::LtBool(std::sync::Arc::new(l3), std::sync::Arc::new(l4));
+    let term = Bool::LtBool(std::sync::Arc::new(left), std::sync::Arc::new(right));
 
     let displayed = format!("{}", term);
     eprintln!("displayed: {:?}", displayed);
@@ -1880,13 +1880,13 @@ fn test_bool_display_roundtrip_deep_lt_vars() {
     let a = || Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
         mettail_runtime::get_or_create_var("a".to_string())
     )));
-    let l1 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let l2 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let l3 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let l4 = Bool::LtBool(Box::new(a()), Box::new(a()));
-    let left = Bool::LtBool(Box::new(l1), Box::new(l2));
-    let right = Bool::LtBool(Box::new(l3), Box::new(l4));
-    let term = Bool::LtBool(Box::new(left), Box::new(right));
+    let l1 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let l2 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let l3 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let l4 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
+    let left = Bool::LtBool(std::sync::Arc::new(l1), std::sync::Arc::new(l2));
+    let right = Bool::LtBool(std::sync::Arc::new(l3), std::sync::Arc::new(l4));
+    let term = Bool::LtBool(std::sync::Arc::new(left), std::sync::Arc::new(right));
 
     let displayed = format!("{}", term);
     eprintln!("displayed: {:?}", displayed);
@@ -2241,7 +2241,7 @@ fn test_try_eval_deep_addint_10000() {
     // the default Rust stack; the PDA heap-allocates its work stack.
     let mut term = Int::NumLit(10_000);
     for i in (0..10_000).rev() {
-        term = Int::AddInt(Box::new(Int::NumLit(i)), Box::new(term));
+        term = Int::AddInt(std::sync::Arc::new(Int::NumLit(i)), std::sync::Arc::new(term));
     }
     let v = term.try_eval();
     // Sum of 0..=10000 = 50_005_000 (within i32 range).
@@ -2255,7 +2255,7 @@ fn test_try_eval_deep_neg_10000() {
     // 10 000 nested unary negations of Lit(1). Even number of negs → result is 1.
     let mut term = Int::NumLit(1);
     for _ in 0..10_000 {
-        term = Int::Neg(Box::new(term));
+        term = Int::Neg(std::sync::Arc::new(term));
     }
     let v = term.try_eval();
     assert_eq!(v, Some(1),
@@ -2268,7 +2268,7 @@ fn test_try_eval_deep_fact_no_panic() {
     // Factorial of 50 overflows i32. Calculator's Fact rule uses
     // `try_fold(..., checked_mul).unwrap_or(0)` so overflow returns 0, not panic.
     // The important property: no panic, no stack overflow.
-    let term = Int::Fact(Box::new(Int::NumLit(50)));
+    let term = Int::Fact(std::sync::Arc::new(Int::NumLit(50)));
     let _ = term.try_eval(); // Should not panic.
 }
 
@@ -2281,9 +2281,9 @@ fn test_try_eval_deep_mixed_ops_1000() {
     let mut term = Int::NumLit(1);
     for i in 0..1000 {
         term = match i % 3 {
-            0 => Int::AddInt(Box::new(term), Box::new(Int::NumLit(1))),  // +1
-            1 => Int::MulInt(Box::new(term), Box::new(Int::NumLit(1))),  // × 1 (identity)
-            _ => Int::Neg(Box::new(Int::Neg(Box::new(term)))),           // double-neg (identity)
+            0 => Int::AddInt(std::sync::Arc::new(term), std::sync::Arc::new(Int::NumLit(1))),  // +1
+            1 => Int::MulInt(std::sync::Arc::new(term), std::sync::Arc::new(Int::NumLit(1))),  // × 1 (identity)
+            _ => Int::Neg(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(term)))),           // double-neg (identity)
         };
     }
     let v = term.try_eval();

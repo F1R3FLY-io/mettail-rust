@@ -43,7 +43,7 @@ fn unit_rhocalc_proc_pzero() {
 #[test]
 fn unit_rhocalc_proc_pdrop() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PDrop(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Proc::PDrop(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PDrop");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -58,7 +58,7 @@ fn unit_rhocalc_proc_pdrop() {
 #[test]
 fn unit_rhocalc_proc_poutput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POutput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PZero));
+    let term = Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POutput");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -73,7 +73,7 @@ fn unit_rhocalc_proc_poutput() {
 #[test]
 fn unit_rhocalc_name_nquote() {
     mettail_runtime::clear_var_cache();
-    let term = Name::NQuote(Box::new(Proc::PZero));
+    let term = Name::NQuote(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuote");
     if let Ok(parsed) = Name::parse(&displayed) {
@@ -100,7 +100,7 @@ fn unit_rhocalc_proc_err() {
 #[test]
 fn unit_rhocalc_proc_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastBigRat(Box::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBigRat");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -113,7 +113,7 @@ fn unit_rhocalc_proc_castbigrat() {
 #[test]
 fn unit_rhocalc_proc_castfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastFixed(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastFixed");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -126,7 +126,7 @@ fn unit_rhocalc_proc_castfixed() {
 #[test]
 fn unit_rhocalc_proc_castfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastFloat");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -139,7 +139,7 @@ fn unit_rhocalc_proc_castfloat() {
 #[test]
 fn unit_rhocalc_proc_castbigint() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastBigInt(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBigInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -152,7 +152,7 @@ fn unit_rhocalc_proc_castbigint() {
 #[test]
 fn unit_rhocalc_proc_castuint32() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastUInt32(Box::new(UInt32::NumLit(0u32)));
+    let term = Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastUInt32");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -165,7 +165,7 @@ fn unit_rhocalc_proc_castuint32() {
 #[test]
 fn unit_rhocalc_proc_castint() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastInt(Box::new(Int::NumLit(0i64)));
+    let term = Proc::CastInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -178,7 +178,7 @@ fn unit_rhocalc_proc_castint() {
 #[test]
 fn unit_rhocalc_proc_castbool() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastBool(Box::new(Bool::BoolLit(false)));
+    let term = Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBool");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -191,7 +191,7 @@ fn unit_rhocalc_proc_castbool() {
 #[test]
 fn unit_rhocalc_proc_caststr() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastStr(Box::new(Str::StringLit(String::new())));
+    let term = Proc::CastStr(std::sync::Arc::new(Str::StringLit(String::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastStr");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -204,7 +204,7 @@ fn unit_rhocalc_proc_caststr() {
 #[test]
 fn unit_rhocalc_proc_castlist() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastList(Box::new(List::ListLit(Vec::new())));
+    let term = Proc::CastList(std::sync::Arc::new(List::ListLit(Vec::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastList");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -217,7 +217,7 @@ fn unit_rhocalc_proc_castlist() {
 #[test]
 fn unit_rhocalc_proc_castbag() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastBag(Box::new(Bag::BagLit(mettail_runtime::HashBag::new())));
+    let term = Proc::CastBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -230,7 +230,7 @@ fn unit_rhocalc_proc_castbag() {
 #[test]
 fn unit_rhocalc_proc_castmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastMap(Box::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term = Proc::CastMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -243,7 +243,7 @@ fn unit_rhocalc_proc_castmap() {
 #[test]
 fn unit_rhocalc_proc_intbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntBinProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -256,7 +256,7 @@ fn unit_rhocalc_proc_intbinproc() {
 #[test]
 fn unit_rhocalc_proc_uintbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UIntBinProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -269,7 +269,7 @@ fn unit_rhocalc_proc_uintbinproc() {
 #[test]
 fn unit_rhocalc_proc_floatbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatBinProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -282,7 +282,7 @@ fn unit_rhocalc_proc_floatbinproc() {
 #[test]
 fn unit_rhocalc_proc_fixedbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedBinProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -295,7 +295,7 @@ fn unit_rhocalc_proc_fixedbinproc() {
 #[test]
 fn unit_rhocalc_proc_bigintcastproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::BigintCastProc(Box::new(Proc::PZero));
+    let term = Proc::BigintCastProc(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigintCastProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -308,7 +308,7 @@ fn unit_rhocalc_proc_bigintcastproc() {
 #[test]
 fn unit_rhocalc_proc_bigratcastproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::BigratCastProc(Box::new(Proc::PZero));
+    let term = Proc::BigratCastProc(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigratCastProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -321,7 +321,7 @@ fn unit_rhocalc_proc_bigratcastproc() {
 #[test]
 fn unit_rhocalc_int_negint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::NegInt(Box::new(Int::NumLit(0i64)));
+    let term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegInt");
     if let Ok(alts) = Int::parse_via_wpda_all(&displayed) {
@@ -337,7 +337,7 @@ fn unit_rhocalc_int_negint() {
 #[test]
 fn unit_rhocalc_proc_fractionproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::FractionProc(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FractionProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -350,7 +350,7 @@ fn unit_rhocalc_proc_fractionproc() {
 #[test]
 fn unit_rhocalc_proc_or() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Or(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Or(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Or");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -363,7 +363,7 @@ fn unit_rhocalc_proc_or() {
 #[test]
 fn unit_rhocalc_proc_and() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::And(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::And(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for And");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -376,7 +376,7 @@ fn unit_rhocalc_proc_and() {
 #[test]
 fn unit_rhocalc_proc_bitor() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::BitOr(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOr");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -389,7 +389,7 @@ fn unit_rhocalc_proc_bitor() {
 #[test]
 fn unit_rhocalc_proc_bitand() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::BitAnd(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAnd");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -402,7 +402,7 @@ fn unit_rhocalc_proc_bitand() {
 #[test]
 fn unit_rhocalc_proc_bitnot() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::BitNot(Box::new(Proc::PZero));
+    let term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNot");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -415,7 +415,7 @@ fn unit_rhocalc_proc_bitnot() {
 #[test]
 fn unit_rhocalc_proc_eq() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Eq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Eq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Eq");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -428,7 +428,7 @@ fn unit_rhocalc_proc_eq() {
 #[test]
 fn unit_rhocalc_proc_ne() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Ne(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Ne(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Ne");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -441,7 +441,7 @@ fn unit_rhocalc_proc_ne() {
 #[test]
 fn unit_rhocalc_proc_gt() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Gt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Gt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Gt");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -454,7 +454,7 @@ fn unit_rhocalc_proc_gt() {
 #[test]
 fn unit_rhocalc_proc_lt() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Lt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Lt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Lt");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -467,7 +467,7 @@ fn unit_rhocalc_proc_lt() {
 #[test]
 fn unit_rhocalc_proc_gteq() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::GtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::GtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEq");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -480,7 +480,7 @@ fn unit_rhocalc_proc_gteq() {
 #[test]
 fn unit_rhocalc_proc_lteq() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::LtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::LtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEq");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -493,7 +493,7 @@ fn unit_rhocalc_proc_lteq() {
 #[test]
 fn unit_rhocalc_proc_add() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Add(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Add(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Add");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -506,7 +506,7 @@ fn unit_rhocalc_proc_add() {
 #[test]
 fn unit_rhocalc_proc_sub() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Sub(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Sub(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Sub");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -519,7 +519,7 @@ fn unit_rhocalc_proc_sub() {
 #[test]
 fn unit_rhocalc_proc_mul() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Mul(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Mul(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Mul");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -532,7 +532,7 @@ fn unit_rhocalc_proc_mul() {
 #[test]
 fn unit_rhocalc_proc_div() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Div(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Div");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -545,7 +545,7 @@ fn unit_rhocalc_proc_div() {
 #[test]
 fn unit_rhocalc_proc_mod() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Mod(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Mod");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -558,7 +558,7 @@ fn unit_rhocalc_proc_mod() {
 #[test]
 fn unit_rhocalc_proc_negproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::NegProc(Box::new(Proc::PZero));
+    let term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -571,7 +571,7 @@ fn unit_rhocalc_proc_negproc() {
 #[test]
 fn unit_rhocalc_proc_concatlist() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ConcatList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ConcatList");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -584,7 +584,7 @@ fn unit_rhocalc_proc_concatlist() {
 #[test]
 fn unit_rhocalc_proc_elemlist() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ElemList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ElemList");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -597,7 +597,7 @@ fn unit_rhocalc_proc_elemlist() {
 #[test]
 fn unit_rhocalc_proc_deletelist() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::DeleteList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteList");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -610,7 +610,7 @@ fn unit_rhocalc_proc_deletelist() {
 #[test]
 fn unit_rhocalc_proc_unionbag() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::UnionBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UnionBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -623,7 +623,7 @@ fn unit_rhocalc_proc_unionbag() {
 #[test]
 fn unit_rhocalc_proc_removebag() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::RemoveBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for RemoveBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -636,7 +636,7 @@ fn unit_rhocalc_proc_removebag() {
 #[test]
 fn unit_rhocalc_proc_diffbag() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::DiffBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DiffBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -649,7 +649,7 @@ fn unit_rhocalc_proc_diffbag() {
 #[test]
 fn unit_rhocalc_int_countbag() {
     mettail_runtime::clear_var_cache();
-    let term = Int::CountBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CountBag");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -662,7 +662,7 @@ fn unit_rhocalc_int_countbag() {
 #[test]
 fn unit_rhocalc_proc_getmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::GetMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GetMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -675,7 +675,7 @@ fn unit_rhocalc_proc_getmap() {
 #[test]
 fn unit_rhocalc_proc_putmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PutMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -688,7 +688,7 @@ fn unit_rhocalc_proc_putmap() {
 #[test]
 fn unit_rhocalc_proc_deletemap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::DeleteMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -701,7 +701,7 @@ fn unit_rhocalc_proc_deletemap() {
 #[test]
 fn unit_rhocalc_proc_mergemap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::MergeMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MergeMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -714,7 +714,7 @@ fn unit_rhocalc_proc_mergemap() {
 #[test]
 fn unit_rhocalc_proc_hasmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::HasMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for HasMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -727,7 +727,7 @@ fn unit_rhocalc_proc_hasmap() {
 #[test]
 fn unit_rhocalc_proc_keysmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::KeysMap(Box::new(Proc::PZero));
+    let term = Proc::KeysMap(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for KeysMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -740,7 +740,7 @@ fn unit_rhocalc_proc_keysmap() {
 #[test]
 fn unit_rhocalc_proc_valuesmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ValuesMap(Box::new(Proc::PZero));
+    let term = Proc::ValuesMap(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ValuesMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -753,7 +753,7 @@ fn unit_rhocalc_proc_valuesmap() {
 #[test]
 fn unit_rhocalc_proc_not() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Not(Box::new(Proc::PZero));
+    let term = Proc::Not(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Not");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -766,7 +766,7 @@ fn unit_rhocalc_proc_not() {
 #[test]
 fn unit_rhocalc_proc_len() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Len(Box::new(Proc::PZero));
+    let term = Proc::Len(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Len");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -779,7 +779,7 @@ fn unit_rhocalc_proc_len() {
 #[test]
 fn unit_rhocalc_proc_tobool() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ToBool(Box::new(Proc::PZero));
+    let term = Proc::ToBool(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ToBool");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -792,7 +792,7 @@ fn unit_rhocalc_proc_tobool() {
 #[test]
 fn unit_rhocalc_proc_tostr() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ToStr(Box::new(Proc::PZero));
+    let term = Proc::ToStr(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ToStr");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -805,7 +805,7 @@ fn unit_rhocalc_proc_tostr() {
 #[test]
 fn unit_rhocalc_int_booltoint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BoolToInt(Box::new(Bool::BoolLit(false)));
+    let term = Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -818,7 +818,7 @@ fn unit_rhocalc_int_booltoint() {
 #[test]
 fn unit_rhocalc_uint32_booltouint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(false)));
+    let term = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
@@ -831,7 +831,7 @@ fn unit_rhocalc_uint32_booltouint32() {
 #[test]
 fn unit_rhocalc_bigint_booltobigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(false)));
+    let term = BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -844,7 +844,7 @@ fn unit_rhocalc_bigint_booltobigint() {
 #[test]
 fn unit_rhocalc_bigrat_booltobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(false)));
+    let term = BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -857,7 +857,7 @@ fn unit_rhocalc_bigrat_booltobigrat() {
 #[test]
 fn unit_rhocalc_bigint_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::IntToBigInt(Box::new(Int::NumLit(0i64)));
+    let term = BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -870,7 +870,7 @@ fn unit_rhocalc_bigint_inttobigint() {
 #[test]
 fn unit_rhocalc_bigrat_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::IntToBigRat(Box::new(Int::NumLit(0i64)));
+    let term = BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -883,7 +883,7 @@ fn unit_rhocalc_bigrat_inttobigrat() {
 #[test]
 fn unit_rhocalc_int_uint32toint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::UInt32ToInt(Box::new(UInt32::NumLit(0u32)));
+    let term = Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -896,7 +896,7 @@ fn unit_rhocalc_int_uint32toint() {
 #[test]
 fn unit_rhocalc_bigint_uint32tobigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(0u32)));
+    let term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
@@ -909,7 +909,7 @@ fn unit_rhocalc_bigint_uint32tobigint() {
 #[test]
 fn unit_rhocalc_bigrat_uint32tobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(0u32)));
+    let term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -922,7 +922,7 @@ fn unit_rhocalc_bigrat_uint32tobigrat() {
 #[test]
 fn unit_rhocalc_bigrat_floattobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -935,7 +935,7 @@ fn unit_rhocalc_bigrat_floattobigrat() {
 #[test]
 fn unit_rhocalc_bigrat_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigIntToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
@@ -948,7 +948,7 @@ fn unit_rhocalc_bigrat_biginttobigrat() {
 #[test]
 fn unit_rhocalc_bigrat_fixedtobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {

@@ -65,7 +65,10 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
     use term_ops::parse_alt_filter::generate_parse_alt_filter_methods;
-    use term_ops::iterative_clone::generate_iterative_clone;
+    // ARC refactor (2026-05-28): iterative_clone disabled — `Clone` is now
+    // derived (Arc children make derived clone O(1) + non-recursive). See
+    // gen/types/enums.rs derive list. Import kept commented for provenance.
+    // use term_ops::iterative_clone::generate_iterative_clone;
     use term_ops::iterative_cmp::generate_iterative_cmp;
     use term_ops::iterative_drop::generate_iterative_drop;
     use term_ops::iterative_hash::generate_iterative_hash;
@@ -136,11 +139,13 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         "match_pattern",
         generate_match_pattern(language),
     );
-    let iterative_clone_impl = spill_and_include(
-        &lang_name,
-        "iterative_clone",
-        generate_iterative_clone(language),
-    );
+    // ARC refactor (2026-05-28): `Clone` is now derived on the AST enums
+    // (gen/types/enums.rs) because recursive children are `Arc<Cat>` →
+    // `Arc::clone` is O(1) and non-recursive. The former iterative work-stack
+    // clone (generate_iterative_clone) existed only to avoid stack overflow on
+    // deep `Box` chains and would now DUPLICATE the derived impl, so it is
+    // disabled here. Emit nothing for this slot.
+    let iterative_clone_impl = proc_macro2::TokenStream::new();
     let iterative_cmp_impl = spill_and_include(
         &lang_name,
         "iterative_cmp",

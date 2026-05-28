@@ -186,7 +186,7 @@ fn build_posint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> PosInt {
     ))
 }.unwrap_posint(),
         _ => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             PosInt::IntToPosInt(f0)
         },
     }

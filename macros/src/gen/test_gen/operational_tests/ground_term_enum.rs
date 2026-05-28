@@ -349,7 +349,7 @@ pub fn enumerate_ground_terms(language: &LanguageDef) -> Vec<GroundTerm> {
             // Build construction code: Cat::Label(Box::new(leaf1), Box::new(leaf2), ...)
             let mut field_exprs: Vec<String> = selected_leaves
                 .iter()
-                .map(|leaf| format!("Box::new({})", leaf.construction))
+                .map(|leaf| format!("std::sync::Arc::new({})", leaf.construction))
                 .collect();
 
             // Opt-Group: append `None` for each Optional inner non-terminal

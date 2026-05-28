@@ -160,12 +160,12 @@ fn build_term_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Term {
             let binder_name = format!("a{}", reader.next_byte() % 8);
 let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
 let body = build_term_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
             Term::Lam(scope)
         },
         _ => {
-            let f0 = Box::new(build_term_from_tape(reader, child_depth));
-            let f1 = Box::new(build_term_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_term_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_term_from_tape(reader, child_depth));
             Term::App(f0, f1)
         },
     }

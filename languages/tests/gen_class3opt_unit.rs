@@ -41,7 +41,7 @@ fn unit_class3opt_proc_pzero() {
 #[test]
 fn unit_class3opt_name_nquote() {
     mettail_runtime::clear_var_cache();
-    let term = Name::NQuote(Box::new(Proc::PZero));
+    let term = Name::NQuote(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuote");
     if let Ok(parsed) = Name::parse(&displayed) {

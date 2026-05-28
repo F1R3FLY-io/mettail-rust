@@ -165,29 +165,29 @@ fn build_num_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Num {
     match choice {
         0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_num(),
         1 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
-            let f1 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Num::AddNum(f0, f1)
         },
         2 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
-            let f1 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Num::MulNum(f0, f1)
         },
         3 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Num::NegNum(f0)
         },
         4 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Num::FactNum(f0)
         },
         5 => {
-            let f0 = Box::new(build_expr_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_expr_from_tape(reader, child_depth));
             Num::ExprToNum(f0)
         },
         _ => {
-            let f0 = Box::new(build_pred_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_pred_from_tape(reader, child_depth));
             Num::PredToNum(f0)
         },
     }
@@ -210,18 +210,18 @@ fn build_pred_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Pred {
     match choice {
         0 => AnyTerm::WrapPred(Pred::BoolLit(reader.next_bool())).unwrap_pred(),
         1 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
-            let f1 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Pred::EqNum(f0, f1)
         },
         2 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
-            let f1 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Pred::NeNum(f0, f1)
         },
         _ => {
-            let f0 = Box::new(build_pred_from_tape(reader, child_depth));
-            let f1 = Box::new(build_pred_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_pred_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_pred_from_tape(reader, child_depth));
             Pred::AndPred(f0, f1)
         },
     }
@@ -262,16 +262,16 @@ fn build_expr_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Expr {
     ))
 }.unwrap_expr(),
         1 => {
-            let f0 = Box::new(build_num_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Expr::CastNum(f0)
         },
         2 => {
-            let f0 = Box::new(build_pred_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_pred_from_tape(reader, child_depth));
             Expr::CastPred(f0)
         },
         _ => {
-            let f0 = Box::new(build_expr_from_tape(reader, child_depth));
-            let f1 = Box::new(build_expr_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_expr_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_expr_from_tape(reader, child_depth));
             Expr::EPar(f0, f1)
         },
     }

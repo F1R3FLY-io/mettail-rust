@@ -41,7 +41,7 @@ fn unit_class2optsmoke_proc_pzero() {
 #[test]
 fn unit_class2optsmoke_proc_choosemaybe() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ChooseMaybe(Box::new(Proc::PZero), None);
+    let term = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), None);
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ChooseMaybe");
     if let Ok(parsed) = Proc::parse(&displayed) {

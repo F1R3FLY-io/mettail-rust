@@ -29,7 +29,7 @@ fn optsmoke_metadata_populated() {
 #[test]
 fn unit_optsmoke_int_ifelse() {
     mettail_runtime::clear_var_cache();
-    let term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(0i32)), None);
+    let term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(0i32)), None);
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IfElse");
     if let Ok(parsed) = Int::parse(&displayed) {
@@ -42,7 +42,7 @@ fn unit_optsmoke_int_ifelse() {
 #[test]
 fn unit_optsmoke_int_booltoint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BoolToInt(Box::new(Bool::BoolLit(false)));
+    let term = Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {

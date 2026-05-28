@@ -114,7 +114,7 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_rhocalc_tostr_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Err));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -126,7 +126,7 @@ fn eval_rhocalc_tostr_err_smoke() {
 #[test]
 fn eval_rhocalc_tostr_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::PZero));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -138,7 +138,7 @@ fn eval_rhocalc_tostr_pzero_smoke() {
 #[test]
 fn eval_rhocalc_tobool_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(Box::new(Proc::Err));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -150,7 +150,7 @@ fn eval_rhocalc_tobool_err_smoke() {
 #[test]
 fn eval_rhocalc_tobool_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(Box::new(Proc::PZero));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -162,7 +162,7 @@ fn eval_rhocalc_tobool_pzero_smoke() {
 #[test]
 fn eval_rhocalc_len_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(Box::new(Proc::Err));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -174,7 +174,7 @@ fn eval_rhocalc_len_err_smoke() {
 #[test]
 fn eval_rhocalc_len_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(Box::new(Proc::PZero));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -186,7 +186,7 @@ fn eval_rhocalc_len_pzero_smoke() {
 #[test]
 fn eval_rhocalc_not_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(Box::new(Proc::Err));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -198,7 +198,7 @@ fn eval_rhocalc_not_err_smoke() {
 #[test]
 fn eval_rhocalc_not_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(Box::new(Proc::PZero));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -210,7 +210,7 @@ fn eval_rhocalc_not_pzero_smoke() {
 #[test]
 fn eval_rhocalc_valuesmap_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(Box::new(Proc::Err));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -222,7 +222,7 @@ fn eval_rhocalc_valuesmap_err_smoke() {
 #[test]
 fn eval_rhocalc_valuesmap_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(Box::new(Proc::PZero));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -234,7 +234,7 @@ fn eval_rhocalc_valuesmap_pzero_smoke() {
 #[test]
 fn eval_rhocalc_keysmap_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(Box::new(Proc::Err));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -246,7 +246,7 @@ fn eval_rhocalc_keysmap_err_smoke() {
 #[test]
 fn eval_rhocalc_keysmap_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(Box::new(Proc::PZero));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -258,7 +258,7 @@ fn eval_rhocalc_keysmap_pzero_smoke() {
 #[test]
 fn eval_rhocalc_hasmap_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -270,7 +270,7 @@ fn eval_rhocalc_hasmap_err_err_smoke() {
 #[test]
 fn eval_rhocalc_hasmap_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -282,7 +282,7 @@ fn eval_rhocalc_hasmap_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_hasmap_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -294,7 +294,7 @@ fn eval_rhocalc_hasmap_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_hasmap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -306,7 +306,7 @@ fn eval_rhocalc_hasmap_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_mergemap_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -318,7 +318,7 @@ fn eval_rhocalc_mergemap_err_err_smoke() {
 #[test]
 fn eval_rhocalc_mergemap_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -330,7 +330,7 @@ fn eval_rhocalc_mergemap_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_mergemap_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -342,7 +342,7 @@ fn eval_rhocalc_mergemap_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_mergemap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -354,7 +354,7 @@ fn eval_rhocalc_mergemap_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_deletemap_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -366,7 +366,7 @@ fn eval_rhocalc_deletemap_err_err_smoke() {
 #[test]
 fn eval_rhocalc_deletemap_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -378,7 +378,7 @@ fn eval_rhocalc_deletemap_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_deletemap_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -390,7 +390,7 @@ fn eval_rhocalc_deletemap_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_deletemap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -402,7 +402,7 @@ fn eval_rhocalc_deletemap_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_putmap_err_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::Err), Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -414,7 +414,7 @@ fn eval_rhocalc_putmap_err_err_err_smoke() {
 #[test]
 fn eval_rhocalc_putmap_err_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::Err), Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -426,7 +426,7 @@ fn eval_rhocalc_putmap_err_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_putmap_err_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::Err), Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -438,7 +438,7 @@ fn eval_rhocalc_putmap_err_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_putmap_err_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::Err), Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -450,7 +450,7 @@ fn eval_rhocalc_putmap_err_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_putmap_pzero_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -462,7 +462,7 @@ fn eval_rhocalc_putmap_pzero_err_err_smoke() {
 #[test]
 fn eval_rhocalc_putmap_pzero_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -474,7 +474,7 @@ fn eval_rhocalc_putmap_pzero_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_putmap_pzero_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -486,7 +486,7 @@ fn eval_rhocalc_putmap_pzero_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_putmap_pzero_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -498,7 +498,7 @@ fn eval_rhocalc_putmap_pzero_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_getmap_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -510,7 +510,7 @@ fn eval_rhocalc_getmap_err_err_smoke() {
 #[test]
 fn eval_rhocalc_getmap_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -522,7 +522,7 @@ fn eval_rhocalc_getmap_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_getmap_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -534,7 +534,7 @@ fn eval_rhocalc_getmap_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_getmap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -546,7 +546,7 @@ fn eval_rhocalc_getmap_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_countbag_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -558,7 +558,7 @@ fn eval_rhocalc_countbag_err_err_smoke() {
 #[test]
 fn eval_rhocalc_countbag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -570,7 +570,7 @@ fn eval_rhocalc_countbag_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_countbag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -582,7 +582,7 @@ fn eval_rhocalc_countbag_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_countbag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -594,7 +594,7 @@ fn eval_rhocalc_countbag_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_diffbag_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -606,7 +606,7 @@ fn eval_rhocalc_diffbag_err_err_smoke() {
 #[test]
 fn eval_rhocalc_diffbag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -618,7 +618,7 @@ fn eval_rhocalc_diffbag_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_diffbag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -630,7 +630,7 @@ fn eval_rhocalc_diffbag_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_diffbag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -642,7 +642,7 @@ fn eval_rhocalc_diffbag_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_removebag_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -654,7 +654,7 @@ fn eval_rhocalc_removebag_err_err_smoke() {
 #[test]
 fn eval_rhocalc_removebag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -666,7 +666,7 @@ fn eval_rhocalc_removebag_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_removebag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -678,7 +678,7 @@ fn eval_rhocalc_removebag_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_removebag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -690,7 +690,7 @@ fn eval_rhocalc_removebag_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_unionbag_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -702,7 +702,7 @@ fn eval_rhocalc_unionbag_err_err_smoke() {
 #[test]
 fn eval_rhocalc_unionbag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -714,7 +714,7 @@ fn eval_rhocalc_unionbag_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_unionbag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -726,7 +726,7 @@ fn eval_rhocalc_unionbag_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_unionbag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -738,7 +738,7 @@ fn eval_rhocalc_unionbag_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_deletelist_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -750,7 +750,7 @@ fn eval_rhocalc_deletelist_err_err_smoke() {
 #[test]
 fn eval_rhocalc_deletelist_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -762,7 +762,7 @@ fn eval_rhocalc_deletelist_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_deletelist_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -774,7 +774,7 @@ fn eval_rhocalc_deletelist_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_deletelist_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -786,7 +786,7 @@ fn eval_rhocalc_deletelist_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_elemlist_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -798,7 +798,7 @@ fn eval_rhocalc_elemlist_err_err_smoke() {
 #[test]
 fn eval_rhocalc_elemlist_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -810,7 +810,7 @@ fn eval_rhocalc_elemlist_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_elemlist_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -822,7 +822,7 @@ fn eval_rhocalc_elemlist_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_elemlist_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -834,7 +834,7 @@ fn eval_rhocalc_elemlist_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_concatlist_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -846,7 +846,7 @@ fn eval_rhocalc_concatlist_err_err_smoke() {
 #[test]
 fn eval_rhocalc_concatlist_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -858,7 +858,7 @@ fn eval_rhocalc_concatlist_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_concatlist_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -870,7 +870,7 @@ fn eval_rhocalc_concatlist_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_concatlist_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -882,7 +882,7 @@ fn eval_rhocalc_concatlist_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_negproc_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(Box::new(Proc::Err));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -894,7 +894,7 @@ fn eval_rhocalc_negproc_err_smoke() {
 #[test]
 fn eval_rhocalc_negproc_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(Box::new(Proc::PZero));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -906,7 +906,7 @@ fn eval_rhocalc_negproc_pzero_smoke() {
 #[test]
 fn eval_rhocalc_mod_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -918,7 +918,7 @@ fn eval_rhocalc_mod_err_err_smoke() {
 #[test]
 fn eval_rhocalc_mod_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -930,7 +930,7 @@ fn eval_rhocalc_mod_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_mod_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -942,7 +942,7 @@ fn eval_rhocalc_mod_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_mod_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -954,7 +954,7 @@ fn eval_rhocalc_mod_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_div_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -966,7 +966,7 @@ fn eval_rhocalc_div_err_err_smoke() {
 #[test]
 fn eval_rhocalc_div_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -978,7 +978,7 @@ fn eval_rhocalc_div_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_div_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -990,7 +990,7 @@ fn eval_rhocalc_div_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_div_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1002,7 +1002,7 @@ fn eval_rhocalc_div_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_mul_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1014,7 +1014,7 @@ fn eval_rhocalc_mul_err_err_smoke() {
 #[test]
 fn eval_rhocalc_mul_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1026,7 +1026,7 @@ fn eval_rhocalc_mul_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_mul_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1038,7 +1038,7 @@ fn eval_rhocalc_mul_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_mul_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1050,7 +1050,7 @@ fn eval_rhocalc_mul_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_sub_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1062,7 +1062,7 @@ fn eval_rhocalc_sub_err_err_smoke() {
 #[test]
 fn eval_rhocalc_sub_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1074,7 +1074,7 @@ fn eval_rhocalc_sub_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_sub_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1086,7 +1086,7 @@ fn eval_rhocalc_sub_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_sub_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1098,7 +1098,7 @@ fn eval_rhocalc_sub_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_add_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1110,7 +1110,7 @@ fn eval_rhocalc_add_err_err_smoke() {
 #[test]
 fn eval_rhocalc_add_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1122,7 +1122,7 @@ fn eval_rhocalc_add_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_add_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1134,7 +1134,7 @@ fn eval_rhocalc_add_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_add_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1146,7 +1146,7 @@ fn eval_rhocalc_add_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_lteq_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1158,7 +1158,7 @@ fn eval_rhocalc_lteq_err_err_smoke() {
 #[test]
 fn eval_rhocalc_lteq_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1170,7 +1170,7 @@ fn eval_rhocalc_lteq_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_lteq_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1182,7 +1182,7 @@ fn eval_rhocalc_lteq_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_lteq_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1194,7 +1194,7 @@ fn eval_rhocalc_lteq_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_gteq_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1206,7 +1206,7 @@ fn eval_rhocalc_gteq_err_err_smoke() {
 #[test]
 fn eval_rhocalc_gteq_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1218,7 +1218,7 @@ fn eval_rhocalc_gteq_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_gteq_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1230,7 +1230,7 @@ fn eval_rhocalc_gteq_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_gteq_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1242,7 +1242,7 @@ fn eval_rhocalc_gteq_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_lt_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1254,7 +1254,7 @@ fn eval_rhocalc_lt_err_err_smoke() {
 #[test]
 fn eval_rhocalc_lt_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1266,7 +1266,7 @@ fn eval_rhocalc_lt_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_lt_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1278,7 +1278,7 @@ fn eval_rhocalc_lt_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_lt_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1290,7 +1290,7 @@ fn eval_rhocalc_lt_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_gt_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1302,7 +1302,7 @@ fn eval_rhocalc_gt_err_err_smoke() {
 #[test]
 fn eval_rhocalc_gt_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1314,7 +1314,7 @@ fn eval_rhocalc_gt_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_gt_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1326,7 +1326,7 @@ fn eval_rhocalc_gt_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_gt_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1338,7 +1338,7 @@ fn eval_rhocalc_gt_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_ne_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1350,7 +1350,7 @@ fn eval_rhocalc_ne_err_err_smoke() {
 #[test]
 fn eval_rhocalc_ne_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1362,7 +1362,7 @@ fn eval_rhocalc_ne_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_ne_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1374,7 +1374,7 @@ fn eval_rhocalc_ne_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_ne_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1386,7 +1386,7 @@ fn eval_rhocalc_ne_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_eq_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1398,7 +1398,7 @@ fn eval_rhocalc_eq_err_err_smoke() {
 #[test]
 fn eval_rhocalc_eq_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1410,7 +1410,7 @@ fn eval_rhocalc_eq_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_eq_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1422,7 +1422,7 @@ fn eval_rhocalc_eq_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_eq_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1434,7 +1434,7 @@ fn eval_rhocalc_eq_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_bitnot_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::Err));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1446,7 +1446,7 @@ fn eval_rhocalc_bitnot_err_smoke() {
 #[test]
 fn eval_rhocalc_bitnot_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::PZero));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1458,7 +1458,7 @@ fn eval_rhocalc_bitnot_pzero_smoke() {
 #[test]
 fn eval_rhocalc_bitand_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1470,7 +1470,7 @@ fn eval_rhocalc_bitand_err_err_smoke() {
 #[test]
 fn eval_rhocalc_bitand_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1482,7 +1482,7 @@ fn eval_rhocalc_bitand_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_bitand_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1494,7 +1494,7 @@ fn eval_rhocalc_bitand_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_bitand_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1506,7 +1506,7 @@ fn eval_rhocalc_bitand_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_bitor_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1518,7 +1518,7 @@ fn eval_rhocalc_bitor_err_err_smoke() {
 #[test]
 fn eval_rhocalc_bitor_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1530,7 +1530,7 @@ fn eval_rhocalc_bitor_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_bitor_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1542,7 +1542,7 @@ fn eval_rhocalc_bitor_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_bitor_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1554,7 +1554,7 @@ fn eval_rhocalc_bitor_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_and_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1566,7 +1566,7 @@ fn eval_rhocalc_and_err_err_smoke() {
 #[test]
 fn eval_rhocalc_and_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1578,7 +1578,7 @@ fn eval_rhocalc_and_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_and_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1590,7 +1590,7 @@ fn eval_rhocalc_and_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_and_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1602,7 +1602,7 @@ fn eval_rhocalc_and_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_or_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1614,7 +1614,7 @@ fn eval_rhocalc_or_err_err_smoke() {
 #[test]
 fn eval_rhocalc_or_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1626,7 +1626,7 @@ fn eval_rhocalc_or_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_or_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1638,7 +1638,7 @@ fn eval_rhocalc_or_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_or_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1650,7 +1650,7 @@ fn eval_rhocalc_or_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_fractionproc_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::Err), Box::new(Proc::Err));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1662,7 +1662,7 @@ fn eval_rhocalc_fractionproc_err_err_smoke() {
 #[test]
 fn eval_rhocalc_fractionproc_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::Err), Box::new(Proc::PZero));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1674,7 +1674,7 @@ fn eval_rhocalc_fractionproc_err_pzero_smoke() {
 #[test]
 fn eval_rhocalc_fractionproc_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::PZero), Box::new(Proc::Err));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1686,7 +1686,7 @@ fn eval_rhocalc_fractionproc_pzero_err_smoke() {
 #[test]
 fn eval_rhocalc_fractionproc_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1698,7 +1698,7 @@ fn eval_rhocalc_fractionproc_pzero_pzero_smoke() {
 #[test]
 fn eval_rhocalc_negint_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(5i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1711,7 +1711,7 @@ fn eval_rhocalc_negint_5() {
 #[test]
 fn eval_rhocalc_negint_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(3i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1724,7 +1724,7 @@ fn eval_rhocalc_negint_3() {
 #[test]
 fn eval_rhocalc_negint_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(2i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1737,7 +1737,7 @@ fn eval_rhocalc_negint_2() {
 #[test]
 fn eval_rhocalc_negint_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(1i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1750,7 +1750,7 @@ fn eval_rhocalc_negint_1() {
 #[test]
 fn eval_rhocalc_negint_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(0i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1763,7 +1763,7 @@ fn eval_rhocalc_negint_0() {
 #[test]
 fn eval_rhocalc_bigratcastproc_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::Err));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1775,7 +1775,7 @@ fn eval_rhocalc_bigratcastproc_err_smoke() {
 #[test]
 fn eval_rhocalc_bigratcastproc_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::PZero));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1787,7 +1787,7 @@ fn eval_rhocalc_bigratcastproc_pzero_smoke() {
 #[test]
 fn eval_rhocalc_bigintcastproc_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::Err));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1799,7 +1799,7 @@ fn eval_rhocalc_bigintcastproc_err_smoke() {
 #[test]
 fn eval_rhocalc_bigintcastproc_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::PZero));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1811,7 +1811,7 @@ fn eval_rhocalc_bigintcastproc_pzero_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1823,7 +1823,7 @@ fn eval_rhocalc_fixedbinproc_err_5_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1835,7 +1835,7 @@ fn eval_rhocalc_fixedbinproc_err_3_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1847,7 +1847,7 @@ fn eval_rhocalc_fixedbinproc_err_2_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1859,7 +1859,7 @@ fn eval_rhocalc_fixedbinproc_err_1_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1871,7 +1871,7 @@ fn eval_rhocalc_fixedbinproc_err_0_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1883,7 +1883,7 @@ fn eval_rhocalc_fixedbinproc_pzero_5_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1895,7 +1895,7 @@ fn eval_rhocalc_fixedbinproc_pzero_3_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1907,7 +1907,7 @@ fn eval_rhocalc_fixedbinproc_pzero_2_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1919,7 +1919,7 @@ fn eval_rhocalc_fixedbinproc_pzero_1_smoke() {
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1931,7 +1931,7 @@ fn eval_rhocalc_fixedbinproc_pzero_0_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1943,7 +1943,7 @@ fn eval_rhocalc_floatbinproc_err_5_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1955,7 +1955,7 @@ fn eval_rhocalc_floatbinproc_err_3_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1967,7 +1967,7 @@ fn eval_rhocalc_floatbinproc_err_2_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1979,7 +1979,7 @@ fn eval_rhocalc_floatbinproc_err_1_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1991,7 +1991,7 @@ fn eval_rhocalc_floatbinproc_err_0_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2003,7 +2003,7 @@ fn eval_rhocalc_floatbinproc_pzero_5_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2015,7 +2015,7 @@ fn eval_rhocalc_floatbinproc_pzero_3_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2027,7 +2027,7 @@ fn eval_rhocalc_floatbinproc_pzero_2_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2039,7 +2039,7 @@ fn eval_rhocalc_floatbinproc_pzero_1_smoke() {
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2051,7 +2051,7 @@ fn eval_rhocalc_floatbinproc_pzero_0_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2063,7 +2063,7 @@ fn eval_rhocalc_uintbinproc_err_5_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2075,7 +2075,7 @@ fn eval_rhocalc_uintbinproc_err_3_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2087,7 +2087,7 @@ fn eval_rhocalc_uintbinproc_err_2_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2099,7 +2099,7 @@ fn eval_rhocalc_uintbinproc_err_1_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2111,7 +2111,7 @@ fn eval_rhocalc_uintbinproc_err_0_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2123,7 +2123,7 @@ fn eval_rhocalc_uintbinproc_pzero_5_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2135,7 +2135,7 @@ fn eval_rhocalc_uintbinproc_pzero_3_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2147,7 +2147,7 @@ fn eval_rhocalc_uintbinproc_pzero_2_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2159,7 +2159,7 @@ fn eval_rhocalc_uintbinproc_pzero_1_smoke() {
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2171,7 +2171,7 @@ fn eval_rhocalc_uintbinproc_pzero_0_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2183,7 +2183,7 @@ fn eval_rhocalc_intbinproc_err_5_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2195,7 +2195,7 @@ fn eval_rhocalc_intbinproc_err_3_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2207,7 +2207,7 @@ fn eval_rhocalc_intbinproc_err_2_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2219,7 +2219,7 @@ fn eval_rhocalc_intbinproc_err_1_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2231,7 +2231,7 @@ fn eval_rhocalc_intbinproc_err_0_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2243,7 +2243,7 @@ fn eval_rhocalc_intbinproc_pzero_5_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2255,7 +2255,7 @@ fn eval_rhocalc_intbinproc_pzero_3_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2267,7 +2267,7 @@ fn eval_rhocalc_intbinproc_pzero_2_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2279,7 +2279,7 @@ fn eval_rhocalc_intbinproc_pzero_1_smoke() {
 #[test]
 fn eval_rhocalc_intbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2295,7 +2295,7 @@ fn eval_rhocalc_intbinproc_pzero_0_smoke() {
 #[test]
 fn nested_rhocalc_tostr_tobool_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ToBool(Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ToBool(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2307,7 +2307,7 @@ fn nested_rhocalc_tostr_tobool_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_tobool_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ToBool(Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ToBool(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2319,7 +2319,7 @@ fn nested_rhocalc_tostr_tobool_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_len_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Len(Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Len(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2331,7 +2331,7 @@ fn nested_rhocalc_tostr_len_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_len_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Len(Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Len(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2343,7 +2343,7 @@ fn nested_rhocalc_tostr_len_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_not_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Not(Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Not(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2355,7 +2355,7 @@ fn nested_rhocalc_tostr_not_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_not_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Not(Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Not(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2367,7 +2367,7 @@ fn nested_rhocalc_tostr_not_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_valuesmap_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ValuesMap(Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ValuesMap(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2379,7 +2379,7 @@ fn nested_rhocalc_tostr_valuesmap_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_valuesmap_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ValuesMap(Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ValuesMap(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2391,7 +2391,7 @@ fn nested_rhocalc_tostr_valuesmap_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_keysmap_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::KeysMap(Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::KeysMap(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2403,7 +2403,7 @@ fn nested_rhocalc_tostr_keysmap_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_keysmap_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::KeysMap(Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::KeysMap(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2415,7 +2415,7 @@ fn nested_rhocalc_tostr_keysmap_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_hasmap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::HasMap(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2427,7 +2427,7 @@ fn nested_rhocalc_tostr_hasmap_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_hasmap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::HasMap(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2439,7 +2439,7 @@ fn nested_rhocalc_tostr_hasmap_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_hasmap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::HasMap(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2451,7 +2451,7 @@ fn nested_rhocalc_tostr_hasmap_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_mergemap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::MergeMap(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2463,7 +2463,7 @@ fn nested_rhocalc_tostr_mergemap_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_mergemap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::MergeMap(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2475,7 +2475,7 @@ fn nested_rhocalc_tostr_mergemap_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_mergemap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::MergeMap(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2487,7 +2487,7 @@ fn nested_rhocalc_tostr_mergemap_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_deletemap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DeleteMap(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2499,7 +2499,7 @@ fn nested_rhocalc_tostr_deletemap_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_deletemap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DeleteMap(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2511,7 +2511,7 @@ fn nested_rhocalc_tostr_deletemap_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_deletemap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DeleteMap(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2523,7 +2523,7 @@ fn nested_rhocalc_tostr_deletemap_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_putmap_pzero_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2535,7 +2535,7 @@ fn nested_rhocalc_tostr_putmap_pzero_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_putmap_pzero_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2547,7 +2547,7 @@ fn nested_rhocalc_tostr_putmap_pzero_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_putmap_pzero_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2559,7 +2559,7 @@ fn nested_rhocalc_tostr_putmap_pzero_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_getmap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::GetMap(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2571,7 +2571,7 @@ fn nested_rhocalc_tostr_getmap_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_getmap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::GetMap(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2583,7 +2583,7 @@ fn nested_rhocalc_tostr_getmap_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_getmap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::GetMap(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2595,7 +2595,7 @@ fn nested_rhocalc_tostr_getmap_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_diffbag_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DiffBag(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2607,7 +2607,7 @@ fn nested_rhocalc_tostr_diffbag_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_diffbag_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DiffBag(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2619,7 +2619,7 @@ fn nested_rhocalc_tostr_diffbag_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_diffbag_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DiffBag(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2631,7 +2631,7 @@ fn nested_rhocalc_tostr_diffbag_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_removebag_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::RemoveBag(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2643,7 +2643,7 @@ fn nested_rhocalc_tostr_removebag_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_removebag_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::RemoveBag(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2655,7 +2655,7 @@ fn nested_rhocalc_tostr_removebag_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_removebag_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::RemoveBag(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2667,7 +2667,7 @@ fn nested_rhocalc_tostr_removebag_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_unionbag_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::UnionBag(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2679,7 +2679,7 @@ fn nested_rhocalc_tostr_unionbag_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_unionbag_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::UnionBag(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2691,7 +2691,7 @@ fn nested_rhocalc_tostr_unionbag_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_unionbag_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::UnionBag(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2703,7 +2703,7 @@ fn nested_rhocalc_tostr_unionbag_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_deletelist_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DeleteList(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2715,7 +2715,7 @@ fn nested_rhocalc_tostr_deletelist_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_deletelist_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DeleteList(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2727,7 +2727,7 @@ fn nested_rhocalc_tostr_deletelist_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_deletelist_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::DeleteList(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2739,7 +2739,7 @@ fn nested_rhocalc_tostr_deletelist_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_elemlist_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ElemList(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2751,7 +2751,7 @@ fn nested_rhocalc_tostr_elemlist_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_elemlist_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ElemList(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2763,7 +2763,7 @@ fn nested_rhocalc_tostr_elemlist_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_elemlist_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ElemList(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2775,7 +2775,7 @@ fn nested_rhocalc_tostr_elemlist_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_concatlist_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ConcatList(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2787,7 +2787,7 @@ fn nested_rhocalc_tostr_concatlist_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_concatlist_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ConcatList(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2799,7 +2799,7 @@ fn nested_rhocalc_tostr_concatlist_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_concatlist_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::ConcatList(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2811,7 +2811,7 @@ fn nested_rhocalc_tostr_concatlist_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_negproc_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::NegProc(Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::NegProc(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2823,7 +2823,7 @@ fn nested_rhocalc_tostr_negproc_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_negproc_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::NegProc(Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::NegProc(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2835,7 +2835,7 @@ fn nested_rhocalc_tostr_negproc_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_mod_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Mod(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2847,7 +2847,7 @@ fn nested_rhocalc_tostr_mod_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_mod_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Mod(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2859,7 +2859,7 @@ fn nested_rhocalc_tostr_mod_pzero_err_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_mod_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Mod(Box::new(Proc::PZero), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2871,7 +2871,7 @@ fn nested_rhocalc_tostr_mod_pzero_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_div_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Div(Box::new(Proc::Err), Box::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Div(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2883,7 +2883,7 @@ fn nested_rhocalc_tostr_div_err_pzero_in_slot0__smoke() {
 #[test]
 fn nested_rhocalc_tostr_div_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::Div(Box::new(Proc::PZero), Box::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2899,7 +2899,7 @@ fn nested_rhocalc_tostr_div_pzero_err_in_slot0__smoke() {
 #[test]
 fn cross_cat_rhocalc_cast_castbigrat_from_bigrat_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2911,7 +2911,7 @@ fn cross_cat_rhocalc_cast_castbigrat_from_bigrat_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castfixed_from_fixed_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2923,7 +2923,7 @@ fn cross_cat_rhocalc_cast_castfixed_from_fixed_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castfloat_from_float_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2935,7 +2935,7 @@ fn cross_cat_rhocalc_cast_castfloat_from_float_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castbigint_from_bigint_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2947,7 +2947,7 @@ fn cross_cat_rhocalc_cast_castbigint_from_bigint_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castuint32_from_uint32_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)));
+    let input_term = Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2959,7 +2959,7 @@ fn cross_cat_rhocalc_cast_castuint32_from_uint32_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castint_from_int_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastInt(Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::CastInt(std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2971,7 +2971,7 @@ fn cross_cat_rhocalc_cast_castint_from_int_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castbool_from_bool_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBool(Box::new(Bool::BoolLit(true)));
+    let input_term = Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2983,7 +2983,7 @@ fn cross_cat_rhocalc_cast_castbool_from_bool_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_caststr_from_str_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastStr(Box::new(Str::StringLit(String::from("a"))));
+    let input_term = Proc::CastStr(std::sync::Arc::new(Str::StringLit(String::from("a"))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2995,7 +2995,7 @@ fn cross_cat_rhocalc_cast_caststr_from_str_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castlist_from_list_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastList(Box::new(List::ListLit(Default::default())));
+    let input_term = Proc::CastList(std::sync::Arc::new(List::ListLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3007,7 +3007,7 @@ fn cross_cat_rhocalc_cast_castlist_from_list_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castbag_from_bag_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBag(Box::new(Bag::BagLit(Default::default())));
+    let input_term = Proc::CastBag(std::sync::Arc::new(Bag::BagLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3019,7 +3019,7 @@ fn cross_cat_rhocalc_cast_castbag_from_bag_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_castmap_from_map_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastMap(Box::new(Map::MapLit(Default::default())));
+    let input_term = Proc::CastMap(std::sync::Arc::new(Map::MapLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3031,7 +3031,7 @@ fn cross_cat_rhocalc_cast_castmap_from_map_to_proc() {
 #[test]
 fn cross_cat_rhocalc_cast_booltoint_from_bool_to_int() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BoolToInt(Box::new(Bool::BoolLit(true)));
+    let input_term = Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3043,7 +3043,7 @@ fn cross_cat_rhocalc_cast_booltoint_from_bool_to_int() {
 #[test]
 fn cross_cat_rhocalc_cast_booltouint32_from_bool_to_uint32() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)));
+    let input_term = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3055,7 +3055,7 @@ fn cross_cat_rhocalc_cast_booltouint32_from_bool_to_uint32() {
 #[test]
 fn cross_cat_rhocalc_cast_booltobigint_from_bool_to_bigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)));
+    let input_term = BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3067,7 +3067,7 @@ fn cross_cat_rhocalc_cast_booltobigint_from_bool_to_bigint() {
 #[test]
 fn cross_cat_rhocalc_cast_booltobigrat_from_bool_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)));
+    let input_term = BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3079,7 +3079,7 @@ fn cross_cat_rhocalc_cast_booltobigrat_from_bool_to_bigrat() {
 #[test]
 fn cross_cat_rhocalc_cast_inttobigint_from_int_to_bigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::NumLit(1i64)));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3091,7 +3091,7 @@ fn cross_cat_rhocalc_cast_inttobigint_from_int_to_bigint() {
 #[test]
 fn cross_cat_rhocalc_cast_inttobigrat_from_int_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::NumLit(1i64)));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3103,7 +3103,7 @@ fn cross_cat_rhocalc_cast_inttobigrat_from_int_to_bigrat() {
 #[test]
 fn cross_cat_rhocalc_cast_uint32toint_from_uint32_to_int() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)));
+    let input_term = Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3115,7 +3115,7 @@ fn cross_cat_rhocalc_cast_uint32toint_from_uint32_to_int() {
 #[test]
 fn cross_cat_rhocalc_cast_uint32tobigint_from_uint32_to_bigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)));
+    let input_term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3127,7 +3127,7 @@ fn cross_cat_rhocalc_cast_uint32tobigint_from_uint32_to_bigint() {
 #[test]
 fn cross_cat_rhocalc_cast_uint32tobigrat_from_uint32_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)));
+    let input_term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3139,7 +3139,7 @@ fn cross_cat_rhocalc_cast_uint32tobigrat_from_uint32_to_bigrat() {
 #[test]
 fn cross_cat_rhocalc_cast_floattobigrat_from_float_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3151,7 +3151,7 @@ fn cross_cat_rhocalc_cast_floattobigrat_from_float_to_bigrat() {
 #[test]
 fn cross_cat_rhocalc_cast_biginttobigrat_from_bigint_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3163,7 +3163,7 @@ fn cross_cat_rhocalc_cast_biginttobigrat_from_bigint_to_bigrat() {
 #[test]
 fn cross_cat_rhocalc_cast_fixedtobigrat_from_fixed_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())));
+    let input_term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3175,7 +3175,7 @@ fn cross_cat_rhocalc_cast_fixedtobigrat_from_fixed_to_bigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_castbigrat_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3187,7 +3187,7 @@ fn cross_cat_rhocalc_chain_castbigrat_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castfixed_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3199,7 +3199,7 @@ fn cross_cat_rhocalc_chain_castfixed_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castfloat_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3211,7 +3211,7 @@ fn cross_cat_rhocalc_chain_castfloat_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castbigint_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3223,7 +3223,7 @@ fn cross_cat_rhocalc_chain_castbigint_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castuint32_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastUInt32(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3235,7 +3235,7 @@ fn cross_cat_rhocalc_chain_castuint32_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castint_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastInt(Box::new(Int::NumLit(1i64)))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastInt(std::sync::Arc::new(Int::NumLit(1i64)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3247,7 +3247,7 @@ fn cross_cat_rhocalc_chain_castint_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castbool_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastBool(Box::new(Bool::BoolLit(true)))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3259,7 +3259,7 @@ fn cross_cat_rhocalc_chain_castbool_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_caststr_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastStr(Box::new(Str::StringLit(String::from("a"))))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastStr(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3271,7 +3271,7 @@ fn cross_cat_rhocalc_chain_caststr_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castlist_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastList(Box::new(List::ListLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastList(std::sync::Arc::new(List::ListLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3283,7 +3283,7 @@ fn cross_cat_rhocalc_chain_castlist_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castbag_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastBag(Box::new(Bag::BagLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBag(std::sync::Arc::new(Bag::BagLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3295,7 +3295,7 @@ fn cross_cat_rhocalc_chain_castbag_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_castmap_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(Box::new(Proc::CastMap(Box::new(Map::MapLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3307,7 +3307,7 @@ fn cross_cat_rhocalc_chain_castmap_nquote() {
 #[test]
 fn cross_cat_rhocalc_chain_booltoint_castint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3319,7 +3319,7 @@ fn cross_cat_rhocalc_chain_booltoint_castint() {
 #[test]
 fn cross_cat_rhocalc_chain_booltoint_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3331,7 +3331,7 @@ fn cross_cat_rhocalc_chain_booltoint_inttobigint() {
 #[test]
 fn cross_cat_rhocalc_chain_booltoint_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3343,7 +3343,7 @@ fn cross_cat_rhocalc_chain_booltoint_inttobigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_castuint32() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastUInt32(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3355,7 +3355,7 @@ fn cross_cat_rhocalc_chain_booltouint32_castuint32() {
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_uint32toint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::UInt32ToInt(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = Int::UInt32ToInt(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3367,7 +3367,7 @@ fn cross_cat_rhocalc_chain_booltouint32_uint32toint() {
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_uint32tobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::UInt32ToBigInt(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3379,7 +3379,7 @@ fn cross_cat_rhocalc_chain_booltouint32_uint32tobigint() {
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_uint32tobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::UInt32ToBigRat(Box::new(UInt32::BoolToUInt32(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3391,7 +3391,7 @@ fn cross_cat_rhocalc_chain_booltouint32_uint32tobigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_booltobigint_castbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigInt(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3403,7 +3403,7 @@ fn cross_cat_rhocalc_chain_booltobigint_castbigint() {
 #[test]
 fn cross_cat_rhocalc_chain_booltobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::BoolToBigInt(Box::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3415,7 +3415,7 @@ fn cross_cat_rhocalc_chain_booltobigint_biginttobigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_booltobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(Box::new(BigRat::BoolToBigRat(Box::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3427,7 +3427,7 @@ fn cross_cat_rhocalc_chain_booltobigrat_castbigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_inttobigint_castbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigInt(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i64)))));
+    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i64)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3439,7 +3439,7 @@ fn cross_cat_rhocalc_chain_inttobigint_castbigint() {
 #[test]
 fn cross_cat_rhocalc_chain_inttobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::IntToBigInt(Box::new(Int::NumLit(1i64)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i64)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3451,7 +3451,7 @@ fn cross_cat_rhocalc_chain_inttobigint_biginttobigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_inttobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(Box::new(BigRat::IntToBigRat(Box::new(Int::NumLit(1i64)))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i64)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3463,7 +3463,7 @@ fn cross_cat_rhocalc_chain_inttobigrat_castbigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_uint32toint_castint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastInt(Box::new(Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::CastInt(std::sync::Arc::new(Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3475,7 +3475,7 @@ fn cross_cat_rhocalc_chain_uint32toint_castint() {
 #[test]
 fn cross_cat_rhocalc_chain_uint32toint_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(Box::new(Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3487,7 +3487,7 @@ fn cross_cat_rhocalc_chain_uint32toint_inttobigint() {
 #[test]
 fn cross_cat_rhocalc_chain_uint32toint_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(Box::new(Int::UInt32ToInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3499,7 +3499,7 @@ fn cross_cat_rhocalc_chain_uint32toint_inttobigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_uint32tobigint_castbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigInt(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3511,7 +3511,7 @@ fn cross_cat_rhocalc_chain_uint32tobigint_castbigint() {
 #[test]
 fn cross_cat_rhocalc_chain_uint32tobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(Box::new(BigInt::UInt32ToBigInt(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3523,7 +3523,7 @@ fn cross_cat_rhocalc_chain_uint32tobigint_biginttobigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_uint32tobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(Box::new(BigRat::UInt32ToBigRat(Box::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3535,7 +3535,7 @@ fn cross_cat_rhocalc_chain_uint32tobigrat_castbigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_floattobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(Box::new(BigRat::FloatToBigRat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3547,7 +3547,7 @@ fn cross_cat_rhocalc_chain_floattobigrat_castbigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_biginttobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(Box::new(BigRat::BigIntToBigRat(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3559,7 +3559,7 @@ fn cross_cat_rhocalc_chain_biginttobigrat_castbigrat() {
 #[test]
 fn cross_cat_rhocalc_chain_fixedtobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(Box::new(BigRat::FixedToBigRat(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3571,7 +3571,7 @@ fn cross_cat_rhocalc_chain_fixedtobigrat_castbigrat() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3583,7 +3583,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3595,7 +3595,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3607,7 +3607,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3619,7 +3619,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3631,7 +3631,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3643,7 +3643,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3655,7 +3655,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_or_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3667,7 +3667,7 @@ fn cross_cat_rhocalc_castop_or_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_and_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3679,7 +3679,7 @@ fn cross_cat_rhocalc_castop_and_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3691,7 +3691,7 @@ fn cross_cat_rhocalc_castop_bitor_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3703,7 +3703,7 @@ fn cross_cat_rhocalc_castop_bitand_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3715,7 +3715,7 @@ fn cross_cat_rhocalc_castop_bitnot_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_eq_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3727,7 +3727,7 @@ fn cross_cat_rhocalc_castop_eq_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_ne_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3739,7 +3739,7 @@ fn cross_cat_rhocalc_castop_ne_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gt_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3751,7 +3751,7 @@ fn cross_cat_rhocalc_castop_gt_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lt_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3763,7 +3763,7 @@ fn cross_cat_rhocalc_castop_lt_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3775,7 +3775,7 @@ fn cross_cat_rhocalc_castop_gteq_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3787,7 +3787,7 @@ fn cross_cat_rhocalc_castop_lteq_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_add_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3799,7 +3799,7 @@ fn cross_cat_rhocalc_castop_add_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_sub_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3811,7 +3811,7 @@ fn cross_cat_rhocalc_castop_sub_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mul_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3823,7 +3823,7 @@ fn cross_cat_rhocalc_castop_mul_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_div_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3835,7 +3835,7 @@ fn cross_cat_rhocalc_castop_div_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mod_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3847,7 +3847,7 @@ fn cross_cat_rhocalc_castop_mod_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_negproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3859,7 +3859,7 @@ fn cross_cat_rhocalc_castop_negproc_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_concatlist_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3871,7 +3871,7 @@ fn cross_cat_rhocalc_castop_concatlist_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_elemlist_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3883,7 +3883,7 @@ fn cross_cat_rhocalc_castop_elemlist_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_deletelist_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3895,7 +3895,7 @@ fn cross_cat_rhocalc_castop_deletelist_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_unionbag_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3907,7 +3907,7 @@ fn cross_cat_rhocalc_castop_unionbag_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_removebag_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3919,7 +3919,7 @@ fn cross_cat_rhocalc_castop_removebag_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_diffbag_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3931,7 +3931,7 @@ fn cross_cat_rhocalc_castop_diffbag_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_getmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3943,7 +3943,7 @@ fn cross_cat_rhocalc_castop_getmap_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_putmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3955,7 +3955,7 @@ fn cross_cat_rhocalc_castop_putmap_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_deletemap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3967,7 +3967,7 @@ fn cross_cat_rhocalc_castop_deletemap_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mergemap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3979,7 +3979,7 @@ fn cross_cat_rhocalc_castop_mergemap_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_hasmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))), Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -3991,7 +3991,7 @@ fn cross_cat_rhocalc_castop_hasmap_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_keysmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4003,7 +4003,7 @@ fn cross_cat_rhocalc_castop_keysmap_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_valuesmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4015,7 +4015,7 @@ fn cross_cat_rhocalc_castop_valuesmap_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_not_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4027,7 +4027,7 @@ fn cross_cat_rhocalc_castop_not_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_len_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4039,7 +4039,7 @@ fn cross_cat_rhocalc_castop_len_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_tobool_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4051,7 +4051,7 @@ fn cross_cat_rhocalc_castop_tobool_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_tostr_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::CastBigRat(Box::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4063,7 +4063,7 @@ fn cross_cat_rhocalc_castop_tostr_castbigrat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4075,7 +4075,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4087,7 +4087,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4099,7 +4099,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4111,7 +4111,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4123,7 +4123,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4135,7 +4135,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4147,7 +4147,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_or_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4159,7 +4159,7 @@ fn cross_cat_rhocalc_castop_or_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_and_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4171,7 +4171,7 @@ fn cross_cat_rhocalc_castop_and_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4183,7 +4183,7 @@ fn cross_cat_rhocalc_castop_bitor_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4195,7 +4195,7 @@ fn cross_cat_rhocalc_castop_bitand_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4207,7 +4207,7 @@ fn cross_cat_rhocalc_castop_bitnot_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_eq_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4219,7 +4219,7 @@ fn cross_cat_rhocalc_castop_eq_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_ne_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4231,7 +4231,7 @@ fn cross_cat_rhocalc_castop_ne_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gt_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4243,7 +4243,7 @@ fn cross_cat_rhocalc_castop_gt_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lt_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4255,7 +4255,7 @@ fn cross_cat_rhocalc_castop_lt_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4267,7 +4267,7 @@ fn cross_cat_rhocalc_castop_gteq_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4279,7 +4279,7 @@ fn cross_cat_rhocalc_castop_lteq_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_add_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4291,7 +4291,7 @@ fn cross_cat_rhocalc_castop_add_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_sub_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4303,7 +4303,7 @@ fn cross_cat_rhocalc_castop_sub_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mul_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4315,7 +4315,7 @@ fn cross_cat_rhocalc_castop_mul_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_div_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4327,7 +4327,7 @@ fn cross_cat_rhocalc_castop_div_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mod_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4339,7 +4339,7 @@ fn cross_cat_rhocalc_castop_mod_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_negproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4351,7 +4351,7 @@ fn cross_cat_rhocalc_castop_negproc_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_concatlist_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4363,7 +4363,7 @@ fn cross_cat_rhocalc_castop_concatlist_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_elemlist_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4375,7 +4375,7 @@ fn cross_cat_rhocalc_castop_elemlist_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_deletelist_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4387,7 +4387,7 @@ fn cross_cat_rhocalc_castop_deletelist_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_unionbag_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4399,7 +4399,7 @@ fn cross_cat_rhocalc_castop_unionbag_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_removebag_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4411,7 +4411,7 @@ fn cross_cat_rhocalc_castop_removebag_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_diffbag_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4423,7 +4423,7 @@ fn cross_cat_rhocalc_castop_diffbag_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_getmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4435,7 +4435,7 @@ fn cross_cat_rhocalc_castop_getmap_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_putmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4447,7 +4447,7 @@ fn cross_cat_rhocalc_castop_putmap_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_deletemap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4459,7 +4459,7 @@ fn cross_cat_rhocalc_castop_deletemap_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mergemap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4471,7 +4471,7 @@ fn cross_cat_rhocalc_castop_mergemap_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_hasmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))), Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4483,7 +4483,7 @@ fn cross_cat_rhocalc_castop_hasmap_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_keysmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4495,7 +4495,7 @@ fn cross_cat_rhocalc_castop_keysmap_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_valuesmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4507,7 +4507,7 @@ fn cross_cat_rhocalc_castop_valuesmap_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_not_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4519,7 +4519,7 @@ fn cross_cat_rhocalc_castop_not_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_len_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4531,7 +4531,7 @@ fn cross_cat_rhocalc_castop_len_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_tobool_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4543,7 +4543,7 @@ fn cross_cat_rhocalc_castop_tobool_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_tostr_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::CastFixed(Box::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4555,7 +4555,7 @@ fn cross_cat_rhocalc_castop_tostr_castfixed_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4567,7 +4567,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4579,7 +4579,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4591,7 +4591,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4603,7 +4603,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4615,7 +4615,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4627,7 +4627,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4639,7 +4639,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_or_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4651,7 +4651,7 @@ fn cross_cat_rhocalc_castop_or_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_and_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4663,7 +4663,7 @@ fn cross_cat_rhocalc_castop_and_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4675,7 +4675,7 @@ fn cross_cat_rhocalc_castop_bitor_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4687,7 +4687,7 @@ fn cross_cat_rhocalc_castop_bitand_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4699,7 +4699,7 @@ fn cross_cat_rhocalc_castop_bitnot_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_eq_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4711,7 +4711,7 @@ fn cross_cat_rhocalc_castop_eq_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_ne_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4723,7 +4723,7 @@ fn cross_cat_rhocalc_castop_ne_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gt_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4735,7 +4735,7 @@ fn cross_cat_rhocalc_castop_gt_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lt_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4747,7 +4747,7 @@ fn cross_cat_rhocalc_castop_lt_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4759,7 +4759,7 @@ fn cross_cat_rhocalc_castop_gteq_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4771,7 +4771,7 @@ fn cross_cat_rhocalc_castop_lteq_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_add_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4783,7 +4783,7 @@ fn cross_cat_rhocalc_castop_add_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_sub_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4795,7 +4795,7 @@ fn cross_cat_rhocalc_castop_sub_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mul_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4807,7 +4807,7 @@ fn cross_cat_rhocalc_castop_mul_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_div_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4819,7 +4819,7 @@ fn cross_cat_rhocalc_castop_div_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mod_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4831,7 +4831,7 @@ fn cross_cat_rhocalc_castop_mod_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_negproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4843,7 +4843,7 @@ fn cross_cat_rhocalc_castop_negproc_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_concatlist_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4855,7 +4855,7 @@ fn cross_cat_rhocalc_castop_concatlist_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_elemlist_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4867,7 +4867,7 @@ fn cross_cat_rhocalc_castop_elemlist_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_deletelist_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4879,7 +4879,7 @@ fn cross_cat_rhocalc_castop_deletelist_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_unionbag_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4891,7 +4891,7 @@ fn cross_cat_rhocalc_castop_unionbag_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_removebag_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4903,7 +4903,7 @@ fn cross_cat_rhocalc_castop_removebag_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_diffbag_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4915,7 +4915,7 @@ fn cross_cat_rhocalc_castop_diffbag_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_getmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4927,7 +4927,7 @@ fn cross_cat_rhocalc_castop_getmap_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_putmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4939,7 +4939,7 @@ fn cross_cat_rhocalc_castop_putmap_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_deletemap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4951,7 +4951,7 @@ fn cross_cat_rhocalc_castop_deletemap_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mergemap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4963,7 +4963,7 @@ fn cross_cat_rhocalc_castop_mergemap_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_hasmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4975,7 +4975,7 @@ fn cross_cat_rhocalc_castop_hasmap_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_keysmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4987,7 +4987,7 @@ fn cross_cat_rhocalc_castop_keysmap_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_valuesmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -4999,7 +4999,7 @@ fn cross_cat_rhocalc_castop_valuesmap_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_not_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5011,7 +5011,7 @@ fn cross_cat_rhocalc_castop_not_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_len_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5023,7 +5023,7 @@ fn cross_cat_rhocalc_castop_len_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_tobool_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5035,7 +5035,7 @@ fn cross_cat_rhocalc_castop_tobool_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_tostr_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5047,7 +5047,7 @@ fn cross_cat_rhocalc_castop_tostr_castfloat_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5059,7 +5059,7 @@ fn cross_cat_rhocalc_castop_intbinproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5071,7 +5071,7 @@ fn cross_cat_rhocalc_castop_uintbinproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5083,7 +5083,7 @@ fn cross_cat_rhocalc_castop_floatbinproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5095,7 +5095,7 @@ fn cross_cat_rhocalc_castop_fixedbinproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5107,7 +5107,7 @@ fn cross_cat_rhocalc_castop_bigintcastproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5119,7 +5119,7 @@ fn cross_cat_rhocalc_castop_bigratcastproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5131,7 +5131,7 @@ fn cross_cat_rhocalc_castop_fractionproc_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_or_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5143,7 +5143,7 @@ fn cross_cat_rhocalc_castop_or_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_and_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5155,7 +5155,7 @@ fn cross_cat_rhocalc_castop_and_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5167,7 +5167,7 @@ fn cross_cat_rhocalc_castop_bitor_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5179,7 +5179,7 @@ fn cross_cat_rhocalc_castop_bitand_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5191,7 +5191,7 @@ fn cross_cat_rhocalc_castop_bitnot_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_eq_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5203,7 +5203,7 @@ fn cross_cat_rhocalc_castop_eq_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_ne_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5215,7 +5215,7 @@ fn cross_cat_rhocalc_castop_ne_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gt_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5227,7 +5227,7 @@ fn cross_cat_rhocalc_castop_gt_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lt_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5239,7 +5239,7 @@ fn cross_cat_rhocalc_castop_lt_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5251,7 +5251,7 @@ fn cross_cat_rhocalc_castop_gteq_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5263,7 +5263,7 @@ fn cross_cat_rhocalc_castop_lteq_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_add_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5275,7 +5275,7 @@ fn cross_cat_rhocalc_castop_add_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_sub_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5287,7 +5287,7 @@ fn cross_cat_rhocalc_castop_sub_castbigint_smoke() {
 #[test]
 fn cross_cat_rhocalc_castop_mul_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))), Box::new(Proc::CastBigInt(Box::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5303,7 +5303,7 @@ fn cross_cat_rhocalc_castop_mul_castbigint_smoke() {
 #[test]
 fn wfst_rhocalc_dispatch_intbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5315,7 +5315,7 @@ fn wfst_rhocalc_dispatch_intbinproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_uintbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5327,7 +5327,7 @@ fn wfst_rhocalc_dispatch_uintbinproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_floatbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5339,7 +5339,7 @@ fn wfst_rhocalc_dispatch_floatbinproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_fixedbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5351,7 +5351,7 @@ fn wfst_rhocalc_dispatch_fixedbinproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_bigintcastproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(Box::new(Proc::PZero));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5363,7 +5363,7 @@ fn wfst_rhocalc_dispatch_bigintcastproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_bigratcastproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(Box::new(Proc::PZero));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5375,7 +5375,7 @@ fn wfst_rhocalc_dispatch_bigratcastproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_negint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(0i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5387,7 +5387,7 @@ fn wfst_rhocalc_dispatch_negint_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_fractionproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5399,7 +5399,7 @@ fn wfst_rhocalc_dispatch_fractionproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_bitnot_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(Box::new(Proc::PZero));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5411,7 +5411,7 @@ fn wfst_rhocalc_dispatch_bitnot_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_negproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(Box::new(Proc::PZero));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5423,7 +5423,7 @@ fn wfst_rhocalc_dispatch_negproc_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_concatlist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5435,7 +5435,7 @@ fn wfst_rhocalc_dispatch_concatlist_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_elemlist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5447,7 +5447,7 @@ fn wfst_rhocalc_dispatch_elemlist_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_deletelist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5459,7 +5459,7 @@ fn wfst_rhocalc_dispatch_deletelist_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_unionbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5471,7 +5471,7 @@ fn wfst_rhocalc_dispatch_unionbag_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_removebag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5483,7 +5483,7 @@ fn wfst_rhocalc_dispatch_removebag_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_diffbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5495,7 +5495,7 @@ fn wfst_rhocalc_dispatch_diffbag_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_countbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5507,7 +5507,7 @@ fn wfst_rhocalc_dispatch_countbag_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_getmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5519,7 +5519,7 @@ fn wfst_rhocalc_dispatch_getmap_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_putmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5531,7 +5531,7 @@ fn wfst_rhocalc_dispatch_putmap_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_deletemap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5543,7 +5543,7 @@ fn wfst_rhocalc_dispatch_deletemap_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_mergemap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5555,7 +5555,7 @@ fn wfst_rhocalc_dispatch_mergemap_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_hasmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5567,7 +5567,7 @@ fn wfst_rhocalc_dispatch_hasmap_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_keysmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(Box::new(Proc::PZero));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5579,7 +5579,7 @@ fn wfst_rhocalc_dispatch_keysmap_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_valuesmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(Box::new(Proc::PZero));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5591,7 +5591,7 @@ fn wfst_rhocalc_dispatch_valuesmap_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_not_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(Box::new(Proc::PZero));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5603,7 +5603,7 @@ fn wfst_rhocalc_dispatch_not_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_len_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(Box::new(Proc::PZero));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5615,7 +5615,7 @@ fn wfst_rhocalc_dispatch_len_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_tobool_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(Box::new(Proc::PZero));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5627,7 +5627,7 @@ fn wfst_rhocalc_dispatch_tobool_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_tostr_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(Box::new(Proc::PZero));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5639,7 +5639,7 @@ fn wfst_rhocalc_dispatch_tostr_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_or_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5651,7 +5651,7 @@ fn wfst_rhocalc_dispatch_or_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_and_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5663,7 +5663,7 @@ fn wfst_rhocalc_dispatch_and_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_bitor_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5675,7 +5675,7 @@ fn wfst_rhocalc_dispatch_bitor_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_bitand_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5687,7 +5687,7 @@ fn wfst_rhocalc_dispatch_bitand_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_eq_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5699,7 +5699,7 @@ fn wfst_rhocalc_dispatch_eq_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_ne_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5711,7 +5711,7 @@ fn wfst_rhocalc_dispatch_ne_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_gt_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5723,7 +5723,7 @@ fn wfst_rhocalc_dispatch_gt_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_lt_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5735,7 +5735,7 @@ fn wfst_rhocalc_dispatch_lt_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_gteq_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5747,7 +5747,7 @@ fn wfst_rhocalc_dispatch_gteq_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_lteq_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5759,7 +5759,7 @@ fn wfst_rhocalc_dispatch_lteq_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_add_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5771,7 +5771,7 @@ fn wfst_rhocalc_dispatch_add_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_sub_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5783,7 +5783,7 @@ fn wfst_rhocalc_dispatch_sub_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_mul_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5795,7 +5795,7 @@ fn wfst_rhocalc_dispatch_mul_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_div_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5807,7 +5807,7 @@ fn wfst_rhocalc_dispatch_div_eval() {
 #[test]
 fn wfst_rhocalc_dispatch_mod_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5823,7 +5823,7 @@ fn wfst_rhocalc_dispatch_mod_eval() {
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5835,7 +5835,7 @@ fn wpda_rhocalc_intbinproc_pzero_0() {
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5847,7 +5847,7 @@ fn wpda_rhocalc_intbinproc_pzero_1() {
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5859,7 +5859,7 @@ fn wpda_rhocalc_intbinproc_pzero_2() {
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5871,7 +5871,7 @@ fn wpda_rhocalc_intbinproc_pzero_3() {
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5883,7 +5883,7 @@ fn wpda_rhocalc_intbinproc_pzero_5() {
 #[test]
 fn wpda_rhocalc_intbinproc_err_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5895,7 +5895,7 @@ fn wpda_rhocalc_intbinproc_err_0() {
 #[test]
 fn wpda_rhocalc_intbinproc_err_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5907,7 +5907,7 @@ fn wpda_rhocalc_intbinproc_err_1() {
 #[test]
 fn wpda_rhocalc_intbinproc_err_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(2i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5919,7 +5919,7 @@ fn wpda_rhocalc_intbinproc_err_2() {
 #[test]
 fn wpda_rhocalc_intbinproc_err_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(3i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5931,7 +5931,7 @@ fn wpda_rhocalc_intbinproc_err_3() {
 #[test]
 fn wpda_rhocalc_intbinproc_err_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(Box::new(Proc::Err), Box::new(Int::NumLit(5i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5943,7 +5943,7 @@ fn wpda_rhocalc_intbinproc_err_5() {
 #[test]
 fn wpda_rhocalc_uintbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5955,7 +5955,7 @@ fn wpda_rhocalc_uintbinproc_pzero_0() {
 #[test]
 fn wpda_rhocalc_negint_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(0i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5967,7 +5967,7 @@ fn wpda_rhocalc_negint_0() {
 #[test]
 fn wpda_rhocalc_negint_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(1i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5979,7 +5979,7 @@ fn wpda_rhocalc_negint_1() {
 #[test]
 fn wpda_rhocalc_negint_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(2i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5991,7 +5991,7 @@ fn wpda_rhocalc_negint_2() {
 #[test]
 fn wpda_rhocalc_negint_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(Box::new(Int::NumLit(3i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6008,7 +6008,7 @@ fn wpda_rhocalc_negint_3() {
 fn type_pres_rhocalc_intbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::IntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6030,7 +6030,7 @@ fn type_pres_rhocalc_intbinproc_pzero_0() {
 fn type_pres_rhocalc_uintbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::UIntBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6052,7 +6052,7 @@ fn type_pres_rhocalc_uintbinproc_pzero_0() {
 fn type_pres_rhocalc_floatbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::FloatBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6074,7 +6074,7 @@ fn type_pres_rhocalc_floatbinproc_pzero_0() {
 fn type_pres_rhocalc_fixedbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::FixedBinProc(Box::new(Proc::PZero), Box::new(Int::NumLit(0i64)));
+    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6096,7 +6096,7 @@ fn type_pres_rhocalc_fixedbinproc_pzero_0() {
 fn type_pres_rhocalc_bigintcastproc_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::BigintCastProc(Box::new(Proc::PZero));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6118,7 +6118,7 @@ fn type_pres_rhocalc_bigintcastproc_pzero() {
 fn type_pres_rhocalc_bigratcastproc_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::BigratCastProc(Box::new(Proc::PZero));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6140,7 +6140,7 @@ fn type_pres_rhocalc_bigratcastproc_pzero() {
 fn type_pres_rhocalc_negint_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::NegInt(Box::new(Int::NumLit(0i64)));
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6162,7 +6162,7 @@ fn type_pres_rhocalc_negint_0() {
 fn type_pres_rhocalc_fractionproc_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::FractionProc(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6184,7 +6184,7 @@ fn type_pres_rhocalc_fractionproc_pzero_pzero() {
 fn type_pres_rhocalc_or_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Or(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Or(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6206,7 +6206,7 @@ fn type_pres_rhocalc_or_pzero_pzero() {
 fn type_pres_rhocalc_and_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::And(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::And(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6228,7 +6228,7 @@ fn type_pres_rhocalc_and_pzero_pzero() {
 fn type_pres_rhocalc_bitor_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::BitOr(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6250,7 +6250,7 @@ fn type_pres_rhocalc_bitor_pzero_pzero() {
 fn type_pres_rhocalc_bitand_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::BitAnd(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6272,7 +6272,7 @@ fn type_pres_rhocalc_bitand_pzero_pzero() {
 fn type_pres_rhocalc_bitnot_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::BitNot(Box::new(Proc::PZero));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6294,7 +6294,7 @@ fn type_pres_rhocalc_bitnot_pzero() {
 fn type_pres_rhocalc_eq_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Eq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Eq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6316,7 +6316,7 @@ fn type_pres_rhocalc_eq_pzero_pzero() {
 fn type_pres_rhocalc_ne_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Ne(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Ne(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6338,7 +6338,7 @@ fn type_pres_rhocalc_ne_pzero_pzero() {
 fn type_pres_rhocalc_gt_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Gt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Gt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6360,7 +6360,7 @@ fn type_pres_rhocalc_gt_pzero_pzero() {
 fn type_pres_rhocalc_lt_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Lt(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Lt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6382,7 +6382,7 @@ fn type_pres_rhocalc_lt_pzero_pzero() {
 fn type_pres_rhocalc_gteq_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::GtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6404,7 +6404,7 @@ fn type_pres_rhocalc_gteq_pzero_pzero() {
 fn type_pres_rhocalc_lteq_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::LtEq(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6426,7 +6426,7 @@ fn type_pres_rhocalc_lteq_pzero_pzero() {
 fn type_pres_rhocalc_add_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Add(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Add(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6448,7 +6448,7 @@ fn type_pres_rhocalc_add_pzero_pzero() {
 fn type_pres_rhocalc_sub_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Sub(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Sub(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6470,7 +6470,7 @@ fn type_pres_rhocalc_sub_pzero_pzero() {
 fn type_pres_rhocalc_mul_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Mul(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Mul(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6492,7 +6492,7 @@ fn type_pres_rhocalc_mul_pzero_pzero() {
 fn type_pres_rhocalc_div_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Div(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6514,7 +6514,7 @@ fn type_pres_rhocalc_div_pzero_pzero() {
 fn type_pres_rhocalc_mod_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Mod(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6536,7 +6536,7 @@ fn type_pres_rhocalc_mod_pzero_pzero() {
 fn type_pres_rhocalc_negproc_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::NegProc(Box::new(Proc::PZero));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6558,7 +6558,7 @@ fn type_pres_rhocalc_negproc_pzero() {
 fn type_pres_rhocalc_concatlist_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::ConcatList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6580,7 +6580,7 @@ fn type_pres_rhocalc_concatlist_pzero_pzero() {
 fn type_pres_rhocalc_elemlist_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::ElemList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6602,7 +6602,7 @@ fn type_pres_rhocalc_elemlist_pzero_pzero() {
 fn type_pres_rhocalc_deletelist_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::DeleteList(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6624,7 +6624,7 @@ fn type_pres_rhocalc_deletelist_pzero_pzero() {
 fn type_pres_rhocalc_unionbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::UnionBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6646,7 +6646,7 @@ fn type_pres_rhocalc_unionbag_pzero_pzero() {
 fn type_pres_rhocalc_removebag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::RemoveBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6668,7 +6668,7 @@ fn type_pres_rhocalc_removebag_pzero_pzero() {
 fn type_pres_rhocalc_diffbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::DiffBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6690,7 +6690,7 @@ fn type_pres_rhocalc_diffbag_pzero_pzero() {
 fn type_pres_rhocalc_countbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::CountBag(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6712,7 +6712,7 @@ fn type_pres_rhocalc_countbag_pzero_pzero() {
 fn type_pres_rhocalc_getmap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::GetMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6734,7 +6734,7 @@ fn type_pres_rhocalc_getmap_pzero_pzero() {
 fn type_pres_rhocalc_putmap_pzero_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::PutMap(Box::new(Proc::PZero), Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6756,7 +6756,7 @@ fn type_pres_rhocalc_putmap_pzero_pzero_pzero() {
 fn type_pres_rhocalc_deletemap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::DeleteMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6778,7 +6778,7 @@ fn type_pres_rhocalc_deletemap_pzero_pzero() {
 fn type_pres_rhocalc_mergemap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::MergeMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6800,7 +6800,7 @@ fn type_pres_rhocalc_mergemap_pzero_pzero() {
 fn type_pres_rhocalc_hasmap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::HasMap(Box::new(Proc::PZero), Box::new(Proc::PZero));
+    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6822,7 +6822,7 @@ fn type_pres_rhocalc_hasmap_pzero_pzero() {
 fn type_pres_rhocalc_keysmap_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::KeysMap(Box::new(Proc::PZero));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6844,7 +6844,7 @@ fn type_pres_rhocalc_keysmap_pzero() {
 fn type_pres_rhocalc_valuesmap_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::ValuesMap(Box::new(Proc::PZero));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6866,7 +6866,7 @@ fn type_pres_rhocalc_valuesmap_pzero() {
 fn type_pres_rhocalc_not_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Not(Box::new(Proc::PZero));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6888,7 +6888,7 @@ fn type_pres_rhocalc_not_pzero() {
 fn type_pres_rhocalc_len_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::Len(Box::new(Proc::PZero));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6910,7 +6910,7 @@ fn type_pres_rhocalc_len_pzero() {
 fn type_pres_rhocalc_tobool_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::ToBool(Box::new(Proc::PZero));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6932,7 +6932,7 @@ fn type_pres_rhocalc_tobool_pzero() {
 fn type_pres_rhocalc_tostr_pzero() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Proc
-    let input_term = Proc::ToStr(Box::new(Proc::PZero));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

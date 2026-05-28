@@ -152,13 +152,13 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     match choice {
         0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_int(),
         1 => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
-            let f2: Option<Box<Int>> = if reader.next_byte() & 1 == 0 { None } else { Some(Box::new(build_int_from_tape(reader, child_depth))) };
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
+            let f2: Option<std::sync::Arc<Int>> = if reader.next_byte() & 1 == 0 { None } else { Some(std::sync::Arc::new(build_int_from_tape(reader, child_depth))) };
             Int::IfElse(f0, f1, f2)
         },
         _ => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Int::BoolToInt(f0)
         },
     }

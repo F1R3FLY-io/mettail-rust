@@ -212,14 +212,14 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                         format!(
                             "mettail_runtime::Scope::new(\
                                 mettail_runtime::Binder(mettail_runtime::get_or_create_var(\"{}\")), \
-                                Box::new({}))",
+                                std::sync::Arc::new({}))",
                             var_name, body_expr
                         )
                     } else {
                         format!(
                             "{}, mettail_runtime::Scope::new(\
                                 mettail_runtime::Binder(mettail_runtime::get_or_create_var(\"{}\")), \
-                                Box::new({}))",
+                                std::sync::Arc::new({}))",
                             pre_scope_exprs.join(", "),
                             var_name, body_expr
                         )
@@ -445,7 +445,7 @@ fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<Str
     } else {
         // For Box<Cat> fields, try to find a leaf value for the category
         let cat_str = field.category.to_string();
-        construct_leaf_for_category(&cat_str, language).map(|leaf| format!("Box::new({})", leaf))
+        construct_leaf_for_category(&cat_str, language).map(|leaf| format!("std::sync::Arc::new({})", leaf))
     }
 }
 

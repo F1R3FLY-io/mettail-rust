@@ -162,7 +162,7 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     ))
 }.unwrap_proc(),
         _ => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let f1 = if reader.next_byte() & 1 == 0 { None } else {
 let num_elems = (reader.next_byte() % 4) as usize;
 let v: Vec<_> = (0..num_elems).map(|_| build_proc_from_tape(reader, child_depth)).collect();

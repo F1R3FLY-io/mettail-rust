@@ -376,13 +376,18 @@ fn generate_regular_push_arm(
                         },
                     };
                 }
-                // Opt-Group: `Option<Box<Cat>>` field. `take()` extracts
-                // the Box (leaves None) without needing a dummy. Push
-                // the inner if Some.
+                // Opt-Group: `Option<Arc<Cat>>` field. `take()` extracts
+                // the Arc (leaves None). ARC refactor: only descend
+                // (push a DropTask) when this is the LAST owner via
+                // `Arc::into_inner`; a shared Arc just drops its handle
+                // cheaply here. Keeps Drop stack-safe + O(1) for shared
+                // subtrees.
                 let _ = dummy_fn.clone();
                 return quote! {
                     if let Some(__b) = #name.take() {
-                        stack.push(DropTask::#task_variant(*__b));
+                        if let Some(__inner) = std::sync::Arc::into_inner(__b) {
+                            stack.push(DropTask::#task_variant(__inner));
+                        }
                     }
                 };
             }
@@ -432,10 +437,15 @@ fn generate_regular_push_arm(
                     }
                 }
             } else {
-                // Box<T> field: replace with dummy box, push extracted child
+                // Arc<T> field (ARC refactor): replace with a cheap dummy
+                // Arc, then descend ONLY if we are the last owner
+                // (`Arc::into_inner` → Some). Shared subtrees drop their
+                // handle in O(1) without recursing. Preserves stack-safety.
                 quote! {
-                    let child = std::mem::replace(#name, Box::new(#dummy_fn()));
-                    stack.push(DropTask::#task_variant(*child));
+                    let child = std::mem::replace(#name, std::sync::Arc::new(#dummy_fn()));
+                    if let Some(__inner) = std::sync::Arc::into_inner(child) {
+                        stack.push(DropTask::#task_variant(__inner));
+                    }
                 }
             }
         })
@@ -583,8 +593,10 @@ fn generate_binder_push_arm(
             }
         } else {
             push_stmts.push(quote! {
-                let child = std::mem::replace(#name, Box::new(#dummy_fn()));
-                stack.push(DropTask::#task_variant(*child));
+                let child = std::mem::replace(#name, std::sync::Arc::new(#dummy_fn()));
+                if let Some(__inner) = std::sync::Arc::into_inner(child) {
+                    stack.push(DropTask::#task_variant(__inner));
+                }
             });
         }
     }
@@ -600,11 +612,13 @@ fn generate_binder_push_arm(
             // This extracts the original scope's body for iterative dropping.
             let dummy_scope = mettail_runtime::Scope::from_parts_unsafe(
                 mettail_runtime::Binder(mettail_runtime::FreeVar::fresh(None)),
-                Box::new(#body_dummy_fn()),
+                std::sync::Arc::new(#body_dummy_fn()),
             );
             let old_scope = std::mem::replace(#scope_name, dummy_scope);
             let (_pattern, body) = old_scope.into_parts_unsafe();
-            stack.push(DropTask::#body_task_variant(*body));
+            if let Some(__inner) = std::sync::Arc::into_inner(body) {
+                stack.push(DropTask::#body_task_variant(__inner));
+            }
         }
     });
 
@@ -696,8 +710,10 @@ fn generate_multi_binder_push_arm(
             }
         } else {
             push_stmts.push(quote! {
-                let child = std::mem::replace(#name, Box::new(#dummy_fn()));
-                stack.push(DropTask::#task_variant(*child));
+                let child = std::mem::replace(#name, std::sync::Arc::new(#dummy_fn()));
+                if let Some(__inner) = std::sync::Arc::into_inner(child) {
+                    stack.push(DropTask::#task_variant(__inner));
+                }
             });
         }
     }
@@ -711,11 +727,13 @@ fn generate_multi_binder_push_arm(
         {
             let dummy_scope = mettail_runtime::Scope::from_parts_unsafe(
                 Vec::new(),
-                Box::new(#body_dummy_fn()),
+                std::sync::Arc::new(#body_dummy_fn()),
             );
             let old_scope = std::mem::replace(#scope_name, dummy_scope);
             let (_pattern, body) = old_scope.into_parts_unsafe();
-            stack.push(DropTask::#body_task_variant(*body));
+            if let Some(__inner) = std::sync::Arc::into_inner(body) {
+                stack.push(DropTask::#body_task_variant(__inner));
+            }
         }
     });
 

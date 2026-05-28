@@ -43,7 +43,7 @@ fn unit_guardedrho_proc_pnil() {
 #[test]
 fn unit_guardedrho_proc_castint() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastInt(Box::new(Int::NumLit(0i64)));
+    let term = Proc::CastInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -58,7 +58,7 @@ fn unit_guardedrho_proc_castint() {
 #[test]
 fn unit_guardedrho_proc_poutput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POutput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), Box::new(Proc::PNil));
+    let term = Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PNil));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POutput");
     if let Ok(parsed) = Proc::parse(&displayed) {
@@ -71,7 +71,7 @@ fn unit_guardedrho_proc_poutput() {
 #[test]
 fn unit_guardedrho_proc_pguardedinput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PGuardedInput(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), mettail_runtime::BehavioralPred::Top, mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")), Box::new(Proc::PNil)));
+    let term = Proc::PGuardedInput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), mettail_runtime::BehavioralPred::Top, mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")), std::sync::Arc::new(Proc::PNil)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PGuardedInput");
 }
@@ -79,7 +79,7 @@ fn unit_guardedrho_proc_pguardedinput() {
 #[test]
 fn unit_guardedrho_name_nquote() {
     mettail_runtime::clear_var_cache();
-    let term = Name::NQuote(Box::new(Proc::PNil));
+    let term = Name::NQuote(std::sync::Arc::new(Proc::PNil));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuote");
     if let Ok(parsed) = Name::parse(&displayed) {
@@ -92,7 +92,7 @@ fn unit_guardedrho_name_nquote() {
 #[test]
 fn unit_guardedrho_proc_pdrop() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PDrop(Box::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Proc::PDrop(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PDrop");
     if let Ok(parsed) = Proc::parse(&displayed) {

@@ -152,17 +152,17 @@ fn build_bool_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bool {
     match choice {
         0 => AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool())).unwrap_bool(),
         1 => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
-            let f1 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Bool::And(f0, f1)
         },
         2 => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
-            let f1 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Bool::Or(f0, f1)
         },
         _ => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Bool::Not(f0)
         },
     }
@@ -185,26 +185,26 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     match choice {
         0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_int(),
         1 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Int::AddInt(f0, f1)
         },
         2 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Int::SubInt(f0, f1)
         },
         3 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Int::MulInt(f0, f1)
         },
         4 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Int::Neg(f0)
         },
         _ => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Int::BoolToInt(f0)
         },
     }

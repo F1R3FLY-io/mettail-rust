@@ -174,14 +174,14 @@ fn display_int_abuts_else_keyword_separated() {
     // insert a space between t-Param and the optional group's "else"
     // literal, AND between the literal and the e-Param.
     let inner = Int::IfElse(
-        Box::new(Bool::BoolLit(true)),
-        Box::new(Int::NumLit(456913875)),
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(456913875)),
         None,
     );
     let outer = Int::IfElse(
-        Box::new(Bool::BoolLit(false)),
-        Box::new(inner),
-        Some(Box::new(Int::NumLit(1894040589))),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(inner),
+        Some(std::sync::Arc::new(Int::NumLit(1894040589))),
     );
     let displayed = format!("{}", outer);
     // The displayed string must contain " else " with both flanking
@@ -205,8 +205,8 @@ fn display_int_no_else_no_trailing_whitespace() {
     // None-branch: Opt emits nothing — output must NOT end with whitespace
     // and must re-parse.
     let term = Int::IfElse(
-        Box::new(Bool::BoolLit(false)),
-        Box::new(Int::NumLit(42)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(42)),
         None,
     );
     let displayed = format!("{}", term);

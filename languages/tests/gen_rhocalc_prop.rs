@@ -320,7 +320,7 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     ))
 }.unwrap_proc(),
         3 => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             Proc::PDrop(f0)
         },
         4 => {
@@ -332,8 +332,8 @@ bag.insert(build_proc_from_tape(reader, child_depth));
 Proc::PPar(bag)
         },
         5 => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::POutput(f0, f1)
         },
         6 => {
@@ -347,7 +347,7 @@ mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
 })
 .collect();
 let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binders, Box::new(body));
+let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
             Proc::PInputs(pre_0, scope)
         },
         7 => {
@@ -359,247 +359,247 @@ mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
 })
 .collect();
 let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binders, Box::new(body));
+let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
             Proc::PNew(scope)
         },
         8 => {
-            let f0 = Box::new(build_bigrat_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bigrat_from_tape(reader, child_depth));
             Proc::CastBigRat(f0)
         },
         9 => {
-            let f0 = Box::new(build_fixed_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_fixed_from_tape(reader, child_depth));
             Proc::CastFixed(f0)
         },
         10 => {
-            let f0 = Box::new(build_float_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_float_from_tape(reader, child_depth));
             Proc::CastFloat(f0)
         },
         11 => {
-            let f0 = Box::new(build_bigint_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bigint_from_tape(reader, child_depth));
             Proc::CastBigInt(f0)
         },
         12 => {
-            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_uint32_from_tape(reader, child_depth));
             Proc::CastUInt32(f0)
         },
         13 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::CastInt(f0)
         },
         14 => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Proc::CastBool(f0)
         },
         15 => {
-            let f0 = Box::new(build_str_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_str_from_tape(reader, child_depth));
             Proc::CastStr(f0)
         },
         16 => {
-            let f0 = Box::new(build_list_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_list_from_tape(reader, child_depth));
             Proc::CastList(f0)
         },
         17 => {
-            let f0 = Box::new(build_bag_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bag_from_tape(reader, child_depth));
             Proc::CastBag(f0)
         },
         18 => {
-            let f0 = Box::new(build_map_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_map_from_tape(reader, child_depth));
             Proc::CastMap(f0)
         },
         19 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::IntBinProc(f0, f1)
         },
         20 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::UIntBinProc(f0, f1)
         },
         21 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::FloatBinProc(f0, f1)
         },
         22 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::FixedBinProc(f0, f1)
         },
         23 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::BigintCastProc(f0)
         },
         24 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::BigratCastProc(f0)
         },
         25 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::FractionProc(f0, f1)
         },
         26 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Or(f0, f1)
         },
         27 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::And(f0, f1)
         },
         28 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::BitOr(f0, f1)
         },
         29 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::BitAnd(f0, f1)
         },
         30 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::BitNot(f0)
         },
         31 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Eq(f0, f1)
         },
         32 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Ne(f0, f1)
         },
         33 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Gt(f0, f1)
         },
         34 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Lt(f0, f1)
         },
         35 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::GtEq(f0, f1)
         },
         36 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::LtEq(f0, f1)
         },
         37 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Add(f0, f1)
         },
         38 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Sub(f0, f1)
         },
         39 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Mul(f0, f1)
         },
         40 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Div(f0, f1)
         },
         41 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Mod(f0, f1)
         },
         42 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::NegProc(f0)
         },
         43 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::ConcatList(f0, f1)
         },
         44 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::ElemList(f0, f1)
         },
         45 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::DeleteList(f0, f1)
         },
         46 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::UnionBag(f0, f1)
         },
         47 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::RemoveBag(f0, f1)
         },
         48 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::DiffBag(f0, f1)
         },
         49 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::GetMap(f0, f1)
         },
         50 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f2 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f2 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::PutMap(f0, f1, f2)
         },
         51 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::DeleteMap(f0, f1)
         },
         52 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::MergeMap(f0, f1)
         },
         53 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::HasMap(f0, f1)
         },
         54 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::KeysMap(f0)
         },
         55 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::ValuesMap(f0)
         },
         56 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Not(f0)
         },
         57 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::Len(f0)
         },
         58 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::ToBool(f0)
         },
         _ => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::ToStr(f0)
         },
     }
@@ -640,7 +640,7 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     ))
 }.unwrap_name(),
         _ => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Name::NQuote(f0)
         },
     }
@@ -663,20 +663,20 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     match choice {
         0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX)).unwrap_int(),
         1 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Int::NegInt(f0)
         },
         2 => {
-            let f0 = Box::new(build_proc_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Int::CountBag(f0, f1)
         },
         3 => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             Int::BoolToInt(f0)
         },
         _ => {
-            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_uint32_from_tape(reader, child_depth));
             Int::UInt32ToInt(f0)
         },
     }
@@ -699,7 +699,7 @@ fn build_uint32_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> UInt32 {
     match choice {
         0 => AnyTerm::WrapUInt32(UInt32::NumLit(reader.next_u32())).unwrap_uint32(),
         _ => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             UInt32::BoolToUInt32(f0)
         },
     }
@@ -722,15 +722,15 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
     match choice {
         0 => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32())))).unwrap_bigint(),
         1 => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             BigInt::BoolToBigInt(f0)
         },
         2 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             BigInt::IntToBigInt(f0)
         },
         _ => {
-            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_uint32_from_tape(reader, child_depth));
             BigInt::UInt32ToBigInt(f0)
         },
     }
@@ -753,27 +753,27 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
     match choice {
         0 => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32()))))).unwrap_bigrat(),
         1 => {
-            let f0 = Box::new(build_bool_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             BigRat::BoolToBigRat(f0)
         },
         2 => {
-            let f0 = Box::new(build_int_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             BigRat::IntToBigRat(f0)
         },
         3 => {
-            let f0 = Box::new(build_uint32_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_uint32_from_tape(reader, child_depth));
             BigRat::UInt32ToBigRat(f0)
         },
         4 => {
-            let f0 = Box::new(build_float_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_float_from_tape(reader, child_depth));
             BigRat::FloatToBigRat(f0)
         },
         5 => {
-            let f0 = Box::new(build_bigint_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_bigint_from_tape(reader, child_depth));
             BigRat::BigIntToBigRat(f0)
         },
         _ => {
-            let f0 = Box::new(build_fixed_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_fixed_from_tape(reader, child_depth));
             BigRat::FixedToBigRat(f0)
         },
     }

@@ -56,7 +56,7 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_ledtest_andpred_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(false)), Box::new(Pred::BoolLit(false)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(false)), std::sync::Arc::new(Pred::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -69,7 +69,7 @@ fn eval_ledtest_andpred_false_false() {
 #[test]
 fn eval_ledtest_andpred_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(false)), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(false)), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -82,7 +82,7 @@ fn eval_ledtest_andpred_false_true() {
 #[test]
 fn eval_ledtest_andpred_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::BoolLit(false)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -95,7 +95,7 @@ fn eval_ledtest_andpred_true_false() {
 #[test]
 fn eval_ledtest_andpred_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -108,7 +108,7 @@ fn eval_ledtest_andpred_true_true() {
 #[test]
 fn eval_ledtest_factnum_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NumLit(5i32)));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -120,7 +120,7 @@ fn eval_ledtest_factnum_5_smoke() {
 #[test]
 fn eval_ledtest_factnum_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NumLit(3i32)));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -132,7 +132,7 @@ fn eval_ledtest_factnum_3_smoke() {
 #[test]
 fn eval_ledtest_factnum_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NumLit(2i32)));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -144,7 +144,7 @@ fn eval_ledtest_factnum_2_smoke() {
 #[test]
 fn eval_ledtest_factnum_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NumLit(1i32)));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -156,7 +156,7 @@ fn eval_ledtest_factnum_1_smoke() {
 #[test]
 fn eval_ledtest_factnum_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NumLit(0i32)));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -168,7 +168,7 @@ fn eval_ledtest_factnum_0_smoke() {
 #[test]
 fn eval_ledtest_negnum_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(5i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -181,7 +181,7 @@ fn eval_ledtest_negnum_5() {
 #[test]
 fn eval_ledtest_negnum_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(3i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -194,7 +194,7 @@ fn eval_ledtest_negnum_3() {
 #[test]
 fn eval_ledtest_negnum_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(2i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -207,7 +207,7 @@ fn eval_ledtest_negnum_2() {
 #[test]
 fn eval_ledtest_negnum_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(1i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -220,7 +220,7 @@ fn eval_ledtest_negnum_1() {
 #[test]
 fn eval_ledtest_negnum_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(0i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -233,7 +233,7 @@ fn eval_ledtest_negnum_0() {
 #[test]
 fn eval_ledtest_mulnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -246,7 +246,7 @@ fn eval_ledtest_mulnum_3_5() {
 #[test]
 fn eval_ledtest_mulnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -259,7 +259,7 @@ fn eval_ledtest_mulnum_3_3() {
 #[test]
 fn eval_ledtest_mulnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -272,7 +272,7 @@ fn eval_ledtest_mulnum_3_2() {
 #[test]
 fn eval_ledtest_mulnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -285,7 +285,7 @@ fn eval_ledtest_mulnum_3_1() {
 #[test]
 fn eval_ledtest_mulnum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -298,7 +298,7 @@ fn eval_ledtest_mulnum_3_0() {
 #[test]
 fn eval_ledtest_mulnum_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -311,7 +311,7 @@ fn eval_ledtest_mulnum_2_5() {
 #[test]
 fn eval_ledtest_mulnum_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -324,7 +324,7 @@ fn eval_ledtest_mulnum_2_3() {
 #[test]
 fn eval_ledtest_mulnum_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -337,7 +337,7 @@ fn eval_ledtest_mulnum_2_2() {
 #[test]
 fn eval_ledtest_mulnum_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -350,7 +350,7 @@ fn eval_ledtest_mulnum_2_1() {
 #[test]
 fn eval_ledtest_mulnum_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -363,7 +363,7 @@ fn eval_ledtest_mulnum_2_0() {
 #[test]
 fn eval_ledtest_mulnum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -376,7 +376,7 @@ fn eval_ledtest_mulnum_1_5() {
 #[test]
 fn eval_ledtest_mulnum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -389,7 +389,7 @@ fn eval_ledtest_mulnum_1_3() {
 #[test]
 fn eval_ledtest_mulnum_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -402,7 +402,7 @@ fn eval_ledtest_mulnum_1_2() {
 #[test]
 fn eval_ledtest_mulnum_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -415,7 +415,7 @@ fn eval_ledtest_mulnum_1_1() {
 #[test]
 fn eval_ledtest_mulnum_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -428,7 +428,7 @@ fn eval_ledtest_mulnum_1_0() {
 #[test]
 fn eval_ledtest_mulnum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -441,7 +441,7 @@ fn eval_ledtest_mulnum_0_5() {
 #[test]
 fn eval_ledtest_mulnum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -454,7 +454,7 @@ fn eval_ledtest_mulnum_0_3() {
 #[test]
 fn eval_ledtest_mulnum_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -467,7 +467,7 @@ fn eval_ledtest_mulnum_0_2() {
 #[test]
 fn eval_ledtest_mulnum_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -480,7 +480,7 @@ fn eval_ledtest_mulnum_0_1() {
 #[test]
 fn eval_ledtest_mulnum_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -493,7 +493,7 @@ fn eval_ledtest_mulnum_0_0() {
 #[test]
 fn eval_ledtest_addnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -506,7 +506,7 @@ fn eval_ledtest_addnum_3_5() {
 #[test]
 fn eval_ledtest_addnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -519,7 +519,7 @@ fn eval_ledtest_addnum_3_3() {
 #[test]
 fn eval_ledtest_addnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -532,7 +532,7 @@ fn eval_ledtest_addnum_3_2() {
 #[test]
 fn eval_ledtest_addnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -545,7 +545,7 @@ fn eval_ledtest_addnum_3_1() {
 #[test]
 fn eval_ledtest_addnum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -558,7 +558,7 @@ fn eval_ledtest_addnum_3_0() {
 #[test]
 fn eval_ledtest_addnum_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -571,7 +571,7 @@ fn eval_ledtest_addnum_2_5() {
 #[test]
 fn eval_ledtest_addnum_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -584,7 +584,7 @@ fn eval_ledtest_addnum_2_3() {
 #[test]
 fn eval_ledtest_addnum_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -597,7 +597,7 @@ fn eval_ledtest_addnum_2_2() {
 #[test]
 fn eval_ledtest_addnum_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -610,7 +610,7 @@ fn eval_ledtest_addnum_2_1() {
 #[test]
 fn eval_ledtest_addnum_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -623,7 +623,7 @@ fn eval_ledtest_addnum_2_0() {
 #[test]
 fn eval_ledtest_addnum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -636,7 +636,7 @@ fn eval_ledtest_addnum_1_5() {
 #[test]
 fn eval_ledtest_addnum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -649,7 +649,7 @@ fn eval_ledtest_addnum_1_3() {
 #[test]
 fn eval_ledtest_addnum_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -662,7 +662,7 @@ fn eval_ledtest_addnum_1_2() {
 #[test]
 fn eval_ledtest_addnum_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -675,7 +675,7 @@ fn eval_ledtest_addnum_1_1() {
 #[test]
 fn eval_ledtest_addnum_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -688,7 +688,7 @@ fn eval_ledtest_addnum_1_0() {
 #[test]
 fn eval_ledtest_addnum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -701,7 +701,7 @@ fn eval_ledtest_addnum_0_5() {
 #[test]
 fn eval_ledtest_addnum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -714,7 +714,7 @@ fn eval_ledtest_addnum_0_3() {
 #[test]
 fn eval_ledtest_addnum_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -727,7 +727,7 @@ fn eval_ledtest_addnum_0_2() {
 #[test]
 fn eval_ledtest_addnum_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -740,7 +740,7 @@ fn eval_ledtest_addnum_0_1() {
 #[test]
 fn eval_ledtest_addnum_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -753,7 +753,7 @@ fn eval_ledtest_addnum_0_0() {
 #[test]
 fn eval_ledtest_nenum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -766,7 +766,7 @@ fn eval_ledtest_nenum_3_5() {
 #[test]
 fn eval_ledtest_nenum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -779,7 +779,7 @@ fn eval_ledtest_nenum_3_3() {
 #[test]
 fn eval_ledtest_nenum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -792,7 +792,7 @@ fn eval_ledtest_nenum_3_2() {
 #[test]
 fn eval_ledtest_nenum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -805,7 +805,7 @@ fn eval_ledtest_nenum_3_1() {
 #[test]
 fn eval_ledtest_nenum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -818,7 +818,7 @@ fn eval_ledtest_nenum_3_0() {
 #[test]
 fn eval_ledtest_nenum_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -831,7 +831,7 @@ fn eval_ledtest_nenum_2_5() {
 #[test]
 fn eval_ledtest_nenum_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -844,7 +844,7 @@ fn eval_ledtest_nenum_2_3() {
 #[test]
 fn eval_ledtest_nenum_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -857,7 +857,7 @@ fn eval_ledtest_nenum_2_2() {
 #[test]
 fn eval_ledtest_nenum_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -870,7 +870,7 @@ fn eval_ledtest_nenum_2_1() {
 #[test]
 fn eval_ledtest_nenum_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -883,7 +883,7 @@ fn eval_ledtest_nenum_2_0() {
 #[test]
 fn eval_ledtest_nenum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -896,7 +896,7 @@ fn eval_ledtest_nenum_1_5() {
 #[test]
 fn eval_ledtest_nenum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -909,7 +909,7 @@ fn eval_ledtest_nenum_1_3() {
 #[test]
 fn eval_ledtest_nenum_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -922,7 +922,7 @@ fn eval_ledtest_nenum_1_2() {
 #[test]
 fn eval_ledtest_nenum_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -935,7 +935,7 @@ fn eval_ledtest_nenum_1_1() {
 #[test]
 fn eval_ledtest_nenum_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -948,7 +948,7 @@ fn eval_ledtest_nenum_1_0() {
 #[test]
 fn eval_ledtest_nenum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -961,7 +961,7 @@ fn eval_ledtest_nenum_0_5() {
 #[test]
 fn eval_ledtest_nenum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -974,7 +974,7 @@ fn eval_ledtest_nenum_0_3() {
 #[test]
 fn eval_ledtest_nenum_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -987,7 +987,7 @@ fn eval_ledtest_nenum_0_2() {
 #[test]
 fn eval_ledtest_nenum_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1000,7 +1000,7 @@ fn eval_ledtest_nenum_0_1() {
 #[test]
 fn eval_ledtest_nenum_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1013,7 +1013,7 @@ fn eval_ledtest_nenum_0_0() {
 #[test]
 fn eval_ledtest_eqnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1026,7 +1026,7 @@ fn eval_ledtest_eqnum_3_5() {
 #[test]
 fn eval_ledtest_eqnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1039,7 +1039,7 @@ fn eval_ledtest_eqnum_3_3() {
 #[test]
 fn eval_ledtest_eqnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1052,7 +1052,7 @@ fn eval_ledtest_eqnum_3_2() {
 #[test]
 fn eval_ledtest_eqnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1065,7 +1065,7 @@ fn eval_ledtest_eqnum_3_1() {
 #[test]
 fn eval_ledtest_eqnum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1078,7 +1078,7 @@ fn eval_ledtest_eqnum_3_0() {
 #[test]
 fn eval_ledtest_eqnum_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1091,7 +1091,7 @@ fn eval_ledtest_eqnum_2_5() {
 #[test]
 fn eval_ledtest_eqnum_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1104,7 +1104,7 @@ fn eval_ledtest_eqnum_2_3() {
 #[test]
 fn eval_ledtest_eqnum_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1117,7 +1117,7 @@ fn eval_ledtest_eqnum_2_2() {
 #[test]
 fn eval_ledtest_eqnum_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1130,7 +1130,7 @@ fn eval_ledtest_eqnum_2_1() {
 #[test]
 fn eval_ledtest_eqnum_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1143,7 +1143,7 @@ fn eval_ledtest_eqnum_2_0() {
 #[test]
 fn eval_ledtest_eqnum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1156,7 +1156,7 @@ fn eval_ledtest_eqnum_1_5() {
 #[test]
 fn eval_ledtest_eqnum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1169,7 +1169,7 @@ fn eval_ledtest_eqnum_1_3() {
 #[test]
 fn eval_ledtest_eqnum_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1182,7 +1182,7 @@ fn eval_ledtest_eqnum_1_2() {
 #[test]
 fn eval_ledtest_eqnum_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1195,7 +1195,7 @@ fn eval_ledtest_eqnum_1_1() {
 #[test]
 fn eval_ledtest_eqnum_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1208,7 +1208,7 @@ fn eval_ledtest_eqnum_1_0() {
 #[test]
 fn eval_ledtest_eqnum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1221,7 +1221,7 @@ fn eval_ledtest_eqnum_0_5() {
 #[test]
 fn eval_ledtest_eqnum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1234,7 +1234,7 @@ fn eval_ledtest_eqnum_0_3() {
 #[test]
 fn eval_ledtest_eqnum_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1247,7 +1247,7 @@ fn eval_ledtest_eqnum_0_2() {
 #[test]
 fn eval_ledtest_eqnum_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1260,7 +1260,7 @@ fn eval_ledtest_eqnum_0_1() {
 #[test]
 fn eval_ledtest_eqnum_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1277,7 +1277,7 @@ fn eval_ledtest_eqnum_0_0() {
 #[test]
 fn nested_ledtest_andpred_nenum_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1290,7 +1290,7 @@ fn nested_ledtest_andpred_nenum_0_2_in_slot1() {
 #[test]
 fn nested_ledtest_andpred_nenum_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1303,7 +1303,7 @@ fn nested_ledtest_andpred_nenum_0_1_in_slot1() {
 #[test]
 fn nested_ledtest_andpred_nenum_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1316,7 +1316,7 @@ fn nested_ledtest_andpred_nenum_0_0_in_slot1() {
 #[test]
 fn nested_ledtest_andpred_eqnum_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1329,7 +1329,7 @@ fn nested_ledtest_andpred_eqnum_0_2_in_slot1() {
 #[test]
 fn nested_ledtest_andpred_eqnum_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1342,7 +1342,7 @@ fn nested_ledtest_andpred_eqnum_0_1_in_slot1() {
 #[test]
 fn nested_ledtest_andpred_eqnum_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1355,7 +1355,7 @@ fn nested_ledtest_andpred_eqnum_0_0_in_slot1() {
 #[test]
 fn nested_ledtest_andpred_nenum_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1368,7 +1368,7 @@ fn nested_ledtest_andpred_nenum_0_2_in_slot0() {
 #[test]
 fn nested_ledtest_andpred_nenum_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1381,7 +1381,7 @@ fn nested_ledtest_andpred_nenum_0_1_in_slot0() {
 #[test]
 fn nested_ledtest_andpred_nenum_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1394,7 +1394,7 @@ fn nested_ledtest_andpred_nenum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_andpred_eqnum_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1407,7 +1407,7 @@ fn nested_ledtest_andpred_eqnum_0_2_in_slot0() {
 #[test]
 fn nested_ledtest_andpred_eqnum_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1420,7 +1420,7 @@ fn nested_ledtest_andpred_eqnum_0_1_in_slot0() {
 #[test]
 fn nested_ledtest_andpred_eqnum_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1433,7 +1433,7 @@ fn nested_ledtest_andpred_eqnum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_factnum_negnum_2_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1445,7 +1445,7 @@ fn nested_ledtest_factnum_negnum_2_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_negnum_1_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1457,7 +1457,7 @@ fn nested_ledtest_factnum_negnum_1_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_negnum_0_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1469,7 +1469,7 @@ fn nested_ledtest_factnum_negnum_0_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_mulnum_0_2_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1481,7 +1481,7 @@ fn nested_ledtest_factnum_mulnum_0_2_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_mulnum_0_1_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1493,7 +1493,7 @@ fn nested_ledtest_factnum_mulnum_0_1_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_mulnum_0_0_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1505,7 +1505,7 @@ fn nested_ledtest_factnum_mulnum_0_0_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_addnum_0_2_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1517,7 +1517,7 @@ fn nested_ledtest_factnum_addnum_0_2_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_addnum_0_1_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1529,7 +1529,7 @@ fn nested_ledtest_factnum_addnum_0_1_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_factnum_addnum_0_0_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1541,7 +1541,7 @@ fn nested_ledtest_factnum_addnum_0_0_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_negnum_factnum_2_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1553,7 +1553,7 @@ fn nested_ledtest_negnum_factnum_2_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_negnum_factnum_1_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1565,7 +1565,7 @@ fn nested_ledtest_negnum_factnum_1_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_negnum_factnum_0_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1577,7 +1577,7 @@ fn nested_ledtest_negnum_factnum_0_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_negnum_mulnum_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1590,7 +1590,7 @@ fn nested_ledtest_negnum_mulnum_0_2_in_slot0() {
 #[test]
 fn nested_ledtest_negnum_mulnum_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1603,7 +1603,7 @@ fn nested_ledtest_negnum_mulnum_0_1_in_slot0() {
 #[test]
 fn nested_ledtest_negnum_mulnum_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1616,7 +1616,7 @@ fn nested_ledtest_negnum_mulnum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_negnum_addnum_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1629,7 +1629,7 @@ fn nested_ledtest_negnum_addnum_0_2_in_slot0() {
 #[test]
 fn nested_ledtest_negnum_addnum_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1642,7 +1642,7 @@ fn nested_ledtest_negnum_addnum_0_1_in_slot0() {
 #[test]
 fn nested_ledtest_negnum_addnum_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1655,7 +1655,7 @@ fn nested_ledtest_negnum_addnum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_mulnum_factnum_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1667,7 +1667,7 @@ fn nested_ledtest_mulnum_factnum_2_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_mulnum_factnum_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1679,7 +1679,7 @@ fn nested_ledtest_mulnum_factnum_1_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_mulnum_factnum_0_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1691,7 +1691,7 @@ fn nested_ledtest_mulnum_factnum_0_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_mulnum_negnum_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1704,7 +1704,7 @@ fn nested_ledtest_mulnum_negnum_2_in_slot1() {
 #[test]
 fn nested_ledtest_mulnum_negnum_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1717,7 +1717,7 @@ fn nested_ledtest_mulnum_negnum_1_in_slot1() {
 #[test]
 fn nested_ledtest_mulnum_negnum_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1730,7 +1730,7 @@ fn nested_ledtest_mulnum_negnum_0_in_slot1() {
 #[test]
 fn nested_ledtest_mulnum_addnum_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1743,7 +1743,7 @@ fn nested_ledtest_mulnum_addnum_0_2_in_slot1() {
 #[test]
 fn nested_ledtest_mulnum_addnum_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1756,7 +1756,7 @@ fn nested_ledtest_mulnum_addnum_0_1_in_slot1() {
 #[test]
 fn nested_ledtest_mulnum_addnum_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(1i32)), Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1769,7 +1769,7 @@ fn nested_ledtest_mulnum_addnum_0_0_in_slot1() {
 #[test]
 fn nested_ledtest_mulnum_factnum_2_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1781,7 +1781,7 @@ fn nested_ledtest_mulnum_factnum_2_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_mulnum_factnum_1_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1793,7 +1793,7 @@ fn nested_ledtest_mulnum_factnum_1_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_mulnum_factnum_0_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::FactNum(Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1805,7 +1805,7 @@ fn nested_ledtest_mulnum_factnum_0_in_slot0__smoke() {
 #[test]
 fn nested_ledtest_mulnum_negnum_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NegNum(Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1818,7 +1818,7 @@ fn nested_ledtest_mulnum_negnum_2_in_slot0() {
 #[test]
 fn nested_ledtest_mulnum_negnum_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NegNum(Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1831,7 +1831,7 @@ fn nested_ledtest_mulnum_negnum_1_in_slot0() {
 #[test]
 fn nested_ledtest_mulnum_negnum_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NegNum(Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1844,7 +1844,7 @@ fn nested_ledtest_mulnum_negnum_0_in_slot0() {
 #[test]
 fn nested_ledtest_mulnum_addnum_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1857,7 +1857,7 @@ fn nested_ledtest_mulnum_addnum_0_2_in_slot0() {
 #[test]
 fn nested_ledtest_mulnum_addnum_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1870,7 +1870,7 @@ fn nested_ledtest_mulnum_addnum_0_1_in_slot0() {
 #[test]
 fn nested_ledtest_mulnum_addnum_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1883,7 +1883,7 @@ fn nested_ledtest_mulnum_addnum_0_0_in_slot0() {
 #[test]
 fn nested_ledtest_addnum_factnum_2_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(2i32)))));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(2i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1895,7 +1895,7 @@ fn nested_ledtest_addnum_factnum_2_in_slot1__smoke() {
 #[test]
 fn nested_ledtest_addnum_factnum_1_in_slot1__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::FactNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::FactNum(std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1911,7 +1911,7 @@ fn nested_ledtest_addnum_factnum_1_in_slot1__smoke() {
 #[test]
 fn edge_ledtest_andpred_bool_false_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(false)), Box::new(Pred::BoolLit(false)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(false)), std::sync::Arc::new(Pred::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1924,7 +1924,7 @@ fn edge_ledtest_andpred_bool_false_false() {
 #[test]
 fn edge_ledtest_andpred_bool_true_false() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::BoolLit(false)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::BoolLit(false)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1937,7 +1937,7 @@ fn edge_ledtest_andpred_bool_true_false() {
 #[test]
 fn edge_ledtest_andpred_bool_false_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(false)), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(false)), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1950,7 +1950,7 @@ fn edge_ledtest_andpred_bool_false_true() {
 #[test]
 fn edge_ledtest_andpred_bool_true_true() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1967,7 +1967,7 @@ fn edge_ledtest_andpred_bool_true_true() {
 #[test]
 fn cross_cat_ledtest_cast_castnum_from_num_to_expr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Expr::CastNum(Box::new(Num::NumLit(1i32)));
+    let input_term = Expr::CastNum(std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1979,7 +1979,7 @@ fn cross_cat_ledtest_cast_castnum_from_num_to_expr() {
 #[test]
 fn cross_cat_ledtest_cast_castpred_from_pred_to_expr() {
     mettail_runtime::clear_var_cache();
-    let input_term = Expr::CastPred(Box::new(Pred::BoolLit(true)));
+    let input_term = Expr::CastPred(std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1991,7 +1991,7 @@ fn cross_cat_ledtest_cast_castpred_from_pred_to_expr() {
 #[test]
 fn cross_cat_ledtest_cast_predtonum_from_pred_to_num() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::PredToNum(Box::new(Pred::BoolLit(true)));
+    let input_term = Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2003,7 +2003,7 @@ fn cross_cat_ledtest_cast_predtonum_from_pred_to_num() {
 #[test]
 fn cross_cat_ledtest_roundtrip_num_to_expr_via_castnum_exprtonum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::ExprToNum(Box::new(Expr::CastNum(Box::new(Num::NumLit(1i32)))));
+    let input_term = Num::ExprToNum(std::sync::Arc::new(Expr::CastNum(std::sync::Arc::new(Num::NumLit(1i32)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2015,7 +2015,7 @@ fn cross_cat_ledtest_roundtrip_num_to_expr_via_castnum_exprtonum() {
 #[test]
 fn cross_cat_ledtest_chain_castpred_exprtonum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::ExprToNum(Box::new(Expr::CastPred(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::ExprToNum(std::sync::Arc::new(Expr::CastPred(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2027,7 +2027,7 @@ fn cross_cat_ledtest_chain_castpred_exprtonum() {
 #[test]
 fn cross_cat_ledtest_chain_predtonum_castnum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Expr::CastNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Expr::CastNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2039,7 +2039,7 @@ fn cross_cat_ledtest_chain_predtonum_castnum() {
 #[test]
 fn cross_cat_ledtest_eval_eqnum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2052,7 +2052,7 @@ fn cross_cat_ledtest_eval_eqnum() {
 #[test]
 fn cross_cat_ledtest_eval_nenum() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2065,7 +2065,7 @@ fn cross_cat_ledtest_eval_nenum() {
 #[test]
 fn cross_cat_ledtest_castop_addnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))), std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2077,7 +2077,7 @@ fn cross_cat_ledtest_castop_addnum_predtonum_smoke() {
 #[test]
 fn cross_cat_ledtest_castop_mulnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))), std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2089,7 +2089,7 @@ fn cross_cat_ledtest_castop_mulnum_predtonum_smoke() {
 #[test]
 fn cross_cat_ledtest_castop_negnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2101,7 +2101,7 @@ fn cross_cat_ledtest_castop_negnum_predtonum_smoke() {
 #[test]
 fn cross_cat_ledtest_castop_factnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2113,7 +2113,7 @@ fn cross_cat_ledtest_castop_factnum_predtonum_smoke() {
 #[test]
 fn cross_cat_ledtest_mixed_addnum_cast_predtonum_lhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::NumLit(1i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2125,7 +2125,7 @@ fn cross_cat_ledtest_mixed_addnum_cast_predtonum_lhs_smoke() {
 #[test]
 fn cross_cat_ledtest_mixed_addnum_cast_predtonum_rhs_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(1i32)), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2137,7 +2137,7 @@ fn cross_cat_ledtest_mixed_addnum_cast_predtonum_rhs_smoke() {
 #[test]
 fn cross_cat_ledtest_composite_addnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))), std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2149,7 +2149,7 @@ fn cross_cat_ledtest_composite_addnum_predtonum_smoke() {
 #[test]
 fn cross_cat_ledtest_composite_mulnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))), Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))), std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2161,7 +2161,7 @@ fn cross_cat_ledtest_composite_mulnum_predtonum_smoke() {
 #[test]
 fn cross_cat_ledtest_composite_negnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2173,7 +2173,7 @@ fn cross_cat_ledtest_composite_negnum_predtonum_smoke() {
 #[test]
 fn cross_cat_ledtest_composite_factnum_predtonum_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::PredToNum(Box::new(Pred::BoolLit(true)))));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::PredToNum(std::sync::Arc::new(Pred::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2189,7 +2189,7 @@ fn cross_cat_ledtest_composite_factnum_predtonum_smoke() {
 #[test]
 fn wfst_ledtest_dispatch_eqnum_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2201,7 +2201,7 @@ fn wfst_ledtest_dispatch_eqnum_eval() {
 #[test]
 fn wfst_ledtest_dispatch_negnum_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(0i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2213,7 +2213,7 @@ fn wfst_ledtest_dispatch_negnum_eval() {
 #[test]
 fn wfst_ledtest_dispatch_nenum_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2225,7 +2225,7 @@ fn wfst_ledtest_dispatch_nenum_eval() {
 #[test]
 fn wfst_ledtest_dispatch_addnum_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2237,7 +2237,7 @@ fn wfst_ledtest_dispatch_addnum_eval() {
 #[test]
 fn wfst_ledtest_dispatch_mulnum_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2249,7 +2249,7 @@ fn wfst_ledtest_dispatch_mulnum_eval() {
 #[test]
 fn wfst_ledtest_dispatch_factnum_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::FactNum(Box::new(Num::NumLit(0i32)));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2261,7 +2261,7 @@ fn wfst_ledtest_dispatch_factnum_eval() {
 #[test]
 fn wfst_ledtest_dispatch_andpred_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2333,7 +2333,7 @@ fn assoc_ledtest_mulnum_left() {
 #[test]
 fn wpda_ledtest_negnum_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(0i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2345,7 +2345,7 @@ fn wpda_ledtest_negnum_0() {
 #[test]
 fn wpda_ledtest_negnum_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(1i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2357,7 +2357,7 @@ fn wpda_ledtest_negnum_1() {
 #[test]
 fn wpda_ledtest_negnum_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(2i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2369,7 +2369,7 @@ fn wpda_ledtest_negnum_2() {
 #[test]
 fn wpda_ledtest_negnum_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(3i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2381,7 +2381,7 @@ fn wpda_ledtest_negnum_3() {
 #[test]
 fn wpda_ledtest_negnum_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(Box::new(Num::NumLit(5i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2393,7 +2393,7 @@ fn wpda_ledtest_negnum_5() {
 #[test]
 fn wpda_ledtest_addnum_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2405,7 +2405,7 @@ fn wpda_ledtest_addnum_0_0() {
 #[test]
 fn wpda_ledtest_eqnum_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2417,7 +2417,7 @@ fn wpda_ledtest_eqnum_0_0() {
 #[test]
 fn wpda_ledtest_eqnum_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2429,7 +2429,7 @@ fn wpda_ledtest_eqnum_0_1() {
 #[test]
 fn wpda_ledtest_eqnum_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2441,7 +2441,7 @@ fn wpda_ledtest_eqnum_0_2() {
 #[test]
 fn wpda_ledtest_eqnum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2453,7 +2453,7 @@ fn wpda_ledtest_eqnum_0_3() {
 #[test]
 fn wpda_ledtest_eqnum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2465,7 +2465,7 @@ fn wpda_ledtest_eqnum_0_5() {
 #[test]
 fn wpda_ledtest_eqnum_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2477,7 +2477,7 @@ fn wpda_ledtest_eqnum_1_0() {
 #[test]
 fn wpda_ledtest_eqnum_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2489,7 +2489,7 @@ fn wpda_ledtest_eqnum_1_1() {
 #[test]
 fn wpda_ledtest_eqnum_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2501,7 +2501,7 @@ fn wpda_ledtest_eqnum_1_2() {
 #[test]
 fn wpda_ledtest_eqnum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2513,7 +2513,7 @@ fn wpda_ledtest_eqnum_1_3() {
 #[test]
 fn wpda_ledtest_eqnum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2525,7 +2525,7 @@ fn wpda_ledtest_eqnum_1_5() {
 #[test]
 fn wpda_ledtest_eqnum_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2537,7 +2537,7 @@ fn wpda_ledtest_eqnum_2_0() {
 #[test]
 fn wpda_ledtest_eqnum_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2549,7 +2549,7 @@ fn wpda_ledtest_eqnum_2_1() {
 #[test]
 fn wpda_ledtest_eqnum_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2561,7 +2561,7 @@ fn wpda_ledtest_eqnum_2_2() {
 #[test]
 fn wpda_ledtest_eqnum_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2573,7 +2573,7 @@ fn wpda_ledtest_eqnum_2_3() {
 #[test]
 fn wpda_ledtest_eqnum_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(2i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2585,7 +2585,7 @@ fn wpda_ledtest_eqnum_2_5() {
 #[test]
 fn wpda_ledtest_eqnum_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2597,7 +2597,7 @@ fn wpda_ledtest_eqnum_3_0() {
 #[test]
 fn wpda_ledtest_eqnum_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2609,7 +2609,7 @@ fn wpda_ledtest_eqnum_3_1() {
 #[test]
 fn wpda_ledtest_eqnum_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2621,7 +2621,7 @@ fn wpda_ledtest_eqnum_3_2() {
 #[test]
 fn wpda_ledtest_eqnum_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2633,7 +2633,7 @@ fn wpda_ledtest_eqnum_3_3() {
 #[test]
 fn wpda_ledtest_eqnum_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(3i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2645,7 +2645,7 @@ fn wpda_ledtest_eqnum_3_5() {
 #[test]
 fn wpda_ledtest_nenum_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2657,7 +2657,7 @@ fn wpda_ledtest_nenum_0_0() {
 #[test]
 fn wpda_ledtest_nenum_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2669,7 +2669,7 @@ fn wpda_ledtest_nenum_0_1() {
 #[test]
 fn wpda_ledtest_nenum_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2681,7 +2681,7 @@ fn wpda_ledtest_nenum_0_2() {
 #[test]
 fn wpda_ledtest_nenum_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2693,7 +2693,7 @@ fn wpda_ledtest_nenum_0_3() {
 #[test]
 fn wpda_ledtest_nenum_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2705,7 +2705,7 @@ fn wpda_ledtest_nenum_0_5() {
 #[test]
 fn wpda_ledtest_nenum_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2717,7 +2717,7 @@ fn wpda_ledtest_nenum_1_0() {
 #[test]
 fn wpda_ledtest_nenum_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(1i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2729,7 +2729,7 @@ fn wpda_ledtest_nenum_1_1() {
 #[test]
 fn wpda_ledtest_nenum_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(2i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2741,7 +2741,7 @@ fn wpda_ledtest_nenum_1_2() {
 #[test]
 fn wpda_ledtest_nenum_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(3i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2753,7 +2753,7 @@ fn wpda_ledtest_nenum_1_3() {
 #[test]
 fn wpda_ledtest_nenum_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(1i32)), Box::new(Num::NumLit(5i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2770,7 +2770,7 @@ fn wpda_ledtest_nenum_1_5() {
 fn type_pres_ledtest_eqnum_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Pred
-    let input_term = Pred::EqNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2792,7 +2792,7 @@ fn type_pres_ledtest_eqnum_0_0() {
 fn type_pres_ledtest_nenum_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Pred
-    let input_term = Pred::NeNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2814,7 +2814,7 @@ fn type_pres_ledtest_nenum_0_0() {
 fn type_pres_ledtest_addnum_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Num
-    let input_term = Num::AddNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2836,7 +2836,7 @@ fn type_pres_ledtest_addnum_0_0() {
 fn type_pres_ledtest_mulnum_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Num
-    let input_term = Num::MulNum(Box::new(Num::NumLit(0i32)), Box::new(Num::NumLit(0i32)));
+    let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2858,7 +2858,7 @@ fn type_pres_ledtest_mulnum_0_0() {
 fn type_pres_ledtest_negnum_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Num
-    let input_term = Num::NegNum(Box::new(Num::NumLit(0i32)));
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2880,7 +2880,7 @@ fn type_pres_ledtest_negnum_0() {
 fn type_pres_ledtest_factnum_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Num
-    let input_term = Num::FactNum(Box::new(Num::NumLit(0i32)));
+    let input_term = Num::FactNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2902,7 +2902,7 @@ fn type_pres_ledtest_factnum_0() {
 fn type_pres_ledtest_andpred_true_true() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Pred
-    let input_term = Pred::AndPred(Box::new(Pred::BoolLit(true)), Box::new(Pred::BoolLit(true)));
+    let input_term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(true)), std::sync::Arc::new(Pred::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

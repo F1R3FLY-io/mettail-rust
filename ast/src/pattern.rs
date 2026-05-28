@@ -1564,13 +1564,13 @@ impl Pattern {
                         let label = language
                             .injection_term_label_for_collection("List")
                             .unwrap_or_else(|| quote::format_ident!("ProcList"));
-                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                        quote! { #elem_cat::#label(std::sync::Arc::new(#expr)) }
                     },
                     Some("Bag") => {
                         let label = language
                             .injection_term_label_for_collection("Bag")
                             .unwrap_or_else(|| quote::format_ident!("ProcBag"));
-                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                        quote! { #elem_cat::#label(std::sync::Arc::new(#expr)) }
                     },
                     _ => expr,
                 }
@@ -1675,13 +1675,13 @@ fn generate_collection_rhs_with_constructor(
                         let label = language
                             .injection_term_label_for_collection("List")
                             .unwrap_or_else(|| quote::format_ident!("ProcList"));
-                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                        quote! { #elem_cat::#label(std::sync::Arc::new(#expr)) }
                     },
                     Some("Bag") => {
                         let label = language
                             .injection_term_label_for_collection("Bag")
                             .unwrap_or_else(|| quote::format_ident!("ProcBag"));
-                        quote! { #elem_cat::#label(Box::new(#expr)) }
+                        quote! { #elem_cat::#label(std::sync::Arc::new(#expr)) }
                     },
                     _ => expr,
                 }
@@ -1991,7 +1991,7 @@ impl PatternTerm {
                         if is_collection || !needs_box {
                             expr
                         } else {
-                            quote! { Box::new(#expr) }
+                            quote! { std::sync::Arc::new(#expr) }
                         }
                     })
                     .collect();
@@ -2023,7 +2023,7 @@ impl PatternTerm {
                 quote! {
                     mettail_runtime::Scope::from_parts_unsafe(
                         #binder_expr,
-                        Box::new(#body_expr)
+                        std::sync::Arc::new(#body_expr)
                     )
                 }
             },
@@ -2040,7 +2040,7 @@ impl PatternTerm {
                             return quote! {
                                 mettail_runtime::Scope::from_parts_unsafe(
                                     #binder_expr,
-                                    Box::new(#body_expr)
+                                    std::sync::Arc::new(#body_expr)
                                 )
                             };
                         }
@@ -2065,7 +2065,7 @@ impl PatternTerm {
                 quote! {
                     mettail_runtime::Scope::from_parts_unsafe(
                         vec![#(#binder_exprs),*],
-                        Box::new(#body_expr)
+                        std::sync::Arc::new(#body_expr)
                     )
                 }
             },
@@ -2109,7 +2109,7 @@ impl PatternTerm {
                         // Reconstruct a Scope from the binder and body
                         let __scope = mettail_runtime::Scope::from_parts_unsafe(
                             #binder_expr.clone(),
-                            Box::new(#term_expr)
+                            std::sync::Arc::new(#term_expr)
                         );
                         // Unbind to get fresh, consistent FreeVar and body
                         let (__fresh_binder, __fresh_body) = __scope.unbind();
@@ -2212,7 +2212,7 @@ impl PatternTerm {
                                 // category (e.g. Name::NQuote) so arity matches the multi-binder.
                                 if let Some(binding) = bindings.get(&v.to_string()) {
                                     let expr = &binding.expression;
-                                    quote! { (#expr).iter().map(|__e| #default_lang_type::NQuote(Box::new(__e.clone()))).collect::<Vec<_>>() }
+                                    quote! { (#expr).iter().map(|__e| #default_lang_type::NQuote(std::sync::Arc::new(__e.clone()))).collect::<Vec<_>>() }
                                 } else {
                                     let expr = replacements[0].to_ascent_rhs(bindings, language);
                                     quote! { vec![#expr] }

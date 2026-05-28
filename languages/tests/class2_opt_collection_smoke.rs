@@ -2,7 +2,7 @@
 //!
 //! Validates that codegen for `Proc::ChooseMaybe(Box<Proc>, Option<Vec<Proc>>)`
 //! compiles and runtime semantics work end-to-end:
-//! - Construction: `ChooseMaybe(Box::new(PZero), Some(vec![PZero, PZero]))`
+//! - Construction: `ChooseMaybe(std::sync::Arc::new(PZero), Some(vec![PZero, PZero]))`
 //! - Clone, Debug, PartialEq, Hash all work via derived/iterative codegen.
 //! - Display roundtrip through parse_via_wpda works for both None and Some.
 
@@ -10,7 +10,7 @@ use mettail_languages::class2optsmoke::Proc;
 
 #[test]
 fn choosemaybe_none_constructs_and_clones() {
-    let term = Proc::ChooseMaybe(Box::new(Proc::PZero), None);
+    let term = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), None);
     let cloned = term.clone();
     assert_eq!(term, cloned);
     let displayed = format!("{}", term);
@@ -19,7 +19,7 @@ fn choosemaybe_none_constructs_and_clones() {
 
 #[test]
 fn choosemaybe_some_empty_constructs_and_clones() {
-    let term = Proc::ChooseMaybe(Box::new(Proc::PZero), Some(vec![]));
+    let term = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![]));
     let cloned = term.clone();
     assert_eq!(term, cloned);
 }
@@ -27,7 +27,7 @@ fn choosemaybe_some_empty_constructs_and_clones() {
 #[test]
 fn choosemaybe_some_nonempty_constructs_and_clones() {
     let term = Proc::ChooseMaybe(
-        Box::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
         Some(vec![Proc::PZero, Proc::PZero]),
     );
     let cloned = term.clone();
@@ -39,15 +39,15 @@ fn choosemaybe_some_nonempty_constructs_and_clones() {
 
 #[test]
 fn choosemaybe_none_ne_some() {
-    let a = Proc::ChooseMaybe(Box::new(Proc::PZero), None);
-    let b = Proc::ChooseMaybe(Box::new(Proc::PZero), Some(vec![]));
+    let a = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), None);
+    let b = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![]));
     assert_ne!(a, b);
 }
 
 #[test]
 fn choosemaybe_some_different_lengths_ne() {
-    let a = Proc::ChooseMaybe(Box::new(Proc::PZero), Some(vec![Proc::PZero]));
-    let b = Proc::ChooseMaybe(Box::new(Proc::PZero), Some(vec![Proc::PZero, Proc::PZero]));
+    let a = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero]));
+    let b = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero, Proc::PZero]));
     assert_ne!(a, b);
 }
 
@@ -56,8 +56,8 @@ fn choosemaybe_some_hash_consistent_with_eq() {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    let a = Proc::ChooseMaybe(Box::new(Proc::PZero), Some(vec![Proc::PZero]));
-    let b = Proc::ChooseMaybe(Box::new(Proc::PZero), Some(vec![Proc::PZero]));
+    let a = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero]));
+    let b = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero]));
     assert_eq!(a, b);
 
     let mut h1 = DefaultHasher::new();

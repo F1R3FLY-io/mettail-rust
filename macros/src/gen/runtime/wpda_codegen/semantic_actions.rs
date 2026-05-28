@@ -480,11 +480,11 @@ fn emit_cross_cat_wrap_action(
     quote! {
         |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
          args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
-            let arg = match args.into_iter().next().and_then(|a| a.into_term::<#source_cat_ident>()) {
+            let arg = match args.into_iter().next().and_then(|a| a.into_term_arc::<#source_cat_ident>()) {
                 Some(t) => t,
                 None => return,
             };
-            b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(Box::new(arg)));
+            b.push_term::<#cat_ident>(#cat_ident::#wrapper_variant(arg));
         }
     }
 }
@@ -696,11 +696,11 @@ fn emit_infix_action_entry(
             |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
              args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let mut iter = args.into_iter();
-                let arg0 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                let arg0 = match iter.next().and_then(|a| a.into_term_arc::<#operand_cat_ident>()) {
                     Some(v) => v,
                     None => return,
                 };
-                b.push_term::<#cat_ident>(#cat_ident::#label_ident(Box::new(arg0)));
+                b.push_term::<#cat_ident>(#cat_ident::#label_ident(arg0));
             }
         }
     } else if info.is_mixfix {
@@ -720,7 +720,7 @@ fn emit_infix_action_entry(
                 };
                 let cat = format_ident!("{}", cat_str);
                 quote! {
-                    let #var = match iter.next().and_then(|a| a.into_term::<#cat>()) {
+                    let #var = match iter.next().and_then(|a| a.into_term_arc::<#cat>()) {
                         Some(v) => v,
                         None => return,
                     };
@@ -730,7 +730,7 @@ fn emit_infix_action_entry(
         let names: Vec<TokenStream> = (0..n)
             .map(|i| {
                 let v = format_ident!("arg{}", i);
-                quote! { Box::new(#v) }
+                quote! { #v }
             })
             .collect();
         quote! {
@@ -747,16 +747,16 @@ fn emit_infix_action_entry(
             |b: &mut mettail_prattail::wpda_runtime::SemanticBuilder,
              args: Vec<mettail_prattail::wpda_runtime::ActionArg>| {
                 let mut iter = args.into_iter();
-                let arg0 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                let arg0 = match iter.next().and_then(|a| a.into_term_arc::<#operand_cat_ident>()) {
                     Some(v) => v,
                     None => return,
                 };
-                let arg1 = match iter.next().and_then(|a| a.into_term::<#operand_cat_ident>()) {
+                let arg1 = match iter.next().and_then(|a| a.into_term_arc::<#operand_cat_ident>()) {
                     Some(v) => v,
                     None => return,
                 };
                 b.push_term::<#cat_ident>(
-                    #cat_ident::#label_ident(Box::new(arg0), Box::new(arg1))
+                    #cat_ident::#label_ident(arg0, arg1)
                 );
             }
         }

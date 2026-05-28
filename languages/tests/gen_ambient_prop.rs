@@ -175,30 +175,30 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     ))
 }.unwrap_proc(),
         2 => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::PIn(f0, f1)
         },
         3 => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::POut(f0, f1)
         },
         4 => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::POpen(f0, f1)
         },
         5 => {
-            let f0 = Box::new(build_name_from_tape(reader, child_depth));
-            let f1 = Box::new(build_proc_from_tape(reader, child_depth));
+            let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Proc::PAmb(f0, f1)
         },
         6 => {
             let binder_name = format!("a{}", reader.next_byte() % 8);
 let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
 let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
             Proc::PNew(scope)
         },
         _ => {

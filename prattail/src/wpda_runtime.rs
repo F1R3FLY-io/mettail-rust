@@ -1823,6 +1823,25 @@ impl ActionArg {
             _ => None,
         }
     }
+    /// Extract the SHARED `Arc<T>` from a `Term` arg WITHOUT cloning the
+    /// pointee (O(1) `Arc::downcast` — just a refcount bump on success).
+    ///
+    /// ARC refactor (2026-05-28): the generated semantic actions store
+    /// recursive AST children as `Arc<Cat>` fields (was `Box<Cat>`). They
+    /// pop child operands via this method and place the shared `Arc`
+    /// directly into the constructed node, so building `Add(left, right)`
+    /// is O(1) — it shares `left`'s subtree instead of deep-cloning it.
+    /// This collapses the former O(N²) chain construction (every chain step
+    /// deep-cloned the whole accumulated left operand via `into_term`;
+    /// heaptrack attributed 96% of chain_1000 peak heap to that clone) to
+    /// O(N) structural sharing. Unlike `into_term`, NO `T: Clone` bound is
+    /// required — the value is never cloned, only shared.
+    pub fn into_term_arc<T: 'static + Send + Sync>(self) -> Option<Arc<T>> {
+        match self {
+            ActionArg::Term { value, .. } => Arc::downcast::<T>(value).ok(),
+            _ => None,
+        }
+    }
     /// Borrow the BinderScope handle.
     pub fn as_binder_scope(&self) -> Option<&BinderHandle> {
         match self {

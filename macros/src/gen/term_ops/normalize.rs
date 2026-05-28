@@ -1607,11 +1607,11 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
         let slot_name = format_ident!("f{}_slot", i);
         let some_flag = format_ident!("f{}_some", i);
         return quote! {
-            let #result_ident: Option<Box<_>> = if #some_flag {
+            let #result_ident: Option<std::sync::Arc<_>> = if #some_flag {
                 match results[#slot_name].take()
                     .expect("normalize: missing optional inner")
                 {
-                    AnyNormalizedTerm::#wrap(v) => Some(Box::new(v)),
+                    AnyNormalizedTerm::#wrap(v) => Some(std::sync::Arc::new(v)),
                     _ => unreachable!("normalize: wrong category in optional slot"),
                 }
             } else {
@@ -1729,7 +1729,7 @@ fn emit_reg_field_construct(i: usize, field: &FieldInfo) -> TokenStream {
     } else if field.is_collection {
         quote! { #result_ident }
     } else {
-        quote! { Box::new(#result_ident) }
+        quote! { std::sync::Arc::new(#result_ident) }
     }
 }
 
@@ -1858,7 +1858,7 @@ fn generate_binder_assemble_arm(
                 AnyNormalizedTerm::#body_wrap(v) => v,
                 _ => unreachable!("normalize: wrong category in binder body"),
             };
-            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
             results[slot] = Some(AnyNormalizedTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
@@ -1889,7 +1889,7 @@ fn generate_multi_binder_assemble_arm(
                 AnyNormalizedTerm::#body_wrap(v) => v,
                 _ => unreachable!("normalize: wrong category in multi-binder body"),
             };
-            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, Box::new(body));
+            let new_scope = mettail_runtime::Scope::from_parts_unsafe(cloned_pattern, std::sync::Arc::new(body));
             results[slot] = Some(AnyNormalizedTerm::#wrap(
                 #cat::#label(#(#pre_construct)* new_scope)
             ));
@@ -2028,7 +2028,7 @@ fn emit_pre_field_constructs(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream>
             if field.is_collection {
                 quote! { #result_ident, }
             } else {
-                quote! { Box::new(#result_ident), }
+                quote! { std::sync::Arc::new(#result_ident), }
             }
         })
         .collect()
@@ -2088,7 +2088,7 @@ fn generate_beta_apply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream {
             } else {
                 // Not a β-redex — reconstruct Apply with normalized subterms.
                 results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
-                    #cat::#apply_variant(Box::new(lam), Box::new(arg))
+                    #cat::#apply_variant(std::sync::Arc::new(lam), std::sync::Arc::new(arg))
                 ));
             }
         }
@@ -2140,7 +2140,7 @@ fn generate_beta_mapply_assemble_arm(cat: &Ident, dom_str: &str) -> TokenStream 
                 stack.push(NormTask::#visit_cat { src: src_ptr, slot });
             } else {
                 results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
-                    #cat::#mapply_variant(Box::new(lam), args_vec)
+                    #cat::#mapply_variant(std::sync::Arc::new(lam), args_vec)
                 ));
             }
         }
@@ -2184,7 +2184,7 @@ fn generate_cancel_assemble_arm(
                 stack.push(NormTask::#visit_cat { src: src_ptr, slot });
             } else {
                 results[slot] = Some(AnyNormalizedTerm::#wrap_cat(
-                    #cat::#label(Box::new(inner))
+                    #cat::#label(std::sync::Arc::new(inner))
                 ));
             }
         }

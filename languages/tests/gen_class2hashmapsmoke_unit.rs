@@ -41,7 +41,7 @@ fn unit_class2hashmapsmoke_proc_pzero() {
 #[test]
 fn unit_class2hashmapsmoke_proc_choosemap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ChooseMap(Box::new(Proc::PZero), mettail_runtime::HashMapLit::default());
+    let term = Proc::ChooseMap(std::sync::Arc::new(Proc::PZero), mettail_runtime::HashMapLit::default());
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ChooseMap");
     if let Ok(parsed) = Proc::parse(&displayed) {

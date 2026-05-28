@@ -122,11 +122,11 @@ pub fn generate_algebraic_tests(
 
                 // Construct f(a, b) and f(b, a)
                 let term_ab = format!(
-                    "{}::{}(Box::new({}), Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
                     category, constructor, leaf_a.construction, leaf_b.construction
                 );
                 let term_ba = format!(
-                    "{}::{}(Box::new({}), Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
                     category, constructor, leaf_b.construction, leaf_a.construction
                 );
 
@@ -177,19 +177,19 @@ pub fn generate_algebraic_tests(
 
                 // f(f(a, b), c) and f(a, f(b, c))
                 let inner_ab = format!(
-                    "{}::{}(Box::new({}), Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
                     category, constructor, leaf.construction, leaf.construction
                 );
                 let inner_bc = format!(
-                    "{}::{}(Box::new({}), Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
                     category, constructor, leaf.construction, leaf.construction
                 );
                 let term_lhs = format!(
-                    "{}::{}(Box::new({}), Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
                     category, constructor, inner_ab, leaf.construction
                 );
                 let term_rhs = format!(
-                    "{}::{}(Box::new({}), Box::new({}))",
+                    "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
                     category, constructor, leaf.construction, inner_bc
                 );
 
@@ -523,7 +523,7 @@ fn generate_identity_test(
 
     // f(a, e) and a
     let combined_construction = format!(
-        "{}::{}(Box::new({}), Box::new({}))",
+        "{}::{}(std::sync::Arc::new({}), std::sync::Arc::new({}))",
         category, constructor, leaf_construction, identity_construction
     );
 
@@ -640,11 +640,11 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        mettail_runtime::clear_var_cache();\n");
                 out.push_str(&format!("        let lang = {};\n", lang_struct));
                 out.push_str(&format!(
-                    "        let lhs = {cat}::{ctor}(Box::new(a.clone()), Box::new(b.clone()));\n",
+                    "        let lhs = {cat}::{ctor}(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()));\n",
                     cat = category, ctor = constructor
                 ));
                 out.push_str(&format!(
-                    "        let rhs = {cat}::{ctor}(Box::new(b), Box::new(a));\n",
+                    "        let rhs = {cat}::{ctor}(std::sync::Arc::new(b), std::sync::Arc::new(a));\n",
                     cat = category, ctor = constructor
                 ));
                 out.push_str("        let lhs_str = format!(\"{}\", lhs);\n");
@@ -691,11 +691,11 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        mettail_runtime::clear_var_cache();\n");
                 out.push_str(&format!("        let lang = {};\n", lang_struct));
                 out.push_str(&format!(
-                    "        let lhs = {cat}::{ctor}(Box::new({cat}::{ctor}(Box::new(a.clone()), Box::new(b.clone()))), Box::new(c.clone()));\n",
+                    "        let lhs = {cat}::{ctor}(std::sync::Arc::new({cat}::{ctor}(std::sync::Arc::new(a.clone()), std::sync::Arc::new(b.clone()))), std::sync::Arc::new(c.clone()));\n",
                     cat = category, ctor = constructor
                 ));
                 out.push_str(&format!(
-                    "        let rhs = {cat}::{ctor}(Box::new(a), Box::new({cat}::{ctor}(Box::new(b), Box::new(c))));\n",
+                    "        let rhs = {cat}::{ctor}(std::sync::Arc::new(a), std::sync::Arc::new({cat}::{ctor}(std::sync::Arc::new(b), std::sync::Arc::new(c))));\n",
                     cat = category, ctor = constructor
                 ));
                 out.push_str("        let lhs_str = format!(\"{}\", lhs);\n");

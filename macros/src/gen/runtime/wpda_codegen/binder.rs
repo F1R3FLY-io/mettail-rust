@@ -2802,7 +2802,7 @@ pub(crate) fn emit_binder_action_entry(
                 {
                     body_holder = Some(var.clone());
                 } else {
-                    field_names.push(quote! { Box::new(#var) });
+                    field_names.push(quote! { std::sync::Arc::new(#var) });
                 }
             }
             ActionArgKind::Predicate => {
@@ -2886,11 +2886,11 @@ pub(crate) fn emit_binder_action_entry(
                         ActionArgKind::Term(cat) => {
                             let cat_id = format_ident!("{}", cat);
                             quote! {
-                                let #inner_var: Option<Box<#cat_id>> =
+                                let #inner_var: Option<std::sync::Arc<#cat_id>> =
                                     match #opt_var.as_mut() {
                                         Some(inner_iter) => inner_iter.next()
                                             .and_then(|a| a.into_term::<#cat_id>())
-                                            .map(Box::new),
+                                            .map(std::sync::Arc::new),
                                         None => None,
                                     };
                             }
@@ -3132,7 +3132,7 @@ pub(crate) fn emit_binder_action_entry(
                 .iter()
                 .map(|n| mettail_runtime::Binder(mettail_runtime::get_or_create_var(n.clone())))
                 .collect();
-            let scope = mettail_runtime::Scope::new(binders, Box::new(#body));
+            let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(#body));
             b.push_term::<#cat_ident>(
                 #cat_ident::#label_ident(#(#field_names,)* scope)
             );
@@ -3151,7 +3151,7 @@ pub(crate) fn emit_binder_action_entry(
         quote! {
             let scope = mettail_runtime::Scope::new(
                 mettail_runtime::Binder(mettail_runtime::get_or_create_var(#binder_name)),
-                Box::new(#body),
+                std::sync::Arc::new(#body),
             );
             b.push_term::<#cat_ident>(
                 #cat_ident::#label_ident(#(#field_names,)* scope)

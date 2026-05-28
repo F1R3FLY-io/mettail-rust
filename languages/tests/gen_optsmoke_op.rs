@@ -37,7 +37,7 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_optsmoke_ifelse_false_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(5i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -49,7 +49,7 @@ fn eval_optsmoke_ifelse_false_5_smoke() {
 #[test]
 fn eval_optsmoke_ifelse_false_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(3i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -61,7 +61,7 @@ fn eval_optsmoke_ifelse_false_3_smoke() {
 #[test]
 fn eval_optsmoke_ifelse_false_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(2i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -73,7 +73,7 @@ fn eval_optsmoke_ifelse_false_2_smoke() {
 #[test]
 fn eval_optsmoke_ifelse_false_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(1i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -85,7 +85,7 @@ fn eval_optsmoke_ifelse_false_1_smoke() {
 #[test]
 fn eval_optsmoke_ifelse_false_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -97,7 +97,7 @@ fn eval_optsmoke_ifelse_false_0_smoke() {
 #[test]
 fn eval_optsmoke_ifelse_true_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(5i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -110,7 +110,7 @@ fn eval_optsmoke_ifelse_true_5() {
 #[test]
 fn eval_optsmoke_ifelse_true_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(3i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -123,7 +123,7 @@ fn eval_optsmoke_ifelse_true_3() {
 #[test]
 fn eval_optsmoke_ifelse_true_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(2i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -136,7 +136,7 @@ fn eval_optsmoke_ifelse_true_2() {
 #[test]
 fn eval_optsmoke_ifelse_true_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(1i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -149,7 +149,7 @@ fn eval_optsmoke_ifelse_true_1() {
 #[test]
 fn eval_optsmoke_ifelse_true_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -166,7 +166,7 @@ fn eval_optsmoke_ifelse_true_0() {
 #[test]
 fn cross_cat_optsmoke_cast_booltoint_from_bool_to_int() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::BoolToInt(Box::new(Bool::BoolLit(true)));
+    let input_term = Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -178,7 +178,7 @@ fn cross_cat_optsmoke_cast_booltoint_from_bool_to_int() {
 #[test]
 fn cross_cat_optsmoke_eval_ifelse() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(1i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -191,7 +191,7 @@ fn cross_cat_optsmoke_eval_ifelse() {
 #[test]
 fn cross_cat_optsmoke_castop_ifelse_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::BoolToInt(Box::new(Bool::BoolLit(true)))), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -207,7 +207,7 @@ fn cross_cat_optsmoke_castop_ifelse_booltoint_smoke() {
 #[test]
 fn wfst_optsmoke_dispatch_ifelse_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -223,7 +223,7 @@ fn wfst_optsmoke_dispatch_ifelse_eval() {
 #[test]
 fn wpda_optsmoke_ifelse_true_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -235,7 +235,7 @@ fn wpda_optsmoke_ifelse_true_0() {
 #[test]
 fn wpda_optsmoke_ifelse_true_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(1i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -247,7 +247,7 @@ fn wpda_optsmoke_ifelse_true_1() {
 #[test]
 fn wpda_optsmoke_ifelse_true_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(2i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -259,7 +259,7 @@ fn wpda_optsmoke_ifelse_true_2() {
 #[test]
 fn wpda_optsmoke_ifelse_true_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(3i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -271,7 +271,7 @@ fn wpda_optsmoke_ifelse_true_3() {
 #[test]
 fn wpda_optsmoke_ifelse_true_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(5i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -283,7 +283,7 @@ fn wpda_optsmoke_ifelse_true_5() {
 #[test]
 fn wpda_optsmoke_ifelse_false_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -295,7 +295,7 @@ fn wpda_optsmoke_ifelse_false_0() {
 #[test]
 fn wpda_optsmoke_ifelse_false_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(1i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -307,7 +307,7 @@ fn wpda_optsmoke_ifelse_false_1() {
 #[test]
 fn wpda_optsmoke_ifelse_false_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(2i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -319,7 +319,7 @@ fn wpda_optsmoke_ifelse_false_2() {
 #[test]
 fn wpda_optsmoke_ifelse_false_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(3i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -331,7 +331,7 @@ fn wpda_optsmoke_ifelse_false_3() {
 #[test]
 fn wpda_optsmoke_ifelse_false_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(false)), Box::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(5i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -348,7 +348,7 @@ fn wpda_optsmoke_ifelse_false_5() {
 fn type_pres_optsmoke_ifelse_true_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
-    let input_term = Int::IfElse(Box::new(Bool::BoolLit(true)), Box::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

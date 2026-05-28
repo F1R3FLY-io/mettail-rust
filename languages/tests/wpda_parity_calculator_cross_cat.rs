@@ -9,7 +9,7 @@
 //! 4. PrefixDispatch on Int matches IntegerLit → ConsumeAndPush(Int's NumLit Return).
 //! 5. Unwinding pops Int's Return, fires NumLit action, pushes Int::NumLit(42).
 //! 6. Unwinding pops the cross-cat ProcInt Return, fires wrap-action,
-//!    pushes Proc::ProcInt(Box::new(Int::NumLit(42))).
+//!    pushes Proc::ProcInt(std::sync::Arc::new(Int::NumLit(42))).
 
 use mettail_languages::calculator::{parse_Bool_via_wpda, parse_Proc_via_wpda, Bool, Int, Proc};
 use mettail_prattail::automata::TokenKind;

@@ -41,7 +41,7 @@ fn unit_class2smoke_proc_pzero() {
 #[test]
 fn unit_class2smoke_proc_choose() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::Choose(Box::new(Proc::PZero), vec![]);
+    let term = Proc::Choose(std::sync::Arc::new(Proc::PZero), vec![]);
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Choose");
     if let Ok(parsed) = Proc::parse(&displayed) {
