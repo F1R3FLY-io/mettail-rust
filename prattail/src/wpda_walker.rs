@@ -11963,34 +11963,16 @@ where
     /// item may advance items in earlier sets, which may themselves
     /// complete, etc.
     #[allow(dead_code)] // S1.b: only called from earley_outboard_chain.
+    /// Thin walker-side wrapper. The completion fixpoint now lives on
+    /// `EarleyChart::complete_to_fixpoint` (WALK-S2, 2026-05-28) so the
+    /// standalone chart unit tests can drive it without a walker; this
+    /// delegate keeps the existing call site stable.
     fn complete_to_fixpoint(
         &self,
         chart: &mut crate::earley::EarleyChart,
         pos: usize,
     ) {
-        // Bounded iteration cap: chain length × rule body size as a
-        // generous bound. Prevents pathological infinite loops if a
-        // bug in complete somehow re-inserts an item.
-        let cap = chart.input_len().saturating_mul(8).max(64);
-        let mut iterations = 0usize;
-        loop {
-            iterations += 1;
-            if iterations > cap {
-                break;
-            }
-            let snapshot: Vec<crate::earley::EarleyItem> =
-                chart.items_at(pos).iter().cloned().collect();
-            let mut any_advanced = false;
-            for item in &snapshot {
-                let advanced = chart.complete(pos, item);
-                if advanced > 0 {
-                    any_advanced = true;
-                }
-            }
-            if !any_advanced {
-                break;
-            }
-        }
+        chart.complete_to_fixpoint(pos);
     }
 
     fn allocate_fork_push_child(

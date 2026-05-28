@@ -132,27 +132,35 @@ impl InfixOperator {
     /// `macros/src/gen/runtime/wpda_codegen/infix.rs`, Substage 6b).
     ///
     /// **PILOT GATE** (`label == "AddInt"`): restricts H3 iterative
-    /// chain-absorption to Calculator's `AddInt`.
+    /// chain-absorption to Calculator's `AddInt` — the single proven-safe
+    /// operator.
     ///
-    /// WALK-S1 (2026-05-28): an attempt to REMOVE this gate (broaden to
-    /// all left-assoc binary ops) produced a build whose
-    /// `test_left_assoc_chain_*` failed at ALL sizes ("no accepting
-    /// branch reached end of input"), so the gate was RESTORED to the
-    /// known-good baseline (chain_10000 = 111 MB, gauntlet 4217/0).
+    /// WALK-S1.5 (2026-05-28) DIAGNOSED why broadening this gate is
+    /// unsafe, via a clean build + tracing (NOT an incremental-build
+    /// artifact, as first hypothesized — the clean build failed too):
     ///
-    /// Root cause is NOT yet proven. Static analysis argues the
-    /// broadening is INERT for a pure single-operator chain: the sole
-    /// consumer of `is_iterative_candidate` is the generated
-    /// `iter_eligible_<cat>` table, whose AddInt arm is byte-identical
-    /// with or without broadening; the InfixLoop singleton `__cands` is
-    /// built from grammar tiers (never from eligibility); and
-    /// `earley_outboard_chain` absorbs a single op-kind run. That points
-    /// to an incremental-build inconsistency rather than a real
-    /// multiple-operator defect. The definitive test is deferred to
-    /// WALK-S3, where enabling right-assoc `^` (PowInt) creates the
-    /// minimal AddInt+PowInt 2-operator case on a CLEAN build: if both
-    /// chains parse, broadening is confirmed inert; if not, the
-    /// multiple-eligible-operator interaction is real and gated here.
+    /// 1. **Cross-category fanout.** Numeric terminals like `+` are
+    ///    shared across categories (Int `AddInt`, BigInt `AddBigInt`,
+    ///    …). `1+1+…` is ambiguous across them. With the gate broadened,
+    ///    EVERY category's `+` becomes iter-eligible and each absorbs the
+    ///    same chain in its own category, producing divergent
+    ///    cross-category cursors. H3 absorption jumps the cursor to
+    ///    `chain_end` + Unwinding, BYPASSING the Tomita merge that the
+    ///    normal walker uses to reconcile category ambiguity — so the
+    ///    divergent cursors never converge and no branch accepts
+    ///    ("no accepting branch reached end of input"). The AddInt-only
+    ///    pilot is safe precisely because ONE category absorbs while the
+    ///    others stay on the convergent normal walker.
+    /// 2. **Right-assoc never triggers.** H3 fires from the InfixLoop
+    ///    singleton fast-path, which only sees LEFT-assoc iteration.
+    ///    Right-assoc `^` RECURSES (RHS sub-parse) instead of iterating,
+    ///    so the trigger never reaches it (`^` chains just use the normal
+    ///    walker). Extending H3 to right-assoc / mixfix needs a NEW
+    ///    pre-fork absorption trigger, not this predicate.
+    ///
+    /// Generalizing H3 (canonical-op-per-terminal eligibility + a
+    /// right-recursive absorption trigger) is designed in
+    /// `prattail/docs/design/plans/c1-right-assoc-ternary-h3-absorption.md`.
     pub fn is_iterative_candidate(&self) -> bool {
         !self.is_cross_category
             && !self.is_postfix

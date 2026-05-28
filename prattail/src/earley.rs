@@ -310,6 +310,35 @@ impl EarleyChart {
         advanced_count
     }
 
+    /// Drive `complete` to a fixpoint at `pos`: repeatedly complete every
+    /// item in `sets[pos]` until no further item advances. A bounded
+    /// iteration cap (`input_len * 8`, floor 64) guards against
+    /// pathological re-insertion. Both the walker chain-absorption drive
+    /// (`earley_outboard_chain`) and the standalone right/left-recursive
+    /// chart unit tests share this so the completion semantics stay in
+    /// one place.
+    pub fn complete_to_fixpoint(&mut self, pos: usize) {
+        let cap = self.input_len.saturating_mul(8).max(64);
+        let mut iterations = 0usize;
+        loop {
+            iterations += 1;
+            if iterations > cap {
+                break;
+            }
+            let snapshot: Vec<EarleyItem> =
+                self.items_at(pos).iter().cloned().collect();
+            let mut any_advanced = false;
+            for item in &snapshot {
+                if self.complete(pos, item) > 0 {
+                    any_advanced = true;
+                }
+            }
+            if !any_advanced {
+                break;
+            }
+        }
+    }
+
     /// Leo reduction: if `sets[pos]` contains exactly one item of
     /// `category` whose dot is at body.len() - 1 (one step from
     /// completion), and that item is the lone candidate for a
