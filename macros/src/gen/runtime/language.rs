@@ -2323,7 +2323,11 @@ fn generate_language_struct_multi(
     // Extract arms: read results from the appropriate relation after Ascent fixpoint.
     // Term IDs must match the wrapper's term_id() which hashes the inner enum (e.g. CalculatorTermInner::Str(t)),
     // so we hash the enum variant wrapping each term for TermInfo and Rewrite.
-    let extract_arms: Vec<TokenStream> = language
+    // NOTE (2026-05-28): superseded by `multi_cat_union_extract` (the dispatch
+    // arms now always use the all-categories union extract to surface
+    // cross-category reduction products). Kept (underscore-prefixed) rather
+    // than deleted; candidate for a cleanup substage.
+    let _extract_arms: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
@@ -2777,7 +2781,9 @@ fn generate_language_struct_multi(
             }
         };
 
-        let core_extract_arms: Vec<TokenStream> = language
+        // NOTE (2026-05-28): superseded by `multi_cat_union_extract` — see the
+        // _extract_arms note above. Kept underscore-prefixed, not deleted.
+        let _core_extract_arms: Vec<TokenStream> = language
             .types
             .iter()
             .filter(|t| core_cats_ref.contains(&t.name.to_string()))
@@ -2899,10 +2905,11 @@ fn generate_language_struct_multi(
                     prog.run();
                     // A-RT05: Post-fixpoint depth check
                     #depth_check_block
-                    match term_ref {
-                        #(#core_extract_arms)*
-                        _ => unreachable!(),
-                    }
+                    // Cross-category eval fix (2026-05-28): union extract
+                    // across ALL categories (see non-split branch). The core
+                    // struct declares the full relation schema, so the union
+                    // extract compiles here too. #core_extract_arms superseded.
+                    #multi_cat_union_extract
                 }
                 // Non-core categories: use the full struct (all rules)
                 _ => {
@@ -2916,10 +2923,9 @@ fn generate_language_struct_multi(
                     prog.run();
                     // A-RT05: Post-fixpoint depth check
                     #depth_check_block
-                    match term_ref {
-                        #(#extract_arms)*
-                        #inner_enum_name::Ambiguous(_) => unreachable!(),
-                    }
+                    // Cross-category eval fix (2026-05-28): union extract
+                    // across ALL categories (see non-split branch).
+                    #multi_cat_union_extract
                 }
             }
         }
@@ -2939,12 +2945,19 @@ fn generate_language_struct_multi(
             prog.run();
             // A-RT05: Post-fixpoint depth check
             #depth_check_block
-            match &term.0 {
-                // Phase D (2026-05-17): Ambiguous → union extract
-                // across all cats (every alt's category contributes).
-                #inner_enum_name::Ambiguous(_) => #multi_cat_union_extract,
-                #(#extract_arms)*
-            }
+            // Cross-category eval fix (2026-05-28): ALWAYS use the
+            // all-categories union extract, not only for Ambiguous inputs.
+            // The per-category single-relation #extract_arms harvested normal
+            // forms + rewrites from ONLY the input term's own category
+            // relation, silently dropping cross-category reduction products
+            // that land in a DIFFERENT relation (e.g. ledtest AndPred→Pred in
+            // a Num-primary language; calculator Len→Int in a Proc-primary
+            // language). The union extract reads every category relation;
+            // is_normal_form stays correct (a term carrying a rewrite edge in
+            // ANY relation is not a normal form in its own). Safe: all op-test
+            // assertions use .any()/!is_empty() (monotone in the nf set), so
+            // reporting additional cross-cat forms cannot break a passing test.
+            #multi_cat_union_extract
         }
     };
 

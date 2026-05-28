@@ -57,6 +57,21 @@ fn left_assoc_chain(depth: usize) -> String {
     s
 }
 
+fn ternary_chain(depth: usize) -> String {
+    // "0 ? 1 : 0 ? 1 : ... : 0" — deeply nested MIXFIX ternary
+    // (`Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int`, right-assoc),
+    // parsing as Tern(0, 1, Tern(0, 1, ... Tern(0, 1, 0))) `depth` levels
+    // deep. Exercises the normal WPDS walker path (NOT the H3 Earley chain
+    // absorption, which is binary-infix-only) — generalization probe for
+    // the Box→Arc AST representation (Arc refactor 2026-05-28).
+    let mut s = String::with_capacity(depth * 8 + 1);
+    for _ in 0..depth {
+        s.push_str("0 ? 1 : ");
+    }
+    s.push('0');
+    s
+}
+
 fn nested_unary(depth: usize) -> String {
     // "- - - ... - 1" (unary prefix chain)
     let mut s = String::with_capacity(depth * 2 + 1);
@@ -266,6 +281,37 @@ fn test_left_assoc_chain_5000() {
     let input = left_assoc_chain(5_000);
     let result = Int::parse_structured(&input);
     assert!(result.is_ok(), "5000 left-assoc ops should parse: {:?}", result.err());
+}
+
+// ── Tests: Deep MIXFIX (ternary) chains — H6 generalization probe ──
+// `Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int` (right-assoc mixfix).
+// Parsed via the normal WPDS walker (NOT H3 Earley absorption). Validates
+// the Box→Arc AST representation generalizes to multi-operand mixfix nesting.
+
+#[test]
+#[ignore = "scaling probe — run explicitly"]
+fn test_ternary_chain_1000() {
+    mettail_runtime::clear_var_cache();
+    let input = ternary_chain(1_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "1000 nested ternaries should parse: {:?}", result.err());
+}
+
+#[test]
+#[ignore = "scaling probe — run explicitly"]
+fn test_ternary_chain_2000() {
+    mettail_runtime::clear_var_cache();
+    let input = ternary_chain(2_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "2000 nested ternaries should parse: {:?}", result.err());
+}
+
+#[test]
+fn test_ternary_chain_10000() {
+    mettail_runtime::clear_var_cache();
+    let input = ternary_chain(10_000);
+    let result = Int::parse_structured(&input);
+    assert!(result.is_ok(), "10000 nested ternaries should parse: {:?}", result.err());
 }
 
 // ── Tests: Deep unary prefix chains ──

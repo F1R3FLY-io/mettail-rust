@@ -112,3 +112,5 @@ rustc-ice-*.txt
 
 # AMD uProf profile artifacts (binary config/output)
 .ri
+
+.pgmcp.toml
