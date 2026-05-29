@@ -183,10 +183,19 @@ fn test_eval_addint_chain_oracle() {
 #[test]
 fn test_eval_subint_chain() {
     // Broadening canonical eligibility makes ALL Int left-assoc ops (not just
-    // AddInt) absorb via H3 at S0. SubInt is non-associative, so this verifies
-    // the (left-recursive) chart absorption produces the LEFT-nested result:
-    // 10-1-1-1 = ((10-1)-1)-1 = 7 (a right-assoc parse 10-(1-(1-1)) = 9; the
-    // value 7 is unreachable from any right-assoc reduction). 4 atoms → H3.
+    // AddInt) absorb via H3. SubInt is NON-associative, so this is the decisive
+    // structural check: the absorption must produce a LEFT-nested AST.
+    // 20-1-1-1-1 (5 atoms = 4 atoms AFTER the LHS, so it DOES trigger the H3
+    // peek gate of >= 4 remaining) = ((((20-1)-1)-1)-1) = 16 left-assoc. A
+    // right-nested absorption would give a different value (e.g. 20-(...)); the
+    // left-assoc value 16 confirms correct left-nesting.
+    assert_chain_eval("20 - 1 - 1 - 1 - 1", "16");
+}
+
+#[test]
+fn test_eval_subint_chain_short_oracle() {
+    // 4 atoms = 3 remaining < 4: stays on the normal walker (no H3). The
+    // absorbed-vs-normal oracle for SubInt left-assoc. 10-1-1-1 = 7.
     assert_chain_eval("10 - 1 - 1 - 1", "7");
 }
 
