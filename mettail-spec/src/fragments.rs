@@ -143,7 +143,8 @@ fn parse_replacement_rules(
             })?;
         let label = label.trim().trim_start_matches("[]").trim();
         let rhs = rhs.trim().trim_end_matches(';').trim();
-        let mut parsed = parse_terms_from_rho_snippet(rhs, module)?;
+        let rhs = format!("{rhs} ;");
+        let mut parsed = parse_terms_from_rho_snippet(&rhs, module)?;
         if parsed.len() != 1 {
             return Err(SpecError::Assemble {
                 message: format!("replacement for '{label}' must be exactly one term rule"),
@@ -194,6 +195,7 @@ fn apply_replacements(pres: &mut Presentation, rules: Vec<(String, GrammarRule)>
     for (label, new_rule) in rules {
         if let Some(idx) = pres.terms.iter().position(|r| r.label == label) {
             pres.terms[idx] = new_rule;
+            pres.term_label_conflicts.remove(&label);
         } else {
             return Err(SpecError::Assemble {
                 message: format!("replacement target term '{label}' not found"),
@@ -354,7 +356,61 @@ pub fn merge_presentations_right_biased(
         .extend(overlay.rust_island_snippets);
     base.proc_artifacts.extend(overlay.proc_artifacts);
     merge_sources(&mut base.sources, &overlay.sources);
+    base.term_label_conflicts
+        .extend(overlay.term_label_conflicts);
     Ok(base)
+}
+
+pub fn merge_presentations_union(
+    mut left: Presentation,
+    right: Presentation,
+) -> Result<Presentation> {
+    ensure_no_type_overlap(&left, &right)?;
+    ensure_no_named_overlap(
+        left.equations.iter().map(|x| x.name.to_string()),
+        right.equations.iter().map(|x| x.name.to_string()),
+        "equation",
+    )?;
+    ensure_no_named_overlap(
+        left.rewrites.iter().map(|x| x.name.to_string()),
+        right.rewrites.iter().map(|x| x.name.to_string()),
+        "rewrite",
+    )?;
+    if left.literals.is_some() && right.literals.is_some() {
+        return Err(SpecError::Assemble {
+            message: "union conflict: duplicate literals blocks; keep disjoint or remove one side"
+                .into(),
+        });
+    }
+    if left.logic.is_some() && right.logic.is_some() {
+        return Err(SpecError::Assemble {
+            message:
+                "union conflict: duplicate logic/relations blocks; keep disjoint or remove one side"
+                    .into(),
+        });
+    }
+
+    merge_types_right_biased(&mut left, right.types);
+    if let Some(literals) = right.literals {
+        left.literals = Some(literals);
+    }
+    merge_terms_union(&mut left, right.terms);
+    merge_equations_right_biased(&mut left, right.equations);
+    merge_rewrites_right_biased(&mut left, right.rewrites);
+    if let Some(logic) = right.logic {
+        left.logic = Some(logic);
+    }
+    if right.semantics != crate::ntir::SemanticsTarget::Unknown {
+        left.semantics = right.semantics;
+    }
+    if right.context_template.is_some() {
+        left.context_template = right.context_template;
+    }
+    left.rust_island_snippets.extend(right.rust_island_snippets);
+    left.proc_artifacts.extend(right.proc_artifacts);
+    merge_sources(&mut left.sources, &right.sources);
+    left.term_label_conflicts.extend(right.term_label_conflicts);
+    Ok(left)
 }
 
 fn merge_types_right_biased(pres: &mut Presentation, delta: Vec<mettail_ast::language::LangType>) {
@@ -376,6 +432,18 @@ fn merge_terms_right_biased(
         let label = item.label.to_string();
         if let Some(idx) = pres.terms.iter().position(|x| x.label == label) {
             pres.terms[idx] = item;
+        } else {
+            pres.terms.push(item);
+        }
+    }
+}
+
+fn merge_terms_union(pres: &mut Presentation, delta: Vec<mettail_ast::grammar::GrammarRule>) {
+    for item in delta {
+        let label = item.label.to_string();
+        if let Some(idx) = pres.terms.iter().position(|x| x.label == label) {
+            pres.terms[idx] = item;
+            pres.term_label_conflicts.insert(label);
         } else {
             pres.terms.push(item);
         }
@@ -428,5 +496,60 @@ fn merge_source_opt(base: &mut Option<String>, overlay: &Option<String>) {
             },
             None => *base = Some(o.clone()),
         }
+    }
+}
+
+fn ensure_no_type_overlap(left: &Presentation, right: &Presentation) -> Result<()> {
+    ensure_no_named_overlap(
+        left.types.iter().map(|x| x.name.to_string()),
+        right.types.iter().map(|x| x.name.to_string()),
+        "type",
+    )
+}
+
+fn ensure_no_named_overlap<I, J>(left: I, right: J, kind: &str) -> Result<()>
+where
+    I: Iterator<Item = String>,
+    J: Iterator<Item = String>,
+{
+    let right_names: std::collections::BTreeSet<String> = right.collect();
+    let overlaps: Vec<String> = left.filter(|name| right_names.contains(name)).collect();
+    if overlaps.is_empty() {
+        return Ok(());
+    }
+    Err(SpecError::Assemble {
+        message: format!("union conflict: duplicate {kind}(s): {}", overlaps.join(", ")),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::merge_presentations_union;
+    use crate::ntir::Presentation;
+    use mettail_ast::language::LogicBlock;
+    use proc_macro2::TokenStream;
+
+    #[test]
+    fn union_conflict_on_duplicate_logic_fails() {
+        let left = Presentation {
+            logic: Some(LogicBlock {
+                relations: Vec::new(),
+                content: TokenStream::new(),
+            }),
+            ..Presentation::default()
+        };
+        let right = Presentation {
+            logic: Some(LogicBlock {
+                relations: Vec::new(),
+                content: TokenStream::new(),
+            }),
+            ..Presentation::default()
+        };
+
+        let err = match merge_presentations_union(left, right) {
+            Ok(_) => panic!("expected logic conflict"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("logic/relations"), "unexpected error: {err}");
     }
 }

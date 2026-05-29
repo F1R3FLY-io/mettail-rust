@@ -237,10 +237,7 @@ fn extender_union_compiles_and_merges() {
 }
 
 #[test]
-fn extender_union_conflict_right_side_wins_silently() {
-    use mettail_ast::grammar::GrammarItem;
-    use quote::ToTokens;
-
+fn extender_union_conflict_requires_explicit_resolution() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("union_conflict.rho");
     std::fs::write(
@@ -248,13 +245,13 @@ fn extender_union_conflict_right_side_wins_silently() {
         r#"module U {
   export extender Left() {
     empty
-    types { ![i32] as Num }
-    terms { Same . Num ::= "left" ; }
+    types { ![i32] as LeftNum }
+    terms { Same . LeftNum ::= "left" ; }
   }
   export extender Right() {
     empty
-    types { ![i64] as Num }
-    terms { Same . Num ::= "right" ; }
+    types { ![i64] as RightNum }
+    terms { Same . RightNum ::= "right" ; }
   }
   export extender Both(L, R) { L /\ R }
   export language L = Both(Left(), Right())
@@ -263,22 +260,163 @@ fn extender_union_conflict_right_side_wins_silently() {
     )
     .expect("write");
 
-    let ntir = compile_entry(path, Some("L")).expect("compile union conflict");
-    assert_eq!(ntir.types.len(), 1);
-    assert_eq!(ntir.types[0].name.to_string(), "Num");
-    let native = ntir.types[0]
-        .native_type
-        .as_ref()
-        .map(ToTokens::to_token_stream)
-        .map(|ts| ts.to_string())
-        .unwrap_or_default();
-    assert_eq!(native, "i64");
+    let err = match compile_entry(path, Some("L")) {
+        Ok(_) => panic!("expected unresolved union conflict"),
+        Err(err) => err,
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("overlapping term label"), "got: {msg}");
+    assert!(msg.contains("replacements"), "got: {msg}");
+}
 
+#[test]
+fn extender_union_conflict_resolved_with_replacement() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("union_conflict_replaced.rho");
+    std::fs::write(
+        &path,
+        r#"module U {
+  export extender Left() {
+    empty
+    types { ![i32] as LeftNum }
+    terms { Same . LeftNum ::= "left" ; }
+  }
+  export extender Right() {
+    empty
+    types { ![i64] as RightNum }
+    terms { Same . RightNum ::= "right" ; }
+  }
+  export extender Both(L, R) {
+    { L /\ R }
+    replacements { []Same => Same . LeftNum ::= "resolved" }
+  }
+  export language L = Both(Left(), Right())
+}
+"#,
+    )
+    .expect("write");
+
+    let ntir = compile_entry(path, Some("L")).expect("compile resolved union conflict");
     assert_eq!(ntir.terms.len(), 1);
     assert_eq!(ntir.terms[0].label.to_string(), "Same");
-    let has_right_terminal = ntir.terms[0]
-        .items
-        .iter()
-        .any(|item| matches!(item, GrammarItem::Terminal(t) if t == "right"));
-    assert!(has_right_terminal, "expected right-side term body to win");
+}
+
+#[test]
+fn extender_union_conflict_on_duplicate_type_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("union_type_conflict.rho");
+    std::fs::write(
+        &path,
+        r#"module U {
+  export extender Left() { empty types { ![i32] as Num } }
+  export extender Right() { empty types { ![i64] as Num } }
+  export extender Both(L, R) { L /\ R }
+  export language L = Both(Left(), Right())
+}
+"#,
+    )
+    .expect("write");
+
+    let err = match compile_entry(path, Some("L")) {
+        Ok(_) => panic!("expected type conflict"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("duplicate type"), "{}", err);
+}
+
+#[test]
+fn extender_union_conflict_on_duplicate_literals_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("union_literals_conflict.rho");
+    std::fs::write(
+        &path,
+        r#"module U {
+  export extender Left() {
+    empty
+    types { ![i32] as Num }
+    literals { Num ::= Regex("[0-9]+") }
+  }
+  export extender Right() {
+    empty
+    types { ![i64] as Num2 }
+    literals { Num2 ::= Regex("[0-9]+") }
+  }
+  export extender Both(L, R) { L /\ R }
+  export language L = Both(Left(), Right())
+}
+"#,
+    )
+    .expect("write");
+
+    let err = match compile_entry(path, Some("L")) {
+        Ok(_) => panic!("expected literals conflict"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("literals"), "{}", err);
+}
+
+#[test]
+fn extender_union_conflict_on_duplicate_equation_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("union_equation_conflict.rho");
+    std::fs::write(
+        &path,
+        r#"module U {
+  export extender Left() {
+    empty
+    types { Elem }
+    terms { T . Elem ::= "t" ; }
+    equations { Eq . |- (T) = (T) ; }
+  }
+  export extender Right() {
+    empty
+    types { Elem2 }
+    terms { U . Elem2 ::= "u" ; }
+    equations { Eq . |- (U) = (U) ; }
+  }
+  export extender Both(L, R) { L /\ R }
+  export language L = Both(Left(), Right())
+}
+"#,
+    )
+    .expect("write");
+
+    let err = match compile_entry(path, Some("L")) {
+        Ok(_) => panic!("expected equation conflict"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("duplicate equation"), "{}", err);
+}
+
+#[test]
+fn extender_union_conflict_on_duplicate_rewrite_fails() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("union_rewrite_conflict.rho");
+    std::fs::write(
+        &path,
+        r#"module U {
+  export extender Left() {
+    empty
+    types { Elem }
+    terms { T . Elem ::= "t" ; }
+    rewrites { Rw . |- (T) ~> (T) ; }
+  }
+  export extender Right() {
+    empty
+    types { Elem2 }
+    terms { U . Elem2 ::= "u" ; }
+    rewrites { Rw . |- (U) ~> (U) ; }
+  }
+  export extender Both(L, R) { L /\ R }
+  export language L = Both(Left(), Right())
+}
+"#,
+    )
+    .expect("write");
+
+    let err = match compile_entry(path, Some("L")) {
+        Ok(_) => panic!("expected rewrite conflict"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("duplicate rewrite"), "{}", err);
 }

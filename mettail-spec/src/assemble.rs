@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::error::{Result, SpecError};
 use crate::eval::{evaluate_graph, resolve_language_path, EvaluatedGraph};
-use crate::fragments::{apply_suffix, merge_presentations, merge_presentations_right_biased};
+use crate::fragments::{apply_suffix, merge_presentations, merge_presentations_union};
 use crate::island::{process_island, IslandArtifact};
 use crate::ntir::ProcArtifact;
 use crate::ntir::{Ntir, Presentation, SemanticsTarget};
@@ -33,7 +33,8 @@ pub fn compile_language(
             message: format!("exported language '{language_name}' not found in entry module"),
         })?;
 
-    let pres = assemble_language_expr(graph, evaluated, &entry.file.imports, &lang_decl.expr)?;
+    let mut pres = assemble_language_expr(graph, evaluated, &entry.file.imports, &lang_decl.expr)?;
+    ensure_no_unresolved_term_conflicts(&mut pres)?;
     Ok(pres.into_ntir(language_name.to_string(), None))
 }
 
@@ -128,7 +129,7 @@ pub(crate) fn eval_extender_expr(
         ExtenderExpr::Union(lhs, rhs) => {
             let left = eval_extender_expr(lhs, params, module)?;
             let right = eval_extender_expr(rhs, params, module)?;
-            merge_presentations_right_biased(left, right)
+            merge_presentations_union(left, right)
         },
         ExtenderExpr::Group(inner) => eval_extender_expr(inner, params, module),
         ExtenderExpr::Suffix { inner, kind, tokens, raw, .. } => {
@@ -172,6 +173,23 @@ pub(crate) fn eval_extender_expr(
         },
         ExtenderExpr::Island(token) => presentation_from_island(token),
     }
+}
+
+fn ensure_no_unresolved_term_conflicts(pres: &mut Presentation) -> Result<()> {
+    if pres.term_label_conflicts.is_empty() {
+        return Ok(());
+    }
+    let labels = pres
+        .term_label_conflicts
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(SpecError::Assemble {
+        message: format!(
+            "union conflict: overlapping term label(s): {labels}; resolve with replacements {{ ... }}"
+        ),
+    })
 }
 
 fn presentation_from_island(token: &IslandToken) -> Result<Presentation> {

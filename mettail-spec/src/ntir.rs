@@ -4,6 +4,7 @@ use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::{
     Equation, LangType, LanguageDef, LiteralBlock, LogicBlock, RewriteRule,
 };
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 pub enum SemanticsTarget {
@@ -61,6 +62,7 @@ pub struct Presentation {
     pub rust_island_snippets: Vec<String>,
     pub proc_artifacts: Vec<ProcArtifact>,
     pub sources: TheorySources,
+    pub term_label_conflicts: BTreeSet<String>,
 }
 
 impl Presentation {
