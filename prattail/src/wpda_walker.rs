@@ -2661,6 +2661,56 @@ fn extract_dispatch_config<W: SemiringRef>(
     }
 }
 
+/// C1-R (WALK-S1, 2026-05-28): forward peek confirming a deterministic
+/// binary chain of `>= min_atoms` atoms over the SAME (atom, op)
+/// token-kind pair, starting from the head atom at `op_pos - 1` with the
+/// leading operator at `op_pos`. O(N), zero-alloc. Returns `true` iff the
+/// InfixLoop pre-fork trigger (codegen, `engine_impl.rs`) should suppress
+/// the fork and absorb the chain as a single right-nested AST.
+///
+/// Free function (not a `WpdaWalker` method) because it is weight- and
+/// engine-agnostic — the codegen call site invokes it without the
+/// `WpdaWalker<W, E>` turbofish.
+pub fn peek_binary_chain(
+    tokens: &dyn WpdaTokenSource,
+    op_pos: usize,
+    min_atoms: usize,
+) -> bool {
+    if op_pos == 0 {
+        return false;
+    }
+    let head_pos = op_pos - 1;
+    let atom_kind = match tokens.peek_kind(head_pos) {
+        Some(k) => k,
+        None => return false,
+    };
+    let op_kind = match tokens.peek_kind(op_pos) {
+        Some(k) => k,
+        None => return false,
+    };
+    if atom_kind == op_kind {
+        return false;
+    }
+    let mut atom_count = 1usize; // head atom
+    let mut probe = op_pos;
+    loop {
+        match tokens.peek_kind(probe).as_ref() {
+            Some(k) if *k == op_kind => {}
+            _ => break,
+        }
+        match tokens.peek_kind(probe + 1).as_ref() {
+            Some(k) if *k == atom_kind => {}
+            _ => break,
+        }
+        atom_count += 1;
+        probe += 2;
+        if atom_count >= min_atoms {
+            return true;
+        }
+    }
+    atom_count >= min_atoms
+}
+
 impl<W, E> WpdaWalker<W, E>
 where
     W: SemiringRef
@@ -5425,7 +5475,81 @@ where
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state, spec: _ } => {
+            WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state, spec } => {
+                // C1-R (WALK-S1, 2026-05-28): dispatch on associativity.
+                //   - RIGHT-assoc (`^`, pre-fork trigger): direct O(N)
+                //     RIGHT-nested `synth_binary_chain` — the left-recursive
+                //     Earley chart cannot produce a right-nested tree (and a
+                //     right-recursive chart would be O(N²); Leo is inert).
+                //   - LEFT-assoc (AddInt, singleton fast-path): the existing
+                //     `earley_outboard_chain` (verified correct, ships 112 MB)
+                //     — UNCHANGED below.
+                //
+                // The right-assoc synth path is reached ONLY via the
+                // `engine_impl.rs` pre-fork trigger, where `cursor.pos` is ON
+                // the leading operator and the head atom (cursor.pos - 1) is
+                // already a Symbol on `cursor.sppf_stack_id`. The whole-chain
+                // root spans [head_pos, chain_end) and INCLUDES the head atom,
+                // so the post-absorb pops the head-atom Symbol before pushing
+                // the root (matching the chart's whole-chain contract). On a
+                // peek-confirmed chain (the trigger gate), `synth_binary_chain`
+                // never returns `None`; the `None` arm is a defensive
+                // fall-through to ConsumeAndPush-equivalent normal dispatch.
+                if spec.assoc_right {
+                    // Chain start = head atom = cursor.pos - 1 (pre-fork
+                    // geometry, empirically confirmed at WALK-S1: cursor.pos is
+                    // ON the leading operator; the sppf_stack top is the single
+                    // head-atom Symbol spanning [chain_start, chain_start+1);
+                    // the GSS frontier is the enclosing CategoryEntry, so the
+                    // post-absorb Unwinding has no Return frame to pop). The
+                    // synthesized root spans [chain_start, chain_end), so we
+                    // pop the head-atom Symbol and push the root in its place.
+                    let chain_start = cursor.pos.saturating_sub(1);
+                    if let Some((root_sid, acc_weight, chain_end)) =
+                        self.synth_binary_chain(cursor, tokens, &spec, weight.clone())
+                    {
+                        // Pop the head-atom Symbol (the root re-spans it).
+                        cursor.sppf_stack_id =
+                            self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                        // Push the whole-chain root.
+                        cursor.sppf_stack_id = self
+                            .sppf_stack_arena
+                            .intern_push(cursor.sppf_stack_id, root_sid);
+                        // Jump past the absorbed region.
+                        cursor.pos = chain_end;
+                        if self.deterministic {
+                            self.pos = chain_end;
+                        }
+                        // Record the absorbed interval [chain_start, chain_end)
+                        // so cross-cat cohort dispatches strictly inside it are
+                        // suppressed (same R4 contract as the chart path).
+                        self.chain_absorbed_intervals
+                            .entry((spec.op_cat_src_idx, spec.op_rule_idx))
+                            .or_default()
+                            .push((chain_start, chain_end));
+                        self.multiply_cursor_weight(cursor, &acc_weight);
+                        self.set_cursor_inner_state(
+                            cursor,
+                            crate::wpda_runtime::WpdaState::Unwinding,
+                        );
+                        return self.cursor_resolution_check(cursor);
+                    }
+                    // Defensive fall-through: peek-confirmed chain failed to
+                    // synthesize (should not happen). Treat as a plain
+                    // single-op consume+push so the parse still progresses.
+                    self.emit_push_side_effects(cursor, &mut symbol);
+                    let _ = self.cursor_gss_push_auto(
+                        cursor,
+                        symbol,
+                        cursor.pos,
+                        weight.clone(),
+                    );
+                    self.advance_cursor_pos(cursor, tokens, 1);
+                    self.multiply_cursor_weight(cursor, &weight);
+                    self.set_cursor_inner_state(cursor, new_state);
+                    return self.cursor_resolution_check(cursor);
+                }
+                // ── LEFT-assoc path (unchanged chart absorber) ──
                 // Phase F.13 chain_10000 Exp 6 Substage 6a (Plan A first
                 // substage, 2026-05-26): idempotent GSS push for an
                 // iterative-eligible infix operator. Skip the push if
@@ -11722,6 +11846,179 @@ where
             }
         }
         false
+    }
+
+    /// C1-R (WALK-S1): synthesize the SPPF Symbol for ONE atom leaf at
+    /// `pos`. Mirrors the chart's per-atom emit but goes through the
+    /// operand category's literal-injection rule (`spec.atom_lit_rule_idx`
+    /// = `NumLit`) instead of the chart's bare-`outer_rule_idx`-for-atoms
+    /// bug (plan V7). The leaf shape is:
+    ///
+    ///   Terminal(kind, Real(pos))
+    ///     ← Packing((atom_cat<<16)|atom_lit_rule, [Terminal], one)
+    ///        ← Symbol(atom_cat, pos, pos+1)
+    ///
+    /// `realize_packing_call` realizes the Symbol → the single NumLit
+    /// packing → `Int::NumLit(v)`. Idempotent: every intern is dedup'd by
+    /// `(kind, pos, …)` / `(rule_idx, children)` / `(nt, lo, hi)`, so two
+    /// cursors synthesizing the same atom collapse to one SppfId.
+    ///
+    /// The atom packing carries `W::one_ref()` (atoms contribute identity
+    /// to the chain weight per the verified `earley_outboard_chain` weight
+    /// contract); the per-step OPERATOR weight is applied by
+    /// `synth_binary_chain` on the step packings, not here.
+    fn synth_atom_symbol(
+        &mut self,
+        pos: usize,
+        spec: &crate::binding_power::IterAbsorbSpec,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Option<crate::sppf::SppfId> {
+        let kind = tokens.peek_kind(pos)?;
+        let text = tokens.peek_text(pos);
+        let term = self.sppf.intern_terminal(
+            kind,
+            crate::sppf::PosOrSynth::Real(pos as u32),
+            text,
+            false,
+        );
+        let atom_rule_idx =
+            ((spec.atom_cat_src_idx as u32) << 16) | (spec.atom_lit_rule_idx as u32);
+        let pack = self
+            .sppf
+            .intern_packing(atom_rule_idx, vec![term], W::one_ref());
+        let sym = self
+            .sppf
+            .intern_symbol(spec.atom_cat_src_idx as u32, pos as u32, (pos + 1) as u32);
+        self.sppf.link_packing_to_symbol(sym, pack);
+        Some(sym)
+    }
+
+    /// C1-R (WALK-S1): direct O(N) synthesizer for a WHOLE binary chain,
+    /// producing a root Symbol spanning `[head_pos, chain_end)` that
+    /// matches the chart's observable contract (one correctly-nested root,
+    /// pushed by the absorb arm onto the sppf_stack). RIGHT-nested when
+    /// `spec.assoc_right` (for `^`: `2^2^3` → `2^(2^3)`); LEFT-nested
+    /// otherwise (kept for parity with the chart, though AddInt continues
+    /// to route through `earley_outboard_chain`).
+    ///
+    /// Recognition is the same O(N), zero-alloc forward peek the chart
+    /// uses: walk `atom (op atom)*` from `head_pos`. Synthesis is iterative
+    /// (no host-stack recursion — R9): fold the operand Symbols pairwise.
+    ///
+    /// Each step packing has EXACTLY two children `[lhs, rhs]` (operand
+    /// Symbols only — NO operator terminal child; binary infix arity = 2,
+    /// `realize_packing_call` resolves `(rule_idx, [lhs, rhs])` →
+    /// `Int::Pow(lhs, rhs)`). This is the plan-V7 fix over the chart's
+    /// latently-wrong 3-children-with-op packing.
+    ///
+    /// Right-nested fold (`assoc_right`):
+    ///   acc = atom(a[m-1])
+    ///   for i in (0..=m-2).rev():
+    ///     pack = packing(R, [atom(a[i]), acc], w)
+    ///     sym  = symbol(op_cat, a[i], hi(acc));  link;  acc = sym
+    /// Left-nested fold (`!assoc_right`):
+    ///   acc = atom(a[0])
+    ///   for i in 1..m:
+    ///     pack = packing(R, [acc, atom(a[i])], w)
+    ///     sym  = symbol(op_cat, a[0], a[i]+1);  link;  acc = sym
+    ///
+    /// Returns `(root, w^(m-1), chain_end)` — the accumulated weight is
+    /// `iter_weight` raised to the number of step packings (`m-1`), exactly
+    /// the per-iteration multiply the normal walker would have applied
+    /// (verified `earley_outboard_chain` weight contract). `None` if the
+    /// chain region is shorter than 2 atoms or peeks malformed.
+    fn synth_binary_chain(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+        spec: &crate::binding_power::IterAbsorbSpec,
+        weight: W,
+    ) -> Option<(crate::sppf::SppfId, W, usize)> {
+        // Pre-fork geometry: cursor.pos is ON the leading operator; the
+        // head atom is at cursor.pos - 1 (already parsed; the absorb arm
+        // pops its Symbol before pushing this root). The chain spans
+        // [head_pos, chain_end).
+        if cursor.pos == 0 {
+            return None;
+        }
+        let head_pos = cursor.pos - 1;
+        let atom_kind = tokens.peek_kind(head_pos)?;
+        let op_kind = tokens.peek_kind(cursor.pos)?;
+        if atom_kind == op_kind {
+            return None;
+        }
+
+        // Forward peek: recover atom positions a[0..m] + chain_end.
+        // Pattern: atom (op atom)* from head_pos. We know head_pos is an
+        // atom and cursor.pos is the op; collect every atom position.
+        let mut atom_positions: Vec<usize> = Vec::new();
+        atom_positions.push(head_pos);
+        let mut probe = cursor.pos;
+        loop {
+            match tokens.peek_kind(probe).as_ref() {
+                Some(k) if *k == op_kind => {}
+                _ => break,
+            }
+            match tokens.peek_kind(probe + 1).as_ref() {
+                Some(k) if *k == atom_kind => {}
+                _ => break,
+            }
+            atom_positions.push(probe + 1);
+            probe += 2;
+        }
+        let chain_end = probe;
+        let m = atom_positions.len();
+        if m < 2 {
+            return None;
+        }
+
+        let rule_idx = ((spec.op_cat_src_idx as u32) << 16) | (spec.op_rule_idx as u32);
+        let op_nt_tag = spec.op_cat_src_idx as u32;
+
+        let acc: crate::sppf::SppfId;
+        if spec.assoc_right {
+            // Right-nested: innermost = rightmost atom.
+            let mut cur = self.synth_atom_symbol(atom_positions[m - 1], spec, tokens)?;
+            for i in (0..=m - 2).rev() {
+                let lhs = self.synth_atom_symbol(atom_positions[i], spec, tokens)?;
+                let acc_hi = self
+                    .sppf
+                    .span_hi(cur)
+                    .expect("synth_binary_chain: acc Symbol must carry hi span");
+                let pack =
+                    self.sppf
+                        .intern_packing(rule_idx, vec![lhs, cur], weight.clone());
+                let sym = self
+                    .sppf
+                    .intern_symbol(op_nt_tag, atom_positions[i] as u32, acc_hi);
+                self.sppf.link_packing_to_symbol(sym, pack);
+                cur = sym;
+            }
+            acc = cur;
+        } else {
+            // Left-nested: innermost = leftmost atom.
+            let mut cur = self.synth_atom_symbol(atom_positions[0], spec, tokens)?;
+            let lo = atom_positions[0] as u32;
+            for i in 1..m {
+                let rhs = self.synth_atom_symbol(atom_positions[i], spec, tokens)?;
+                let pack =
+                    self.sppf
+                        .intern_packing(rule_idx, vec![cur, rhs], weight.clone());
+                let sym = self
+                    .sppf
+                    .intern_symbol(op_nt_tag, lo, (atom_positions[i] + 1) as u32);
+                self.sppf.link_packing_to_symbol(sym, pack);
+                cur = sym;
+            }
+            acc = cur;
+        }
+
+        // Accumulated weight = iter_weight^(m-1): one per step packing.
+        let mut accumulated = W::one_ref();
+        for _ in 0..(m - 1) {
+            accumulated = accumulated.times_ref(&weight);
+        }
+        Some((acc, accumulated, chain_end))
     }
 
     #[allow(dead_code)] // S1.b: unreachable; S1.c wires the trigger.

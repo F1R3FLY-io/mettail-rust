@@ -1117,6 +1117,68 @@ pub(crate) fn emit_engine_impl_full(
                             }
                         }
 
+                        // C1-R (WALK-S1, 2026-05-28): pre-fork right-assoc
+                        // absorption trigger. Right-associative binary
+                        // operators (`^`) recurse via the RHS sub-parse and
+                        // NEVER re-iterate to the InfixLoop singleton (plan
+                        // D2), so the left-assoc singleton fast-path below
+                        // can't reach them. Intercept HERE — after `__cands`
+                        // is built, before the singleton-vs-fork branch — for
+                        // the LEADING infix-tier candidate: if it is the
+                        // canonical iterative-eligible op for its terminal
+                        // (`iter_eligible_<cat>` → Some) AND right-assoc AND a
+                        // forward peek confirms a deterministic >= 5-atom
+                        // (>= 4 remaining after the head) chain of that
+                        // op-kind, emit `IterativeChainAbsorb` with
+                        // `new_state = Unwinding` and SUPPRESS the fork. The
+                        // peek proves the region is a single-op-kind run, so a
+                        // fork at the chain head would only spawn cursors that
+                        // either can't complete the chain or redundantly
+                        // re-walk the (already-absorbed) interior. `_pos` is
+                        // ON the operator; the head atom (parsed at `_pos - 1`)
+                        // is on `cursor.sppf_stack_id`. On peek-failure this
+                        // block is inert and control falls through to the
+                        // unchanged `match __cands.len()` (non-chain /
+                        // short-chain workloads bit-identical). LEFT-assoc
+                        // (AddInt) is NOT routed here — it keeps the existing
+                        // singleton path (minimal blast radius).
+                        if let Some((_pf_l_bp, _pf_r_bp, _pf_result_src, _pf_rule_idx)) =
+                            #infix_loop_dispatch
+                        {
+                            if _pf_l_bp >= *cur_bp {
+                                let symbol_rs = _pf_result_src;
+                                let symbol_ri = _pf_rule_idx;
+                                let _pf_spec: Option<mettail_prattail::binding_power::IterAbsorbSpec> =
+                                    #iter_eligible_dispatch;
+                                if let Some(spec) = _pf_spec {
+                                    // S1 scope: right-assoc binary only. (S2
+                                    // adds `|| spec.is_mixfix` for ternary.)
+                                    if spec.assoc_right
+                                        && mettail_prattail::wpda_walker::peek_binary_chain(
+                                            tokens, _pos, 5,
+                                        )
+                                    {
+                                        return WpdaStepAction::IterativeChainAbsorb {
+                                            symbol: StackSymbolV2::rule_at(
+                                                _pf_result_src,
+                                                _pf_rule_idx,
+                                                0,
+                                                Some(*cur_bp),
+                                            )
+                                            .with_kind_return(),
+                                            weight: lex_w(
+                                                mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
+                                                _pf_result_src,
+                                                _pf_rule_idx,
+                                            ),
+                                            new_state: WpdaState::Unwinding,
+                                            spec,
+                                        };
+                                    }
+                                }
+                            }
+                        }
+
                         match __cands.len() {
                             0 => {
                                 // No tier matched — fall through to Unwinding.
