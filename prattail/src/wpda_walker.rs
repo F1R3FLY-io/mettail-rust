@@ -5708,7 +5708,7 @@ where
                     self.set_cursor_inner_state(cursor, new_state);
                     return self.cursor_resolution_check(cursor);
                 }
-                // ── LEFT-assoc path (unchanged chart absorber) ──
+                // ── LEFT-assoc path (C1 WALK-S3: direct synth_binary_chain) ──
                 // Phase F.13 chain_10000 Exp 6 Substage 6a (Plan A first
                 // substage, 2026-05-26): idempotent GSS push for an
                 // iterative-eligible infix operator. Skip the push if
@@ -5759,31 +5759,53 @@ where
                     crate::stats_inc!(self, chain_region_iterations);
                 }
 
-                // Plan v6 H2 (2026-05-27, shell-only): region-amortized
-                // Earley absorption trigger detection — OUTSIDE the
-                // `already_chained` block because empirical chain_50
-                // measurement showed already_chained is never true in
-                // practice (Exp 6/7 elision is inert — every chain
-                // operator gets its own Return frame). The trigger
-                // fires on the FIRST IterativeChainAbsorb call per
-                // (cat_src, rule_idx) per parse, peeks ahead for ≥ 4
-                // atoms, and attempts an Earley outboard call. The
-                // Earley result is currently LOGGED but NOT used to
-                // mutate cursor state — full SPPF state reconciliation
-                // is deferred to H3. This shell ships the trigger
-                // machinery so we can empirically measure how often
-                // the trigger fires + Earley succeeds at chain_500
-                // BEFORE committing to the integration design.
-                // H3-bis (2026-05-27): fires for EVERY cursor entering
-                // the chain region (with peek-ahead gate). The cache
-                // `chain_earley_cache` keyed on (start_pos, cat, rule)
-                // lets cohort-revived cursors that hit the SAME chain
-                // region reuse the prior cursor's Earley chart instead
-                // of rebuilding it (chain_500 w/o cache: 993 Earley
-                // calls = +73% wall regression). The SPPF arena
-                // additionally dedups Symbols/Packings/Terminals across
-                // cursors so cache misses that rebuild Earley still
-                // collapse to the same SppfId via intern_*.
+                // C1 (WALK-S3, 2026-05-29): LEFT-assoc chain absorption
+                // via the DIRECT O(N) left-nested `synth_binary_chain`,
+                // superseding the latently-wrong left-recursive Earley
+                // chart (`earley_outboard_chain`, plan V7: bare
+                // `outer_rule_idx` instead of `(cat<<16)|rule`, the op
+                // as an arity-3 Terminal child, atoms not NumLit — all
+                // masked only by the parse-only gate + `+` associativity).
+                //
+                // The trigger gate is UNCHANGED from the chart path: a
+                // forward peek for >= 4 atoms remaining AFTER the head
+                // (`probe_start = cursor.pos + 1`). cursor.pos is ON the
+                // leading operator about to be consumed; the head atom
+                // a[0] at cursor.pos - 1 is already a Symbol on
+                // `cursor.sppf_stack_id` (empirically traced WALK-S3:
+                // cursor.pos=1, sppf_depth=1, top_span=[0,1], GSS
+                // frontier = CategoryEntry — IDENTICAL to the right-assoc
+                // S1 / mixfix S2 pre-fork singleton geometry).
+                //
+                // `synth_binary_chain` (with spec.assoc_right == false →
+                // its left-nested `else` branch) folds a[0..m] into a
+                // WHOLE-CHAIN root `((((a0+a1)+a2)+…)+a_{m-1})` spanning
+                // REAL `[head_pos, chain_end)` with exactly-2 operand
+                // children per step and NumLit atoms. We then apply the
+                // SAME post-absorb contract proven by S1/S2: pop the
+                // single head-atom Symbol (the root re-spans it), push
+                // the whole-chain root, jump to chain_end, record the
+                // absorbed interval, multiply the cursor weight by the
+                // accumulated `iter_weight^(m-1)`, and set Unwinding.
+                //
+                // Weight equivalence with the retired chart path: the
+                // chart absorbed `iter_weight^(m-2)` (it EXCLUDED the
+                // head — atom_count = m-1 atoms, m-2 steps) and the head
+                // a[0] was folded SEPARATELY by the normal walker fold
+                // (+1 iter_weight), for a total of `iter_weight^(m-1)`.
+                // `synth_binary_chain` produces `iter_weight^(m-1)` in
+                // one shot (m atoms → m-1 steps), so the cursor's total
+                // accumulated weight is identical.
+                //
+                // Cohort multiplicity is preserved: the absorb fires on
+                // the FIRST eligible operator (and, for longer chains,
+                // on later cohort cursors too — same as the chart). The
+                // pos=head cursor yields the complete depth-1 whole-chain
+                // root (the winner); any later cohort cursor that
+                // absorbs a SHORTER suffix leaves an extra head Symbol on
+                // its stack (depth >= 2) and is filtered by
+                // `is_cursor_accepting_terminal` at EOI / lex-dominated —
+                // exactly as under the chart path (verified 112 MB).
                 {
                     // Defensive peek-ahead: at least 4 atoms remaining
                     // in the chain (cursor.pos is on the operator
@@ -5811,104 +5833,77 @@ where
                     if remaining_atoms >= 4 {
                         let cat = symbol.category_src_idx;
                         let rule = symbol.rule_index_in_category;
-                        let cache_key = (probe_start, cat, rule);
                         crate::stats_inc!(self, chain_earley_trigger_count);
-
-                        // Cache lookup — if the same chain region was
-                        // absorbed by a prior cursor in this parse,
-                        // reuse the (SppfId, weight, chain_end) result.
-                        let cached = self.chain_earley_cache.get(&cache_key).cloned();
-                        let result = match cached {
-                            Some(triple) => Some(triple),
-                            None => {
-                                // Cache miss — invoke Earley.
-                                // earley_outboard_chain expects
-                                // cursor.pos to be on an atom; cursor
-                                // here is on the operator (about to
-                                // be consumed by advance_cursor_pos
-                                // below). Construct a probe cursor
-                                // with pos = cursor.pos + 1.
-                                let mut probe_cursor = cursor.clone();
-                                probe_cursor.pos = cursor.pos + 1;
-                                let res = self.earley_outboard_chain(
-                                    &probe_cursor,
-                                    tokens,
-                                    &symbol,
-                                    weight.clone(),
-                                );
-                                if let Some(ref triple) = res {
-                                    self.chain_earley_cache
-                                        .insert(cache_key, triple.clone());
-                                }
-                                res
+                        // C1 (WALK-S3): chain_start = head atom = the
+                        // single Symbol on `cursor.sppf_stack_id` at
+                        // cursor.pos - 1 (the head a[0]; empirically
+                        // confirmed depth=1, span=[chain_start,
+                        // chain_start+1]). `synth_binary_chain` recovers
+                        // a[0..m] + chain_end by its own forward peek
+                        // from this same head_pos and folds the WHOLE
+                        // chain LEFT-nested (spec.assoc_right == false).
+                        let chain_start = cursor.pos.saturating_sub(1);
+                        if let Some((root_sid, acc_weight, chain_end)) =
+                            self.synth_binary_chain(cursor, tokens, &spec, weight.clone())
+                        {
+                            crate::stats_inc!(self, chain_earley_succeeded_count);
+                            // atoms absorbed = (chain_end - chain_start)/2 + 1
+                            // (m total atoms in the chain, head included).
+                            // Inlined into the (feature-gated) stat macro so
+                            // there is no unused binding when walker-stats is
+                            // off.
+                            crate::stats_add!(
+                                self,
+                                chain_earley_atoms_absorbed_sum,
+                                (chain_end.saturating_sub(chain_start)) / 2 + 1
+                            );
+                            // Pop the single head-atom Symbol — the
+                            // whole-chain root re-spans it (S1/S2
+                            // post-absorb contract). The chart path
+                            // pushed WITHOUT popping and folded a[0]
+                            // separately via the normal walker; the
+                            // direct synth includes a[0] in the root, so
+                            // we pop-then-push to keep the stack depth
+                            // invariant (depth-1 winner at the head
+                            // cursor).
+                            cursor.sppf_stack_id =
+                                self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                            cursor.sppf_stack_id = self
+                                .sppf_stack_arena
+                                .intern_push(cursor.sppf_stack_id, root_sid);
+                            // Jump past the absorbed region.
+                            cursor.pos = chain_end;
+                            if self.deterministic {
+                                self.pos = chain_end;
                             }
-                        };
-
-                        match result {
-                            Some((root_sid, acc_weight, chain_end)) => {
-                                crate::stats_inc!(
-                                    self,
-                                    chain_earley_succeeded_count
-                                );
-                                let atoms = (chain_end
-                                    .saturating_sub(probe_start))
-                                    / 2
-                                    + 1;
-                                crate::stats_add!(
-                                    self,
-                                    chain_earley_atoms_absorbed_sum,
-                                    atoms as u64
-                                );
-                                // R4 (2026-05-28): record the absorbed
-                                // interval [probe_start, chain_end) for
-                                // this (cat, rule). Cross-cat dispatches
-                                // at positions strictly inside this
-                                // interval are suppressed (the chain
-                                // interior is already fully parsed by
-                                // this single Earley absorption — see
-                                // allocate_fork_push_child suppression).
-                                self.chain_absorbed_intervals
-                                    .entry((cat, rule))
-                                    .or_default()
-                                    .push((probe_start, chain_end));
-                                // Plan v6 H3 (2026-05-27, ATTEMPT 1):
-                                // replace cursor state with Earley
-                                // result. Risk: post-chain state
-                                // machine alignment.
-                                //
-                                // 1. Jump cursor.pos to chain_end.
-                                cursor.pos = chain_end;
-                                if self.deterministic {
-                                    self.pos = chain_end;
-                                }
-                                // 2. Push earley_root onto sppf_stack.
-                                cursor.sppf_stack_id = self
-                                    .sppf_stack_arena
-                                    .intern_push(
-                                        cursor.sppf_stack_id,
-                                        root_sid,
-                                    );
-                                // 3. Multiply weight by acc_weight.
-                                self.multiply_cursor_weight(
-                                    cursor, &acc_weight,
-                                );
-                                // 4. Set state to Unwinding (best-
-                                // guess post-chain state). If wrong,
-                                // gauntlet will catch.
-                                self.set_cursor_inner_state(
-                                    cursor,
-                                    crate::wpda_runtime::WpdaState::Unwinding,
-                                );
-                                // 5. Skip the rest of this arm.
-                                return self.cursor_resolution_check(cursor);
-                            }
-                            None => {
-                                crate::stats_inc!(
-                                    self,
-                                    chain_earley_returned_none_count
-                                );
-                            }
+                            // R4: record the absorbed interval
+                            // [chain_start, chain_end) (the whole chain,
+                            // head included) for this (cat, rule).
+                            // Cross-cat cohort dispatches strictly inside
+                            // it are suppressed (the chain interior is
+                            // fully parsed by this single absorption —
+                            // see allocate_fork_push_child suppression).
+                            self.chain_absorbed_intervals
+                                .entry((cat, rule))
+                                .or_default()
+                                .push((chain_start, chain_end));
+                            // Accumulated weight = iter_weight^(m-1), one
+                            // per step packing (equivalent to the chart's
+                            // iter_weight^(m-2) absorb + the separate
+                            // head-fold's +1 — see the arm header note).
+                            self.multiply_cursor_weight(cursor, &acc_weight);
+                            self.set_cursor_inner_state(
+                                cursor,
+                                crate::wpda_runtime::WpdaState::Unwinding,
+                            );
+                            return self.cursor_resolution_check(cursor);
                         }
+                        // Defensive: peek-confirmed chain failed to
+                        // synthesize (should not happen — the >= 4-atom
+                        // gate guarantees m >= 5). Fall through to the
+                        // normal single-op consume+push below so the
+                        // parse still progresses.
+                        crate::stats_inc!(self, chain_earley_returned_none_count);
                     }
                 }
                 self.emit_push_side_effects(cursor, &mut symbol);
@@ -12336,7 +12331,14 @@ where
         Some((acc, accumulated, chain_end))
     }
 
-    #[allow(dead_code)] // S1.b: unreachable; S1.c wires the trigger.
+    // C1 (WALK-S3, 2026-05-29): superseded by synth_binary_chain
+    // left-nested; the LEFT-assoc walker arm no longer calls this. The
+    // right-recursive Earley chart module (`earley.rs`) is retained
+    // additively for its 17 standalone unit tests; this walker-side
+    // outboard driver is now dead. Kept (commented-in, dead_code) rather
+    // than deleted so the chart-integration history + the earley.rs
+    // tests' walker-driver shape remain auditable.
+    #[allow(dead_code)] // S3: superseded by synth_binary_chain left-nested; retained for its earley.rs unit tests.
     fn earley_outboard_chain(
         &mut self,
         cursor: &BranchCursor<W>,
@@ -12587,7 +12589,7 @@ where
     /// Run Earley `complete` at sets[pos] to fixpoint. Each completed
     /// item may advance items in earlier sets, which may themselves
     /// complete, etc.
-    #[allow(dead_code)] // S1.b: only called from earley_outboard_chain.
+    #[allow(dead_code)] // S3: only called from earley_outboard_chain (now dead); retained for its earley.rs unit tests.
     /// Thin walker-side wrapper. The completion fixpoint now lives on
     /// `EarleyChart::complete_to_fixpoint` (WALK-S2, 2026-05-28) so the
     /// standalone chart unit tests can drive it without a walker; this
