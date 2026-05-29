@@ -1151,3 +1151,38 @@ ACCEPT at all three arms (p ≪ 0.05, post-Arc faster, no regression). The speed
 - **G4** eval: **9 / 9** incl. the decisive `test_eval_ternary_chain` (`0?1:0?1:0?1:0?1:0`→"0"; `1?7:0?9:3`→"7" = Tern(1,7,Tern(0,9,3)), right-nested; `0?7:1?9:3`→"9" = Tern(0,7,Tern(1,9,3))) + `test_eval_ternary_chain_oracle` (1-level normal-walker `1?7:3`→"7"). The 2-level `1?7:0?9:3` / `0?7:1?9:3` cases (levels=2 ≥ min_levels=2) DIRECTLY exercise the absorbed path and pin right-nesting in the else slot; the right-assoc `^`, AddInt, SubInt, MulInt evals are all unchanged.
 
 **Result:** MIXFIX ternary `? :` chains now absorb O(N) (memory + time). `ternary_chain_10000` 745 MB → **58.3 MB** (now UNDER the 500 MB hard ceiling with large margin). RIGHT-assoc `^` (37.8 MB) and LEFT-assoc chart path (114.9 MB) both preserved. `earley_outboard_chain` retained for the left-assoc path. S3 (migrate AddInt onto `synth_binary_chain`; retire the chart emit) remains.
+
+## C1 — WALK-S3: migrate LEFT-assoc onto `synth_binary_chain`; retire the Earley chart emit to dead_code (2026-05-29)
+
+Commit `5ab4b59` (parent `b185919`). The LEFT-associative chain fast path (`1+1+…`, `20-1-1-…`, `2*3*…`) now absorbs via the direct O(N) left-nested `synth_binary_chain` instead of `earley_outboard_chain`. Plan V7: the chart emit was latently wrong (bare `outer_rule_idx` instead of `(cat<<16)|rule`, the op as an arity-3 Terminal child, atoms not NumLit) — masked only by the parse-only gate + `+` associativity. `synth_binary_chain` encodes the correct `(cat<<16)|rule`, exactly-2 operand children, NumLit atoms.
+
+**Empirically-traced LEFT-assoc singleton geometry (WALK_S3 on `1+1+1+1+1`):** at the first operator `cursor.pos=1` (ON `+`), `sppf_depth=1`, the head atom a[0] is a poppable Symbol spanning `[0,1)`, GSS frontier = `CategoryEntry` (no Return frame) — BYTE-IDENTICAL to the S1/S2 pre-fork singleton geometry. The chart had instead built over `[cursor.pos+1, chain_end)` (EXCLUDING a[0], in chart-local coords = a latent collision masking V7), pushed WITHOUT a pop, and folded a[0] separately via the surviving cohort cursors. So S3 unifies on the proven S1/S2 post-absorb contract: pop the single head-atom Symbol, push the whole-chain left-nested root spanning REAL `[head_pos, chain_end)`, record the interval, multiply by `iter_weight^(m-1)`, set Unwinding.
+
+**Weight equivalence:** chart absorbed `iter_weight^(m-2)` (head excluded) + separate head-fold `+1` = `iter_weight^(m-1)`; direct synth = `iter_weight^(m-1)` in one shot. `earley_outboard_chain` + `complete_to_fixpoint` → `#[allow(dead_code)]` (retained for earley.rs's 17 unit tests; not deleted).
+
+**Gates (independently re-verified on the committed binary):** G1 prattail-lib 4220/0 (incl. earley.rs chart unit tests); G2 all 8 `gen_*_op` 0 failures; G3 `test_left_assoc_chain_10000` 106.4 MB (≤118; BEATS the 114.7 MB chart baseline — synth is leaner), ternary 58.1 MB, right 38.5 MB (both no-regression); G4 eval 9/9 incl. `test_eval_subint_chain` (`20-1-1-1-1`→"16", left-nested — the decisive value-equivalence check).
+
+**Result:** all three chain associativity classes now share ONE direct O(N) synthesizer (`synth_binary_chain` left/right + `synth_ternary_chain` mixfix). The Earley chart is fully retired from the walker hot path.
+
+## C1 — WALK-S5: N≥51 Welch consolidation + pgmcp experiment #8 DECIDE (2026-05-29)
+
+The final validation substage. pgmcp experiment #8 / hypothesis #8 (`primary_metric = ternary_chain_10000_peak_rss_mb`, criterion LOCKED 2026-05-28: welch_t α=0.05 tail=less cohens_d≥0.5, planned_n=51, Benjamini-Hochberg). **2 arms: CONTROL = `a23ef69` (pre-C1 normal walker, built in a `/tmp/c1-control` git worktree with the current test file overlaid — compiled as-is), TREATMENT = `5ab4b59`.** N=51/arm + 3 warmups, `taskset -c 2`, performance governor (amd-pstate-epp, boost), AMD Ryzen Threadripper PRO 5975WX, kernel 7.0.10.
+
+**Primary decision — `experiment_decide(hyp 8)` = ACCEPTED:** `ternary_chain_10000` peak RSS **749.66 → 58.22 MiB (92.2% reduction)**; welch_t statistic −34641, p=0.0, Cohen's d=−6860, 95% CI [−691.48, −691.40] MiB; robustness Mann-Whitney p=0.0, Cliff's δ=−1.0 (perfect separation; the control-arm normality warning is moot under the agreeing non-parametric test).
+
+**Secondary RSS (recorded under exp #8, N=51/arm):** `right_assoc_chain_10000` 374.59 → 37.62 MiB (90.0%, d=1512); `left_assoc_chain_10000` 114.32 → 109.00 MiB (4.7%, d=8.51 — synth leaner than the chart).
+
+**No-regression wall-time panels (Welch, N=51, clean idle core 2) — ALL significant WINS, ZERO slowdowns:**
+
+| panel | control (ms) | treatment (ms) | speedup | p |
+|-------|-------------:|---------------:|--------:|---|
+| left_assoc_chain_50  | 4.505 | 3.418 | 1.32× | 1.8e-79 |
+| left_assoc_chain_100 | 6.955 | 5.509 | 1.26× | 4.4e-66 |
+| left_assoc_chain_200 | 11.693 | 9.156 | 1.28× | 1.7e-70 |
+| right_assoc_chain_50 | 24.454 | 1.991 | 12.28× | 3.0e-93 |
+| right_assoc_chain_100 | 47.984 | 2.455 | 19.55× | 3.9e-103 |
+| right_assoc_chain_200 | 95.355 | 3.360 | 28.38× | 4.4e-97 |
+
+LEFT-assoc wall is a flat ~1.28× constant factor; RIGHT-assoc speedup GROWS with N (12→19→28×) = the C1-R asymptotic absorption win. Plan G5 gate PASSES (no panel LOSS). Evidence: pgmcp artifact #2 + raw arrays `/tmp/s5_{control,treatment}_*.{txt,json}`.
+
+**C1 COMPLETE.** All chains now O(N) low-constant: ternary 745→58, right 371→38, left 115→106 MB; the only chain previously over the 500 MB ceiling (ternary) is now 8.5× under it. All four substages (S0 canonical-op + IterAbsorbSpec, S1 `^`, S2 `?:`, S3 left-assoc unify) shipped + verified; experiment #8 accepted.
