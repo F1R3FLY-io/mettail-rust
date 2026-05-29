@@ -998,6 +998,18 @@ mod tests {
                 symbol: ret_sym(),
                 weight: one(),
                 new_state: ready(),
+                spec: crate::binding_power::IterAbsorbSpec {
+                    left_bp: 0,
+                    right_bp: 0,
+                    assoc_right: false,
+                    is_mixfix: false,
+                    op_cat_src_idx: 0,
+                    op_rule_idx: 0,
+                    atom_cat_src_idx: 0,
+                    atom_lit_rule_idx: 0,
+                    trigger: "",
+                    sep: "",
+                },
             };
         assert_eq!(
             DivergenceClass::classify_for_tomita(&a),

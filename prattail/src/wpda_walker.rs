@@ -368,6 +368,11 @@ pub enum WpdaStepAction<W: SemiringRef> {
         symbol: StackSymbolV2,
         weight: W,
         new_state: WpdaState,
+        /// C1: the canonical absorption descriptor (associativity, mixfix
+        /// shape, packing rule ids, operand literal rule, mixfix terminals)
+        /// threaded from `iter_eligible_<cat>`. The arm dispatches the direct
+        /// SPPF synthesizer on it (`assoc_right`/`is_mixfix`).
+        spec: crate::binding_power::IterAbsorbSpec,
     },
     /// Phase 4: consume the current token (advance `pos` by 1), pop the
     /// stack top (firing the action attached to it if it's a `Return` or
@@ -529,7 +534,15 @@ fn project_continuation_record_for_action<W: SemiringRef>(
             (header + symbol_size + w_size + state_size + 1, 6, 0)
         }
         WpdaStepAction::IterativeChainAbsorb { .. } => {
-            (header + symbol_size + w_size + state_size, 7, 0)
+            (
+                header
+                    + symbol_size
+                    + w_size
+                    + state_size
+                    + std::mem::size_of::<crate::binding_power::IterAbsorbSpec>(),
+                7,
+                0,
+            )
         }
         WpdaStepAction::ConsumeAndPop { .. } => {
             (header + w_size + state_size, 8, 0)
@@ -5412,7 +5425,7 @@ where
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
             }
-            WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state } => {
+            WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state, spec: _ } => {
                 // Phase F.13 chain_10000 Exp 6 Substage 6a (Plan A first
                 // substage, 2026-05-26): idempotent GSS push for an
                 // iterative-eligible infix operator. Skip the push if

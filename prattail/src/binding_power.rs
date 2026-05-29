@@ -18,6 +18,44 @@ pub enum Associativity {
     Right,
 }
 
+/// H3 chain-absorption descriptor for ONE canonical iterative-eligible
+/// operator. Emitted as a `const` literal by `iter_eligible_<cat>` (codegen,
+/// `infix.rs`) and consumed by the walker's `IterativeChainAbsorb` arm +
+/// the InfixLoop pre-fork trigger (`engine_impl.rs`). Carries everything the
+/// direct SPPF synthesizer needs so it can build the absorbed chain's forest
+/// without a grammar lookup at parse time. See
+/// `prattail/docs/design/plans/c1-right-assoc-ternary-h3-absorption.md` (§3.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IterAbsorbSpec {
+    /// Operator left binding power.
+    pub left_bp: u8,
+    /// Operator right binding power.
+    pub right_bp: u8,
+    /// `left_bp > right_bp` — right-associative binary. Always `false` for
+    /// mixfix (mixfix associativity is structural, see `is_mixfix`).
+    pub assoc_right: bool,
+    /// This operator is a (ternary-shaped, right-recursive) mixfix.
+    pub is_mixfix: bool,
+    /// Result-category source index of the operator (the packing's category;
+    /// the global packing rule id is `(op_cat_src_idx << 16) | op_rule_idx`).
+    pub op_cat_src_idx: u16,
+    /// Local rule index of the operator within its result category.
+    pub op_rule_idx: u16,
+    /// Operand (atom) category source index (== `op_cat_src_idx` for the
+    /// same-category chains C1 targets).
+    pub atom_cat_src_idx: u16,
+    /// Local rule index of the operand category's literal-injection rule
+    /// (`NumLit` = `per_cat[atom_cat][0]`), used to synthesize each atom leaf.
+    pub atom_lit_rule_idx: u16,
+    /// Mixfix trigger terminal (`"?"`); `""` for binary operators. Stored as
+    /// the terminal STRING (not a precomputed tag) because `token_kind_to_tag`
+    /// is a runtime FxHash over the exact `TokenKind` the lexer emits — the
+    /// peek compares against the live token at parse time instead.
+    pub trigger: &'static str,
+    /// Mixfix inner separator (`":"`); `""` for binary operators.
+    pub sep: &'static str,
+}
+
 /// An infix operator with its binding power.
 #[derive(Debug, Clone)]
 pub struct InfixOperator {
@@ -108,6 +146,25 @@ impl InfixOperator {
         }
     }
 
+    /// True iff this mixfix operator right-recurses through its LAST operand
+    /// (the `else` slot of a `c "?" t ":" e`-shaped ternary): its final
+    /// `MixfixPart.operand_category` equals its `result_category`, and the
+    /// operator's own `category` equals `result_category`.
+    ///
+    /// Needed because mixfix associativity is hard-coded `Left` at
+    /// classification (the `step right` annotation does NOT reach
+    /// `associativity()` for the mixfix path), so right-recursion must be
+    /// detected structurally rather than via binding powers. See the C1 plan
+    /// (V5).
+    pub fn right_recursive_tail(&self) -> bool {
+        self.is_mixfix
+            && self.category == self.result_category
+            && self
+                .mixfix_parts
+                .last()
+                .map_or(false, |p| p.operand_category == self.result_category)
+    }
+
     /// Phase F.13 chain_10000 Exp 6 (Plan A first substage, 2026-05-26):
     /// `true` iff this operator can be parsed by a single per-chain
     /// `WpdaState::InfixChainIterative` GSS RuleAt push followed by
@@ -131,42 +188,62 @@ impl InfixOperator {
     /// belongs in the codegen emit site (`emit_iter_eligible_fn` in
     /// `macros/src/gen/runtime/wpda_codegen/infix.rs`, Substage 6b).
     ///
-    /// **PILOT GATE** (`label == "AddInt"`): restricts H3 iterative
-    /// chain-absorption to Calculator's `AddInt` — the single proven-safe
-    /// operator.
+    /// This predicate is the STRUCTURAL filter only — it admits any binary
+    /// directional infix op (left- or right-assoc) and any same-category
+    /// right-recursive ternary-shaped mixfix. It does NOT decide which op
+    /// actually absorbs; two cross-cutting filters guard correctness:
     ///
-    /// WALK-S1.5 (2026-05-28) DIAGNOSED why broadening this gate is
-    /// unsafe, via a clean build + tracing (NOT an incremental-build
-    /// artifact, as first hypothesized — the clean build failed too):
+    /// - **D1 (cross-category fanout) → canonical-op-per-terminal** is
+    ///   enforced at the codegen emit site (`BindingPowerTable::
+    ///   is_canonical_iter_op` in `emit_iter_eligible_fn`,
+    ///   `macros/.../wpda_codegen/infix.rs`). Numeric terminals like `+`
+    ///   are shared across categories (Int `AddInt`, BigInt `AddBigInt`,
+    ///   …); a bare literal is ambiguous across them. H3 absorption jumps
+    ///   the cursor to `chain_end`+Unwinding, BYPASSING the Tomita merge
+    ///   that reconciles category ambiguity, so if MORE than one category
+    ///   absorbed the same chain the divergent cursors would never
+    ///   converge ("no accepting branch reached end of input"). The
+    ///   canonical filter admits exactly ONE category per terminal (lowest
+    ///   `category_src_idx`); the rest stay on the convergent normal
+    ///   walker — exactly why the original AddInt-only pilot was safe.
+    ///   (WALK-S1.5 confirmed this on a clean build + tracing; it is NOT
+    ///   an incremental-build artifact.)
+    /// - **D2 (right-assoc / mixfix never iterate to the singleton)** is
+    ///   handled by a NEW pre-fork absorption trigger in `engine_impl.rs`
+    ///   (right-assoc `^` recurses via the RHS sub-parse and ternary `?`
+    ///   enters the mixfix tier; neither reaches the left-assoc InfixLoop
+    ///   singleton). Left-assoc `AddInt` keeps the existing singleton path.
     ///
-    /// 1. **Cross-category fanout.** Numeric terminals like `+` are
-    ///    shared across categories (Int `AddInt`, BigInt `AddBigInt`,
-    ///    …). `1+1+…` is ambiguous across them. With the gate broadened,
-    ///    EVERY category's `+` becomes iter-eligible and each absorbs the
-    ///    same chain in its own category, producing divergent
-    ///    cross-category cursors. H3 absorption jumps the cursor to
-    ///    `chain_end` + Unwinding, BYPASSING the Tomita merge that the
-    ///    normal walker uses to reconcile category ambiguity — so the
-    ///    divergent cursors never converge and no branch accepts
-    ///    ("no accepting branch reached end of input"). The AddInt-only
-    ///    pilot is safe precisely because ONE category absorbs while the
-    ///    others stay on the convergent normal walker.
-    /// 2. **Right-assoc never triggers.** H3 fires from the InfixLoop
-    ///    singleton fast-path, which only sees LEFT-assoc iteration.
-    ///    Right-assoc `^` RECURSES (RHS sub-parse) instead of iterating,
-    ///    so the trigger never reaches it (`^` chains just use the normal
-    ///    walker). Extending H3 to right-assoc / mixfix needs a NEW
-    ///    pre-fork absorption trigger, not this predicate.
-    ///
-    /// Generalizing H3 (canonical-op-per-terminal eligibility + a
-    /// right-recursive absorption trigger) is designed in
-    /// `prattail/docs/design/plans/c1-right-assoc-ternary-h3-absorption.md`.
+    /// See `prattail/docs/design/plans/c1-right-assoc-ternary-h3-absorption.md`.
     pub fn is_iterative_candidate(&self) -> bool {
-        !self.is_cross_category
-            && !self.is_postfix
-            && !self.is_mixfix
-            && self.left_bp < self.right_bp
-            && self.label == "AddInt"
+        // Binary infix, left- OR right-associative (distinct binding powers
+        // = a genuinely directional operator; `==` would be ambiguous and is
+        // excluded).
+        let binary = !self.is_mixfix && self.left_bp != self.right_bp;
+        // OR a same-category right-recursive ternary-shaped mixfix: exactly
+        // two parts (three operands incl. the LHS), no preceding terminals,
+        // exactly one separator per inner part, an empty trailing terminal
+        // set, and right-recursion through the last operand. This admits
+        // `Tern` (c "?" t ":" e) while excluding postfix-mixfix shapes
+        // (POutput's `n "!" "(" q ")"`, non-empty preceding/following).
+        let ternary_mixfix = self.is_mixfix
+            && self.mixfix_parts.len() == 2
+            && self
+                .mixfix_parts
+                .iter()
+                .all(|p| p.preceding_terminals.is_empty())
+            && self
+                .mixfix_parts
+                .last()
+                .map_or(false, |p| p.following_terminals.is_empty())
+            && self
+                .mixfix_parts
+                .iter()
+                .rev()
+                .skip(1)
+                .all(|p| p.following_terminals.len() == 1)
+            && self.right_recursive_tail();
+        !self.is_cross_category && !self.is_postfix && (binary || ternary_mixfix)
     }
 }
 
@@ -181,6 +258,65 @@ impl BindingPowerTable {
     /// Create a new empty binding power table.
     pub fn new() -> Self {
         BindingPowerTable { operators: Vec::new() }
+    }
+
+    /// D1 (canonical-op-per-terminal): among every iterative-candidate
+    /// operator sharing `op`'s terminal, is `op` THE canonical one — i.e. the
+    /// one whose result category is the runtime lex-min WINNER for a chain
+    /// over that terminal? The winner minimizes, smallest-first:
+    ///   1. `value_home_rank(cat)`: 0 if `cat` parses this terminal's operand
+    ///      token via a tier-0.0 polymorphic literal home prefix arm (today:
+    ///      integer-home categories — `NativeType::is_integer()`, incl.
+    ///      `CanonicalBigInt`), else 1. Mirrors `LexicographicWeight`'s
+    ///      primary key: a literal-home cursor parses the operand at tier 0.0,
+    ///      a cross-cat-projected cursor at >= BP_TIER_CROSSCAT_PROJECTION
+    ///      (0.025). This is why bare-integer chains converge on Int even when
+    ///      a non-integer-home category (e.g. BigRat, which reaches a bare
+    ///      integer only via a cross-cat projection) has a lower
+    ///      `category_src_idx`.
+    ///   2. `cat_src_idx(cat)`: the category source index — the lex-min
+    ///      tiebreak after primary/lex_alt, among equal-rank cursors.
+    ///   3. the operator's label: a deterministic total order; cannot tie
+    ///      across distinct categories sharing one terminal.
+    ///
+    /// Selecting the lex-min winner guarantees exactly ONE category absorbs a
+    /// given terminal's chains AND that it is the SAME category the convergent
+    /// normal walker selects at EOI — so the absorbed parse equals the
+    /// pre-broadening parse (modulo absorption). For a terminal owned by a
+    /// single category the sole candidate is trivially canonical, independent
+    /// of `value_home_rank`. This generalizes the AddInt-only pilot and
+    /// prevents the WALK-S1.5 cross-category fanout. `cat_src_idx` resolves a
+    /// category NAME to its source index; `value_home_rank` to its 0/1 rank.
+    pub fn is_canonical_iter_op(
+        &self,
+        op: &InfixOperator,
+        cat_src_idx: &dyn Fn(&str) -> Option<u16>,
+        value_home_rank: &dyn Fn(&str) -> u8,
+    ) -> bool {
+        if !op.is_iterative_candidate() {
+            return false;
+        }
+        let Some(op_s) = cat_src_idx(&op.result_category) else {
+            return false;
+        };
+        let op_key = (value_home_rank(&op.result_category), op_s, op.label.as_str());
+        for other in &self.operators {
+            if !other.is_iterative_candidate() || other.terminal != op.terminal {
+                continue;
+            }
+            let Some(o_s) = cat_src_idx(&other.result_category) else {
+                continue;
+            };
+            let other_key =
+                (value_home_rank(&other.result_category), o_s, other.label.as_str());
+            // A strictly-lower (value_home_rank, src_idx, label) candidate
+            // exists for this terminal ⇒ `op` is not canonical. Strict `<`
+            // makes the self-comparison a no-op without an identity check.
+            if other_key < op_key {
+                return false;
+            }
+        }
+        true
     }
 
     /// Get all regular infix operators for a given category (excludes postfix, mixfix, cross-category).
@@ -561,6 +697,102 @@ mod tests {
     fn test_bp_table_new_empty() {
         let table = BindingPowerTable::new();
         assert!(table.operators.is_empty(), "new table should have zero operators");
+    }
+
+    // ── C1 D1: canonical-op-per-terminal winner selection ───────────────
+    // These pin the value-home-rank rule so a future `terms {}` reorder (the
+    // original WALK-S1.5 failure mode: BigRat's `error` rule pushed BigRat to
+    // a lower src_idx than Int) cannot silently re-break the canonical winner.
+
+    #[test]
+    fn test_canonical_iter_op_value_home_beats_lower_src_idx() {
+        // `+` shared across BigRat(src 1, NOT integer-home), Int(2, home),
+        // UInt32(3, home), BigInt(6, home) — the calculator's actual order
+        // (Proc=0, BigRat=1, Int=2, UInt32=3, ..., BigInt=6). The walker's
+        // lex-min winner for a bare-integer chain is Int, NOT the
+        // lower-src_idx BigRat (a bare integer reaches BigRat only via a
+        // cross-cat projection at a worse tier). The value-home key selects
+        // Int; the OLD lowest-src_idx-only rule wrongly selected AddBigRat.
+        let mut table = BindingPowerTable::new();
+        table.operators.push(make_op("AddBigRat", "+", "BigRat", "BigRat", 2, 3, false, false, false));
+        table.operators.push(make_op("AddInt", "+", "Int", "Int", 2, 3, false, false, false));
+        table.operators.push(make_op("AddUInt32", "+", "UInt32", "UInt32", 2, 3, false, false, false));
+        table.operators.push(make_op("AddBigInt", "+", "BigInt", "BigInt", 2, 3, false, false, false));
+        let src = |n: &str| -> Option<u16> {
+            match n {
+                "BigRat" => Some(1),
+                "Int" => Some(2),
+                "UInt32" => Some(3),
+                "BigInt" => Some(6),
+                _ => None,
+            }
+        };
+        // 0 = integer-home (tier-0.0 polymorphic home arm); BigRat is
+        // rational-home (rank 1, reachable only via cross-cat for integers).
+        let home = |n: &str| -> u8 {
+            match n {
+                "Int" | "UInt32" | "BigInt" => 0,
+                _ => 1,
+            }
+        };
+        let by_label = |lbl: &str| table.operators.iter().find(|o| o.label == lbl).unwrap();
+        assert!(
+            table.is_canonical_iter_op(by_label("AddInt"), &src, &home),
+            "AddInt (integer-home, lex-min winner) must be canonical for `+`"
+        );
+        assert!(
+            !table.is_canonical_iter_op(by_label("AddBigRat"), &src, &home),
+            "AddBigRat (lower src_idx but NOT integer-home) must NOT be canonical"
+        );
+        assert!(
+            !table.is_canonical_iter_op(by_label("AddUInt32"), &src, &home),
+            "AddUInt32 (integer-home but higher src than Int) must NOT be canonical"
+        );
+        assert!(
+            !table.is_canonical_iter_op(by_label("AddBigInt"), &src, &home),
+            "AddBigInt (integer-home but higher src than Int) must NOT be canonical"
+        );
+    }
+
+    #[test]
+    fn test_canonical_iter_op_right_assoc_pow() {
+        // `^` shared across Int(src 2, integer-home) and Float(5, not). Right-
+        // assoc (left_bp > right_bp). Int is the winner (only integer-home).
+        let mut table = BindingPowerTable::new();
+        table.operators.push(make_op("PowInt", "^", "Int", "Int", 27, 26, false, false, false));
+        table.operators.push(make_op("PowFloat", "^", "Float", "Float", 27, 26, false, false, false));
+        let src = |n: &str| -> Option<u16> {
+            match n {
+                "Int" => Some(2),
+                "Float" => Some(5),
+                _ => None,
+            }
+        };
+        let home = |n: &str| -> u8 { if n == "Int" { 0 } else { 1 } };
+        let by_label = |lbl: &str| table.operators.iter().find(|o| o.label == lbl).unwrap();
+        assert!(
+            table.is_canonical_iter_op(by_label("PowInt"), &src, &home),
+            "PowInt (integer-home) must be canonical for `^`"
+        );
+        assert!(
+            !table.is_canonical_iter_op(by_label("PowFloat"), &src, &home),
+            "PowFloat (not integer-home) must NOT be canonical"
+        );
+    }
+
+    #[test]
+    fn test_canonical_iter_op_unique_terminal() {
+        // A terminal owned by a single (non-integer-home) category is
+        // trivially canonical despite the rank-1 penalty — uniqueness wins.
+        let mut table = BindingPowerTable::new();
+        table.operators.push(make_op("EPar", "|", "Expr", "Expr", 2, 3, false, false, false));
+        let src = |n: &str| -> Option<u16> { if n == "Expr" { Some(4) } else { None } };
+        let home = |_: &str| -> u8 { 1 };
+        let by_label = |lbl: &str| table.operators.iter().find(|o| o.label == lbl).unwrap();
+        assert!(
+            table.is_canonical_iter_op(by_label("EPar"), &src, &home),
+            "the sole candidate for a unique terminal must be canonical"
+        );
     }
 
     #[test]

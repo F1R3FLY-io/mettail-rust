@@ -17,7 +17,8 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use mettail_languages::calculator::{Bool, Int};
+use mettail_languages::calculator::{Bool, CalculatorLanguage, Int};
+use mettail_runtime::Language;
 
 // ── Helper: generate deeply nested parenthesized expression ──
 
@@ -70,6 +71,129 @@ fn ternary_chain(depth: usize) -> String {
     }
     s.push('0');
     s
+}
+
+// ── C1 (WALK-S0..S4): chain EVAL gate (G4) ──────────────────────────
+//
+// The parse-only chain tests assert is_ok() but NOT values; that blind
+// spot hid latent SPPF-emit bugs (wrong arity / rule_idx) in chain
+// absorption. These assert the EVALUATED value of absorbed (and, as
+// oracles, non-absorbed) chains so right-associativity, arity, and the
+// literal-injection rule are all verified end-to-end. Under S0 they
+// validate the normal-walker / AddInt-chart baseline; later substages
+// re-run them after each operator's absorption is wired.
+
+fn assert_chain_eval(input: &str, expected: &str) {
+    mettail_runtime::clear_var_cache();
+    let lang = CalculatorLanguage;
+    let parsed = lang
+        .parse_term(input)
+        .unwrap_or_else(|e| panic!("parse should succeed for {input:?}: {e:?}"));
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == expected),
+        "{input:?} should evaluate to {expected:?}, got {nfs:?}"
+    );
+}
+
+/// Right-associativity verification under a NON-CONFLUENT eval. Calculator's
+/// `^` eval is non-confluent — the cross-cat cast machinery (`int(bool(x))`,
+/// etc.) explores many reduction paths, and a deeply-composed power (e.g.
+/// 2^8=256) is not reliably reached. So we keep the exponents at 1 so the
+/// right-assoc value stays SMALL (and IS reliably produced) while asserting
+/// the LEFT-assoc value (a higher power) is ABSENT. A higher power is only
+/// computable from a LEFT-nested parse, so its absence confirms the parse is
+/// right-associative — not left, not ambiguous.
+fn assert_right_assoc_eval(input: &str, right_val: &str, left_val: &str) {
+    mettail_runtime::clear_var_cache();
+    let lang = CalculatorLanguage;
+    let parsed = lang
+        .parse_term(input)
+        .unwrap_or_else(|e| panic!("parse should succeed for {input:?}: {e:?}"));
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == right_val),
+        "{input:?} (right-assoc) should produce {right_val:?}, got {nfs:?}"
+    );
+    assert!(
+        !nfs.iter().any(|d| d == left_val),
+        "{input:?} (right-assoc) must NOT produce the left-assoc value {left_val:?}, got {nfs:?}"
+    );
+}
+
+#[test]
+fn test_eval_right_assoc_chain() {
+    // `^` is right-associative (`step right`). Exponents kept at 1 so the
+    // right-assoc value stays small (reliably reduced under the non-confluent
+    // eval) and the left-assoc value (a higher power) stays absent. >= 4
+    // atoms → exercise H3 absorption once C1-R (S1) lands; under S0 baseline.
+    // 2^1^1^2 = 2^(1^(1^2)) = 2^1 = 2   (left ((2^1)^1)^2 = 2^2 = 4).
+    assert_right_assoc_eval("2 ^ 1 ^ 1 ^ 2", "2", "4");
+    // 3^1^1^2 = 3^(1^(1^2)) = 3^1 = 3   (left ((3^1)^1)^2 = 3^2 = 9).
+    assert_right_assoc_eval("3 ^ 1 ^ 1 ^ 2", "3", "9");
+}
+
+#[test]
+fn test_eval_right_assoc_chain_oracle() {
+    // 3 atoms (< trigger threshold): always the normal walker — the
+    // absorbed-vs-normal oracle. 2^1^3 = 2^(1^3) = 2^1 = 2 (left (2^1)^3 = 8).
+    assert_right_assoc_eval("2 ^ 1 ^ 3", "2", "8");
+}
+
+#[test]
+fn test_eval_ternary_chain() {
+    // Right-recursive in the else slot. All-zero conds select the tail: 0.
+    assert_chain_eval("0 ? 1 : 0 ? 1 : 0 ? 1 : 0 ? 1 : 0", "0");
+    // Tern(1,7,Tern(0,9,3)) -> 7 ; Tern(0,7,Tern(1,9,3)) -> 9.
+    assert_chain_eval("1 ? 7 : 0 ? 9 : 3", "7");
+    assert_chain_eval("0 ? 7 : 1 ? 9 : 3", "9");
+}
+
+#[test]
+fn test_eval_ternary_chain_oracle() {
+    // 1 level (< trigger threshold): normal walker. Tern(1,7,3) -> 7.
+    assert_chain_eval("1 ? 7 : 3", "7");
+}
+
+#[test]
+fn test_eval_addint_chain() {
+    // 8 atoms: triggers the (left-assoc) H3 absorption. 1+...+1 = 8.
+    assert_chain_eval("1 + 1 + 1 + 1 + 1 + 1 + 1 + 1", "8");
+}
+
+#[test]
+fn test_eval_addint_chain_oracle() {
+    assert_chain_eval("1 + 1", "2");
+}
+
+#[test]
+fn test_eval_subint_chain() {
+    // Broadening canonical eligibility makes ALL Int left-assoc ops (not just
+    // AddInt) absorb via H3 at S0. SubInt is non-associative, so this verifies
+    // the (left-recursive) chart absorption produces the LEFT-nested result:
+    // 10-1-1-1 = ((10-1)-1)-1 = 7 (a right-assoc parse 10-(1-(1-1)) = 9; the
+    // value 7 is unreachable from any right-assoc reduction). 4 atoms → H3.
+    assert_chain_eval("10 - 1 - 1 - 1", "7");
+}
+
+#[test]
+fn test_eval_mulint_chain() {
+    // MulInt deep chain via the broadened H3 absorption. 2*3*1*1 = 6.
+    assert_chain_eval("2 * 3 * 1 * 1", "6");
 }
 
 fn nested_unary(depth: usize) -> String {

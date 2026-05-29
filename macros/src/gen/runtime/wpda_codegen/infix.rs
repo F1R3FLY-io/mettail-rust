@@ -378,6 +378,41 @@ pub(crate) fn emit_bp_tables(
     // Lookup: rule label → (cat_src_idx, rule_idx) for resolving result
     // categories and rule indices in the BP-table emission.
     let label_to_indices = build_label_index(categories, per_cat);
+    // C1 S0: per-category literal-injection rule index (`NumLit` for Int).
+    // The synth_atom_symbol primitive needs each operand category's literal
+    // rule to build atom leaves. `generate_literal_label(native_type)` names
+    // the synthetic rule; resolve its local rule_idx via the label index.
+    let cat_lit_rule_idx: std::collections::HashMap<String, u16> = language
+        .types
+        .iter()
+        .filter_map(|td| {
+            let cat_name = td.name.to_string();
+            let nt = td.native_type.as_ref()?;
+            let lit_label = crate::gen::generate_literal_label(nt).to_string();
+            let (_, ri) = label_to_indices.get(&(cat_name.clone(), lit_label))?;
+            Some((cat_name, *ri))
+        })
+        .collect();
+    // C1 D1: per-category value-home rank source — `true` if the category
+    // parses its literal operand via a tier-0.0 polymorphic home prefix arm
+    // (integer kinds incl. `CanonicalBigInt`), else `false`. This is the
+    // lex-min PRIMARY key the canonical-op winner selection mirrors: a
+    // bare-integer chain converges on the integer-home category (Int) even
+    // when a non-integer-home category (e.g. BigRat) has a lower
+    // `category_src_idx` but reaches a bare integer only via a cross-cat
+    // projection (tier >= BP_TIER_CROSSCAT_PROJECTION = 0.025).
+    let cat_is_value_home: std::collections::HashMap<String, bool> = language
+        .types
+        .iter()
+        .map(|td| {
+            let is_home = td
+                .native_type
+                .as_ref()
+                .map(|nt| crate::gen::native::NativeType::from_syn_type(nt).is_integer())
+                .unwrap_or(false);
+            (td.name.to_string(), is_home)
+        })
+        .collect();
     let mut per_cat_tables = Vec::new();
     for cat in categories {
         let cat_lower = cat.to_lowercase();
@@ -394,7 +429,15 @@ pub(crate) fn emit_bp_tables(
         per_cat_tables.push(emit_infix_bp_fn(&bp_table, cat, &infix_ident, &label_to_indices));
         per_cat_tables.push(emit_postfix_bp_fn(&bp_table, cat, &postfix_ident, &label_to_indices));
         per_cat_tables.push(emit_mixfix_bp_fn(&bp_table, cat, &mixfix_ident, &label_to_indices));
-        per_cat_tables.push(emit_iter_eligible_fn(&bp_table, cat, &iter_ident, &label_to_indices));
+        per_cat_tables.push(emit_iter_eligible_fn(
+            &bp_table,
+            cat,
+            &iter_ident,
+            &label_to_indices,
+            categories,
+            &cat_lit_rule_idx,
+            &cat_is_value_home,
+        ));
     }
     // B7 Pattern 1: per-rule mixfix-parts metadata. Used by the engine's
     // Unwinding-MixfixMarker / MixfixContinuation arms to look up each
@@ -477,7 +520,18 @@ fn emit_iter_eligible_fn(
     category: &str,
     fn_ident: &proc_macro2::Ident,
     label_index: &std::collections::HashMap<(String, String), (u16, u16)>,
+    categories: &[String],
+    cat_lit_rule_idx: &std::collections::HashMap<String, u16>,
+    cat_is_value_home: &std::collections::HashMap<String, bool>,
 ) -> TokenStream {
+    // Resolve a category NAME → its source index (position in `categories`).
+    let cat_pos = |name: &str| categories.iter().position(|c| c == name).map(|p| p as u16);
+    // Value-home rank: 0 if the category parses its operand literal via a
+    // tier-0.0 polymorphic home prefix arm (integer-home), else 1. Mirrors
+    // the walker's lex-min primary key so the canonical winner matches the
+    // category the convergent normal walker selects at EOI.
+    let value_home_rank =
+        |name: &str| -> u8 { u8::from(!*cat_is_value_home.get(name).unwrap_or(&false)) };
     let cat_ops: Vec<&InfixOperator> = bp_table
         .operators
         .iter()
@@ -486,12 +540,18 @@ fn emit_iter_eligible_fn(
     let arms: Vec<TokenStream> = cat_ops
         .iter()
         .filter(|op| op.is_iterative_candidate())
+        // D1 (cross-category canonical): only the lex-min WINNER category for
+        // each terminal is eligible — lowest `(value_home_rank, src_idx,
+        // label)` — so exactly ONE category absorbs a chain over that terminal
+        // and the rest stay on the convergent normal walker (prevents the
+        // WALK-S1.5 cross-cat fanout). The value-home key makes a bare-integer
+        // chain converge on Int even when a non-integer-home category (BigRat)
+        // has a lower src_idx.
+        .filter(|op| bp_table.is_canonical_iter_op(op, &cat_pos, &value_home_rank))
         .filter_map(|op| {
-            // Plan A invariant I1: no other operator in this category
-            // shares the same (terminal, left_bp) pair. If such a
-            // conflict exists, the singleton InfixLoop dispatch would
-            // pick the wrong rule, so we exclude the iterative path
-            // entirely.
+            // I1 (within-category): no other operator in this category shares
+            // the same (terminal, left_bp) pair, so the singleton InfixLoop
+            // dispatch is unambiguous.
             let conflict = cat_ops.iter().any(|other| {
                 !std::ptr::eq(*other as *const _, *op as *const _)
                     && other.terminal == op.terminal
@@ -503,16 +563,49 @@ fn emit_iter_eligible_fn(
             let (rs, ri) = *label_index.get(&(op.result_category.clone(), op.label.clone()))?;
             let l = op.left_bp;
             let r = op.right_bp;
-            Some(quote! { (#rs, #ri) => Some((#l, #r)), })
+            let assoc_right = op.left_bp > op.right_bp;
+            let is_mixfix = op.is_mixfix;
+            // For an iter-candidate (`!is_cross_category`) the operand
+            // category equals the result category, so atom_cat_src_idx == rs.
+            let atom_cat_src_idx = rs;
+            let atom_lit_rule_idx = *cat_lit_rule_idx.get(&op.result_category)?;
+            // Mixfix trigger + inner separator terminals (empty for binary).
+            let (trigger, sep): (String, String) = if op.is_mixfix {
+                let sep = op
+                    .mixfix_parts
+                    .first()
+                    .and_then(|p| p.following_terminals.first().cloned())
+                    .unwrap_or_default();
+                (op.terminal.clone(), sep)
+            } else {
+                (String::new(), String::new())
+            };
+            let trigger_lit = proc_macro2::Literal::string(&trigger);
+            let sep_lit = proc_macro2::Literal::string(&sep);
+            Some(quote! {
+                (#rs, #ri) => Some(mettail_prattail::binding_power::IterAbsorbSpec {
+                    left_bp: #l,
+                    right_bp: #r,
+                    assoc_right: #assoc_right,
+                    is_mixfix: #is_mixfix,
+                    op_cat_src_idx: #rs,
+                    op_rule_idx: #ri,
+                    atom_cat_src_idx: #atom_cat_src_idx,
+                    atom_lit_rule_idx: #atom_lit_rule_idx,
+                    trigger: #trigger_lit,
+                    sep: #sep_lit,
+                }),
+            })
         })
         .collect();
     quote! {
-        /// Phase F.13 chain_10000 Exp 6 Substage 6b: iterative-eligible
-        /// operator lookup. Returns `Some((left_bp, right_bp))` when
-        /// `(rs, ri)` is an iterative candidate with no `(terminal, l_bp)`
-        /// conflict in this category.
+        /// C1: iterative-eligible operator lookup. Returns the canonical
+        /// `IterAbsorbSpec` for `(rs, ri)` — present iff this op is THE
+        /// canonical absorber for its terminal (cross-category D1 filter) and
+        /// has no within-category (terminal, l_bp) conflict (I1). The walker's
+        /// H3 absorption + the InfixLoop pre-fork trigger consume the spec.
         #[allow(non_snake_case, dead_code)]
-        fn #fn_ident(rs: u16, ri: u16) -> Option<(u8, u8)> {
+        fn #fn_ident(rs: u16, ri: u16) -> Option<mettail_prattail::binding_power::IterAbsorbSpec> {
             match (rs, ri) {
                 #(#arms)*
                 _ => None,

@@ -1146,18 +1146,29 @@ pub(crate) fn emit_engine_impl_full(
                                 let b = __cands.into_iter().next().unwrap();
                                 let symbol_rs = b.symbol.category_src_idx;
                                 let symbol_ri = b.symbol.rule_index_in_category;
-                                let iter_lookup: Option<(u8, u8)> = #iter_eligible_dispatch;
-                                if let Some((_l_bp, r_bp)) = iter_lookup {
-                                    return WpdaStepAction::IterativeChainAbsorb {
-                                        symbol: b.symbol,
-                                        weight: b.weight,
-                                        new_state: WpdaState::InfixChainIterative {
-                                            result_src_idx: symbol_rs,
-                                            rule_idx: symbol_ri,
-                                            outer_bp: *cur_bp,
-                                            rhs_bp: r_bp,
-                                        },
-                                    };
+                                let iter_lookup: Option<mettail_prattail::binding_power::IterAbsorbSpec> = #iter_eligible_dispatch;
+                                if let Some(spec) = iter_lookup {
+                                    // C1: only LEFT-associative binary operators
+                                    // absorb via this singleton fast-path (the
+                                    // existing iterative chain path). Right-assoc
+                                    // and mixfix operators recurse / enter the
+                                    // mixfix tier and never re-iterate to a
+                                    // singleton, so they are handled by the
+                                    // pre-fork absorption trigger below; here
+                                    // they fall through to ConsumeAndPush.
+                                    if !spec.assoc_right && !spec.is_mixfix {
+                                        return WpdaStepAction::IterativeChainAbsorb {
+                                            symbol: b.symbol,
+                                            weight: b.weight,
+                                            new_state: WpdaState::InfixChainIterative {
+                                                result_src_idx: symbol_rs,
+                                                rule_idx: symbol_ri,
+                                                outer_bp: *cur_bp,
+                                                rhs_bp: spec.right_bp,
+                                            },
+                                            spec,
+                                        };
+                                    }
                                 }
                                 WpdaStepAction::ConsumeAndPush {
                                     symbol: b.symbol,
@@ -1739,7 +1750,7 @@ fn emit_iter_eligible_dispatch(categories: &[String]) -> TokenStream {
         {
             match state_cat_src_idx {
                 #(#arms)*
-                _ => None::<(u8, u8)>,
+                _ => None::<mettail_prattail::binding_power::IterAbsorbSpec>,
             }
         }
     }
