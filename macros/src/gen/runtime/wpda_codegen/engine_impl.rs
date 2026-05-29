@@ -1117,6 +1117,73 @@ pub(crate) fn emit_engine_impl_full(
                             }
                         }
 
+                        // C1-M (WALK-S2, 2026-05-28): pre-fork MIXFIX ternary
+                        // absorption trigger. Mixfix operators (`Tern`,
+                        // `c "?" t ":" e`, right-recursive in the else slot)
+                        // enter the mixfix tier above (pushing a MixfixMarker
+                        // then a PrefixDispatch for the inner operand) and
+                        // NEVER re-iterate to the InfixLoop singleton (mixfix
+                        // associativity is hard-coded Left; plan D2/V5), so the
+                        // singleton fast-path below cannot reach them.
+                        // Intercept HERE — after `__cands` is built (which now
+                        // holds the MixfixMarker candidate), before the
+                        // singleton-vs-fork branch — for the LEADING mixfix-tier
+                        // candidate: if it is the canonical iterative-eligible
+                        // op for its trigger (`iter_eligible_<cat>` → Some) AND
+                        // mixfix AND a forward peek confirms a deterministic
+                        // >= 2-level ternary chain, emit `IterativeChainAbsorb`
+                        // with `new_state = Unwinding` and SUPPRESS the fork
+                        // (the MixfixMarker push is bypassed by the early
+                        // `return`). The peek proves the region is a single
+                        // ternary-shape run, so the normal mixfix descent would
+                        // only re-walk the (about-to-be-absorbed) interior.
+                        // `_pos` is ON the trigger (`?`); the head cond c0
+                        // (parsed at `_pos - 1`) is on `cursor.sppf_stack_id`.
+                        // On peek-failure this block is inert and control falls
+                        // through to the unchanged `match __cands.len()` (other
+                        // languages' mixfix ops won't have `Some(spec)` — the
+                        // `right_recursive_tail` + exact-shape gate in
+                        // `is_iterative_candidate` restricts eligibility to
+                        // Tern-shaped ops — so they are bit-identical).
+                        if let Some((_pmx_l_bp, _pmx_result_src, _pmx_rule_idx)) =
+                            #mixfix_dispatch
+                        {
+                            if _pmx_l_bp >= *cur_bp {
+                                let symbol_rs = _pmx_result_src;
+                                let symbol_ri = _pmx_rule_idx;
+                                let _pmx_spec: Option<mettail_prattail::binding_power::IterAbsorbSpec> =
+                                    #iter_eligible_dispatch;
+                                if let Some(spec) = _pmx_spec {
+                                    if spec.is_mixfix
+                                        && mettail_prattail::wpda_walker::peek_ternary_chain(
+                                            tokens,
+                                            _pos,
+                                            spec.trigger,
+                                            spec.sep,
+                                            2,
+                                        )
+                                    {
+                                        return WpdaStepAction::IterativeChainAbsorb {
+                                            symbol: StackSymbolV2::rule_at(
+                                                _pmx_result_src,
+                                                _pmx_rule_idx,
+                                                0,
+                                                Some(*cur_bp),
+                                            )
+                                            .with_kind_return(),
+                                            weight: lex_w(
+                                                mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
+                                                _pmx_result_src,
+                                                _pmx_rule_idx,
+                                            ),
+                                            new_state: WpdaState::Unwinding,
+                                            spec,
+                                        };
+                                    }
+                                }
+                            }
+                        }
+
                         // C1-R (WALK-S1, 2026-05-28): pre-fork right-assoc
                         // absorption trigger. Right-associative binary
                         // operators (`^`) recurse via the RHS sub-parse and

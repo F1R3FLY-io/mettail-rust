@@ -2711,6 +2711,96 @@ pub fn peek_binary_chain(
     atom_count >= min_atoms
 }
 
+/// C1-M (WALK-S2, 2026-05-28): forward peek confirming a deterministic
+/// MIXFIX ternary chain of `>= min_levels` levels, starting from the
+/// leading trigger (`?`) at `trigger_pos`. The LHS cond `c0` sits at
+/// `trigger_pos - 1` (already parsed; on `cursor.sppf_stack_id`). The
+/// token pattern recognized is, from `trigger_pos`:
+///
+///   `?` t0 `:` c1 `?` t1 `:` c2 … `?` t_{k-1} `:` e_final
+///
+/// i.e. each level `i` contributes `trigger atom sep atom`, where the
+/// trailing atom is either the NEXT level's cond `c_{i+1}` (if the
+/// following token is another `trigger`) or the final else `e_final`
+/// (if not). `trigger` and `sep` are compared by EXACT token TEXT
+/// (`peek_text`) — the operator strings carried in the `IterAbsorbSpec`
+/// — while operands are validated as "an atom" iff their `peek_kind` is
+/// `Some` and their `peek_text` is NEITHER the trigger NOR the sep
+/// (mirroring the binary peek's "atom_kind != op_kind" guard, but
+/// text-based because a mixfix has two distinct operator strings).
+/// O(N), zero-alloc. Returns `true` iff `levels >= min_levels`.
+///
+/// Free function (not a `WpdaWalker` method) because it is weight- and
+/// engine-agnostic — the codegen call site invokes it without the
+/// `WpdaWalker<W, E>` turbofish (symmetric with `peek_binary_chain`).
+pub fn peek_ternary_chain(
+    tokens: &dyn WpdaTokenSource,
+    trigger_pos: usize,
+    trigger: &str,
+    sep: &str,
+    min_levels: usize,
+) -> bool {
+    if trigger_pos == 0 {
+        // Need a parsed LHS cond at trigger_pos - 1.
+        return false;
+    }
+    // The position must actually be ON the trigger.
+    match tokens.peek_text(trigger_pos) {
+        Some(t) if t == trigger => {}
+        _ => return false,
+    }
+    // Predicate: is `pos` an operand atom? (`Some` kind, text is neither
+    // the trigger nor the separator). Conds/thens/else are arbitrary Int
+    // atoms; this excludes the two operator strings without assuming a
+    // specific literal TokenKind.
+    let is_atom = |pos: usize| -> bool {
+        if tokens.peek_kind(pos).is_none() {
+            return false;
+        }
+        match tokens.peek_text(pos) {
+            Some(t) => t != trigger && t != sep,
+            None => false,
+        }
+    };
+    // The head cond c0 must be an atom (defensive; mirrors binary's
+    // head-atom check).
+    if !is_atom(trigger_pos - 1) {
+        return false;
+    }
+    let mut levels = 0usize;
+    let mut probe = trigger_pos;
+    loop {
+        // `?`
+        match tokens.peek_text(probe) {
+            Some(t) if t == trigger => {}
+            _ => break,
+        }
+        // then-atom t_i
+        if !is_atom(probe + 1) {
+            return false;
+        }
+        // `:`
+        match tokens.peek_text(probe + 2) {
+            Some(t) if t == sep => {}
+            _ => return false,
+        }
+        // The atom at probe+3 is either the next cond c_{i+1} or e_final.
+        if !is_atom(probe + 3) {
+            return false;
+        }
+        levels += 1;
+        // Disambiguate: if probe+4 is another trigger, probe+3 was a cond
+        // and the chain continues; otherwise probe+3 was e_final.
+        match tokens.peek_text(probe + 4) {
+            Some(t) if t == trigger => {
+                probe += 4;
+            }
+            _ => break,
+        }
+    }
+    levels >= min_levels
+}
+
 impl<W, E> WpdaWalker<W, E>
 where
     W: SemiringRef
@@ -5476,25 +5566,94 @@ where
                 self.cursor_resolution_check(cursor)
             }
             WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state, spec } => {
-                // C1-R (WALK-S1, 2026-05-28): dispatch on associativity.
-                //   - RIGHT-assoc (`^`, pre-fork trigger): direct O(N)
-                //     RIGHT-nested `synth_binary_chain` — the left-recursive
-                //     Earley chart cannot produce a right-nested tree (and a
-                //     right-recursive chart would be O(N²); Leo is inert).
+                // C1-R (WALK-S1, 2026-05-28) + C1-M (WALK-S2, 2026-05-28):
+                // dispatch on associativity / mixfix.
+                //   - MIXFIX ternary (`? :`, pre-fork mixfix-tier trigger):
+                //     direct O(N) RIGHT-nested-in-else `synth_ternary_chain`
+                //     (S2 below). Mixfix never re-iterates to the InfixLoop
+                //     singleton (plan D2/V5), so it is reached ONLY via the
+                //     mixfix-tier pre-fork trigger in `engine_impl.rs`.
+                //   - RIGHT-assoc binary (`^`, pre-fork infix-tier trigger):
+                //     direct O(N) RIGHT-nested `synth_binary_chain` — the
+                //     left-recursive Earley chart cannot produce a right-nested
+                //     tree (and a right-recursive chart would be O(N²); Leo is
+                //     inert).
                 //   - LEFT-assoc (AddInt, singleton fast-path): the existing
                 //     `earley_outboard_chain` (verified correct, ships 112 MB)
                 //     — UNCHANGED below.
                 //
-                // The right-assoc synth path is reached ONLY via the
+                // The mixfix + right-assoc synth paths are reached ONLY via the
                 // `engine_impl.rs` pre-fork trigger, where `cursor.pos` is ON
-                // the leading operator and the head atom (cursor.pos - 1) is
-                // already a Symbol on `cursor.sppf_stack_id`. The whole-chain
-                // root spans [head_pos, chain_end) and INCLUDES the head atom,
-                // so the post-absorb pops the head-atom Symbol before pushing
-                // the root (matching the chart's whole-chain contract). On a
-                // peek-confirmed chain (the trigger gate), `synth_binary_chain`
-                // never returns `None`; the `None` arm is a defensive
-                // fall-through to ConsumeAndPush-equivalent normal dispatch.
+                // the leading operator/trigger and the head atom (cursor.pos -
+                // 1) is already a Symbol on `cursor.sppf_stack_id`. The
+                // whole-chain root spans [head_pos, chain_end) and INCLUDES the
+                // head atom, so the post-absorb pops the head-atom Symbol
+                // before pushing the root (matching the chart's whole-chain
+                // contract). On a peek-confirmed chain (the trigger gate), the
+                // synthesizer never returns `None`; the `None` arm is a
+                // defensive fall-through to ConsumeAndPush-equivalent dispatch.
+                if spec.is_mixfix {
+                    // C1-M (WALK-S2): MIXFIX ternary absorption. Same
+                    // pre-fork geometry + post-absorb contract as the
+                    // right-assoc binary branch below (cursor.pos is ON the
+                    // leading `?`; the head cond c0 at cursor.pos - 1 is the
+                    // single head-atom Symbol on the sppf_stack; the GSS
+                    // frontier is the enclosing CategoryEntry, so the
+                    // post-absorb Unwinding has no Return frame to pop). The
+                    // synthesized root spans [chain_start, chain_end), so we
+                    // pop the head-atom Symbol and push the root in its place.
+                    // Empirically traced (WALK-S2, `0?1:…:0` N=2/N=4):
+                    // cursor.pos=1 (ON the leading `?`), chain_start=0,
+                    // sppf_stack_depth=1 (the single head-cond c0 Symbol), and
+                    // the synthesized root spans [0, chain_end) (root_lo=0,
+                    // root_hi=chain_end = EOF sentinel index) — identical to
+                    // S1's binary contract. The absorb fires ~4× per parse from
+                    // cohort re-entry; all dedup to the SAME interned root_sid.
+                    let chain_start = cursor.pos.saturating_sub(1);
+                    if let Some((root_sid, acc_weight, chain_end)) =
+                        self.synth_ternary_chain(cursor, tokens, &spec, weight.clone())
+                    {
+                        // Pop the head-atom (cond c0) Symbol (root re-spans it).
+                        cursor.sppf_stack_id =
+                            self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                        // Push the whole-chain root.
+                        cursor.sppf_stack_id = self
+                            .sppf_stack_arena
+                            .intern_push(cursor.sppf_stack_id, root_sid);
+                        // Jump past the absorbed region.
+                        cursor.pos = chain_end;
+                        if self.deterministic {
+                            self.pos = chain_end;
+                        }
+                        // Record the absorbed interval [chain_start, chain_end)
+                        // so cross-cat cohort dispatches strictly inside it are
+                        // suppressed (same R4 contract as the binary path).
+                        self.chain_absorbed_intervals
+                            .entry((spec.op_cat_src_idx, spec.op_rule_idx))
+                            .or_default()
+                            .push((chain_start, chain_end));
+                        self.multiply_cursor_weight(cursor, &acc_weight);
+                        self.set_cursor_inner_state(
+                            cursor,
+                            crate::wpda_runtime::WpdaState::Unwinding,
+                        );
+                        return self.cursor_resolution_check(cursor);
+                    }
+                    // Defensive fall-through: peek-confirmed ternary chain
+                    // failed to synthesize (should not happen). Treat as a
+                    // plain consume+push so the parse still progresses.
+                    self.emit_push_side_effects(cursor, &mut symbol);
+                    let _ = self.cursor_gss_push_auto(
+                        cursor,
+                        symbol,
+                        cursor.pos,
+                        weight.clone(),
+                    );
+                    self.advance_cursor_pos(cursor, tokens, 1);
+                    self.multiply_cursor_weight(cursor, &weight);
+                    self.set_cursor_inner_state(cursor, new_state);
+                    return self.cursor_resolution_check(cursor);
+                }
                 if spec.assoc_right {
                     // Chain start = head atom = cursor.pos - 1 (pre-fork
                     // geometry, empirically confirmed at WALK-S1: cursor.pos is
@@ -12016,6 +12175,162 @@ where
         // Accumulated weight = iter_weight^(m-1): one per step packing.
         let mut accumulated = W::one_ref();
         for _ in 0..(m - 1) {
+            accumulated = accumulated.times_ref(&weight);
+        }
+        Some((acc, accumulated, chain_end))
+    }
+
+    /// C1-M (WALK-S2, 2026-05-28): direct O(N) synthesizer for a WHOLE
+    /// MIXFIX ternary chain (`c "?" t ":" e`, right-recursive in `e`),
+    /// producing a root Symbol spanning `[head_pos, chain_end)` that
+    /// matches the chart's observable contract (one correctly-nested
+    /// root, pushed by the absorb arm onto the sppf_stack). RIGHT-nested
+    /// in the else slot: `0 ? 1 : 0 ? 1 : 0` → `Tern(0, 1, Tern(0, 1, 0))`.
+    ///
+    /// Pre-fork geometry (symmetric with `synth_binary_chain`): the absorb
+    /// arm enters with `cursor.pos` ON the leading trigger (`?`); the head
+    /// cond `c0` is at `cursor.pos - 1` (already parsed; the absorb arm
+    /// pops its head-atom Symbol before pushing this root).
+    ///
+    /// Recognition is the same O(N), zero-alloc forward peek
+    /// `peek_ternary_chain` uses: from `head_pos`, the layout is
+    /// `c0 ? t0 : c1 ? t1 : … ? t_{k-1} : e_final`. Each level `i`
+    /// contributes the cond `c_i` and then `t_i` positions; the trailing
+    /// atom after a level's separator is the next cond (if followed by
+    /// another trigger) or `e_final`. Synthesis is iterative (no
+    /// host-stack recursion — R9): fold the levels innermost-first.
+    ///
+    /// Each step packing has EXACTLY THREE children `[cond, then, else]`
+    /// (operand Symbols only — NO `?`/`:` separator children; the
+    /// separators are literal-consumed in the normal walker path and are
+    /// not realized SPPF nodes). `realize_packing_call` resolves
+    /// `(rule_idx, [cond, then, else])` → `Int::Tern(cond, then, else)`.
+    ///
+    /// Right-nested fold:
+    ///   acc = atom(e_final)
+    ///   for i in (0..=k-1).rev():
+    ///     pack = packing(T, [atom(c_i), atom(t_i), acc], w)
+    ///     sym  = symbol(op_cat, pos(c_i), hi(acc));  link;  acc = sym
+    ///
+    /// Returns `(root, w^k, chain_end)` — the accumulated weight is
+    /// `iter_weight` raised to the number of levels (`k`), one per step
+    /// packing (mirrors `synth_binary_chain`'s `w^(steps)` contract).
+    /// `None` if fewer than 2 levels or peeks malformed (the trigger gate
+    /// guarantees `>= 2`, so `None` is a defensive fall-through).
+    fn synth_ternary_chain(
+        &mut self,
+        cursor: &BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+        spec: &crate::binding_power::IterAbsorbSpec,
+        weight: W,
+    ) -> Option<(crate::sppf::SppfId, W, usize)> {
+        if cursor.pos == 0 {
+            return None;
+        }
+        let head_pos = cursor.pos - 1;
+        let trigger = spec.trigger;
+        let sep = spec.sep;
+        if trigger.is_empty() || sep.is_empty() {
+            return None;
+        }
+        // The position must be ON the trigger.
+        match tokens.peek_text(cursor.pos) {
+            Some(t) if t == trigger => {}
+            _ => return None,
+        }
+        // Operand-atom predicate (Some kind, text is neither operator).
+        let is_atom = |pos: usize| -> bool {
+            tokens.peek_kind(pos).is_some()
+                && match tokens.peek_text(pos) {
+                    Some(t) => t != trigger && t != sep,
+                    None => false,
+                }
+        };
+        if !is_atom(head_pos) {
+            return None;
+        }
+
+        // Forward peek: recover per-level (cond, then) positions + the
+        // final else position + chain_end. Pattern from head_pos:
+        //   c0 [trigger] t0 [sep] c1 [trigger] t1 [sep] … e_final
+        // The cond of level 0 is the head atom; subsequent conds are the
+        // trailing atom of the prior level when followed by another
+        // trigger.
+        let mut cond_positions: Vec<usize> = Vec::new();
+        let mut then_positions: Vec<usize> = Vec::new();
+        let mut cur_cond = head_pos;
+        let mut probe = cursor.pos;
+        let mut e_final: usize;
+        loop {
+            // [trigger] at probe
+            match tokens.peek_text(probe) {
+                Some(t) if t == trigger => {}
+                _ => return None,
+            }
+            // then-atom t_i at probe+1
+            if !is_atom(probe + 1) {
+                return None;
+            }
+            // [sep] at probe+2
+            match tokens.peek_text(probe + 2) {
+                Some(t) if t == sep => {}
+                _ => return None,
+            }
+            // trailing atom at probe+3 (next cond or e_final)
+            if !is_atom(probe + 3) {
+                return None;
+            }
+            cond_positions.push(cur_cond);
+            then_positions.push(probe + 1);
+            // Disambiguate: another trigger at probe+4 ⇒ probe+3 is the
+            // next level's cond; otherwise probe+3 is e_final.
+            match tokens.peek_text(probe + 4) {
+                Some(t) if t == trigger => {
+                    cur_cond = probe + 3;
+                    probe += 4;
+                }
+                _ => {
+                    e_final = probe + 3;
+                    probe += 4;
+                    break;
+                }
+            }
+        }
+        let chain_end = probe;
+        let k = cond_positions.len();
+        if k < 2 {
+            return None;
+        }
+
+        let rule_idx = ((spec.op_cat_src_idx as u32) << 16) | (spec.op_rule_idx as u32);
+        let op_nt_tag = spec.op_cat_src_idx as u32;
+
+        // Right-nested fold in the else slot: innermost = e_final.
+        let mut cur = self.synth_atom_symbol(e_final, spec, tokens)?;
+        for i in (0..k).rev() {
+            let cond_sym = self.synth_atom_symbol(cond_positions[i], spec, tokens)?;
+            let then_sym = self.synth_atom_symbol(then_positions[i], spec, tokens)?;
+            let acc_hi = self
+                .sppf
+                .span_hi(cur)
+                .expect("synth_ternary_chain: acc Symbol must carry hi span");
+            // EXACTLY 3 children: [cond, then, else]. No `?`/`:` children.
+            let pack = self.sppf.intern_packing(
+                rule_idx,
+                vec![cond_sym, then_sym, cur],
+                weight.clone(),
+            );
+            let sym = self
+                .sppf
+                .intern_symbol(op_nt_tag, cond_positions[i] as u32, acc_hi);
+            self.sppf.link_packing_to_symbol(sym, pack);
+            cur = sym;
+        }
+        let acc = cur;
+
+        // Accumulated weight = iter_weight^k: one per step packing (level).
+        let mut accumulated = W::one_ref();
+        for _ in 0..k {
             accumulated = accumulated.times_ref(&weight);
         }
         Some((acc, accumulated, chain_end))
