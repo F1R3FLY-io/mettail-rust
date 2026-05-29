@@ -5,7 +5,7 @@ use crate::eval::{evaluate_graph, resolve_language_path, EvaluatedGraph};
 use crate::fragments::{apply_suffix, merge_presentations, merge_presentations_union};
 use crate::island::{process_island, IslandArtifact};
 use crate::ntir::ProcArtifact;
-use crate::ntir::{Ntir, Presentation, SemanticsTarget};
+use crate::ntir::{Ntir, Presentation, SemanticsTarget, SpaceSummary};
 use crate::resolve::ResolvedGraph;
 use crate::surface::IslandToken;
 use crate::surface::{ContentItem, ExtenderExpr, LanguageExpr};
@@ -36,6 +36,84 @@ pub fn compile_language(
     let mut pres = assemble_language_expr(graph, evaluated, &entry.file.imports, &lang_decl.expr)?;
     ensure_no_unresolved_term_conflicts(&mut pres)?;
     Ok(pres.into_ntir(language_name.to_string(), None))
+}
+
+pub fn compile_entry_with_spaces(
+    entry_path: std::path::PathBuf,
+    language_name: Option<&str>,
+) -> Result<(Ntir, Vec<SpaceSummary>)> {
+    let graph = crate::resolve::resolve_graph(entry_path)?;
+    let evaluated = evaluate_graph(&graph)?;
+    let entry = graph.vertices.get(&graph.entry).unwrap();
+    let name = language_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        entry
+            .file
+            .module
+            .items
+            .iter()
+            .find_map(|i| match i {
+                ContentItem::Language(l) if l.exported => Some(l.name.clone()),
+                _ => None,
+            })
+            .expect("entry must export a language when --language omitted")
+    });
+    let ntir = compile_language(&graph, &evaluated, &name)?;
+    let spaces = compile_spaces(&graph, &evaluated)?;
+    Ok((ntir, spaces))
+}
+
+fn compile_spaces(graph: &ResolvedGraph, evaluated: &EvaluatedGraph) -> Result<Vec<SpaceSummary>> {
+    let entry = graph
+        .vertices
+        .get(&graph.entry)
+        .ok_or_else(|| SpecError::Assemble { message: "missing entry module".into() })?;
+
+    let exported_langs: std::collections::HashSet<&str> = entry
+        .file
+        .module
+        .items
+        .iter()
+        .filter_map(|i| match i {
+            ContentItem::Language(l) if l.exported => Some(l.name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    for item in &entry.file.module.items {
+        let ContentItem::Space(s) = item else {
+            continue;
+        };
+        if !s.exported {
+            continue;
+        }
+
+        let Some(lang_name) = s.lang.is_simple_ident() else {
+            return Err(SpecError::Assemble {
+                message: format!(
+                    "space '{}' must reference an exported language by simple name, got '{}'",
+                    s.name,
+                    s.lang.segments.join(".")
+                ),
+            });
+        };
+        if !exported_langs.contains(lang_name) {
+            return Err(SpecError::Assemble {
+                message: format!(
+                    "space '{}' references unknown exported language '{}'",
+                    s.name, lang_name
+                ),
+            });
+        }
+
+        let ntir = compile_language(graph, evaluated, lang_name)?;
+        out.push(SpaceSummary {
+            name: s.name.clone(),
+            language: lang_name.to_string(),
+            language_hash: ntir.hash,
+        });
+    }
+    Ok(out)
 }
 
 pub fn assemble_language_expr(

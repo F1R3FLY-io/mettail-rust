@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use mettail_spec::{
-    assemble::{compile_entry, validate_ntir},
+    assemble::{compile_entry, compile_entry_with_spaces, validate_ntir},
     parser::parse_file,
     resolve::resolve_graph,
 };
@@ -102,6 +102,39 @@ fn assemble_and_validate_mycalc() {
 
     validate_ntir(&ntir).expect("validate composed NTIR");
     assert!(!ntir.hash.is_empty());
+}
+
+#[test]
+fn compile_entry_with_spaces_extracts_exported_spaces() {
+    let entry = fixtures_dir().join("app.rho");
+    let (ntir, spaces) = compile_entry_with_spaces(entry, Some("MyCalc")).expect("compile");
+    assert_eq!(ntir.name, "MyCalc");
+    assert_eq!(spaces.len(), 1);
+    assert_eq!(spaces[0].name, "s");
+    assert_eq!(spaces[0].language, "MyCalc");
+    assert_eq!(spaces[0].language_hash, ntir.hash);
+}
+
+#[test]
+fn space_must_reference_exported_language_in_entry_module() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("app.rho");
+    std::fs::write(
+        &path,
+        r#"module App {
+  export extender E() { empty semantics Rust types { ![i32] as Int } terms { Int . |- "0" : Int ; } }
+  export language MyCalc = E()
+  export space s: Missing
+}
+"#,
+    )
+    .expect("write");
+
+    let err = match compile_entry_with_spaces(path, Some("MyCalc")) {
+        Ok(_) => panic!("expected error"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("unknown exported language"));
 }
 
 #[test]

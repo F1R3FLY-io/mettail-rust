@@ -120,6 +120,13 @@ pub struct NtirSummary {
     pub term_labels: Vec<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SpaceSummary {
+    pub name: String,
+    pub language: String,
+    pub language_hash: String,
+}
+
 impl Ntir {
     pub fn summary(&self) -> NtirSummary {
         NtirSummary {

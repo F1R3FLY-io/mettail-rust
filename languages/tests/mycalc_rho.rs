@@ -14,3 +14,12 @@ fn mycalc_from_rho_compiles_and_exposes_language() {
     names.sort();
     assert_eq!(names, ["Cmplx", "Float"]);
 }
+
+#[test]
+fn mycalc_exports_spaces_metadata() {
+    let spaces = mettail_languages::mycalc::EXPORTED_SPACES;
+    assert_eq!(spaces.len(), 1);
+    assert_eq!(spaces[0].name, "s");
+    assert_eq!(spaces[0].language, "MyCalc");
+    assert!(!spaces[0].language_hash.is_empty());
+}

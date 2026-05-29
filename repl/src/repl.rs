@@ -5,7 +5,7 @@ use crate::state::ReplState;
 use anyhow::Result;
 use colored::Colorize;
 use mettail_query::run_query as query_run_query;
-use mettail_runtime::{AscentResults, Language, TermInfo};
+use mettail_runtime::{AscentResults, Language, SpaceSpec, TermInfo};
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
 use std::any::Any;
@@ -105,6 +105,13 @@ pub struct Repl {
     state: ReplState,
     registry: LanguageRegistry,
     editor: DefaultEditor,
+}
+
+fn exported_spaces_for_language(language_name: &str) -> &'static [SpaceSpec] {
+    match language_name {
+        "MyCalc" => mettail_languages::mycalc::EXPORTED_SPACES,
+        _ => &[],
+    }
 }
 
 impl Repl {
@@ -531,6 +538,22 @@ impl Repl {
                     .map(|t| format!(" = {}", t))
                     .unwrap_or_default();
                 println!("  {}{}{}", ty.name.cyan(), native.dimmed(), primary.dimmed());
+            }
+
+            // Spaces (introspection-only)
+            let spaces = exported_spaces_for_language(meta.name());
+            if !spaces.is_empty() {
+                println!();
+                println!("{} ({})", "SPACES".yellow().bold(), spaces.len());
+                for s in spaces {
+                    println!(
+                        "  {} : {}  {} {}",
+                        s.name.cyan(),
+                        s.language.green(),
+                        "hash".dimmed(),
+                        s.language_hash.dimmed()
+                    );
+                }
             }
 
             // Terms grouped by type - format: [Label] syntax:Type -| context

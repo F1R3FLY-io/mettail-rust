@@ -157,3 +157,16 @@ pub struct LogicRuleDef {
     /// The rule in Ascent syntax (formatted for display)
     pub rule: &'static str,
 }
+
+/// A typed space (channel) declaration associated with an exported language binding.
+///
+/// This is introspection-only metadata for now: publish/receive semantics are not wired yet.
+#[derive(Debug, Clone, Copy)]
+pub struct SpaceSpec {
+    /// Space identifier (e.g., `s` in `export space s: MyCalc`).
+    pub name: &'static str,
+    /// Exported language binding name (e.g., `MyCalc`).
+    pub language: &'static str,
+    /// Content hash of the referenced language's assembled NTIR.
+    pub language_hash: &'static str,
+}
