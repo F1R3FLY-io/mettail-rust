@@ -326,6 +326,21 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     pub resolved_total: u64,
     pub failed_total: u64,
     pub snapshot_appends_total: u64,
+    /// Cohort-revive-rework M0 (2026-05-29): cumulative count of paused
+    /// cohort members orphaned on `InFlight` entries (worker never
+    /// reached `Resolved`, so the end-of-step drain never fired). These
+    /// are the cross-cat cursors silently lost per the
+    /// `drive-suite-green-ledger.md` "⚑ Cross-cat cluster ROOT CAUSE".
+    /// Tallied at EOI by `orphaned_pending_members_count` and revived by
+    /// M1's `drain_orphaned_inflight_members`.
+    pub inflight_orphan_members_total: u64,
+    /// Cohort-revive-rework M0 (2026-05-29): cumulative count of paused
+    /// cohort members orphaned on `Failed` entries. (At this milestone
+    /// the `Failed` variant is unit-shaped and carries NO pending_members,
+    /// so this is structurally always 0 until M2 stashes them; counted
+    /// separately so the census can confirm M0's prediction that the
+    /// loss is entirely in the `InFlight` branch.)
+    pub failed_orphan_members_total: u64,
 }
 
 impl<W: SemiringRef> DispatchCohortCache<W> {
@@ -342,6 +357,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             snapshot_appends_total: 0,
             cohort_cursors_emitted_total: 0,
             cohort_cursors_graduated_total: 0,
+            inflight_orphan_members_total: 0,
+            failed_orphan_members_total: 0,
         }
     }
 
@@ -357,6 +374,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         self.snapshot_appends_total = 0;
         self.cohort_cursors_emitted_total = 0;
         self.cohort_cursors_graduated_total = 0;
+        self.inflight_orphan_members_total = 0;
+        self.failed_orphan_members_total = 0;
     }
 
     /// Phase F.13 H12 Stage 1.5 — register a cross-cat-projection
@@ -598,6 +617,146 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
     }
 
+    /// Cohort-revive-rework M1 (2026-05-29): drain every paused cohort
+    /// member still orphaned on an `InFlight` entry, returning one
+    /// `(Arc<CohortShell>, CohortMemberState)` pair per member so the
+    /// walker can re-materialize each as an independent worker via
+    /// `cohort_lazy::materialize_branch_cursor`.
+    ///
+    /// **Take-semantics + entry removal (idempotent).** An `InFlight`
+    /// entry whose owning worker reached `Resolved` would have been
+    /// transitioned to `Resolved` and drained by `take_pending_for_drain`
+    /// at end-of-step; an entry that is STILL `InFlight` at EOI fixpoint
+    /// is one whose worker died (dropped / errored) without resolving —
+    /// its paused members are the silently-lost cross-cat cursors. We
+    /// **remove** the whole entry (not merely take its members): the
+    /// re-injected orphan, when re-driven from `shell.inner_state` (its
+    /// pre-Fork dispatch state), re-emits the same Fork and re-registers
+    /// at this key. With the stale `InFlight` entry gone, that
+    /// re-registration returns `WorkerInserted` (dispatch_cohort.rs:376)
+    /// instead of `InflightCollision` — so the orphan becomes the WORKER
+    /// for its own sub-parse and can run it to completion / EOI, rather
+    /// than re-pausing behind the dead worker forever. Removing the entry
+    /// is strictly idempotent: a second call finds no matching entry and
+    /// returns empty.
+    ///
+    /// `Resolved` entries are left untouched (their members are not
+    /// orphans). `Failed` is unit-shaped here (no members) — M2 will
+    /// extend this to a `Failed` side-queue.
+    ///
+    /// Returns an empty `Vec` when there is nothing to revive (the
+    /// common case — most parses leave no orphans).
+    #[allow(clippy::type_complexity)]
+    pub fn drain_orphaned_inflight_members(
+        &mut self,
+    ) -> Vec<(
+        std::sync::Arc<crate::cohort_lazy::CohortShell<W>>,
+        crate::cohort_lazy::CohortMemberState<W>,
+    )> {
+        // First pass: identify InFlight keys that carry revivable
+        // orphans (Some(shell) + non-empty pending_members). We collect
+        // keys then remove, because `FxHashMap` cannot be mutated while
+        // its `values()` iterator is borrowed.
+        let orphan_keys: Vec<DispatchKey> = self
+            .entries
+            .iter()
+            .filter_map(|(k, entry)| match entry {
+                DispatchCacheEntry::InFlight {
+                    cohort_shell: Some(_),
+                    pending_members,
+                    ..
+                } if !pending_members.is_empty() => Some(k.clone()),
+                _ => None,
+            })
+            .collect();
+        if orphan_keys.is_empty() {
+            return Vec::new();
+        }
+        // Upper bound on output size: sum of pending_members lengths.
+        // Re-read each entry to size the Vec exactly (members are capped
+        // at MAX_PENDING_COHORT_PER_KEY = 16, keys are few at EOI).
+        let total: usize = orphan_keys
+            .iter()
+            .filter_map(|k| match self.entries.get(k) {
+                Some(DispatchCacheEntry::InFlight { pending_members, .. }) => {
+                    Some(pending_members.len())
+                }
+                _ => None,
+            })
+            .sum();
+        let mut out: Vec<(
+            std::sync::Arc<crate::cohort_lazy::CohortShell<W>>,
+            crate::cohort_lazy::CohortMemberState<W>,
+        )> = Vec::with_capacity(total);
+        for key in orphan_keys {
+            // `remove` drops the stale InFlight entry so re-registration
+            // of a re-injected orphan returns `WorkerInserted`.
+            if let Some(DispatchCacheEntry::InFlight {
+                cohort_shell,
+                pending_members,
+                ..
+            }) = self.entries.remove(&key)
+            {
+                let shell = cohort_shell.expect(
+                    "drain_orphaned_inflight_members: cohort_shell is Some by the \
+                     orphan_keys filter (pause_cohort_member always sets it before \
+                     pushing a member)",
+                );
+                for state in pending_members {
+                    out.push((std::sync::Arc::clone(&shell), state));
+                }
+            }
+        }
+        out
+    }
+
+    /// Cohort-revive-rework M0 (2026-05-29): census of paused cohort
+    /// members that are still orphaned at EOI — i.e. parked on
+    /// `InFlight` entries whose owning worker never reached `Resolved`
+    /// (so the end-of-step drain at `wpda_walker.rs:9068` never fired
+    /// for them) or — once M2 lands — on `Failed` entries. Returns
+    /// `(inflight_orphans, failed_orphans)`.
+    ///
+    /// `InFlight` orphans with a `cohort_shell` are the cross-cat
+    /// cursors silently lost per the ledger's "⚑ Cross-cat cluster ROOT
+    /// CAUSE": each is a valid alternate sub-parse (ProcStr / PVar /
+    /// binder / nested-cast) that would have reached EOI but for the
+    /// `(pos, source, bp)` cohort collision pausing it behind a worker
+    /// that subsequently died. M1's `drain_orphaned_inflight_members`
+    /// revives exactly this set.
+    ///
+    /// `Resolved` entries are EXCLUDED — their members were (or could
+    /// still be) drained by the normal end-of-step path; they are not
+    /// orphans. `Failed` is unit-shaped at this milestone (carries no
+    /// `pending_members`) so its orphan count is structurally 0 until
+    /// M2; counted separately so the census validates the prediction
+    /// that the loss is entirely in the `InFlight` branch.
+    pub fn orphaned_pending_members_count(&self) -> (u64, u64) {
+        let mut inflight_orphans: u64 = 0;
+        let failed_orphans: u64 = 0;
+        for entry in self.entries.values() {
+            if let DispatchCacheEntry::InFlight {
+                cohort_shell,
+                pending_members,
+                ..
+            } = entry
+            {
+                // Only members with a materializable shell are revivable.
+                // (pause_cohort_member always sets the shell before
+                // pushing a member, so a non-empty pending_members
+                // implies Some(shell); the guard is belt-and-suspenders.)
+                if cohort_shell.is_some() {
+                    inflight_orphans += pending_members.len() as u64;
+                }
+            }
+            // DispatchCacheEntry::Failed is a unit variant at M0/M1 —
+            // it discards pending_members on the InFlight→Failed
+            // transition (`fail`), so there is nothing to count here.
+            // M2 will stash them into a side-queue and extend this.
+        }
+        (inflight_orphans, failed_orphans)
+    }
+
     /// Phase F.13 H12 Stage 1.5.3 — read the cached worker
     /// pre-dispatch weight for a key. Returns None if the key has no
     /// entry. Used by the walker's resolve site to populate
@@ -739,6 +898,18 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             "  cohort_cursors_emitted={}  cohort_cursors_graduated={}",
             self.cohort_cursors_emitted_total,
             self.cohort_cursors_graduated_total,
+        )?;
+        // Cohort-revive-rework M0/M1 (2026-05-29): orphan census +
+        // revive accounting. `inflight_orphan_members` / `failed_orphan_members`
+        // are the snapshots taken at EOI by `orphaned_pending_members_count`
+        // (see `resolve_at_end_of_input`); a non-zero InFlight count on a
+        // failing cross-cat test is the empirical signature of the root
+        // cause this rework targets.
+        writeln!(
+            f,
+            "  inflight_orphan_members={}  failed_orphan_members={}",
+            self.inflight_orphan_members_total,
+            self.failed_orphan_members_total,
         )?;
         Ok(())
     }

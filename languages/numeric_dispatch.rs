@@ -67,13 +67,25 @@ impl CastWidth for &CalcInt {
 pub(crate) fn calc_peel_list_elem(p: &CalcProc) -> &CalcProc {
     match p {
         CalcProc::ElemList(list, index) => {
-            let idx = match index.as_ref() {
-                CalcInt::NumLit(n) => *n as usize,
-                _ => panic!("ElemList: expected Int literal"),
+            // Disambiguation-aligned (2026-05-29): a not-yet-reduced index, a
+            // non-literal list, or an out-of-bounds index yields NO numeric
+            // result for THIS derivation — return `p` so the surrounding
+            // numeric dispatch sees a non-numeric `ElemList` and skips it.
+            // NEVER panic: an OOB element access is EVIDENCE that this parse
+            // alternate is invalid (e.g. a truncated cross-cat list `[3]`
+            // reaching `at(_, 1)`); panicking would crash the whole Ascent
+            // eval and wrongly reject the VALID full-length sibling
+            // alternate (which still peels and produces the correct result).
+            let CalcInt::NumLit(n) = index.as_ref() else {
+                return p;
             };
+            // A negative index wraps to a large `usize`; `v.get(..)` then
+            // returns None → `unwrap_or(p)`, so OOB is handled uniformly
+            // without a separate sign check (NumLit's int width is irrelevant).
+            let idx = *n as usize;
             match list.as_ref() {
-                CalcList::ListLit(v) => v.get(idx).expect("ElemList: index out of bounds"),
-                _ => panic!("ElemList: list not a literal"),
+                CalcList::ListLit(v) => v.get(idx).unwrap_or(p),
+                _ => p,
             }
         },
         _ => p,

@@ -40,6 +40,48 @@ fn safeify_rust_code(rust_code: &syn::Expr) -> TokenStream {
     crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code)
 }
 
+/// EVAL-layer cast-error surfacing (2026-05-30, see
+/// `docs/design/plans/cast-error-eval-surfacing.md`).
+///
+/// A *cross-category cast* fold rule (params NOT all the same category as the
+/// result, e.g. `IntBin . a:Proc, w:Int : Int` or rhocalc `IntBinProc .
+/// a:Proc, w:Int : Proc`) can FAIL by evidence: an invalid bit width (7 < 8) or
+/// a non-finite source makes the cast genuinely impossible. Per the project
+/// disambiguation mandate ("drop/transform a result ONLY when evidence rejects
+/// it"), such a rejected cast must reduce to the language's error term, NOT
+/// stay stuck. This returns the zero-ary error variant the grammar declares for
+/// `category` so the fold codegen can surface it on `None`:
+///   * prefer the cast-specific `CastErr<Category>` (calc Int→`CastErrInt`,
+///     UInt32→`CastErrUInt32`, Fixed→`CastErrFixed`, Float→`CastErrFloat`,
+///     BigInt→`CastErrBigInt`),
+///   * else fall back to the generic zero-ary `Err` (calc BigRat→`Err`;
+///     rhocalc Proc→`Err`),
+///   * else `None` (no error variant declared → keep the current
+///     fall-through/"stuck cast" behavior; never invent a variant).
+///
+/// This is distinct from the generic `Err`-filter applied to SAME-category fold
+/// rules (arithmetic `_ => Err` catch-alls are transient "operands not ready"
+/// sentinels that must fall through). The mixed-param signature precisely
+/// selects the cast rules — repo-wide the only other mixed-param binary fold
+/// rule is calc `CountBag` whose action is infallible (its `None` arm is dead),
+/// so surfacing a cast-error on its `None` is behaviorally inert.
+fn cast_error_variant_for(language: &LanguageDef, category: &Ident) -> Option<Ident> {
+    let cast_err = format_ident!("CastErr{}", category);
+    let err = format_ident!("Err");
+    let has_zero_ary = |label: &Ident| {
+        language.terms.iter().any(|r| {
+            r.category == *category && r.label == *label && common::fold_field_count(r) == 0
+        })
+    };
+    if has_zero_ary(&cast_err) {
+        Some(cast_err)
+    } else if has_zero_ary(&err) {
+        Some(err)
+    } else {
+        None
+    }
+}
+
 mod antipattern;
 mod bloom_filter;
 mod categories;
@@ -2960,8 +3002,35 @@ fn generate_fold_big_step_rules(
                     // rewrite rule. See `languages/src/calculator.rs`
                     // failure-surfacing block.
                     let safe = crate::gen::native::rust_code_rewrite::safeify_and_wrap(rust_code);
-                    let res_expr = quote! { #safe.map(|__v| #category::#num_lit(__v)) };
-                    let bind_res: TokenStream = quote! { if let Some(res) = #res_expr; };
+                    // EVAL-layer cast-error surfacing (2026-05-30, see
+                    // `docs/design/plans/cast-error-eval-surfacing.md`). This
+                    // block ONLY sees cross-category (mixed-param) fold rules —
+                    // the cast rules `IntBin . a:Proc, w:Int : Int` etc. A cast
+                    // that genuinely cannot succeed (invalid width, non-finite
+                    // source) yields `None` here; per the disambiguation mandate
+                    // ("drop/transform a result ONLY when evidence rejects it")
+                    // the rejected cast must reduce to the declared error term
+                    // (`Int::CastErrInt`, …), NOT stay stuck. When the result
+                    // category declares a `CastErr<Cat>`/`Err` variant we surface
+                    // it on `None`; otherwise we keep the original
+                    // `.map(..)` + `if let Some(res)` fall-through (the
+                    // "stuck cast" shape). The only other mixed-param rule in
+                    // the corpus is calc `CountBag` (Bag,Proc→Int) whose action
+                    // is infallible — its `None` arm is dead, so surfacing a
+                    // cast-error there is behaviorally inert.
+                    let bind_res: TokenStream = match cast_error_variant_for(language, category)
+                    {
+                        Some(err_variant) => quote! {
+                            let res = match #safe {
+                                Some(__v) => #category::#num_lit(__v),
+                                None => #category::#err_variant,
+                            };
+                        },
+                        None => {
+                            let res_expr = quote! { #safe.map(|__v| #category::#num_lit(__v)) };
+                            quote! { if let Some(res) = #res_expr; }
+                        },
+                    };
                     if param_count == 1 {
                         let p0 = &param_names[0];
                         let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
@@ -3325,14 +3394,11 @@ fn generate_fold_big_step_rules(
                 });
             }
 
-            // fold_C(s, res) for each constructor with rust_code and eval_mode Fold (unary or binary)
-            // If the category has an Err variant, only emit when res is not Err (so we don't
-            // rewrite e.g. Add(2, *(3)) to error when the right arg hasn't been evaluated yet).
-            let err_label = format_ident!("Err");
-            let category_has_err = language
-                .terms
-                .iter()
-                .any(|r| r.category == *category && r.label == err_label);
+            // fold_C(s, res) for each constructor with rust_code and eval_mode Fold (unary or binary).
+            // EVAL-layer error surfacing (2026-05-30, see
+            // `docs/design/plans/cast-error-eval-surfacing.md`): the legacy
+            // per-rule `filter_err` (which dropped `Cat::Err` fold results) is
+            // removed below — see the rationale at the `filter_err` binding.
             for rule in &language.terms {
                 if rule.category != *category
                     || rule.eval_mode != Some(EvalMode::Fold)
@@ -3363,14 +3429,28 @@ fn generate_fold_big_step_rules(
                 // the grammar author's rewrite rules (which DO produce Err
                 // terms) feed `rw_proc(stuck_cast, Err)` separately, which
                 // then propagates through the normal eq/rw machinery.
-                let filter_err = if category_has_err {
-                    quote! {
-                        ,
-                        if (match & res { #category :: #err_label => false , _ => true })
-                    }
-                } else {
-                    quote! {}
-                };
+                // EVAL-layer error surfacing (2026-05-30, see
+                // `docs/design/plans/cast-error-eval-surfacing.md`). The legacy
+                // `filter_err` clause dropped every `Cat::Err` fold result so
+                // the non-native (rhocalc `Proc`) fold rules' `Cat::Err`
+                // outcomes never surfaced — leaving cast failures (invalid
+                // width / non-finite), div-by-zero (`if y.is_zero() { Err }`),
+                // and type mismatches (`_ => Err`) STUCK instead of reducing to
+                // the language's `error` term. Under fold-CLOSURE semantics the
+                // operands `lv`/`rv` are ALREADY fully folded when the rule
+                // fires, so such a `Cat::Err` is a FINAL evidence-based
+                // rejection, never a transient "operands not ready" sentinel.
+                // Per the disambiguation mandate ("drop/transform a result ONLY
+                // when evidence rejects it") it MUST be surfaced. Dropping the
+                // filter aligns rhocalc with its OWN test suite
+                // (`fixed_div_by_zero_is_error`, `bigint_div_by_zero_is_error`,
+                // `type_mismatch_bitand_is_error`,
+                // `fraction_zero_denominator_is_error`, and the `int(0.0/0.0,8)`
+                // non-finite target — all EXPECT `error`). Repo-wide the ONLY
+                // non-native category declaring an `Err` variant is rhocalc
+                // `Proc`, so this is rhocalc-scoped; the parser gauntlet (no
+                // eval) is unaffected.
+                let filter_err = quote! {};
 
                 // Non-native fold rules (e.g. Proc): route through full
                 // `safeify_and_wrap` — binary operators AND methods both

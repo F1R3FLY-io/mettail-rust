@@ -225,6 +225,39 @@ pub trait WpdaEngine<W: SemiringRef> {
         let _ = name;
         None
     }
+
+    /// Pass-2c token-soundness backstop (2026-05-30): the minimum number of
+    /// input token positions that rule `(src_idx, rule_idx)`'s literal
+    /// terminals MUST occupy STRICTLY WITHIN the rule's result-Symbol span.
+    ///
+    /// Concretely this is the count of `SyntaxExpr::Literal` terminals in the
+    /// rule's `syntax_pattern` that appear AFTER the rule's FIRST parameter.
+    /// Leading literals (a prefix trigger such as `float` / `bool` before the
+    /// first operand) are consumed as `TriggerTerminal`s BEFORE the Symbol's
+    /// `lo_pos`, so they fall OUTSIDE the span and are excluded here; trailing
+    /// and infix literals (`(`, `)`, `,`, `+`, …) fall inside it.
+    ///
+    /// ## Why it exists (the soundness invariant)
+    /// A derivation's terminal yield must equal the input it spans: every
+    /// literal a rule node claims to have matched must occupy real input. The
+    /// Pass-2c implicit-cast wrap can fire a trigger-bearing cast's action
+    /// over just its operand WITHOUT the cast's `"("`/`")"` ever being matched
+    /// (e.g. `bool(0)` fabricating `FloatToBool(IntToFloat(0))` — the inner
+    /// `IntToFloat`'s `float ( )` is absent from the input). Such a packing's
+    /// result Symbol span EQUALS its operand span (`slack == 0`) even though
+    /// `min_terminal_span >= 1`. The realize pass rejects any packing whose
+    /// `slack = (sym_hi - sym_lo) - Σ child spans` is `< min_terminal_span` —
+    /// dropping ONLY token-unsound derivations on EVIDENCE (not a weight). A
+    /// genuinely sound derivation always has `slack >= min_terminal_span`
+    /// (and may exceed it via interior grouping parens), so the filter never
+    /// drops a sound parse.
+    ///
+    /// Default `0` (no constraint) for engines/synthetic rules without a
+    /// literal-bearing syntax_pattern. Per-language codegen overrides it.
+    fn min_terminal_span(&self, src_idx: u16, rule_idx: u16) -> u32 {
+        let _ = (src_idx, rule_idx);
+        0
+    }
 }
 
 /// Phase F.8 (2026-05-18): three-state classification of a token that
@@ -704,9 +737,14 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     // 189]` (5 entries) instead of `[X_id, Y_id]`. Splice state is now
     // per-cursor at `BranchCursor::sppf_collection_arena: Arc<Vec<Vec<
     // SppfId>>>`, mirroring the `cursor.builder: Arc<SemanticBuilder>`
-    // Arc-CoW pattern from Phase 5.2. Realize-time readers consult the
-    // winner cursor's arena via `winner_collection_arena()`. See
-    // `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md`.
+    // Arc-CoW pattern from Phase 5.2. PARSE-time fire
+    // (`fire_action_via_transient`) reads this cursor's own arena to splice
+    // collection items into the transient builder. Collection-accumulation
+    // fix (2026-05-29): REALIZE-time readers no longer consult any cursor's
+    // arena — they read each derivation's `CollectionId` SPPF node's own
+    // `items` (snapshotted at the fire site). See
+    // `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md` and
+    // `docs/design/plans/collection-accumulation-fix.md`.
     /// Option C / C3: SPPF-side predicate payload arena.
     /// `emit_push_predicate` interns the `Arc<dyn Any + Send + Sync>` here
     /// and pushes a `SppfNode::Predicate { handle }` leaf. Realization
@@ -800,6 +838,16 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// revived cursors per key.
     pending_cohort_drain_keys:
         rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    /// Cohort-revive-rework M1 (2026-05-29): bounded re-drive counter for
+    /// EOI orphan revival. `run_to_end_of_input`'s `!progress_made` block
+    /// calls `revive_orphaned_cohort_members_once`, which injects
+    /// orphaned `InFlight` cohort members as fresh `Frame::Concrete`
+    /// workers and `continue`s to re-drive. Each such injection bumps
+    /// this counter; once it reaches the cap (`MAX_REVIVAL_ROUNDS = 4`)
+    /// the walker stops reviving and parks normally, so a pathological
+    /// orphan that re-dies every round cannot livelock the parse loop.
+    /// Reset to 0 in `reset()`.
+    revival_rounds: u32,
     /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort
     /// cache. Memoizes `emit_recovery_fork`'s `Vec<ForkBranch<W>>`
     /// across cohort members at the same
@@ -892,6 +940,19 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
 /// Pathological cases (infinite loops in cursor mutation, e.g., a Fork
 /// that re-emits the same Fork) trip this guard immediately.
 pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
+
+/// Cohort-revive-rework M1 (2026-05-29): maximum number of times
+/// `run_to_end_of_input` will revive EOI-orphaned cohort members and
+/// re-drive the parse within a single parse. Each revival round
+/// re-injects orphaned `InFlight` cohort members as fresh workers
+/// (`revive_orphaned_cohort_members_once`). A small cap bounds the rare
+/// pathological case of an orphan whose re-driven sub-parse re-dies and
+/// re-orphans every round; in practice a successful revive resolves in a
+/// single round (the orphan becomes a worker and runs to EOI). 4 mirrors
+/// the conservative bound style used elsewhere in this walker (cohort
+/// caps, recovery depth) and is comfortably above the observed
+/// single-round need while preventing livelock.
+const MAX_REVIVAL_ROUNDS: u32 = 4;
 
 /// One branch of a [`WpdaStepAction::Fork`] action. Codegen emits a
 /// `Vec<ForkBranch<W>>` when a parser-side ambiguity needs WPDS-driven
@@ -2857,6 +2918,8 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
+            revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
@@ -2943,6 +3006,8 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
+            revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
@@ -3024,6 +3089,8 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
+            revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
@@ -3106,6 +3173,10 @@ where
         // SPPF arena and would be unsound to reuse across resets.
         self.dispatch_cohort_cache.clear();
         self.pending_cohort_drain_keys.clear();
+        // Cohort-revive-rework M1 (2026-05-29): reset the orphan
+        // re-drive counter at the parse boundary so each parse gets a
+        // fresh `MAX_REVIVAL_ROUNDS` budget.
+        self.revival_rounds = 0;
         // Phase F.13 Task #117 (2026-05-23): recovery cache is per-
         // parse — `tokens` and `infra.token_id_map` keying are
         // parse-local. Clear at reset boundary.
@@ -3718,7 +3789,15 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WpdaMaxStepsExceeded>
     where
-        W: 'static + std::fmt::Debug,
+        // M1.PERF (2026-05-31): the spurious-blowup gate in
+        // `revive_orphaned_cohort_members_once` calls `realize_root_to_terms`
+        // (the resolver's exact success condition) to distinguish a genuine
+        // cross-cat parse from the deep-mixfix spurious O(N) orphan tail,
+        // requiring `IdempotentSemiring + StarSemiringRef`. Every real
+        // walker instantiation (production + `ScriptedEngine` unit tests)
+        // uses `LexicographicWeight`, which satisfies both, so this adds no
+        // obligation at any existing call site.
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
         // Phase F.13 Task #117 (2026-05-23): pin recovery cache pointer
         // for the duration of the parse loop so the codegen-emitted
@@ -3839,7 +3918,22 @@ where
                 if !progress_made {
                     // True fixed point — every cursor's engine.step
                     // returned Idle (or transitioned to itself), so no
-                    // further state movement is possible. Exit cleanly.
+                    // further state movement is possible.
+                    //
+                    // Cohort-revive-rework M1 (2026-05-29): BEFORE exiting,
+                    // check whether any cross-cat cohort members were
+                    // silently orphaned on InFlight dispatch-cache entries
+                    // (their worker died without resolving, so the
+                    // end-of-step drain never fired). If so, re-inject them
+                    // as fresh workers and re-drive — they run their own
+                    // cross-cat sub-parse and reach EOI. Bounded by
+                    // `MAX_REVIVAL_ROUNDS`; returns 0 (and we exit) once
+                    // there are no orphans or the budget is exhausted.
+                    if self.revive_orphaned_cohort_members_once(tokens) > 0 {
+                        continue;
+                    }
+                    // No orphans to revive (or budget exhausted) — true
+                    // parked frontier. Exit cleanly.
                     return Ok(());
                 }
                 continue;
@@ -3920,6 +4014,29 @@ where
                 .unwrap_or(false)
             {
                 eprintln!("{}", self.stats);
+            }
+        }
+        // Cohort-revive-rework M0 (2026-05-29): orphan census at the
+        // parse boundary, BEFORE force-materialize / resolution. Snapshot
+        // the count of paused cohort members still parked on non-Resolved
+        // (InFlight / Failed) entries into the cache's cumulative
+        // counters so `write_summary` can print them and so a test
+        // harness can assert "≥1 orphan on a failing cross-cat test, 0 on
+        // a passing one" (the M0 prediction). Gated under the same
+        // PRATTAIL_WALKER_STATS env var as the cohort-cache summary so
+        // the hot path pays nothing in production.
+        {
+            if std::env::var_os("PRATTAIL_WALKER_STATS")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
+                let (inflight_orphans, failed_orphans) = self
+                    .dispatch_cohort_cache
+                    .orphaned_pending_members_count();
+                self.dispatch_cohort_cache.inflight_orphan_members_total +=
+                    inflight_orphans;
+                self.dispatch_cohort_cache.failed_orphan_members_total +=
+                    failed_orphans;
             }
         }
         // Phase F.13 H12 Stage 1.2 (2026-05-21): emit dispatch-cohort
@@ -4081,6 +4198,39 @@ where
         // by removing premature cursors from `branch_cursors` itself —
         // ensuring that any downstream commit_winner_at_eoi or SPPF
         // root extraction operates on the surviving (EOI-reached) set.
+        // Cluster H (2026-05-29): capture every VALID-PREFIX cursor's
+        // `(pos, weight, sppf_root)` BEFORE the Phase E Fix A retain (and
+        // before the accepting_indices filter consumes/commits cursors).
+        // A valid-prefix cursor is `is_accepting_config` (so its
+        // configuration genuinely accepts — Accepted / InfixLoop /
+        // Unwinding-at-entry) but parked STRICTLY before logical EOI.
+        // This single capture feeds both salvage sites below (the Phase E
+        // empty-branch case where the prefix is `Accepted`, and the
+        // `accepting_indices == 0` case where the prefix sits in
+        // `InfixLoop` waiting for an operator that never came — e.g.
+        // `Float "1.5 2.5"`). Realization (`realize_root_to_terms`) needs
+        // only the root id (reads the SPPF arena, not the cursor), so the
+        // captured root id survives any later cursor mutation.
+        let prefix_trailing_candidates: Vec<(usize, W, crate::sppf::SppfId)> = {
+            let eof = tokens.eof_node();
+            self.branch_cursors
+                .iter()
+                .filter_map(|frame| {
+                    let c = frame.as_concrete_expect();
+                    if !self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c) {
+                        let root = self
+                            .sppf_stack_arena
+                            .top(c.sppf_stack_id)
+                            .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                        // Defensive: only `pos < eof` (a true prefix).
+                        if c.pos < eof {
+                            return Some((c.pos, c.weight.clone(), root));
+                        }
+                    }
+                    None
+                })
+                .collect()
+        };
         {
             let eof = tokens.eof_node();
             let len_before = self.branch_cursors.len();
@@ -4091,6 +4241,33 @@ where
             });
             // No further work if all were premature.
             if self.branch_cursors.is_empty() && len_before > 0 {
+                // Cluster H (2026-05-29): before reporting the generic
+                // "premature lex-Fork acceptance" failure, salvage the
+                // VALID-PREFIX / trailing-tokens case. The retain above
+                // dropped every cursor in `WpdaState::Accepted` with
+                // `pos < eof`. If those dropped cursors include at least
+                // one whose configuration is genuinely accepting
+                // (`is_accepting_config`) and whose SPPF root realizes to
+                // a term, this is NOT a premature lex-Fork — it is a
+                // proper prefix parse with unconsumed trailing tokens.
+                //
+                // Crucially, this arm is reached only when NO cursor
+                // survived the retain, i.e. NO cursor reached logical
+                // EOI. So there is no longer-and-complete parse competing
+                // with the prefix; surfacing the prefix does not violate
+                // max-munch disambiguation (the Phase E Fix A drop still
+                // wins whenever a full-EOI cursor coexists, because then
+                // `branch_cursors` is non-empty and this arm is skipped).
+                //
+                // `resolve_prefix_with_trailing` picks the
+                // FURTHEST-reaching prefix (max `pos` = longest accepted
+                // prefix) and carries ALL cursors tied at that furthest
+                // position so genuine prefix ambiguity is preserved.
+                if let Some(trailing) =
+                    self.resolve_prefix_with_trailing(&prefix_trailing_candidates)
+                {
+                    return trailing;
+                }
                 return WpdaResolveResult::ParseError {
                     message: "all Accepted cursors had unconsumed input \
                               (premature lex-Fork acceptance)"
@@ -4124,10 +4301,30 @@ where
             .max()
             .unwrap_or(self.pos);
         match accepting_indices.len() {
-            0 => WpdaResolveResult::ParseError {
-                message: "no accepting branch reached end of input".to_string(),
-                position: max_dead_pos,
-            },
+            0 => {
+                // Cluster H (2026-05-29): no cursor reached logical EOI,
+                // but a VALID-PREFIX cursor may still exist (captured in
+                // `prefix_trailing_candidates` above, BEFORE the Phase E
+                // retain). This is the trailing-tokens case where the
+                // accepting prefix sits in `InfixLoop` — e.g.
+                // `Float "1.5 2.5"`: `1.5` is a complete FloatLit but the
+                // cursor is waiting for a binary operator, sees `2.5`
+                // (not an operator), and dies without ever transitioning
+                // to `WpdaState::Accepted`. Surface the prefix so the
+                // facade emits `TrailingTokens` instead of a misleading
+                // "no accepting branch" error. Disambiguation-safe: this
+                // arm is reached ONLY when zero cursors are at EOI, so no
+                // full parse competes with the prefix.
+                if let Some(trailing) =
+                    self.resolve_prefix_with_trailing(&prefix_trailing_candidates)
+                {
+                    return trailing;
+                }
+                WpdaResolveResult::ParseError {
+                    message: "no accepting branch reached end of input".to_string(),
+                    position: max_dead_pos,
+                }
+            }
             1 => {
                 // C8.1 (2026-05-16): the M11 multiset snapshot-iteration arm was
                 // deleted alongside the C10 W revert to LexicographicWeight.
@@ -4230,6 +4427,64 @@ where
                 WpdaResolveResult::Accepted { weights, terms, roots }
             }
         }
+    }
+
+    /// Cluster H (2026-05-29): build a `WpdaResolveResult::AcceptedWithTrailing`
+    /// from the prefix-accepting cursors captured by the Phase E Fix A
+    /// salvage path in `resolve_at_end_of_input`.
+    ///
+    /// `prefix_candidates` is `(pos, weight, sppf_root)` for every cursor
+    /// that was `is_accepting_config` but parked at `pos < eof_node`. This
+    /// is invoked ONLY when no full-EOI accepting cursor exists, so the
+    /// longest prefix is the best (and only) accepting derivation.
+    ///
+    /// Disambiguation contract: we select the cursors that reached the
+    /// FURTHEST position (max `pos` = longest accepted prefix per
+    /// max-munch) and carry ALL of them — preserving genuine prefix-level
+    /// ambiguity exactly as the `Accepted` multi-arm does. The returned
+    /// `position` is the furthest prefix boundary (the first unconsumed
+    /// token index), which the facade installs into `*pos` so the
+    /// generated wrapper emits a structured `TrailingTokens` error.
+    ///
+    /// Returns `None` (so the caller falls through to the generic
+    /// "premature lex-Fork acceptance" `ParseError`) when no candidate
+    /// has a realizable SPPF root — i.e. there is no genuine prefix parse
+    /// to surface.
+    fn resolve_prefix_with_trailing(
+        &self,
+        prefix_candidates: &[(usize, W, crate::sppf::SppfId)],
+    ) -> Option<WpdaResolveResult<W>>
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        // Longest accepted prefix wins (max-munch over the prefix set).
+        let max_pos = prefix_candidates.iter().map(|(p, _, _)| *p).max()?;
+        let mut weights: Vec<W> = Vec::new();
+        let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
+        let mut roots: Vec<crate::sppf::SppfId> = Vec::new();
+        for (pos, weight, root) in prefix_candidates.iter().filter(|(p, _, _)| *p == max_pos) {
+            let _ = pos;
+            let root = *root;
+            if root == crate::sppf::SPPF_ID_NONE {
+                continue;
+            }
+            if let Some(t) = self.realize_root_to_terms(root, Some(1)).into_iter().next() {
+                weights.push(weight.clone());
+                terms.push(t);
+                roots.push(root);
+            }
+        }
+        if terms.is_empty() {
+            // No realizable prefix term — not a genuine trailing-tokens
+            // case; let the caller surface the generic failure.
+            return None;
+        }
+        Some(WpdaResolveResult::AcceptedWithTrailing {
+            weights,
+            terms,
+            roots,
+            position: max_pos,
+        })
     }
 
     /// Option C / C7 (2026-05-15): Realize the user AST from a Shared
@@ -4375,18 +4630,18 @@ where
                                     }
                                 }
                             }
-                            Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
+                            Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
                                 // Recursively realize each collected SppfId so
                                 // the Collection arg's contents are materialized.
-                                // Phase F.4 (2026-05-18): consult winner cursor's
-                                // arena (post-commit) instead of walker-global.
-                                if let Some(items) =
-                                    self.winner_collection_arena().get(*cid as usize)
-                                {
-                                    for &item in items {
-                                        if colors.get(&item) != Some(&RealizeColor::Black) {
-                                            stack.push((item, Phase::Enter));
-                                        }
+                                // Collection-accumulation fix (2026-05-29): walk
+                                // the node's OWN derivation-local `items`
+                                // (snapshotted at the fire site) instead of the
+                                // post-commit `winner_collection_arena()` =
+                                // `branch_cursors[0]`, which truncated/emptied
+                                // collections belonging to non-winner cursors.
+                                for &item in items {
+                                    if colors.get(&item) != Some(&RealizeColor::Black) {
+                                        stack.push((item, Phase::Enter));
                                     }
                                 }
                             }
@@ -4514,7 +4769,7 @@ where
                     Vec::new()
                 }
             }
-            Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
+            Some(crate::sppf::SppfNode::CollectionId { id: cid, .. }) => {
                 // The CollectionId placeholder is consumed by the action
                 // alongside the collected items. The realization yields
                 // ActionArg::CollectionId(cid); the parent Packing's
@@ -4546,7 +4801,7 @@ where
                     W::one_ref(),
                 )]
             }
-            Some(crate::sppf::SppfNode::Symbol { .. }) => {
+            Some(crate::sppf::SppfNode::Symbol { lo_pos: sym_lo, hi_pos: sym_hi, .. }) => {
                 // Concat all packings' realizations. Phase C.6 preserves
                 // per-derivation weights; the Symbol-level ⊕-aggregation
                 // is captured in Sppf::Symbol.weight_sum at link time,
@@ -4572,16 +4827,164 @@ where
                 // (production `LexicographicWeight`) `star = one` so
                 // this is identity; for non-idempotent W the multiplier
                 // captures the cycle's closed-semiring contribution.
+                let sym_span: u32 = (*sym_hi).saturating_sub(*sym_lo);
                 let mut out: Vec<(ActionArg, W)> = Vec::new();
                 for &p in self.sppf.packings_of(id) {
                     let p_color = colors.get(&p).copied();
-                    let p_results = match memo.get(&p) {
+                    // Pass-2c token-soundness backstop (2026-05-30): reject a
+                    // packing whose result-Symbol span does NOT leave room for
+                    // the rule's in-span literal terminals — i.e. the rule
+                    // claims to have matched `"("`/`")"`/`,`/… that occupy zero
+                    // input. This is the EVIDENCE-based drop (yield != span)
+                    // that retires the former premature-disambiguation weight
+                    // crutch; a sound derivation always has slack >=
+                    // min_terminal_span (interior grouping only adds slack), so
+                    // no sound parse is dropped. See WpdaEngine::min_terminal_span.
+                    if let Some(crate::sppf::SppfNode::Packing { rule_idx: prule, children, .. }) =
+                        self.sppf.node(p)
+                    {
+                        let pcat = (*prule >> 16) as u16;
+                        let plocal = (*prule & 0xFFFF) as u16;
+                        let min_span = self.engine.min_terminal_span(pcat, plocal);
+                        if min_span > 0 {
+                            let child_span_sum: u32 = children
+                                .iter()
+                                .map(|&c| match self.sppf.node(c) {
+                                    Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) =>
+                                        (*hi_pos).saturating_sub(*lo_pos),
+                                    Some(crate::sppf::SppfNode::Terminal { .. })
+                                    | Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => 1,
+                                    _ => 0,
+                                })
+                                .sum();
+                            // Soundness filter applies ONLY when the result
+                            // Symbol carries a MEANINGFUL span that covers its
+                            // operands (sym_span >= child_span_sum). A
+                            // zero-width or under-covering span (sym_span <
+                            // child_span_sum) is a synthetic / recovery /
+                            // not-yet-finalized node whose lo/hi don't encode
+                            // real input extent — the span signal is unreliable
+                            // there, so we must NOT reject (doing so wrongly
+                            // dropped sound lambda `App`/`Lam` packings whose
+                            // Symbol had lo_pos==hi_pos==0). Restricting to
+                            // sym_span >= child_span_sum keeps the filter sound:
+                            // it fires only where the yield==span invariant is
+                            // actually observable.
+                            if sym_span >= child_span_sum {
+                                let slack = sym_span - child_span_sum;
+                                if slack < min_span {
+                                    // Token-unsound derivation: the rule claims
+                                    // to match in-span literals that occupy zero
+                                    // input (a fabricated cast). Drop this
+                                    // packing on evidence (yield != span).
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    let memo_results = match memo.get(&p) {
                         Some(v) => v,
                         None => continue,
                     };
-                    if p_results.is_empty() && p_color == Some(RealizeColor::Gray) {
+                    if memo_results.is_empty() && p_color == Some(RealizeColor::Gray) {
                         continue; // cycle back-edge — skip
                     }
+                    // ── Stale-finalization-under-in-progress-cycle repair
+                    //    (2026-05-31) ─────────────────────────────────────
+                    // ROOT FIX for the realize-DFS bug that DROPS a PRESENT
+                    // sound derivation (`int(-1 <= 0)` realized 0 terms for the
+                    // accepting Int Symbol despite a SOUND packing under it that
+                    // realizes to 1 standalone). EMPIRICAL MECHANISM (env-gated
+                    // `PRATTAIL_REALIZE_TRACE` ancestor-chain dump, all 336
+                    // gray-hits classified): the SPPF has a GENUINE same-span
+                    // ambiguity cycle — NOT a diamond/DAG re-convergence. Every
+                    // back-edge target is a true DFS-ancestor of the re-entry
+                    // node. The lost derivation rides a packing that sits ON A
+                    // PATH THROUGH the cycle but is ITSELF OUTSIDE it.
+                    //
+                    // Concretely (`int(-1<=0)`): the cycle node is Symbol 13 =
+                    // Bool(lo=2,hi=5), with TWO packings — an ACYCLIC one (12 =
+                    // `Le(-1,0)`, realizes to 1) and a CYCLIC one (43, whose
+                    // subtree loops back to 13 via cross-cat). The sound root
+                    // derivation is packing 28 = `BoolToInt(Symbol 13)`, a child
+                    // of the accepting Int Symbol 29. The iterative tri-color DFS
+                    // memoizes each node's realization EXACTLY ONCE (at its
+                    // `Phase::Leave`). The DFS descends to Symbol 13 (→Gray) and
+                    // explores its CYCLIC packing 43 FIRST; that traversal reaches
+                    // packing 28 as a cross-edge (28's only child is Symbol 13)
+                    // WHILE Symbol 13 is still Gray, so 28 reads 13's PROVISIONAL
+                    // empty back-edge memo (`memo.entry(13).or_insert(empty)` set
+                    // at the Gray-at-Enter back-edge) and Leave-finalizes EMPTY +
+                    // BLACK. Only LATER does the DFS explore 13's ACYCLIC packing
+                    // 12, so Symbol 13's own memo resolves empty→1 — but the
+                    // single-visit memo never recomputes the already-BLACK packing
+                    // 28. When the accepting Symbol 29 Leaves and consumes packing
+                    // 28 it reads the stale empty memo and drops the sound
+                    // derivation that is demonstrably PRESENT in the SPPF (the
+                    // same packing realizes to 1 standalone with a fresh memo).
+                    // The Newton/Tarjan post-pass cannot rescue this: it rewrites
+                    // SYMBOL memos in non-trivial SCCs by a `star()` multiplier
+                    // (identity for LexicographicWeight), and packing 28 is a
+                    // Packing node OUTSIDE every SCC — never touched.
+                    //
+                    // The repair: a BLACK packing with an EMPTY memo is the exact
+                    // (and only) stale signature — recompute it ONCE from the
+                    // CURRENT (monotone-grown, now-resolved) child memos via
+                    // `realize_packing_call`. This:
+                    //   • restores the sound derivation (packing 28 reads the
+                    //     now-resolved `memo[13]` → yields its 1 term);
+                    //   • is a NO-OP for a legitimately produces-nothing packing
+                    //     (OptAbsent under an empty optional, etc.) — recompute
+                    //     stays empty, behavior unchanged;
+                    //   • is INERT for a packing whose consumer Leaves while the
+                    //     cycle node is still unresolved: such a consumer sits
+                    //     INSIDE the cycle, so the child memo is still empty at
+                    //     recompute time → recompute yields empty → the cycle
+                    //     stays empty and the Newton/Tarjan closed-semiring
+                    //     post-pass remains the SOLE handler of true cycle
+                    //     contributions (`star = one` for LexicographicWeight).
+                    //     Only an OUTSIDE consumer (one that Leaves AFTER the cycle
+                    //     node resolves via its acyclic packing) recomputes
+                    //     non-empty — exactly the lost-derivation case;
+                    //   • adds ZERO cost to the common acyclic path (a non-empty
+                    //     cached packing memo is always correct — computed from
+                    //     then-resolved children — so it is never recomputed);
+                    //   • drops NO alternate — purely additive completeness
+                    //     (restores a present sound derivation); the Step-A
+                    //     token-soundness filter (already applied to `p` above)
+                    //     remains the sole evidence-based drop.
+                    // Termination: the recompute reads child memos directly (no
+                    // graph re-walk); `memo` only grows; fires at most once per
+                    // packing per Symbol-Leave. Nested cases compose because
+                    // Symbol Leaves run in post-order — a consumed child Symbol's
+                    // packings are already repaired before its parent Leaves.
+                    let recomputed_storage: Vec<(ActionArg, W)>;
+                    let p_results: &Vec<(ActionArg, W)> = if memo_results.is_empty()
+                        && p_color == Some(RealizeColor::Black)
+                    {
+                        if let Some(crate::sppf::SppfNode::Packing {
+                            rule_idx: prule,
+                            children: pchildren,
+                            weight: pweight,
+                        }) = self.sppf.node(p)
+                        {
+                            recomputed_storage = self.realize_packing_call(
+                                *prule,
+                                pchildren,
+                                pweight.clone(),
+                                memo,
+                                limit,
+                            );
+                            &recomputed_storage
+                        } else {
+                            // Black+empty but not a Packing node (defensive —
+                            // a Symbol's packings_of are always Packing nodes);
+                            // keep the empty memo result.
+                            memo_results
+                        }
+                    } else {
+                        memo_results
+                    };
                     for entry in p_results {
                         if let Some(cap) = limit {
                             if out.len() >= cap {
@@ -4894,22 +5297,37 @@ where
                         // the slot the CollectionId references, then
                         // push the CollectionId arg. action_fn will
                         // pop_args and drain the collection.
-                        // Phase F.4 (2026-05-18): consult winner
-                        // cursor's arena (post-commit).
-                        if let Some(items) = self.winner_collection_arena().get(*id as usize) {
-                            // Each item is realized as an ActionArg::Term
-                            // in `memo`; push them onto sb so
-                            // push_to_collection drains correctly.
-                            for &item in items {
-                                if let Some(item_realized) = memo.get(&item) {
-                                    if let Some((item_arg, _item_w)) = item_realized.first() {
-                                        match item_arg {
-                                            ActionArg::Term { value, .. } => {
-                                                sb.push_term_arc(Arc::clone(value));
-                                                sb.push_to_collection(*id);
-                                            }
-                                            _ => {}
+                        //
+                        // Collection-accumulation fix (2026-05-29): read the
+                        // element SppfIds from the matching `CollectionId`
+                        // child node's own derivation-local `items` (in scope
+                        // as `children: &[SppfId]`), NOT from the post-commit
+                        // `winner_collection_arena()` = `branch_cursors[0]`
+                        // (the WRONG cursor — it truncated/emptied collections
+                        // belonging to non-winner derivations). Each item
+                        // SppfId is realized via the existing `memo`.
+                        let items: &[crate::sppf::SppfId] = children
+                            .iter()
+                            .find_map(|&c| match self.sppf.node(c) {
+                                Some(crate::sppf::SppfNode::CollectionId {
+                                    id: cid,
+                                    items,
+                                }) if *cid == *id as u32 => Some(items.as_slice()),
+                                _ => None,
+                            })
+                            .unwrap_or(&[]);
+                        // Each item is realized as an ActionArg::Term
+                        // in `memo`; push them onto sb so
+                        // push_to_collection drains correctly.
+                        for &item in items {
+                            if let Some(item_realized) = memo.get(&item) {
+                                if let Some((item_arg, _item_w)) = item_realized.first() {
+                                    match item_arg {
+                                        ActionArg::Term { value, .. } => {
+                                            sb.push_term_arc(Arc::clone(value));
+                                            sb.push_to_collection(*id);
                                         }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -5807,30 +6225,27 @@ where
                 // `is_cursor_accepting_terminal` at EOI / lex-dominated —
                 // exactly as under the chart path (verified 112 MB).
                 {
-                    // Defensive peek-ahead: at least 4 atoms remaining
-                    // in the chain (cursor.pos is on the operator
-                    // about to be consumed by this arm; next atom is
-                    // at cursor.pos + 1).
-                    let probe_start = cursor.pos + 1;
-                    let mut remaining_atoms = 0usize;
-                    let mut probe = probe_start;
-                    loop {
-                        let atom_here = tokens.peek_kind(probe);
-                        if atom_here.is_none() {
-                            break;
-                        }
-                        remaining_atoms += 1;
-                        // Look for the next operator at probe+1.
-                        let op_next = tokens.peek_kind(probe + 1);
-                        if op_next.is_none() {
-                            break;
-                        }
-                        probe += 2;
-                        if remaining_atoms >= 4 {
-                            break;
-                        }
-                    }
-                    if remaining_atoms >= 4 {
+                    // Cluster B fix (regr-WALK-S3, 2026-05-29): kind-validated
+                    // chain gate. The prior loop counted ANY token as an atom
+                    // and ANY following token as an operator, so it bled across
+                    // `)`/`(` and across different-precedence operators —
+                    // spuriously triggering left-assoc `synth_binary_chain`
+                    // absorption on grouped (`(1+2)+(3+4)`), comparison
+                    // (`a<b<c`), and mixed-precedence (`1+2==3 and 4==4`)
+                    // expressions, then desyncing the parse (semantic-action
+                    // elide / no-accepting-branch) and writing a bogus
+                    // `chain_absorbed_intervals` suppression interval.
+                    // Delegate to `peek_binary_chain` — the SAME kind-validated
+                    // recognizer the right-assoc / mixfix pre-fork triggers use
+                    // (engine_impl.rs) and that `synth_binary_chain` itself
+                    // re-validates — so the gate fires ONLY on a genuine flat
+                    // `atom (op atom)*` chain over one (atom_kind, op_kind)
+                    // pair. `cursor.pos` is on the leading operator (head atom
+                    // at cursor.pos - 1); `min_atoms = 5` matches the prior
+                    // "≥ 4 atoms AFTER the head" threshold (head + 4 = 5 total,
+                    // m >= 5). Flat single-op literal chains absorb
+                    // byte-identically (perf preserved; chain Welch unaffected).
+                    if peek_binary_chain(tokens, cursor.pos, 5) {
                         let cat = symbol.category_src_idx;
                         let rule = symbol.rule_index_in_category;
                         crate::stats_inc!(self, chain_earley_trigger_count);
@@ -8250,6 +8665,177 @@ where
     ///
     /// L3.6 invariant: after this call, every entry in
     /// `self.branch_cursors` is `Frame::Concrete(_)`.
+    /// Cohort-revive-rework M1 (2026-05-29): at an EOI parked fixpoint,
+    /// revive cohort members that are still orphaned on `InFlight`
+    /// dispatch-cache entries (their worker died without resolving, so
+    /// the end-of-step drain never fired for them — the cross-cat cursor
+    /// loss documented in `drive-suite-green-ledger.md` "⚑ Cross-cat
+    /// cluster ROOT CAUSE"). Each orphan is re-materialized via
+    /// `cohort_lazy::materialize_branch_cursor` (reconstructing the
+    /// cursor in its pre-Fork dispatch state at the dispatch position)
+    /// and pushed onto `branch_cursors` as a fresh `Frame::Concrete`.
+    /// `drain_orphaned_inflight_members` REMOVED the stale `InFlight`
+    /// entry, so when the walker re-drives the injected cursor it
+    /// re-emits its Fork and re-registers as `WorkerInserted` — becoming
+    /// the worker for its own sub-parse and reaching EOI on its own
+    /// return context (which the dead worker's context could not).
+    ///
+    /// Returns the number of cursors injected. The caller
+    /// (`run_to_end_of_input`) `continue`s the parse loop iff this is
+    /// `> 0`, re-driving the freshly-injected cursors.
+    ///
+    /// **Bounded.** Guarded by `revival_rounds < MAX_REVIVAL_ROUNDS`.
+    /// Each call that injects ≥1 cursor bumps `revival_rounds`. A
+    /// pathological orphan that re-dies every round (e.g. a genuinely
+    /// unparseable cross-cat alternate) is revived at most
+    /// `MAX_REVIVAL_ROUNDS` times, after which this returns 0 and the
+    /// walker parks normally and resolution proceeds (yielding the same
+    /// "no accepting branch" the pre-M1 walker would have — no
+    /// regression, just a bounded number of extra attempts). Hitting the
+    /// cap is benign (NOT a panic).
+    ///
+    /// **Disambiguation-safe.** Injected cursors carry `cohort_origin =
+    /// None` (the shell's origin, which is `None` for a normal
+    /// pre-dispatch parent) so they behave as ordinary worker cursors:
+    /// they flow through `merge_equivalent_cursors` + SPPF dedup and
+    /// collapse with a live alternate ONLY when observationally
+    /// equivalent (same `ConfigKey` AND same `sppf_stack` tip). A
+    /// genuinely distinct derivation survives as a first-class
+    /// `Ambiguous` alternate; an already-covered one merges (no
+    /// double-count). The `-3!` ladder / `wpda_parity_*` /
+    /// `h3_chain_correctness` invariants are preserved.
+    fn revive_orphaned_cohort_members_once(
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+    ) -> usize
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        // Bounded re-drive: stop reviving once the per-parse budget is
+        // exhausted. Benign — the walker parks and resolves normally.
+        if self.revival_rounds >= MAX_REVIVAL_ROUNDS {
+            return 0;
+        }
+        let orphans = self.dispatch_cohort_cache.drain_orphaned_inflight_members();
+        if orphans.is_empty() {
+            return 0;
+        }
+        // Cohort-revive-rework M1.PERF (2026-05-31): SPURIOUS-BLOWUP GATE.
+        //
+        // M1 revives EVERY orphaned cohort member at the EOI fixpoint and
+        // re-drives each as an independent worker cursor. Two regimes:
+        //
+        //  (1) GENUINE cross-cat: the orphan set is bounded by GRAMMAR
+        //      complexity, INDEPENDENT of input length. Empirically
+        //      (2026-05-31 trace) the heaviest cross-cat tests peak at 101
+        //      orphans/round (`simulator_regression_cross_cat_dispatch_
+        //      chaining`); the full calculator.rs corpus peaks at 123
+        //      (incl. the already-failing Exp-15 doubly-nested casts); the
+        //      op-suites + edge_case produce ZERO. These NEED revival to
+        //      surface a term-bearing / promoted-category derivation (e.g.
+        //      `"42"` → `Int` rather than bare `NumLit`; `float(x)`,
+        //      `int(a > b == c)`), and that parse does NOT yet have an
+        //      accepting, REALIZABLE winner on the frontier — revival is
+        //      the only way to reach one.
+        //
+        //  (2) DEEP-PARENTHESIZED-MIXFIX SPURIOUS blowup: one cross-cat
+        //      dispatch per nesting level, so the orphan set scales with
+        //      input length N (`test_deep_ternary_100` drains 1067 in one
+        //      round, ~10×N). Re-driving ~N cursors to EOI turns an O(N)
+        //      parse into O(N²) (`test_deep_ternary_500` 67.5 s; _1000
+        //      > 240 s). Crucially this parse ALREADY has a winning,
+        //      term-bearing cursor on the frontier; the O(N) orphans are
+        //      spurious dead-ends that all die.
+        //
+        // The two regimes are separated by the CONJUNCTION of two
+        // independent signals — neither alone is sufficient (each was
+        // empirically falsified in isolation, 2026-05-31):
+        //
+        //  • orphan count > `SPURIOUS_ORPHAN_THRESHOLD` (256 — 2× the 123
+        //    grammar-bounded ceiling, matching `MAX_COHORT_FRAME_MEMBERS`).
+        //    A grammar-bounded cross-cat parse NEVER exceeds this; only the
+        //    N-scaling deep-mixfix does. (Count alone is insufficient: a
+        //    blind cap/truncate still leaves O(N²) because each capped
+        //    cursor re-parses O(N) structure and re-spawns — `_1000`
+        //    measured 116 s under a blind cap=256.)
+        //
+        //  • `parse_already_succeeds`: the frontier already contains a
+        //    cursor at logical-EOI in an accepting config whose SPPF root
+        //    realizes to ≥1 term — i.e. `resolve_at_end_of_input`'s exact
+        //    success condition (wpda_walker.rs:4293-4419: `is_logical_eoi`
+        //    ∧ `is_accepting_config` ∧ `cursor_root != SPPF_ID_NONE` ∧
+        //    non-empty `realize_root_to_terms`). (This signal alone is
+        //    insufficient: it is ALSO true for `"42"` / `float(x)`, where
+        //    the realizable winner is the WRONG/un-promoted category and
+        //    revival is REQUIRED to add the right one — skipping there
+        //    regressed `test_unambiguous_int_literal` /
+        //    `test_nfa_spillover_float_int_var`, 2026-05-31.)
+        //
+        // When BOTH hold, the parse is the spurious-blowup regime: it
+        // already resolves to an accepting, term-bearing derivation AND its
+        // orphan set is the N-scaling spurious tail. Skipping revival is
+        // then exactly equivalent to M1 not having fired — the resolver
+        // finds the SAME winner — while eliminating the O(N²) re-drive
+        // (`test_deep_ternary_1000` → ~baseline). Genuine cross-cat parses
+        // (≤256 orphans) NEVER hit this branch and revive byte-for-byte as
+        // original M1, so no green cross-cat test regresses. Disambiguation-
+        // safe: a real ambiguity is grammar-bounded (≤256) and surfaces via
+        // the normal Fork/SPPF path; M1 never manufactures >256 first-class
+        // alternates for a single input.
+        const SPURIOUS_ORPHAN_THRESHOLD: usize = 256;
+        if orphans.len() > SPURIOUS_ORPHAN_THRESHOLD {
+            let parse_already_succeeds = {
+                let candidate_roots: Vec<crate::sppf::SppfId> = self
+                    .branch_cursors
+                    .iter()
+                    .filter_map(|frame| match frame {
+                        crate::cohort_lazy::Frame::Concrete(c)
+                            if self.is_logical_eoi(c.pos, tokens)
+                                && self.is_accepting_config(c) =>
+                        {
+                            self.sppf_stack_arena.top(c.sppf_stack_id)
+                        }
+                        _ => None,
+                    })
+                    .filter(|&sid| sid != crate::sppf::SPPF_ID_NONE)
+                    .collect();
+                candidate_roots
+                    .iter()
+                    .any(|&root| !self.realize_root_to_terms(root, Some(1)).is_empty())
+            };
+            if parse_already_succeeds {
+                // Spurious-blowup regime: an accepting, term-bearing winner
+                // is already on the frontier and the orphans are the
+                // N-scaling spurious tail. Skip revival entirely. Re-insert
+                // the (now-drained) orphans is unnecessary: they were
+                // removed from the cache by `drain_orphaned_inflight_members`
+                // and the parse already succeeds without them.
+                return 0;
+            }
+        }
+        let injected = orphans.len();
+        // Preallocate for the cursors we are about to push.
+        self.branch_cursors.reserve(injected);
+        for (shell, state) in orphans {
+            // Reconstruct the orphan's pre-Fork cursor. `inner_state` =
+            // shell.inner_state (the dispatch state that emits the Fork);
+            // `pos` = shell.pos (the dispatch position). Re-driving it
+            // re-emits the Fork → the CrossCatDelegate branch re-registers
+            // at the (now-removed) key as a fresh WorkerInserted worker.
+            let cursor = crate::cohort_lazy::materialize_branch_cursor(&shell, &state);
+            self.branch_cursors
+                .push(crate::cohort_lazy::Frame::Concrete(cursor));
+        }
+        self.revival_rounds += 1;
+        // Re-driving requires the walker to be in fanout mode so
+        // `step_fanout` processes the injected cursors. At an EOI parked
+        // fixpoint the walker is already in `AmbiguityFanout` (the only
+        // state that reaches the `!progress_made` hook); the injected
+        // Frame::Concrete cursors join `branch_cursors` and are stepped
+        // on the next `step_fanout` iteration.
+        injected
+    }
+
     fn force_materialize_cohort_frames(&mut self) {
         // Fast path: nothing to do if all frames are already concrete.
         if self.branch_cursors.iter().all(|f| f.is_concrete()) {
@@ -10340,9 +10926,10 @@ where
             // collection arena. Sibling cursors' Arcs drop when
             // `branch_cursors` is cleared above, reclaiming any
             // per-lineage splice content orphaned by the merge
-            // tiebreak. Post-commit, this Arc is the SOLE source of
-            // truth for realize_*'s CollectionId resolution. See
-            // `WpdaWalker::winner_collection_arena()`.
+            // tiebreak. Collection-accumulation fix (2026-05-29): this arena
+            // is no longer read at realize time (CollectionId nodes carry
+            // their own `items`); it is retained because parse-time fire
+            // (`fire_action_via_transient`) still reads it before commit.
             sppf_collection_arena: winner.sppf_collection_arena,
             // Phase F.3a (2026-05-20): preserve winner's mirror.
             last_action_output_cat: winner.last_action_output_cat,
@@ -10551,7 +11138,10 @@ where
                 // mirror by interning the CollectionId leaf on the SPPF
                 // side and pushing the SppfId onto sppf_stack so the
                 // subsequent emit_fire_action's arity check passes.
-                let sid = self.sppf.intern_collection_id(*id as u32);
+                // Collection-accumulation fix (2026-05-29): EMPTY items here
+                // — elements are spliced separately into the per-cursor arena
+                // and snapshotted into the node at the fire site.
+                let sid = self.sppf.intern_collection_id(*id as u32, Vec::new());
                 // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                 // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
                 cursor.sppf_stack_id =
@@ -10577,9 +11167,33 @@ where
                 // from `builder.args_stack` into `builder.collections`.
                 // Mirror by popping the corresponding symbol from
                 // `cursor.sppf_stack` and appending to the per-cursor SPPF
-                // arena slot. Bounds-check on `id` matches the helper's
-                // defensive guard at `emit_splice_into_collection`.
-                if (*id as usize) < cursor.sppf_collection_arena.len() {
+                // arena slot.
+                //
+                // Cluster A fix (2026-05-29): resolve the target slot at
+                // RUNTIME as the innermost open collection
+                // (`collection_stack_depth - 1`), NOT the static per-rule
+                // `slot_idx` carried in `id`. The Class-3 ZIP-MAP-SEP names
+                // splice codegen bakes the static `slot_idx` (0 for PInputs
+                // `ns`), which is only correct with NO outer-collection
+                // nesting. When a PInputs nests inside a PPar bag (PPar bag =
+                // runtime slot 0, `ns` = runtime slot 1) the static id 0
+                // mis-routes the channel name into the OUTER bag, leaving
+                // `ns` empty → comm `multi_substitute_name([x],[])` → subst
+                // OOB. The `ns` CollectionMarker push (emit_push_side_effects)
+                // and the fire-site item snapshot already use the runtime id,
+                // so the splice must too. This mirrors the generic
+                // Pratt-element-close splice's runtime `acc_id` resolution
+                // (see the InfixLoop close path). `id` is retained in the
+                // variant as a debug cross-check (static slot_idx <= runtime
+                // innermost slot, since runtime accounts for outer nesting).
+                let acc_id = cursor.collection_stack_depth.saturating_sub(1) as usize;
+                debug_assert!(
+                    *id as usize <= acc_id,
+                    "SpliceIntoCollection: static slot_idx {} exceeds runtime \
+                     innermost slot {} (collection_stack_depth = {})",
+                    id, acc_id, cursor.collection_stack_depth,
+                );
+                if acc_id < cursor.sppf_collection_arena.len() {
                     // Phase F.13 chain_10000 Plan D E3 Substage 2
                     // (2026-05-26): arena.top + intern_pop replaces
                     // Arc::make_mut(&mut sppf_stack).pop. Read top first
@@ -10588,7 +11202,7 @@ where
                         cursor.sppf_stack_id =
                             self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                         Arc::make_mut(&mut cursor.sppf_collection_arena)
-                            [*id as usize]
+                            [acc_id]
                             .push(top);
                     }
                 }
@@ -10906,28 +11520,14 @@ where
             .unwrap_or(0)
     }
 
-    /// Phase F.4 (2026-05-18): post-commit accessor for the winner
-    /// cursor's SPPF collection arena.
-    ///
-    /// In multi-cursor pre-commit state, this returns the FIRST
-    /// branch_cursor's arena (any one of the live fanout cursors) —
-    /// which reflects ONLY that one cursor's splice history. Other
-    /// live cursors' content is invisible to this accessor. Pre-fix,
-    /// the walker-global arena held content from ALL live cursors
-    /// smashed together, which was the bug; the post-fix conservative
-    /// view (only one cursor's splices) is correct for the production
-    /// realize_* paths, all of which are called POST-COMMIT after
-    /// `commit_winner_at_eoi` has installed the surviving cursor at
-    /// `branch_cursors[0]`.
-    #[inline]
-    fn winner_collection_arena(&self) -> &[Vec<crate::sppf::SppfId>] {
-        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-        self.branch_cursors
-            .first()
-            .and_then(|f| f.as_concrete())
-            .map(|c| c.sppf_collection_arena.as_ref().as_slice())
-            .unwrap_or(&[])
-    }
+    // Collection-accumulation fix (2026-05-29): `winner_collection_arena()`
+    // GENUINELY REMOVED — both former callers (the realize DFS Enter arm and
+    // `realize_packing_call`'s `ActionArg::CollectionId` arm) now read each
+    // derivation's collection from the `CollectionId` SPPF node's own `items`
+    // field (snapshotted at the `emit_fire_action` fire site). Reading
+    // `branch_cursors[0]` was the root-cause bug: it returned ONE cursor's
+    // arena post-commit, truncating/emptying collections belonging to other
+    // (non-winner) derivations in an `Ambiguous([...])` result.
 
     /// Phase F.3c.2 (2026-05-20): reconstruct an `ActionArg` from a single
     /// SPPF node id, using `cursor.sppf_symbol_terms` as the memo for
@@ -11007,7 +11607,7 @@ where
                 // None defensively.
                 None
             }
-            SppfNode::CollectionId { id } => Some(ActionArg::CollectionId(*id as u8)),
+            SppfNode::CollectionId { id, .. } => Some(ActionArg::CollectionId(*id as u8)),
             SppfNode::OptAbsent { .. } => Some(ActionArg::Optional(None)),
             SppfNode::Predicate { handle } => self
                 .sppf_predicate_arena
@@ -11362,6 +11962,41 @@ where
                 .is_some();
             let transient_result =
                 self.fire_action_via_transient(cursor, symbol, &children);
+            // Collection-accumulation fix (2026-05-29): re-intern each
+            // CollectionId child carrying a SNAPSHOT of the OWNING cursor's
+            // arena slot, so the element SppfIds become derivation-local in
+            // the SPPF. Realize then reads `items` from the node (not the
+            // post-commit `branch_cursors[0]` arena, which truncated
+            // collections belonging to non-winner cursors). Each CollectionId
+            // child is handled independently (multi-slot rules have several).
+            // This does NOT change `lo_pos` (CollectionId nodes have no span)
+            // nor the already-fired transient (which read the arena directly).
+            //
+            // Two-phase to satisfy the borrow checker: first snapshot
+            // (immutable read of `self.sppf` + `cursor.sppf_collection_arena`),
+            // then re-intern (mutable `self.sppf`).
+            let collection_snapshots: Vec<Option<(u32, Vec<crate::sppf::SppfId>)>> =
+                children
+                    .iter()
+                    .map(|&c| match self.sppf.node(c) {
+                        Some(crate::sppf::SppfNode::CollectionId { id, .. }) => {
+                            let slot_id = *id;
+                            let items: Vec<crate::sppf::SppfId> = cursor
+                                .sppf_collection_arena
+                                .get(slot_id as usize)
+                                .cloned()
+                                .unwrap_or_default();
+                            Some((slot_id, items))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+            let mut children = children;
+            for (slot, snap) in children.iter_mut().zip(collection_snapshots.into_iter()) {
+                if let Some((slot_id, items)) = snap {
+                    *slot = self.sppf.intern_collection_id(slot_id, items);
+                }
+            }
             match (has_action, transient_result) {
                 (true, None) => {
                     // Elide / arity mismatch — action_fn returned without
@@ -11516,7 +12151,12 @@ where
     fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
         // C3 dual-mode: push a CollectionId placeholder onto sppf_stack so
         // the fire_action arity check matches builder.stack arity.
-        let sid = self.sppf.intern_collection_id(id as u32);
+        // Collection-accumulation fix (2026-05-29): this placeholder push
+        // happens BEFORE elements are spliced into the cursor's arena, so it
+        // carries EMPTY items here. `emit_fire_action` re-interns each
+        // CollectionId child with the snapshot of the owning cursor's arena
+        // slot immediately before `intern_packing`.
+        let sid = self.sppf.intern_collection_id(id as u32, Vec::new());
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
         cursor.sppf_stack_id =
@@ -14058,7 +14698,9 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WpdaMaxStepsExceeded>
     where
-        W: 'static + std::fmt::Debug,
+        // M1.PERF (2026-05-31): propagated from `run_to_end_of_input`
+        // (the spurious-blowup gate's `realize_root_to_terms` call).
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
         let max_steps = std::env::var("PRATTAIL_MAX_STEPS")
             .ok()

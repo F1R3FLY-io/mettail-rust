@@ -145,6 +145,10 @@ pub(crate) fn emit_engine_impl_full(
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
+    // Pass-2c token-soundness backstop (2026-05-30): per-rule in-span literal
+    // count consumed by the realize-time soundness filter.
+    let min_terminal_span_body =
+        semantic_actions::emit_min_terminal_span_body(categories, &per_cat_indexed);
 
     // Phase 3: InfixLoop dispatch arm. Per-category match on
     // `state_cat_src_idx` calling the emitted `infix_bp_<cat>` lookup
@@ -1786,6 +1790,16 @@ pub(crate) fn emit_engine_impl_full(
                 // so both `push_term::<Cat>` and
                 // `push_term::<NativeTy>` resolve correctly.
                 #cat_of_type_name_body
+            }
+
+            fn min_terminal_span(&self, src_idx: u16, rule_idx: u16) -> u32 {
+                // Pass-2c token-soundness backstop (2026-05-30): per-rule
+                // count of literal terminals matched STRICTLY WITHIN the
+                // rule's result-Symbol span (literals after the first param).
+                // The realize-time filter rejects any packing whose Symbol
+                // span leaves less slack than this — dropping token-unsound
+                // fabricated-cast derivations on evidence (yield != span).
+                #min_terminal_span_body
             }
         }
     }

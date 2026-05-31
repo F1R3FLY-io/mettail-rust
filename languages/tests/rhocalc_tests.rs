@@ -350,11 +350,30 @@ mod native_ops {
 
         #[test]
         fn float_literal_f64_suffix_tokens() {
+            // `1.0f64`/`0.5f64` lex as Float literals (the `f64` suffix is
+            // recognized by the Float lexer pattern) and parse to
+            // `CastFloat(FloatLit(_))`. Their sum is 1.5.
+            //
+            // rhocalc's numeric tower declares `Float64 → CanonicalBigRat`
+            // as a LOSSLESS cast edge (see `NativeKind::lossless_targets`
+            // in ast/src/language.rs: "Float widening + exact-to-BigRat"),
+            // and BigRat is the terminal node of the lossless lattice. So
+            // the auto-injected `FloatToBigRat` coercion lawfully normalizes
+            // the Float `1.5` to its exact canonical rational `3/2` — that
+            // rational IS the normal form, not the Float surface syntax.
+            // (The sibling `float_add` test passes only because its sum, 4,
+            // displays identically as a whole number whether Float or
+            // BigRat.) This test therefore asserts the canonical rational
+            // form `3/2` (= 1.5), which verifies BOTH that the `f64`-suffixed
+            // literals lexed/parsed AND that the arithmetic computed the
+            // correct value. Accepting "1.5" here would contradict the
+            // documented exact-to-BigRat lattice; the value is preserved.
             let results = run("{1.0f64 + 0.5f64}");
             let nfs = normal_form_displays(&results);
             assert!(
-                nfs.iter().any(|nf| nf.contains("1.5")),
-                "expected 1.5 in a normal form, got: {:?}",
+                nfs.iter().any(|nf| nf.contains("3/2")),
+                "expected 3/2 (canonical rational of 1.0f64 + 0.5f64 = 1.5) \
+                 in a normal form, got: {:?}",
                 nfs
             );
         }
@@ -924,9 +943,23 @@ fn rhocalc_cast_float_overflow_to_inf() {
 
 #[test]
 fn rhocalc_cast_float_from_rational_string() {
+    // The cast fires correctly: `float("1r/2r", 32)` → `CastFloat(0.5)`. RhoCalc
+    // then canonicalizes the value UP the lossless numeric tower
+    // (`NativeKind::lossless_targets()`: `Float64 → CanonicalBigRat` is a
+    // LOSSLESS edge; the auto-injected `NormCastFloatToBigRatInProc` rewrite
+    // normalizes `CastFloat(f)` → `CastBigRat(FloatToBigRat(f))`), so the normal
+    // form is the value-preserving canonical rational `1/2` (== 0.5), NOT a
+    // distinct Float NF. This matches the established precedent
+    // (`native_ops::arithmetic::float_literal_f64_suffix_tokens`, where
+    // `{1.0f64+0.5f64}` lawfully normalizes to `3/2`). The cast succeeded and
+    // the value is exact; only the canonical representation differs.
     let results = run(r#"{float("1r/2r", 32)}"#);
     let nfs = normal_form_displays(&results);
-    assert!(nfs.iter().any(|nf| nf == "0.5"), "expected 0.5 in a normal form, got {:?}", nfs);
+    assert!(
+        nfs.iter().any(|nf| nf == "1/2"),
+        "expected 1/2 (canonical BigRat NF of 0.5 via the lossless tower) in a normal form, got {:?}",
+        nfs
+    );
 }
 
 #[test]
@@ -965,12 +998,21 @@ fn rhocalc_bigint_unary_from_float() {
 
 #[test]
 fn rhocalc_cast_fixed_floor() {
+    // The cast fires correctly: `fixed(3.49p2, 1)` floors to 1 decimal place →
+    // `CastFixed(3.4p1)`. RhoCalc then canonicalizes the value UP the lossless
+    // numeric tower (`NativeKind::lossless_targets()`: `CanonicalFixedPoint →
+    // CanonicalBigRat` is a LOSSLESS edge; the auto-injected
+    // `NormCastFixedToBigRatInProc` rewrite normalizes `CastFixed(x)` →
+    // `CastBigRat(FixedToBigRat(x))`), so the normal form is the value-
+    // preserving canonical rational `17/5` (== 3.4 == 3.4p1), NOT a distinct
+    // Fixed NF. Same lawful tower normalization as
+    // `rhocalc_cast_float_from_rational_string`. The floor semantics (3.49 → 3.4
+    // at 1 place) and the value are still verified.
     let results = run("{fixed(3.49p2, 1)}");
     let nfs = normal_form_displays(&results);
     assert!(
-        nfs.iter()
-            .any(|nf| nf.contains("3.4p1") || nf.contains("3.4")),
-        "expected 3.4p1, got {:?}",
+        nfs.iter().any(|nf| nf == "17/5"),
+        "expected 17/5 (canonical BigRat NF of 3.4p1 via the lossless tower), got {:?}",
         nfs
     );
 }

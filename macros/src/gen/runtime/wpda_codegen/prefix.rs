@@ -1489,12 +1489,24 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                 rule_idx,
                 source_src_idx,
             } => {
-                // WPDS-architectural redesign (2026-05-13): Pass 2c
-                // implicit-cast synthesized arm. Same emission shape as
-                // CrossCatProjection BUT weight is BP_TIER_PASS2C_SYNTHESIZED
-                // (0.15) instead of 0.0, so a direct user-declared cast
-                // ALWAYS wins lex-min over an implicit-cast chain reaching
-                // the same configuration.
+                // Pass 2c implicit-cast synthesized arm — same emission shape
+                // as CrossCatProjection (delegate to source via
+                // CrossCatDelegate, fire the cast action on the Return pop).
+                //
+                // Pass-2c token-soundness fix (§5, 2026-05-30): the
+                // `BP_TIER_PASS2C_SYNTHESIZED` (0.15) tier is RETAINED, but its
+                // role is now SOUND-branch disambiguation ONLY (prefer the
+                // minimal cast interpretation among SOUND ties), NOT a
+                // soundness crutch. The token-UNSOUND fabrication this wrap
+                // could produce — firing the cast action WITHOUT the cast's
+                // `"("`/`")"` being matched (e.g. `bool(0)` →
+                // `FloatToBool(IntToFloat(0))`) — is now rejected on EVIDENCE
+                // at realize time by `WpdaEngine::min_terminal_span` + the
+                // span filter in `realize_node_leave`, independent of weight.
+                // (The tier is kept rather than zeroed because removing it
+                // regresses legitimately-ambiguous SOUND chained-comparison
+                // cases like `int(b >= N <= b >= M)` whose canonical reading
+                // depends on this ordering — see lex_weight.rs.)
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
                 quote! {
@@ -1591,10 +1603,15 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     rule_idx,
                     source_src_idx,
                 } => {
-                    // WPDS-architectural redesign (2026-05-13): Pass 2c
-                    // implicit-cast multi-branch arm. Same emission shape as
-                    // CrossCatProjection but with BP_TIER_PASS2C_SYNTHESIZED
-                    // weight to ensure direct casts win lex-min.
+                    // Pass 2c implicit-cast multi-branch arm — same emission
+                    // shape as CrossCatProjection.
+                    //
+                    // Pass-2c token-soundness fix (§5, 2026-05-30): the
+                    // `BP_TIER_PASS2C_SYNTHESIZED` (0.15) tier is RETAINED for
+                    // SOUND-branch disambiguation only (see the singleton
+                    // ImplicitCast arm above). Soundness is enforced
+                    // independently by the realize-time `min_terminal_span`
+                    // span filter, not by this weight.
                     let rule_idx = *rule_idx;
                     let src_idx = *source_src_idx;
                     quote! {

@@ -2239,6 +2239,35 @@ fn generate_language_struct_multi(
                             wrapped.hash(&mut hasher);
                             hasher.finish()
                         };
+                        // Stage 3.13d Bug B (2026-05-29): cross-category
+                        // observational-equivalence dedup. The parser can
+                        // preserve TWO alts that are the SAME source term up
+                        // to a transparent identity cast (e.g. `2.0 + 2.5`
+                        // parses to BOTH `Float::AddFloat(..)` AND
+                        // `Proc::ProcFloat(AddFloat(..))`). `ProcFloat` is a
+                        // transparent projection wrapper, so both produce
+                        // the SAME `semantic_hash` (observational equivalence
+                        // under Ascent's rewrite relation; the wrapper has no
+                        // syntax / no action). Collapsing them keeps
+                        // `all_terms` free of these cross-cat duplicates
+                        // WITHOUT collapsing evaluatively-distinct alts: the
+                        // `-3!` pair `Int::Fact(NumLit(-3))` (evals "error")
+                        // vs `Int::Neg(Fact(NumLit(3)))` (evals "-6") carry
+                        // DIFFERENT semantic_hashes (`Fact`/`Neg` are
+                        // non-transparent → discriminants emitted) and so are
+                        // BOTH retained. This is observational dedup, not
+                        // Display dedup. Equivalent terms share NF status
+                        // (transparent casts are pure identity), so keeping
+                        // the first-seen representative is sound.
+                        let __sem_key = {
+                            use std::hash::Hasher;
+                            let mut __h = std::collections::hash_map::DefaultHasher::new();
+                            t.semantic_hash(&mut __h);
+                            __h.finish()
+                        };
+                        if !__seen_sem.insert(__sem_key) {
+                            continue;
+                        }
                         let has_rewrites = rewrites_cat.iter().any(|(from, _)| from == t);
                         __all_term_infos.push(mettail_runtime::TermInfo {
                             term_id,
@@ -2308,6 +2337,11 @@ fn generate_language_struct_multi(
             let mut __all_term_infos: Vec<mettail_runtime::TermInfo> = Vec::new();
             let mut __all_rewrites: Vec<mettail_runtime::Rewrite> = Vec::new();
             let mut __all_equivalences: Vec<mettail_runtime::EquivClass> = Vec::new();
+            // Stage 3.13d Bug B (2026-05-29): shared cross-category
+            // observational-equivalence dedup set (semantic_hash keys). See
+            // the per-category push site below for rationale and the `-3!`
+            // safety argument.
+            let mut __seen_sem: std::collections::HashSet<u64> = std::collections::HashSet::new();
             let mut custom_relations = std::collections::HashMap::new();
             #custom_relation_extraction
             #(#multi_cat_union_extract_blocks)*

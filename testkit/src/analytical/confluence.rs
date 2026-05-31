@@ -126,6 +126,28 @@ fn parse_pattern_to_term(pattern: &str) -> Option<Term> {
         return Some(Term::var(trimmed));
     }
 
+    // Single ASCII letter (any case) is ALWAYS a metavariable, never a
+    // nullary constructor. MeTTaIL's universal convention: bound rule
+    // metavariables are single letters (`S`, `T`, `X`, `v`, `x`, `y`, `n`,
+    // `p`, `q`, ...). No language uses a single lowercase letter as a
+    // nullary constructor (those are multi-letter keywords like `new`,
+    // `nil`, or quoted terminals like `cast_error_int`), and no single
+    // lowercase letter is ever a function/App head in any rewrite pattern.
+    //
+    // This is the fix for the rhocalc/ledtest termination false-negative:
+    // the auto-injected `NormCast<Src>To<Tgt>In<Cat>` rules render to user
+    // syntax `v ~> v` (the cast wrappers are invisible transparent
+    // projections). Pre-fix, the bare-identifier heuristic below classified
+    // lowercase `v` as a nullary constant `App{v,[]}`, turning a reflexive
+    // identity `Var(v) → Var(v)` into a self-looping defined-symbol DP
+    // `⟨v#(), v#()⟩` with zero arity → flagged "no decreasing ordering" →
+    // spurious PotentiallyNonTerminating. As a variable, `Var(v) → Var(v)`
+    // yields NO dependency pairs (extract_dependency_pairs skips Var LHS),
+    // which is the correct verdict: an identity rewrite is terminating.
+    if trimmed.len() == 1 && trimmed.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Some(Term::var(trimmed));
+    }
+
     // Parenthesized application: (Label arg1 arg2 ...)
     if trimmed.starts_with('(') && trimmed.ends_with(')') {
         let inner = &trimmed[1..trimmed.len() - 1].trim();

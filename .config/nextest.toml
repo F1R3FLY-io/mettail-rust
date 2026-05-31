@@ -1,0 +1,27 @@
+# cargo-nextest configuration.
+#
+# Rationale (2026-05-29, "drive suite green" workstream): the full-workspace run
+# had NO slow-timeout, so two binder-heavy proptest campaigns
+# (gen_rhocalc_prop::sim_rhocalc_proptest_campaign,
+#  gen_ambient_prop::proc_display_parse_roundtrip) ran unbounded >39 min and
+# stalled the whole run. These profiles BOUND hangs (a terminated test FAILS
+# loudly, surfacing the root cause) WITHOUT weakening coverage. This is a
+# CI/build-config change only — no product runtime behavior changes — so the
+# Welch-t-test gate does not apply.
+
+[profile.default]
+# Local/dev default: warn at 60s, terminate after 3 periods (180s).
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci]
+# Full-suite runs. fail-fast off so one failure does not mask the rest.
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 5 }   # 600s general cap
+
+# Property-test campaigns + display/parse roundtrips are legitimately long: the
+# known-GOOD gen_calculator_prop::sim_calculator_proptest_campaign passes at
+# ~1391s. Give this class a longer leash (1800s) so the good campaign still
+# passes while the >2340s binder-heavy HANGS are still bounded.
+[[profile.ci.overrides]]
+filter = 'test(/proptest_campaign/) | test(/display_parse_roundtrip/)'
+slow-timeout = { period = "180s", terminate-after = 10 }   # 1800s cap

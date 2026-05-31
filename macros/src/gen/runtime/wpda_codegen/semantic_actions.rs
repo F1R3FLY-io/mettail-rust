@@ -96,6 +96,91 @@ pub fn emit_action_for_body(
     }
 }
 
+/// Pass-2c token-soundness backstop (2026-05-30): emit the body of
+/// `WpdaEngine::min_terminal_span` — a `match (src_idx, rule_idx)` returning,
+/// per rule, the count of `SyntaxExpr::Literal` terminals that appear AFTER
+/// the rule's FIRST parameter in its `syntax_pattern`. Those literals are
+/// matched STRICTLY WITHIN the rule's result-Symbol span (leading literals
+/// before the first param are consumed as out-of-span `TriggerTerminal`s), so
+/// a sound derivation's Symbol span must exceed the operand spans by at least
+/// this many input positions. See `WpdaEngine::min_terminal_span` for the full
+/// soundness rationale and the realize-time filter that consumes this.
+///
+/// Only emitted for rules whose `syntax_pattern` is a plain literal/param
+/// sequence (NO `SyntaxExpr::Op` meta-syntax — collection `#sep`/`#zip`/`#map`
+/// etc. have variable-length structure whose span arithmetic is not a fixed
+/// literal count; those return 0 = no constraint, which never rejects). Rules
+/// with a zero count are omitted (default arm returns 0). This targets exactly
+/// the trigger-bearing cast shape `"t" "(" a ")"` (count = 1, the trailing
+/// `")"`) whose fabricating Pass-2c wrap is the falsified soundness bug.
+pub fn emit_min_terminal_span_body(
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    use mettail_ast::grammar::SyntaxExpr;
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let cat_u16 = cat_i as u16;
+        for (rule_idx, rule) in rules {
+            let Some(sp) = rule.syntax_pattern.as_ref() else { continue; };
+            // Skip patterns containing meta-syntax Op (collections): their
+            // span is not a fixed literal count.
+            if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) {
+                continue;
+            }
+            // Emit the constraint ONLY for rules whose `term_context` params
+            // are ALL `Simple` (a plain typed operand `a:Y` that parses to a
+            // Symbol child carrying a real input span). Any non-Simple param —
+            // `^x.body` Abstraction / MultiAbstraction (the bound variable is a
+            // BinderScope/Ident with NO span), GuardBody, or Optional — makes
+            // the realize-time `slack = sym_span - Σ child spans` arithmetic
+            // undercount the children (no span for the binder var) and would
+            // wrongly reject sound derivations (observed: ambient PNew
+            // `"new" "(" x "," p ")"` → `nested_new`). The Pass-2c fabrication
+            // this backstop targets is a SIMPLE unary cast
+            // (`<Y>To<X> . a:Y |- "t" "(" a ")"`) — all-Simple params — never a
+            // binder; binders/guards parse soundly via their own machinery.
+            let all_simple_params = rule
+                .term_context
+                .as_ref()
+                .map(|tc| {
+                    tc.iter().all(|p| {
+                        matches!(p, mettail_ast::grammar::TermParam::Simple { .. })
+                    })
+                })
+                .unwrap_or(true);
+            if !all_simple_params {
+                continue;
+            }
+            // Count literals strictly after the first Param.
+            let mut seen_param = false;
+            let mut post_param_literals: u32 = 0;
+            for e in sp.iter() {
+                match e {
+                    SyntaxExpr::Param(_) => seen_param = true,
+                    SyntaxExpr::Literal(_) if seen_param => post_param_literals += 1,
+                    _ => {}
+                }
+            }
+            if post_param_literals > 0 {
+                let r = *rule_idx;
+                arms.push(quote! { (#cat_u16, #r) => #post_param_literals, });
+            }
+        }
+    }
+    let _ = categories;
+    if arms.is_empty() {
+        quote! { 0u32 }
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#arms)*
+                _ => 0u32,
+            }
+        }
+    }
+}
+
 /// D7 fix (2026-05-13): Look up a zero-arity terminal-keyword rule for
 /// `cat_name` whose label can serve as an error-fallback variant for a
 /// failing literal-eval action.
