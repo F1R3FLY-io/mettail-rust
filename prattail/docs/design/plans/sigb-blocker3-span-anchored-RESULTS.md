@@ -171,3 +171,39 @@ span drain never fires; the small WINs are interleaving noise, hot path byte-ide
 RSS: control max 26180 KB vs treatment max 26100 KB — treatment LOWER; chain_1000/2000 within +5%.
 
 calc with all 3 M7.3 tests = **214/6** (211 + 3 new B3 tests; 6 unchanged = 2 Float STOP + 4 eval-ambiguity).
+
+## M7.4 — full sweep. VERDICT: PASS (all gates green for the Bool subset).
+
+- gauntlet `cargo test --release -p mettail-prattail --lib` = **4220/0** (`b3-span-m74-gauntlet.log`).
+- C-bis cycle/newton/tarjan/star/scc/self_loop = **0 failures** (83 such tests pass, within the gauntlet).
+- op-suites: `gen_calculator_op` **1331/0** (≥1331 ✓); `gen_rhocalc_op` **532/0** (=532 ✓).
+- `edge_case_tests` **229/0** (the `-3!` regression ✓); `probe_neg_zero` **23/0** ✓.
+- `wpda_parity_calculator` **16/0** (incl. `wpds_parse_rejects_bare_bool_in_int_slot_token_unsound` ✓);
+  `wpda_parity_calculator_cross_cat` **2/0** ✓.
+- `pass2c_token_soundness_probe` green (extended with the 2 var-first Bool casts).
+- rhocalc pre-existing-fail = **0** (gen_rhocalc_op 532/0, gen_rhocalc_unit 126/0, gen_rhocalc_rewrite 86/0; ≤8 ✓).
+- gen_calculator_unit 2/0, gen_calculator_analytical 169/0 — no regression.
+- calc full suite = **214/6** (211 base-pass + 3 new B3 tests; 6 = `test_nested_float_float_int` +
+  `test_triple_nested_float` [Float STOP] + 4 pre-existing eval-ambiguity).
+
+## FINAL VERDICT (pgmcp experiment #9): SPLIT — BOOL FAMILY CLOSED, FLOAT FAMILY STOPPED.
+
+- **Bool family FULLY CLOSED.** `simulator_regression_bool_prefix_tokens` (both var-first targets
+  `int(y != true > x < "qua")` + `int(y and b == y < "x")`) GREEN. The span-anchored
+  reconstruction (`R.span_lo == K_sib.pos` + category-compat + depth-1 coercion interposition,
+  EOI/pre-Error retention, take-once `crosswrap_drained` termination) closes the §1.2 left-assoc
+  fold defect that M5.0→M6.0 could not. Splice count 14 (>1000x below M5.1's 16251); Welch-neutral;
+  ambiguity-preserving; token-sound. `B3_DISABLE=1` / `B3_SPAN_DISABLE=1` restore Blocker-2.
+- **Float family STOPPED** (design R2 split-verdict). `test_nested_float_float_int` +
+  `test_triple_nested_float` REMAIN. Root cause (localized, OUT OF SCOPE): the `float(`-prefix
+  unary-vs-binary-fold Fork does not resolve when `FloatBin`'s `a:Proc` slot is itself
+  `float(...)`/`int(...)` — the inner 2-param fold never reduces to a `[2,7]` Float Symbol, so
+  there is no body to span-anchor (`[C7-4](b)` falsified, full-SPPF-verified). A DISTINCT defect
+  requiring its own `float(`-prefix-dispatch plan, NOT span-anchored reconstruction.
+- **calc release = 214/6**, NOT the design's aspirational 213/4 (which assumed Float would also
+  close). The cast family is CLOSED FOR THE BOOL SUBSET; the 2 residual Float tests are a distinct,
+  out-of-scope `float(`-fold Fork defect. This is the precisely-reported SPLIT verdict the design §6
+  anticipated ("If SPLIT (Bool closes, Float deeper), say so precisely").
+
+Deliverables: `/var/tmp/suite-green/sigb-cast-family-FINAL.patch` (full = Blocker-2 + M7.0-M7.4);
+`/var/tmp/suite-green/b3-span-m7k-delta.patch` (pure additions vs Blocker-2; +1373/-7; applies cleanly).
