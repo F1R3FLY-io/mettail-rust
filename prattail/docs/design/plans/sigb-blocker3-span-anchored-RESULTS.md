@@ -99,3 +99,75 @@ M7.1 GATE (PASS):
 - R8 (the genuine BoolToInt member not directly span-anchored) did NOT manifest: the
   SPPF-dedup + `merge_equivalent_cursors` + the span-anchored revival of the available
   pos:2 members (with §2.4c coercion interposition) collectively resolve the genuine derivation.
+
+## M7.2 — Float family: STOP CONFIRMED (deeper defect, distinct residual). VERDICT: SPLIT.
+
+Per the M7.0 `[C7-4]` STOP gate (the design's R2 split-verdict provision), the Float family
+is NOT addressable by span-anchored reconstruction. M7.2 re-confirmed the STOP with a sharper
+discriminator and localized the genuine defect:
+
+- `take_span_anchored_outer_cast` fires **0 Float pairings** on `float(float(10,64),64)` —
+  correctly, because NO SPPF Symbol with `span_lo=2` ever exists (re-verified full-SPPF scan).
+- DISCRIMINATOR (via `parse_term`): the defect is the OUTER `float(` 2-param fold, NOT the inner:
+  - `int(int(5,32),32)` → OK, `int(float(42,64),32)` → OK (outer `int(` fold nests fine).
+  - `float(float(10,64),64)` → ERR, `float(int(5,32),64)` → ERR (outer `float(` fold fails for ANY inner).
+  - inner `float(10,64)` STANDALONE → OK (`float(10 , 64)`); single-arg `float(float(3))`/`float(3)` → OK.
+- ROOT CAUSE (localized, OUT OF SCOPE for this plan): `float(` is the shared prefix of BOTH the
+  UNARY casts (`IntToFloat`/`BoolToFloat`/`StrToFloat`/`FloatId` = `a:X |- "float" "(" a ")"`) AND
+  the BINARY `FloatBin . a:Proc, w:Int |- "float" "(" a "," w ")"`. When `FloatBin`'s first slot
+  `a:Proc` is itself a `float(...)`/`int(...)`, the `float(`-prefix Fork between the unary-cast arm
+  and the binary-fold arm does not resolve — the inner 2-param fold never reduces to a `[2,7]`
+  Float Symbol. (`int(`/`uint(`/`fixed(` resolve their analogous Fork; only `float(` fails — a
+  `float(`-prefix-dispatch arity-disambiguation defect, upstream of where span-anchoring operates.)
+- This is a DISTINCT residual requiring its own plan (a `float(`-prefix unary-vs-binary-fold Fork
+  disambiguation), NOT span-anchored reconstruction (which presupposes the inner Float `[2,7]`
+  Symbol exists; it never does). STOP per `[C7-4]` (do NOT force / hack / relax clause-4 per design).
+- Float gate items that DO hold: `simulator_regression_cross_cat_with_floats` GREEN (Float-in-chain),
+  `test_nested_int_float` GREEN (Float inner under `int(` outer), single-arg `float(float(3))`/`float(3)`
+  GREEN. ONLY `test_nested_float_float_int` + `test_triple_nested_float` (outer `float(` fold) remain.
+
+## SPLIT VERDICT SUMMARY
+- **Bool family: FULLY CLOSED** (`simulator_regression_bool_prefix_tokens` GREEN). calc 210/7 → 211/6.
+- **Float family: STOPPED** (deeper `float(`-prefix-fold Fork defect; `test_nested_float_float_int`
+  + `test_triple_nested_float` remain). The cast family is NOT fully closed (calc 211/6, not 213/4);
+  the residual 2 Float tests are a distinct out-of-scope defect, NOT a span-anchored-reconstruction gap.
+
+## M7.3 — TERMINATION + Welch + ambiguity (Bool subset). VERDICT: PASS.
+
+Added to `languages/tests/calculator.rs`:
+- `sigb_b3_span_anchored_termination_bool` — the 2 corpus Bool targets + a synthetic
+  5-op (`int(a != b > c < d <= "z")`) + 6-op (`int(a != b > c < d >= e <= "z")`) var-first
+  Int->Str-tail chain ALL parse AND RETURN (the Ok return IS the termination certificate:
+  the take-once `crosswrap_drained` set bounds re-injection to a fixpoint). PASS.
+- `sigb_b3_span_anchored_baseline_passes_remain_green` — the 6 boollit/paren-first corpus
+  inputs (which pass via the FORWARD path) stay green (span drain never fires for them). PASS.
+- `sigb_b3_span_anchored_ambiguity_preservation` — `parse_via_wpda_all` on the 2 targets yields
+  >=1 derivation AND every alt is token-sound (non-paren token sequence == input). PASS.
+- token-soundness probe extended with the 2 var-first Bool casts. PASS.
+- R4 REFINEMENT: the all-var minimal `int(y != z > x < "qua")` ERRs on BOTH arms identically
+  (no literal -> no full-span Bool body to anchor -> nothing sound to revive); a never-passing
+  input, NOT a regression. Removed from the termination test with an explanatory note.
+
+TERMINATION BOUND (empirical, from the SIGB_SPAN trace on `:2188`): **14 distinct (K_sib, body)
+span-anchored pairings spliced** (>1000x below M5.1's 16251-cursor over-fire); the pre-Error
+retention fires ONCE (1 injection of the member×snapshot fanout), then the parse resolves
+without re-dropping; parse completes in 0.19s (no hang).
+
+WELCH chain panel (`b3_span_welch_driver.sh`, N=51, 3 rounds, `taskset -c 2-3`, perf-gov;
+control = B3_DISABLE=1 + B3_SPAN_DISABLE=1, treatment = B3 ON; `b3-span-welch-analysis.log`):
+```
+config         ctrl_ms  ctrl_sd   treat_ms treat_sd    delta%      verdict
+left_50         3.8858   0.0253     3.8786   0.0281    -0.18%   WIN(treat faster)
+left_100        7.4982   0.0560     7.5110   0.0823    +0.17%   neutral
+left_200       15.2141   0.3302    15.0038   0.2290    -1.38%   WIN(treat faster)
+right_50        0.8298   0.0214     0.8088   0.0114    -2.53%   WIN(treat faster)
+right_100       1.3511   0.0395     1.2860   0.0118    -4.82%   WIN(treat faster)
+right_200       2.3364   0.0523     2.2983   0.0243    -1.63%   WIN(treat faster)
+right_1000     11.2340   0.7016    10.7873   0.3437    -3.98%   WIN(treat faster)
+right_2000     22.5888   1.3826    22.0659   1.0461    -2.31%   WIN(treat faster)
+```
+**ANY ARM LOSS (p<0.05): False** — the gate. B3 is Welch-neutral on cast-free chains (the
+span drain never fires; the small WINs are interleaving noise, hot path byte-identical).
+RSS: control max 26180 KB vs treatment max 26100 KB — treatment LOWER; chain_1000/2000 within +5%.
+
+calc with all 3 M7.3 tests = **214/6** (211 + 3 new B3 tests; 6 unchanged = 2 Float STOP + 4 eval-ambiguity).
