@@ -4157,6 +4157,41 @@ where
                     if self.revive_orphaned_cohort_members_once(tokens) > 0 {
                         continue;
                     }
+                    // Sig-B Blocker-3 §2.4a (2026-06-01, pgmcp experiment #9):
+                    // the SPAN-ANCHORED outer-cast EOI retention, alongside the
+                    // orphan revival. At the structural fixpoint a paused
+                    // outer-cast member's full-span body may have resolved at a
+                    // DIFFERENT dispatch pos (§1.2 left-assoc fold). Pair by
+                    // SPAN ALIGNMENT + category compat (+ §2.4c coercion) and
+                    // re-inject; re-enter the fanout loop so the spliced member
+                    // fires its cast. The take-once `crosswrap_drained` set
+                    // bounds re-injection (§3). Gated by B3_DISABLE +
+                    // B3_SPAN_DISABLE; skipped (→ clean exit = Blocker-2) when set.
+                    if !b3_disabled() && !b3_span_disabled() {
+                        let revived = self.revive_span_anchored_outer_cast_members();
+                        if !revived.is_empty() {
+                            if sigb_m70_trace() {
+                                eprintln!(
+                                    "[SIGB_SPAN] EOI retention injected {} cursor(s) — re-entering fanout",
+                                    revived.len()
+                                );
+                            }
+                            for c in revived {
+                                self.branch_cursors
+                                    .push(crate::cohort_lazy::Frame::Concrete(c));
+                            }
+                            let branches: Vec<crate::gss::GssNodeId> = self
+                                .branch_cursors
+                                .iter()
+                                .map(|f| match f {
+                                    crate::cohort_lazy::Frame::Concrete(c) => c.node,
+                                    crate::cohort_lazy::Frame::Cohort(cf) => cf.shell.node,
+                                })
+                                .collect();
+                            self.state = WpdaState::AmbiguityFanout { branches };
+                            continue;
+                        }
+                    }
                     // No orphans to revive (or budget exhausted) — true
                     // parked frontier. Exit cleanly.
                     return Ok(());
@@ -9337,6 +9372,49 @@ where
         }
         eprintln!("[SIGB_M70] resolved_total={}", resolved_count);
 
+        // ── §A'. InFlight-entry survey: print every InFlight key with its
+        //    pending_members count. This is the OTHER half of the paused-
+        //    member population (the span scan iterates these as K_sib). The
+        //    genuine outer-cast member may be InFlight (worker still pending)
+        //    rather than Resolved — this reveals whether the (1,11)=BoolToInt
+        //    member is paused-with-members at the drop boundary.
+        let mut inflight_count = 0usize;
+        let mut inflight_with_members = 0usize;
+        for (key, entry) in self.dispatch_cohort_cache.entries.iter() {
+            if let DispatchCacheEntry::InFlight {
+                pending_members,
+                cohort_size,
+                worker_snapshots,
+                ..
+            } = entry
+            {
+                inflight_count += 1;
+                if !pending_members.is_empty() {
+                    inflight_with_members += 1;
+                }
+                // Only print InFlight entries that are paused-member-bearing
+                // (the span-scan-eligible ones) to bound output.
+                if !pending_members.is_empty() {
+                    eprintln!(
+                        "[SIGB_M70]   IF key{{pos:{},src:{},bp:{},wrap:({},{})}} \
+                         cohort_size={} snaps={} members={}",
+                        key.pos,
+                        key.source_src_idx,
+                        key.inner_cur_bp,
+                        key.wrap_cat,
+                        key.wrap_rule,
+                        cohort_size,
+                        worker_snapshots.len(),
+                        pending_members.len(),
+                    );
+                }
+            }
+        }
+        eprintln!(
+            "[SIGB_M70] inflight_total={} inflight_with_members={}",
+            inflight_count, inflight_with_members
+        );
+
         // ── §B. SPAN-ANCHORED pairing scan (THE [C7-2]/[C7-3] core, NEW vs
         //    M6.0). For each Resolved `R` with SPPF span [lo,hi] and each
         //    paused member key `K_sib` (non-empty pending_members), test the
@@ -10343,10 +10421,50 @@ where
         if self.branch_cursors.is_empty() {
             // Sig-B Blocker-3 M7.0 DIAGNOSTIC-CONFIRM (2026-06-01, INERT):
             // reproduce the six [C7-n] predicates at this pre-Error drop
-            // boundary. READ-ONLY; printed BEFORE the Error so the verdict
+            // boundary. READ-ONLY; printed BEFORE the retention so the verdict
             // reflects the un-revived cache state. Gated by SIGB_CROSSWRAP.
             if sigb_m70_trace() {
                 self.sigb_m70_span_diagnostic(tokens);
+            }
+            // Sig-B Blocker-3 §2.4a (2026-06-01, pgmcp experiment #9): the
+            // SPAN-ANCHORED outer-cast PRE-ERROR retention. The frontier has
+            // collapsed (all forks dropped), but a sound derivation may EXIST
+            // for a paused outer-cast member whose body resolved at a DIFFERENT
+            // dispatch pos (the left-assoc fold §1.2). Before declaring Error,
+            // attempt the span-anchored drain: pair each paused member with a
+            // Resolved body by SPAN ALIGNMENT (R.span_lo == K_sib.pos) +
+            // category compat, interposing a single-hop coercion when needed
+            // (§2.4c). If ≥1 cursor is injected, re-enter the fanout loop
+            // (return AmbiguityFanout) instead of Error so the spliced member
+            // fires its cast + consumes `)`. The take-once `crosswrap_drained`
+            // set bounds re-injection (§3 termination). Gated by B3_DISABLE
+            // (whole feature) + B3_SPAN_DISABLE (span drain isolation); when
+            // either is set this is skipped → EXACTLY Blocker-2's Error.
+            if !b3_disabled() && !b3_span_disabled() {
+                let revived = self.revive_span_anchored_outer_cast_members();
+                if !revived.is_empty() {
+                    if sigb_m70_trace() {
+                        eprintln!(
+                            "[SIGB_SPAN] pre-Error retention injected {} cursor(s) — re-entering fanout",
+                            revived.len()
+                        );
+                    }
+                    self.branch_cursors = revived
+                        .into_iter()
+                        .map(crate::cohort_lazy::Frame::Concrete)
+                        .collect();
+                    let branches: Vec<crate::gss::GssNodeId> = self
+                        .branch_cursors
+                        .iter()
+                        .map(|f| match f {
+                            crate::cohort_lazy::Frame::Concrete(c) => c.node,
+                            crate::cohort_lazy::Frame::Cohort(cf) => cf.shell.node,
+                        })
+                        .collect();
+                    let s = WpdaState::AmbiguityFanout { branches };
+                    self.state = s.clone();
+                    return s;
+                }
             }
             // CASE 1: all branches dropped.
             let s = WpdaState::Error {
@@ -14248,6 +14366,107 @@ where
     ///   - Restores inner_state to the worker's pre-pop state so the
     ///     next walker step re-emits Pop and triggers the normal
     ///     post-pop processing.
+    /// Sig-B Blocker-3 §2.4c (2026-06-01, pgmcp experiment #9): interpose a
+    /// SINGLE-hop coercion Symbol over a resolved body Symbol, returning the
+    /// NEW wrapped Symbol id (or `None` if the coercion action elides). REUSES
+    /// the EXACT `emit_fire_action` success-arm shape (intern_packing +
+    /// intern_symbol at the SAME span + `fire_action_via_transient` store into
+    /// `sppf_symbol_terms`) so the interposed coercion is byte-equal to what
+    /// the forward dispatch would have synthesized — never an invented
+    /// coercion. The wrapped Symbol spans `[body.lo, body.hi]` (the coercion
+    /// is transparent / span-0, so the span is the body's own span — token-
+    /// sound by construction). Called ONLY by the span-anchored revival when
+    /// `body_cat != tgt_cat` (clause-4 matched via a coercion); the depth-1
+    /// `single_hop_coercion` table guarantees at most one hop.
+    fn intern_coercion_over_body(
+        &mut self,
+        body_symbol_id: crate::sppf::SppfId,
+        coercion_cat: u16,
+        coercion_rule: u16,
+    ) -> Option<crate::sppf::SppfId> {
+        // The coercion's result span = the body's span (transparent projection
+        // / span-0 coercion; the cast's own literals, if any, are NOT consumed
+        // here — depth-1 Pass-2a projections are span-0, and the realize-time
+        // min_terminal_span filter rejects any token-unsound packing).
+        let lo = self.sppf.span_lo(body_symbol_id)?;
+        let hi = self.sppf.span_hi(body_symbol_id)?;
+        // Fire the coercion action over [body_symbol_id] via the read-only
+        // transient (the SAME path emit_fire_action uses). A probe cursor
+        // suffices — reconstruct_action_arg reads sppf_symbol_terms by sid.
+        let coercion_symbol =
+            StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, None);
+        let probe = self.make_probe_cursor();
+        let (result_arc, _output_cat, _drains) =
+            self.fire_action_via_transient(&probe, coercion_symbol, &[body_symbol_id])?;
+        // Intern Packing(coercion_rule, [body]) + Symbol(coercion_cat, lo, hi),
+        // link, and store the realized Term keyed by the new Symbol id (so a
+        // subsequent fire consuming THIS Symbol as a child reconstructs it).
+        let global_rule_idx: u32 =
+            ((coercion_cat as u32) << 16) | (coercion_rule as u32);
+        let packing_id =
+            self.sppf
+                .intern_packing(global_rule_idx, vec![body_symbol_id], W::one_ref());
+        let wrapped_symbol_id =
+            self.sppf.intern_symbol(coercion_cat as u32, lo, hi);
+        self.sppf.link_packing_to_symbol(wrapped_symbol_id, packing_id);
+        self.sppf_symbol_terms.insert(wrapped_symbol_id, result_arc);
+        Some(wrapped_symbol_id)
+    }
+
+    /// Sig-B Blocker-3 §2.4a/§2.4c (2026-06-01, pgmcp experiment #9): drain
+    /// the SPAN-ANCHORED outer-cast jobs (EOI / pre-Error) and revive each
+    /// into a fresh `BranchCursor`, interposing the §2.4c coercion when the
+    /// job carries one. Returns the revived cursors (to be pushed into the
+    /// frontier and re-driven). Gated `!b3_disabled() && !b3_span_disabled()`
+    /// by the caller. The drain itself (eligibility) lives in
+    /// `DispatchCohortCache::take_span_anchored_outer_cast`; this walker
+    /// method only materializes the revivals (the splice/coercion shape).
+    fn revive_span_anchored_outer_cast_members(&mut self) -> Vec<BranchCursor<W>> {
+        // Borrow-split: take the jobs first (the drain needs &mut cache + &sppf
+        // + &engine), then revive (needs &mut self.sppf etc). The drain reads
+        // self.sppf + self.engine immutably and mutates only the cache's
+        // crosswrap_drained/splices_total; collect jobs into an owned Vec so
+        // the subsequent revival loop can re-borrow self mutably.
+        let jobs = {
+            let cache = &mut self.dispatch_cohort_cache;
+            let sppf = &self.sppf;
+            let engine = &self.engine;
+            cache.take_span_anchored_outer_cast(sppf, engine)
+        };
+        if jobs.is_empty() {
+            return Vec::new();
+        }
+        let mut revived: Vec<BranchCursor<W>> = Vec::with_capacity(jobs.len());
+        for job in jobs {
+            // §2.4c: interpose the coercion Symbol over the body when the
+            // pairing matched via a single-hop coercion (body_cat != tgt_cat).
+            // When direct (coercion == None), splice the raw body (byte-
+            // identical to the forward Blocker-2 splice shape).
+            let body_symbol_id = match job.coercion {
+                Some((cc, cr)) => match self.intern_coercion_over_body(job.symbol_id, cc, cr) {
+                    Some(wrapped) => wrapped,
+                    // The coercion elided (cross-cat-incompatible at fire) —
+                    // skip this job (no sound revival). Evidence-driven drop.
+                    None => continue,
+                },
+                None => job.symbol_id,
+            };
+            let cursor = self.revive_cohort_member_with_snapshot(
+                job.member,
+                body_symbol_id,
+                job.pos_at_dispatch,
+                job.hi_pos,
+                job.source_src_idx,
+                job.inner_cur_bp,
+                job.wrap_cat,
+                job.wrap_rule,
+                &job.snap,
+            );
+            revived.push(cursor);
+        }
+        revived
+    }
+
     /// Phase F.13 H12 Stage 1.5 (2026-05-21): cohort revive with a
     /// per-packing `WorkerSnapshot`. Approach 4b refined:
     ///   - Bug A: GSS push at `pos_at_dispatch` (not `hi_pos`).
