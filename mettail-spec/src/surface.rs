@@ -55,6 +55,7 @@ pub struct SpaceDecl {
 
 #[derive(Debug, Clone)]
 pub struct ProcContent {
+    pub lang: String,
     pub raw: String,
 }
 

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::error::{Result, SpecError};
 use crate::resolve::{ModuleId, ResolvedGraph};
-use crate::surface::{ContentItem, ExtenderDecl, LanguageDecl, LanguageExpr, Module, SpaceDecl};
+use crate::surface::{ContentItem, ExtenderDecl, LanguageDecl, LanguageExpr, Module, SpaceDecl, ProcContent};
 
 #[derive(Debug, Clone)]
 pub struct ExtenderBinding {
@@ -21,6 +21,7 @@ pub struct ModuleEnv {
     pub extenders: HashMap<String, ExtenderBinding>,
     pub languages: HashMap<String, LanguageBinding>,
     pub spaces: HashMap<String, SpaceDecl>,
+    pub procs: Vec<ProcContent>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,12 +78,12 @@ fn eval_module(module: &Module, module_id: &ModuleId) -> Result<ModuleEnv> {
                 for (k, v) in nested_env.languages {
                     env.languages.entry(k).or_insert(v);
                 }
+                env.procs.extend(nested_env.procs);
             },
-            ContentItem::Proc(_) => {
-                return Err(SpecError::Eval {
-                    module: module.name.clone(),
-                    message: "process content (ProcContent) is not supported in Phase 1".into(),
-                });
+            ContentItem::Proc(p) => {
+                // Rholang evaluation stub to unblock module spine + runtime hooks stories
+                println!("STUB: Evaluating {} process: {}", p.lang, p.raw);
+                env.procs.push(p.clone());
             },
         }
     }

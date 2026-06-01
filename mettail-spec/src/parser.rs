@@ -168,8 +168,11 @@ impl ParserState {
                 Err(self.error("unexpected 'empty' at module content level"))
             },
             Token::Island { .. } => {
-                Err(self
-                    .error("process/island content at module level is not supported in Phase 1"))
+                if let Token::Island { lang, body, .. } = self.advance() {
+                    Ok(ContentItem::Proc(ProcContent { lang, raw: body }))
+                } else {
+                    unreachable!()
+                }
             },
             other => Err(self.error(format!("unexpected module content: {other:?}"))),
         }
