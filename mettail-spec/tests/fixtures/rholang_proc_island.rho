@@ -4,6 +4,8 @@ module ProcDemo {
       let x = 1;
       for y <- ch { !y }
     ```
+    semantics Rust
   }
   export language Demo = ProcExt()
 }
+

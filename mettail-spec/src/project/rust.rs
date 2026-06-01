@@ -20,13 +20,20 @@ pub fn project_rust_source_with_spaces(
 ) -> Result<String> {
     let theory = assemble_rust_theory_body(ntir)?;
     let spaces_src = project_spaces_const(spaces);
+    let artifacts_src = project_proc_artifacts_fn(ntir);
     match &ntir.context_template {
         Some(tmpl) if tmpl.insert_offset.is_some() => {
             let lowered = lower_rust_context(tmpl, &theory)?;
-            Ok(format!("{lowered}\n{spaces_src}"))
+            Ok(format!("{lowered}\n{spaces_src}\n{artifacts_src}"))
         },
-        Some(tmpl) => Ok(format!("{}\n\n{}\n{}", tmpl.raw.trim_end(), theory, spaces_src)),
-        None => Ok(format!("{theory}\n{spaces_src}")),
+        Some(tmpl) => Ok(format!(
+            "{}\n\n{}\n{}\n{}",
+            tmpl.raw.trim_end(),
+            theory,
+            spaces_src,
+            artifacts_src
+        )),
+        None => Ok(format!("{theory}\n{spaces_src}\n{artifacts_src}")),
     }
 }
 
@@ -76,6 +83,41 @@ fn project_spaces_const(spaces: &[crate::ntir::SpaceSummary]) -> String {
     }
     out.push_str("];\n");
     out
+}
+
+fn project_proc_artifacts_fn(ntir: &Ntir) -> String {
+    let mut out = String::new();
+    out.push_str(
+        "\npub fn get_proc_artifacts() -> Vec<(&'static str, mettail_runtime::ProcGst)> {\n",
+    );
+    out.push_str("    vec![\n");
+    for art in &ntir.proc_artifacts {
+        out.push_str(&format!("        ({:?}, {}),\n", art.lang, project_proc_gst(&art.gst)));
+    }
+    out.push_str("    ]\n");
+    out.push_str("}\n");
+    out
+}
+
+fn project_proc_gst(gst: &crate::island::plugin::ProcGst) -> String {
+    use crate::island::plugin::{ProcGst, ProcStmt};
+    match gst {
+        ProcGst::Empty => "mettail_runtime::ProcGst::Empty".to_string(),
+        ProcGst::Stmt(stmt) => match stmt {
+            ProcStmt::Let { name, body } => format!("mettail_runtime::ProcGst::Stmt(mettail_runtime::ProcStmt::Let {{ name: {:?}.into(), body: {:?}.into() }})", name, body),
+            ProcStmt::For { bind, source, body } => format!("mettail_runtime::ProcGst::Stmt(mettail_runtime::ProcStmt::For {{ bind: {:?}.into(), source: {:?}.into(), body: {:?}.into() }})", bind, source, body),
+            ProcStmt::Send { channel, payload } => format!("mettail_runtime::ProcGst::Stmt(mettail_runtime::ProcStmt::Send {{ channel: {:?}.into(), payload: {:?}.into() }})", channel, payload),
+            ProcStmt::Raw(raw) => format!("mettail_runtime::ProcGst::Stmt(mettail_runtime::ProcStmt::Raw({:?}.into()))", raw),
+        },
+        ProcGst::Seq(seq) => {
+            let mut inner = String::new();
+            for item in seq {
+                inner.push_str(&project_proc_gst(item));
+                inner.push_str(", ");
+            }
+            format!("mettail_runtime::ProcGst::Seq(vec![{}])", inner)
+        }
+    }
 }
 
 /// Parse projected source back into [`LanguageDef`] (round-trip check).

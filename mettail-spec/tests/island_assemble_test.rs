@@ -14,6 +14,11 @@ fn rholang_proc_island_compiles() {
     assert_eq!(art.lang, "Rholang");
     let json = serde_json::to_string(&art.gst).expect("serialize gst");
     assert!(json.contains("Let") || json.contains("let"));
+
+    let src = mettail_spec::project_rust_source(&ntir).expect("project");
+    assert!(src
+        .contains("pub fn get_proc_artifacts() -> Vec<(&'static str, mettail_runtime::ProcGst)>"));
+    assert!(src.contains("mettail_runtime::ProcGst::Stmt(mettail_runtime::ProcStmt::Let { name: \"x\".into(), body: \"1\".into() })"));
 }
 
 #[test]

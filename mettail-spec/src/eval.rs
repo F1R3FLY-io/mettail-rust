@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::error::{Result, SpecError};
 use crate::resolve::{ModuleId, ResolvedGraph};
-use crate::surface::{ContentItem, ExtenderDecl, LanguageDecl, LanguageExpr, Module, SpaceDecl, ProcContent};
+use crate::surface::{
+    ContentItem, ExtenderDecl, LanguageDecl, LanguageExpr, Module, ProcContent, SpaceDecl,
+};
 
 #[derive(Debug, Clone)]
 pub struct ExtenderBinding {
