@@ -153,6 +153,34 @@ pub(crate) fn emit_parse_fns(
                                 .unwrap_or_else(|arc| (*arc).clone());
                             Ok((typed, dw))
                         }
+                        // Cluster H (2026-05-29): valid-prefix parse with
+                        // trailing tokens. Return the prefix term + weight
+                        // and set `*pos` to the prefix boundary so the
+                        // generated wrapper's `pos < tokens.len()` check
+                        // emits a structured `TrailingTokens` error.
+                        WpdaResolveResult::AcceptedWithTrailing {
+                            weights, roots, position, ..
+                        } => {
+                            *pos = position;
+                            let root = roots
+                                .first()
+                                .copied()
+                                .ok_or(WpdaParseError::EmptyResult)?;
+                            let term = walker
+                                .realize_root_to_terms(root, Some(1))
+                                .into_iter()
+                                .next()
+                                .ok_or(WpdaParseError::EmptyResult)?;
+                            let dw = weights
+                                .into_iter()
+                                .next()
+                                .ok_or(WpdaParseError::EmptyResult)?;
+                            let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map_err(|_| WpdaParseError::EmptyResult)?;
+                            let typed = std::sync::Arc::try_unwrap(arc)
+                                .unwrap_or_else(|arc| (*arc).clone());
+                            Ok((typed, dw))
+                        }
                         WpdaResolveResult::ParseError { message, position } => {
                             Err(WpdaParseError::ParseFailed {
                                 message,
@@ -241,6 +269,37 @@ pub(crate) fn emit_parse_fns(
                             }
                             // C10: `weights` is already Vec<LexicographicWeight>
                             // post-revert.
+                            Ok((typed_terms, weights))
+                        }
+                        // Cluster H (2026-05-29): valid-prefix parse with
+                        // trailing tokens. Realize ALL prefix derivations
+                        // (ambiguity-preserving) and set `*pos` to the
+                        // prefix boundary so the caller's trailing check
+                        // (`pos < eof_node`) surfaces `TrailingTokens`.
+                        WpdaResolveResult::AcceptedWithTrailing {
+                            weights, roots, position, ..
+                        } => {
+                            *pos = position;
+                            const REALIZE_CAP: usize = 64;
+                            let mut typed_terms: Vec<#cat_ident> = Vec::new();
+                            for &root in &roots {
+                                if typed_terms.len() >= REALIZE_CAP {
+                                    break;
+                                }
+                                for term in walker.realize_root_to_terms(root, Some(REALIZE_CAP)) {
+                                    let arc = std::sync::Arc::downcast::<#cat_ident>(term)
+                                        .map_err(|_| WpdaParseError::EmptyResult)?;
+                                    let typed = std::sync::Arc::try_unwrap(arc)
+                                        .unwrap_or_else(|arc| (*arc).clone());
+                                    typed_terms.push(typed);
+                                    if typed_terms.len() >= REALIZE_CAP {
+                                        break;
+                                    }
+                                }
+                            }
+                            if typed_terms.is_empty() {
+                                return Err(WpdaParseError::EmptyResult);
+                            }
                             Ok((typed_terms, weights))
                         }
                         WpdaResolveResult::ParseError { message, position } => {
@@ -379,6 +438,33 @@ pub(crate) fn emit_parse_fns(
                         *pos = walker.position();
                         // C7b (Phase 3.1.6, 2026-05-15): realize the first
                         // SPPF root for backward-compat single-result return.
+                        let pick = roots
+                            .first()
+                            .and_then(|&root|
+                                walker
+                                    .realize_root_to_terms(root, Some(1))
+                                    .into_iter()
+                                    .next()
+                            );
+                        let result = match pick {
+                            Some(term) => std::sync::Arc::downcast::<#cat_ident>(term)
+                                .map(|arc| std::sync::Arc::try_unwrap(arc)
+                                    .unwrap_or_else(|arc| (*arc).clone()))
+                                .map_err(|_| WpdaParseError::EmptyResult),
+                            None => Err(WpdaParseError::EmptyResult),
+                        };
+                        (result, attempts)
+                    }
+                    // Cluster H (2026-05-29): valid-prefix parse with
+                    // trailing tokens. Return the prefix term (`Ok`) and
+                    // set `*pos` to the prefix boundary; `parse_recovering`
+                    // then appends a `TrailingTokens` error to its trail
+                    // while STILL returning the partial AST — the
+                    // recovering-mode "what parsed + what went wrong"
+                    // contract (recovery_integration_tests assert
+                    // `result.is_some()` for trailing-token inputs).
+                    WpdaResolveResult::AcceptedWithTrailing { roots, position, .. } => {
+                        *pos = position;
                         let pick = roots
                             .first()
                             .and_then(|&root|

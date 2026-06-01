@@ -247,19 +247,32 @@ pub const BP_TIER_CROSSCAT_LHS: f64 = 0.05;
 pub const BP_TIER_POSTFIX: f64 = 0.10;
 pub const BP_TIER_MIXFIX: f64 = 0.20;
 
-/// WPDS-architectural redesign (2026-05-13): Pass 2c synthesized implicit-cast
-/// arms. Pass 2c emits `<Source>To<Target> . a:Y |- "trigger" "(" a ")" : X`
-/// shaped rules as CrossCatProjection-style descriptors in result_cat's
-/// prefix dispatch (covering FIRST(source_cat) tokens) so internal cross-cat
-/// sub-parses succeed (e.g., LtBool's RHS wraps an Int as IntToBool inside
-/// `int(false > b < -N)`).
+/// Pass 2c implicit-cast tier. Pass 2c emits a trigger-bearing syntactic cast
+/// (`<Y>To<X> . a:Y |- "trig" "(" a ")" : X`) as a CrossCatDelegate wrap into
+/// result_cat's prefix dispatch (covering FIRST(Y) tokens) so internal
+/// cross-cat sub-parses succeed (e.g. LtBool's RHS wraps an Int as IntToBool
+/// inside `int(false > b < -N)`).
 ///
-/// Strictly higher than CROSSCAT_PROJECTION so a SINGLE Pass 2c hop ALWAYS
-/// loses lex-min to a DIRECT user-declared cast that reaches the same
-/// `(pos, gss-node-symbol)` configuration. Without this, both paths had
-/// primary=0.0 and `rule_idx` declaration-order tiebreak picked the wrong
-/// one — causing `int(true)` to parse as `Int::FloatToInt(BoolToFloat(...))`
-/// (chained, 2 hops) instead of `Int::BoolToInt(BoolLit)` (direct, 1 hop).
+/// ## Soundness is NOT this tier's job (Pass-2c token-soundness fix, §5,
+/// 2026-05-30)
+/// Historically this tier (`0.15`) was justified as making a DIRECT cast
+/// "always win lex-min" over an implicit-cast CHAIN that reaches the same
+/// configuration — which conflated DISAMBIGUATION with SOUNDNESS and MASKED a
+/// token-unsound fabrication (the wrap fires the cast action WITHOUT the
+/// cast's `"("`/`")"` being matched, e.g. `bool(0)` → `FloatToBool(IntToFloat(0))`,
+/// yield != input). Soundness is now enforced INDEPENDENTLY and on EVIDENCE by
+/// `WpdaEngine::min_terminal_span` + the realize-time span filter in
+/// `realize_node_leave` (drops any derivation whose result-Symbol span leaves
+/// no room for a rule's in-span literal terminals). With the unsound
+/// derivations gone regardless of weight, this tier's REMAINING role is a
+/// legitimate bias among SOUND coexisting branches — preferring the minimal
+/// (fewest-hop) cast interpretation when several SOUND ones tie — exactly like
+/// `BP_TIER_CROSSCAT_PROJECTION` / `BP_TIER_CROSSCAT_LHS`. It is RETAINED at
+/// `0.15` for that sound-branch ordering (and because removing it regresses
+/// legitimately-ambiguous SOUND chained-comparison cases such as
+/// `int(b >= N <= b >= M)`, whose canonical interpretation depends on this
+/// ordering). The name is kept for continuity; read it as "Pass-2c sound-branch
+/// tier", not a soundness guarantee.
 ///
 /// Magnitude `0.15`:
 /// - Higher than `BP_TIER_CROSSCAT_LHS = 0.05` so cross-cat-LHS still wins

@@ -405,9 +405,21 @@ pub enum EdgeKind {
     /// `CategoryEntry(source_src_idx)` to delegate to a sub-cat parse.
     /// Convergent: post-pop returns to the outer dispatch site whose
     /// `(source_src_idx, inner_cur_bp)` are payload.
+    ///
+    /// M4 (2026-05-30, re-landed): ALSO carries the WRAPPING rule's
+    /// `(wrap_cat, wrap_rule)` so the resolve site
+    /// (`cursor_gss_pop_via_edge`) can reconstruct the widened
+    /// [`crate::dispatch_cohort::DispatchKey`] — distinct cross-cat wrap
+    /// injections sharing `(pos, source, bp)` but wrapping via different rules
+    /// stay distinct in the cohort cache. Making these fields part of the
+    /// EdgeKind ALSO means two convergent edges that wrap via different rules
+    /// are no longer `≡_E`-equivalent (their post-pop return frames genuinely
+    /// differ), which is correct.
     CrossCatProjection {
         source_src_idx: u16,
         inner_cur_bp: u8,
+        wrap_cat: u16,
+        wrap_rule: u16,
     },
     /// PrefixDispatch consumed a literal and pushed a `RuleAt` frame
     /// to begin parsing the rule's items. Payload = (cat, rule, item position).

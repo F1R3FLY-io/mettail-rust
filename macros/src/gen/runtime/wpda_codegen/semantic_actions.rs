@@ -96,6 +96,193 @@ pub fn emit_action_for_body(
     }
 }
 
+/// Pass-2c token-soundness backstop (2026-05-30): emit the body of
+/// `WpdaEngine::min_terminal_span` — a `match (src_idx, rule_idx)` returning,
+/// per rule, the count of `SyntaxExpr::Literal` terminals that appear AFTER
+/// the rule's FIRST parameter in its `syntax_pattern`. Those literals are
+/// matched STRICTLY WITHIN the rule's result-Symbol span (leading literals
+/// before the first param are consumed as out-of-span `TriggerTerminal`s), so
+/// a sound derivation's Symbol span must exceed the operand spans by at least
+/// this many input positions. See `WpdaEngine::min_terminal_span` for the full
+/// soundness rationale and the realize-time filter that consumes this.
+///
+/// Only emitted for rules whose `syntax_pattern` is a plain literal/param
+/// sequence (NO `SyntaxExpr::Op` meta-syntax — collection `#sep`/`#zip`/`#map`
+/// etc. have variable-length structure whose span arithmetic is not a fixed
+/// literal count; those return 0 = no constraint, which never rejects). Rules
+/// with a zero count are omitted (default arm returns 0). This targets exactly
+/// the trigger-bearing cast shape `"t" "(" a ")"` (count = 1, the trailing
+/// `")"`) whose fabricating Pass-2c wrap is the falsified soundness bug.
+pub fn emit_min_terminal_span_body(
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+) -> TokenStream {
+    use mettail_ast::grammar::SyntaxExpr;
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let cat_u16 = cat_i as u16;
+        for (rule_idx, rule) in rules {
+            let Some(sp) = rule.syntax_pattern.as_ref() else { continue; };
+            // Skip patterns containing meta-syntax Op (collections): their
+            // span is not a fixed literal count.
+            if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) {
+                continue;
+            }
+            // Emit the constraint ONLY for rules whose `term_context` params
+            // are ALL `Simple` (a plain typed operand `a:Y` that parses to a
+            // Symbol child carrying a real input span). Any non-Simple param —
+            // `^x.body` Abstraction / MultiAbstraction (the bound variable is a
+            // BinderScope/Ident with NO span), GuardBody, or Optional — makes
+            // the realize-time `slack = sym_span - Σ child spans` arithmetic
+            // undercount the children (no span for the binder var) and would
+            // wrongly reject sound derivations (observed: ambient PNew
+            // `"new" "(" x "," p ")"` → `nested_new`). The Pass-2c fabrication
+            // this backstop targets is a SIMPLE unary cast
+            // (`<Y>To<X> . a:Y |- "t" "(" a ")"`) — all-Simple params — never a
+            // binder; binders/guards parse soundly via their own machinery.
+            let all_simple_params = rule
+                .term_context
+                .as_ref()
+                .map(|tc| {
+                    tc.iter().all(|p| {
+                        matches!(p, mettail_ast::grammar::TermParam::Simple { .. })
+                    })
+                })
+                .unwrap_or(true);
+            if !all_simple_params {
+                continue;
+            }
+            // Count literals strictly after the first Param.
+            let mut seen_param = false;
+            let mut post_param_literals: u32 = 0;
+            for e in sp.iter() {
+                match e {
+                    SyntaxExpr::Param(_) => seen_param = true,
+                    SyntaxExpr::Literal(_) if seen_param => post_param_literals += 1,
+                    _ => {}
+                }
+            }
+            if post_param_literals > 0 {
+                let r = *rule_idx;
+                arms.push(quote! { (#cat_u16, #r) => #post_param_literals, });
+            }
+        }
+    }
+    let _ = categories;
+    if arms.is_empty() {
+        quote! { 0u32 }
+    } else {
+        quote! {
+            match (src_idx, rule_idx) {
+                #(#arms)*
+                _ => 0u32,
+            }
+        }
+    }
+}
+
+/// Sig-B Blocker-3 §2.3 (2026-06-01, pgmcp experiment #9): emit the body of
+/// `WpdaEngine::single_hop_coercion(from_cat, to_cat) -> &[(u16, u16)]`.
+///
+/// Returns, for the cross-category pair `(from_cat → to_cat)`, the
+/// grammar-declared SINGLE-hop coercion rules that bridge it, as
+/// `(target_cat = to_cat, rule_index_in_to_cat)` pairs. EMPTY when no such
+/// grammar rule exists (the §2.4a clause-4 category compatibility then
+/// REJECTS the pair). Usually one entry; MULTIPLE entries are returned when
+/// two rules share `(from, to)` (Ambiguous — §2.4c emits one splice job per
+/// coercion).
+///
+/// **The rule set MIRRORS the live Pass-2a / Pass-2c synthesis EXACTLY**
+/// (`prefix.rs` `classify_atomic`'s `CrossCatProjection` arm — sp.len()==1,
+/// single Simple `Base(Y)` param, `Param(name)` matching, source≠result — and
+/// the Pass-2c `ImplicitCast` enumeration — NonAtomic, single Simple `Base(Y)`
+/// param, sp.len()≥3, source≠result). This is the HARD-CONSTRAINT guarantee
+/// that the splice's interposed coercion ≡ the coercion the live forward
+/// dispatch would have synthesized — never an invented coercion/weight.
+///
+/// Emitted as a `match (from_cat, to_cat)` returning a `&'static [(u16,u16)]`
+/// (interned per arm), default `&[]`. Sibling of `min_terminal_span`'s
+/// emission. PURE static lookup — no runtime state, O(1).
+pub fn emit_single_hop_coercion_body(
+    categories: &[String],
+    per_cat: &[Vec<(u16, &GrammarRule)>],
+    language: &LanguageDef,
+) -> TokenStream {
+    use mettail_ast::grammar::{SyntaxExpr, TermParam};
+    use mettail_ast::types::TypeExpr;
+    // Collect `(from_cat, to_cat) -> Vec<rule_idx>` so co-bridging rules
+    // accumulate into one arm (Ambiguous).
+    let mut table: std::collections::BTreeMap<(u16, u16), Vec<u16>> =
+        std::collections::BTreeMap::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let to_cat = cat_i as u16;
+        for (rule_idx, rule) in rules {
+            // Both shapes require a single Simple param of a foreign Base
+            // category. Read the operand (`a:Y`) category name.
+            let Some(tc) = rule.term_context.as_ref() else { continue; };
+            if tc.len() != 1 {
+                continue;
+            }
+            let TermParam::Simple { name: param_name, ty } = &tc[0] else { continue; };
+            let TypeExpr::Base(source_ident) = ty else { continue; };
+            let source_cat_name = source_ident.to_string();
+            if source_cat_name == rule.category.to_string() {
+                continue;
+            }
+            let Some(sp) = rule.syntax_pattern.as_ref() else { continue; };
+            // Pass-2a CrossCatProjection: sp.len()==1, the lone element is
+            // `Param(name)` matching the param (transparent projection
+            // `ProcFloat . f:Float |- f : Proc`, span-0, min_terminal_span 0).
+            let is_pass2a = sp.len() == 1
+                && matches!(
+                    sp.first(),
+                    Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
+                );
+            // Pass-2c ImplicitCast: NonAtomic trigger-bearing cast,
+            // sp.len()>=3 (`<Y>To<X> . a:Y |- "t" "(" a ")" : X`). Mirror the
+            // `classify_atomic(rule) == NonAtomic` gate the Pass-2c emission
+            // uses so we never double-count a Pass-2a/CrossCatPrefixUnary rule.
+            let is_pass2c = sp.len() >= 3
+                && matches!(
+                    classify_atomic(rule, language),
+                    AtomicShape::NonAtomic
+                );
+            if !(is_pass2a || is_pass2c) {
+                continue;
+            }
+            let from_cat = categories
+                .iter()
+                .position(|c| c == &source_cat_name)
+                .map(|i| i as u16)
+                .unwrap_or(0);
+            table.entry((from_cat, to_cat)).or_default().push(*rule_idx);
+        }
+    }
+    let _ = categories;
+    if table.is_empty() {
+        return quote! { &[] };
+    }
+    let mut arms: Vec<TokenStream> = Vec::with_capacity(table.len());
+    for ((from_cat, to_cat), rule_idxs) in table {
+        // Build the `&'static [(to_cat, rule_idx)]` slice literal for this
+        // (from, to) pair. `to_cat` is the coercion rule's category
+        // (category_src_idx); `rule_idx` is its index within that category.
+        let pairs: Vec<TokenStream> = rule_idxs
+            .iter()
+            .map(|ri| quote! { (#to_cat, #ri) })
+            .collect();
+        arms.push(quote! {
+            (#from_cat, #to_cat) => &[#(#pairs),*],
+        });
+    }
+    quote! {
+        match (from_cat, to_cat) {
+            #(#arms)*
+            _ => &[],
+        }
+    }
+}
+
 /// D7 fix (2026-05-13): Look up a zero-arity terminal-keyword rule for
 /// `cat_name` whose label can serve as an error-fallback variant for a
 /// failing literal-eval action.

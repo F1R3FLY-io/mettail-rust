@@ -145,6 +145,17 @@ pub(crate) fn emit_engine_impl_full(
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
+    // Pass-2c token-soundness backstop (2026-05-30): per-rule in-span literal
+    // count consumed by the realize-time soundness filter.
+    let min_terminal_span_body =
+        semantic_actions::emit_min_terminal_span_body(categories, &per_cat_indexed);
+    // Sig-B Blocker-3 §2.3 (2026-06-01, pgmcp experiment #9): grammar
+    // single-hop coercion table (`(from_cat, to_cat) -> &[(target_cat,
+    // rule_idx)]`). Mirrors the live Pass-2a/Pass-2c synthesis rule set
+    // EXACTLY; consumed by the span-anchored splice's §2.4a clause-4
+    // (category compatibility) + §2.4c (interpose the coercion Symbol).
+    let single_hop_coercion_body =
+        semantic_actions::emit_single_hop_coercion_body(categories, &per_cat_indexed, language);
 
     // Phase 3: InfixLoop dispatch arm. Per-category match on
     // `state_cat_src_idx` calling the emitted `infix_bp_<cat>` lookup
@@ -1786,6 +1797,30 @@ pub(crate) fn emit_engine_impl_full(
                 // so both `push_term::<Cat>` and
                 // `push_term::<NativeTy>` resolve correctly.
                 #cat_of_type_name_body
+            }
+
+            fn min_terminal_span(&self, src_idx: u16, rule_idx: u16) -> u32 {
+                // Pass-2c token-soundness backstop (2026-05-30): per-rule
+                // count of literal terminals matched STRICTLY WITHIN the
+                // rule's result-Symbol span (literals after the first param).
+                // The realize-time filter rejects any packing whose Symbol
+                // span leaves less slack than this — dropping token-unsound
+                // fabricated-cast derivations on evidence (yield != span).
+                #min_terminal_span_body
+            }
+
+            fn single_hop_coercion(&self, from_cat: u16, to_cat: u16) -> &[(u16, u16)] {
+                // Sig-B Blocker-3 §2.3 (2026-06-01): grammar single-hop
+                // coercion table — the `(target_cat, rule_idx)` of every
+                // Pass-2a transparent projection / Pass-2c trigger-bearing
+                // cast that bridges `from_cat → to_cat`. Mirrors the live
+                // synthesis rule set EXACTLY. Empty when no grammar coercion
+                // exists. The span-anchored splice consumes this to (a)
+                // accept a category-incompatible body whose category is
+                // one-hop-reachable to the cast's arg cat (§2.4a clause-4) and
+                // (b) interpose the named coercion Symbol before the cast
+                // fires (§2.4c).
+                #single_hop_coercion_body
             }
         }
     }

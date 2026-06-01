@@ -39,7 +39,7 @@
 //!     Symbol   { non_terminal_tag, lo_pos, hi_pos, weight_sum: W }
 //!     Packing  { rule_idx, children, weight: W }
 //!     Epsilon  { pos }
-//!     CollectionId { id }
+//!     CollectionId { id, items }
 //!     OptAbsent { pos }
 //!     Predicate { handle }
 //!     BinderScope { names_text, depth }
@@ -216,12 +216,27 @@ pub enum SppfNode<W: SemiringRef> {
 
     /// Placeholder for a collection slot's identity argument. Pushed by
     /// `emit_push_collection_id` to mirror the builder's
-    /// `ActionArg::CollectionId`. The realization pass resolves it by
-    /// looking up `walker.sppf_collection_arena[id]` (which holds the
-    /// SppfIds collected via `emit_splice_into_collection`).
+    /// `ActionArg::CollectionId`.
+    ///
+    /// Collection-accumulation fix (2026-05-29): elements are now stored
+    /// **derivation-locally** in `items`, captured at the `emit_fire_action`
+    /// fire site as a snapshot of the owning cursor's
+    /// `BranchCursor::sppf_collection_arena[id]`. Previously the node carried
+    /// only `id` and was dedup'd by `id`, forcing realize to read
+    /// `winner_collection_arena()` = `branch_cursors[0]` — the WRONG cursor —
+    /// which truncated/emptied collections. The realization pass now walks
+    /// `items` directly (no per-cursor side-table), so each derivation keeps
+    /// its own elements.
     CollectionId {
-        /// Index into `WpdaWalker::sppf_collection_arena`.
+        /// The slot index this placeholder mirrors (still used by the action
+        /// reconstruction to thread `ActionArg::CollectionId(id)`).
         id: u32,
+        /// The derivation-local collected element SppfIds. Snapshot of the
+        /// owning cursor's `sppf_collection_arena[id]` at fire time. Distinct
+        /// `items` => distinct nodes (no longer dedup'd by `id`); `Packing`
+        /// dedup `(rule_idx, children)` still merges truly-identical
+        /// derivations and now correctly separates differing ones.
+        items: Vec<crate::sppf::SppfId>,
     },
 
     /// Marker for "this optional group was not filled." Distinct from
@@ -361,7 +376,16 @@ pub struct Sppf<W: SemiringRef> {
     /// (~16-24 bytes per typical entry).
     dedup_packing: FxHashMap<(u32, Vec<SppfId>), SppfId>,
     dedup_epsilon: FxHashMap<u32, SppfId>,
-    dedup_collection_id: FxHashMap<u32, SppfId>,
+    /// Collection-accumulation fix (2026-05-29): CollectionId nodes are now
+    /// derivation-local (they carry their own collected element `items`).
+    /// Dedup by `(id, items)` — NOT by `id` alone — so two derivations with
+    /// the same slot id but DIFFERENT collected elements stay distinct
+    /// (preserves disambiguation: a truncated and a full collection must not
+    /// collapse), while structurally-identical collections still merge. The
+    /// merge bounds node growth and prevents the realize cartesian blow-up
+    /// (wrong-cardinality regressions) that dropping dedup entirely caused.
+    /// Mirrors `dedup_packing`'s full-list key (no silent-collision risk).
+    dedup_collection_id: FxHashMap<(u32, Vec<SppfId>), SppfId>,
     dedup_opt_absent: FxHashMap<u32, SppfId>,
     dedup_predicate: FxHashMap<u32, SppfId>,
     /// Bug N (Phase 3.1.5): dedup BinderScope by `(depth, names_hash)`.
@@ -569,16 +593,27 @@ impl<W: SemiringRef> Sppf<W> {
         id
     }
 
-    /// Intern a `CollectionId` placeholder pointing at slot `id` in the
-    /// walker's `sppf_collection_arena`. Dedup'd by `id` — two cursors
-    /// referring to the same collection slot share the placeholder node.
-    pub fn intern_collection_id(&mut self, id: u32) -> SppfId {
-        if let Some(&sid) = self.dedup_collection_id.get(&id) {
+    /// Intern a `CollectionId` placeholder for slot `id` carrying its
+    /// derivation-local collected `items`.
+    ///
+    /// Collection-accumulation fix (2026-05-29): NO dedup-by-id. Distinct
+    /// `items` must be distinct nodes so realize can recover each
+    /// derivation's own collection from the node itself (rather than from
+    /// the post-commit `branch_cursors[0]` arena, which truncated collections
+    /// belonging to non-winner cursors). `Packing` dedup `(rule_idx,
+    /// children)` still collapses truly-identical derivations and now
+    /// correctly separates derivations whose collections differ.
+    pub fn intern_collection_id(&mut self, id: u32, items: Vec<SppfId>) -> SppfId {
+        // Dedup by (id, items): identical collections merge (bounds node
+        // growth, prevents the realize cartesian blow-up); collections with
+        // differing elements stay distinct (preserves disambiguation).
+        let key = (id, items.clone());
+        if let Some(&sid) = self.dedup_collection_id.get(&key) {
             return sid;
         }
         let sid = self.nodes.len() as SppfId;
-        self.nodes.push(SppfNode::CollectionId { id });
-        self.dedup_collection_id.insert(id, sid);
+        self.nodes.push(SppfNode::CollectionId { id, items });
+        self.dedup_collection_id.insert(key, sid);
         sid
     }
 

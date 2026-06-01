@@ -170,35 +170,59 @@ fn wpds_parse_float_lit() {
 }
 
 #[test]
-fn wpds_parse_accepts_bool_via_cross_cat_projection_in_int_slot() {
-    // B.2 (Phase E Stage 1, 2026-05-16): test renamed + assertion flipped.
+fn wpds_parse_rejects_bare_bool_in_int_slot_token_unsound() {
+    // Pass-2c token-soundness fix (2026-05-30): assertion CORRECTED back to
+    // "rejects" — token-unsound input (no derivation whose yield == input) is
+    // correctly rejected per the token-soundness invariant.
     //
-    // Previously named `wpds_parse_rejects_non_integer_in_int_slot`, this
-    // test asserted that the parser rejects `BooleanLit("true")` at an
-    // Int slot. Post-Stage-1.1 (cross-cat-projection), the parser
-    // INTENTIONALLY accepts via the auto-injected `BoolToInt` cast
-    // constructor: `BooleanLit("true")` lexes to `Bool::BoolLit(true)`,
-    // which projects to `Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))`
-    // via the user-defined `BoolToInt . v:Bool |- v : Int` rule (or its
-    // auto-injected equivalent).
-    //
-    // This is the intended cross-cat-projection semantics, NOT a bug.
-    // The original test was written before the feature shipped.
+    // History: this test was originally `wpds_parse_rejects_non_integer_in_int_slot`
+    // (asserting REJECT). B.2 (Phase E Stage 1, 2026-05-16) renamed it to
+    // `..._accepts_bool_via_cross_cat_projection_in_int_slot` and flipped it to
+    // expect `Int::BoolToInt(Bool::BoolLit(true))` for the BARE input `true`,
+    // on the premise of a TRANSPARENT `BoolToInt . v:Bool |- v : Int` projection.
+    // No such transparent projection exists in the calculator grammar: the only
+    // `BoolToInt` rule is `BoolToInt . a:Bool |- "int" "(" a ")" : Int`, which
+    // DISPLAYS as `int(true)`. So parsing the bare 1-token input `true` as
+    // `BoolToInt(true)` claims to have matched the `int` `(` `)` literals that
+    // are ABSENT from the input — its terminal yield `int ( true )` != the input
+    // `true`. That is the SAME token-unsound fabrication class as `bool(0)` →
+    // `bool(float(0))`; the realize-time `min_terminal_span` span filter now
+    // rejects it on EVIDENCE (not a weight). Per the user's non-negotiable
+    // principle, making this token-unsound parse error is a correctness
+    // improvement. (A SOUND `int(true)` — with the actual `int(` `)` tokens —
+    // still parses to `Int::BoolToInt(Bool::BoolLit(true))`; see below.)
     let kinds = vec![TokenKind::BooleanLit];
     let texts = vec!["true"];
     let mut pos = 0usize;
     let result = parse_Int_via_wpda(&kinds, &texts, &mut pos, 0);
-    match &result {
+    assert!(
+        result.is_err(),
+        "bare `true` has no token-sound Int derivation (its only Int reading, \
+         BoolToInt, displays `int(true)` != `true`) — it must be rejected, got {:?}",
+        result,
+    );
+
+    // Soundness counterpart: the SOUND form `int(true)` (with the real
+    // `int` `(` `)` tokens) DOES parse to Int::BoolToInt(Bool::BoolLit(true)).
+    let kinds2 = vec![
+        TokenKind::Fixed("int".into()),
+        TokenKind::Fixed("(".into()),
+        TokenKind::BooleanLit,
+        TokenKind::Fixed(")".into()),
+    ];
+    let texts2 = vec!["int", "(", "true", ")"];
+    let mut pos2 = 0usize;
+    let result2 = parse_Int_via_wpda(&kinds2, &texts2, &mut pos2, 0);
+    match &result2 {
         Ok(Int::BoolToInt(inner)) => match inner.as_ref() {
             Bool::BoolLit(true) => {}
             other => panic!(
-                "expected Int::BoolToInt(Bool::BoolLit(true)), \
-                 got Int::BoolToInt({:?})",
+                "expected Int::BoolToInt(Bool::BoolLit(true)), got Int::BoolToInt({:?})",
                 other
             ),
         },
         other => panic!(
-            "expected Int::BoolToInt(Bool::BoolLit(true)), got {:?}",
+            "expected sound `int(true)` => Int::BoolToInt(Bool::BoolLit(true)), got {:?}",
             other
         ),
     }

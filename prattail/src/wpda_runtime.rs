@@ -691,6 +691,36 @@ pub enum WpdaResolveResult<W: SemiringRef> {
         /// problem.
         roots: Vec<crate::sppf::SppfId>,
     },
+    /// Cluster H (2026-05-29): the walker reached a VALID prefix parse —
+    /// at least one cursor is `is_accepting_config` — but parked at a
+    /// position STRICTLY BEFORE logical EOI, and NO cursor reached
+    /// logical EOI. This is the "trailing tokens" case: the grammar
+    /// accepts a proper prefix of the input but the remaining tokens
+    /// cannot be consumed.
+    ///
+    /// Distinguished from the Phase E Fix A "premature lex-Fork
+    /// acceptance" drop: that drop fires when a SHORT prefix-accept
+    /// COEXISTS with a longer full-EOI parse (the short one is genuinely
+    /// premature and is discarded so the full parse wins). This variant
+    /// fires ONLY when there is NO full-EOI parse at all — so the prefix
+    /// is the best (and only) accepting derivation, and the facade must
+    /// surface it as `Ok(term)` with `*pos = position` so the wrapper's
+    /// `pos < tokens.len()` check emits a structured
+    /// `ParseError::TrailingTokens` (carrying the partial AST in
+    /// recovering mode) rather than a misleading `UnexpectedToken`.
+    ///
+    /// `weights`/`terms`/`roots` are parallel (length ≥ 1), mirroring
+    /// `Accepted`; `position` is the prefix boundary (the first
+    /// unconsumed token index). Disambiguation is preserved: if multiple
+    /// prefix-accepting cursors tie at the same furthest position, ALL
+    /// are carried (the `Ambiguous` end-state still applies to the
+    /// prefix).
+    AcceptedWithTrailing {
+        weights: Vec<W>,
+        terms: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+        roots: Vec<crate::sppf::SppfId>,
+        position: usize,
+    },
     /// Zero accepting configurations at EOI — input cannot be parsed by
     /// the grammar. `position` is where the cursor stalled (max position
     /// reached among dead cursors).

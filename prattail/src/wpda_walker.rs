@@ -69,6 +69,64 @@ use rustc_hash::FxHashSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
+/// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): is the `B2_DISABLE`
+/// benchmark-control gate set? When set, the cross-wrap body-splice drain
+/// (§3b) and the §3d pause-site backstop are both skipped, so the SAME
+/// binary reproduces the base[sigb-gll] behavior — the CONTROL arm of the
+/// interleaved Welch chain panel (R4). Read once and memoized; off by
+/// default → zero behavioral effect on the production path. The chain
+/// workloads never reach the gated code anyway (the drain block is behind
+/// `!pending_cohort_drain_keys.is_empty()`, empty for cast-free chains), so
+/// this exists solely to A/B the cross-cat workloads without compiler
+/// variance between two separately-built binaries.
+#[inline]
+fn b2_crosswrap_disabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("B2_DISABLE").is_some())
+}
+
+/// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the WHOLE
+/// span-anchored outer-cast reconstruction disabled? Read once from
+/// `B3_DISABLE` and memoized. When set, the §2.4a span-anchored Bool
+/// revival + §2.4c coercion interposition + §2.4d Float family are ALL
+/// SKIPPED so the binary falls back to EXACTLY Blocker-2's behavior — the
+/// 8/9-of-the-cast-family A/B control arm. Off by default (one memoized
+/// `OnceLock` read; zero behavioral effect on the production path). At M7.0
+/// this is INERT — nothing reads it yet (the span-anchored drain is wired at
+/// M7.1).
+#[inline]
+fn b3_disabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("B3_DISABLE").is_some())
+}
+
+/// Sig-B Blocker-3 §4 (2026-06-01, pgmcp experiment #9): is the
+/// SPAN-ANCHORED drain isolated from the rest of Blocker-2? Read once from
+/// `B3_SPAN_DISABLE` and memoized. When set, the §2.4 span-anchored drain +
+/// coercion interposition are SKIPPED (independently of `B3_DISABLE`) so
+/// `take_span_anchored_outer_cast` is never invoked — the finer A/B lever
+/// that isolates the span anchor from the forward Blocker-2 drain. The
+/// forward per-step `take_pending_for_drain_crosswrap` + §3d backstop are
+/// untouched by this lever (only `B2_DISABLE` gates those). Off by default;
+/// at M7.0 INERT (wired at M7.1).
+#[inline]
+fn b3_span_disabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("B3_SPAN_DISABLE").is_some())
+}
+
+/// Sig-B Blocker-3 M7.0 (2026-06-01, pgmcp experiment #9): is the
+/// `SIGB_CROSSWRAP` trace gate on? Memoized sibling of dispatch_cohort's
+/// `sigb_crosswrap_trace`. Gates the INERT M7.0 span-anchored diagnostic
+/// survey (`sigb_m70_span_diagnostic`) emitted at the drop boundary. Off by
+/// default; the survey emits NOTHING and has zero behavioral effect when
+/// unset.
+#[inline]
+fn sigb_m70_trace() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("SIGB_CROSSWRAP").is_some())
+}
+
 use crate::automata::semiring::{IdempotentSemiring, SemiringRef, StarSemiringRef};
 use crate::automata::TokenKind;
 use crate::gss::{WpdaGss, WpdaGssNode};
@@ -224,6 +282,58 @@ pub trait WpdaEngine<W: SemiringRef> {
     fn cat_of_type_name(&self, name: &str) -> Option<u16> {
         let _ = name;
         None
+    }
+
+    /// Pass-2c token-soundness backstop (2026-05-30): the minimum number of
+    /// input token positions that rule `(src_idx, rule_idx)`'s literal
+    /// terminals MUST occupy STRICTLY WITHIN the rule's result-Symbol span.
+    ///
+    /// Concretely this is the count of `SyntaxExpr::Literal` terminals in the
+    /// rule's `syntax_pattern` that appear AFTER the rule's FIRST parameter.
+    /// Leading literals (a prefix trigger such as `float` / `bool` before the
+    /// first operand) are consumed as `TriggerTerminal`s BEFORE the Symbol's
+    /// `lo_pos`, so they fall OUTSIDE the span and are excluded here; trailing
+    /// and infix literals (`(`, `)`, `,`, `+`, …) fall inside it.
+    ///
+    /// ## Why it exists (the soundness invariant)
+    /// A derivation's terminal yield must equal the input it spans: every
+    /// literal a rule node claims to have matched must occupy real input. The
+    /// Pass-2c implicit-cast wrap can fire a trigger-bearing cast's action
+    /// over just its operand WITHOUT the cast's `"("`/`")"` ever being matched
+    /// (e.g. `bool(0)` fabricating `FloatToBool(IntToFloat(0))` — the inner
+    /// `IntToFloat`'s `float ( )` is absent from the input). Such a packing's
+    /// result Symbol span EQUALS its operand span (`slack == 0`) even though
+    /// `min_terminal_span >= 1`. The realize pass rejects any packing whose
+    /// `slack = (sym_hi - sym_lo) - Σ child spans` is `< min_terminal_span` —
+    /// dropping ONLY token-unsound derivations on EVIDENCE (not a weight). A
+    /// genuinely sound derivation always has `slack >= min_terminal_span`
+    /// (and may exceed it via interior grouping parens), so the filter never
+    /// drops a sound parse.
+    ///
+    /// Default `0` (no constraint) for engines/synthetic rules without a
+    /// literal-bearing syntax_pattern. Per-language codegen overrides it.
+    fn min_terminal_span(&self, src_idx: u16, rule_idx: u16) -> u32 {
+        let _ = (src_idx, rule_idx);
+        0
+    }
+
+    /// Sig-B Blocker-3 §2.3 (2026-06-01, pgmcp experiment #9): the
+    /// grammar-determined SINGLE-hop coercion table. Returns the
+    /// `(target_cat, rule_index_in_target_cat)` pairs for every Pass-2a
+    /// transparent projection (`ProcX . x:X |- x : Proc`-shape) or Pass-2c
+    /// trigger-bearing cast (`<Y>To<X> . a:Y |- "t" "(" a ")" : X`) that
+    /// bridges `from_cat → to_cat`. EMPTY (`&[]`) when no such grammar rule
+    /// exists. Usually one entry; MULTIPLE when two rules co-bridge the same
+    /// `(from, to)` (Ambiguous — the splice emits one job per coercion).
+    ///
+    /// The default (test mocks, `IdleEngine`) is `&[]` (no coercions). Per-
+    /// language codegen emits a `match (from_cat, to_cat)` mirroring the live
+    /// Pass-2a/Pass-2c synthesis rule set EXACTLY (so the splice's interposed
+    /// coercion is byte-equal to what the forward dispatch would synthesize —
+    /// never an invented coercion). PURE static lookup, O(1), no side effects.
+    fn single_hop_coercion(&self, from_cat: u16, to_cat: u16) -> &[(u16, u16)] {
+        let _ = (from_cat, to_cat);
+        &[]
     }
 }
 
@@ -704,9 +814,14 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     // 189]` (5 entries) instead of `[X_id, Y_id]`. Splice state is now
     // per-cursor at `BranchCursor::sppf_collection_arena: Arc<Vec<Vec<
     // SppfId>>>`, mirroring the `cursor.builder: Arc<SemanticBuilder>`
-    // Arc-CoW pattern from Phase 5.2. Realize-time readers consult the
-    // winner cursor's arena via `winner_collection_arena()`. See
-    // `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md`.
+    // Arc-CoW pattern from Phase 5.2. PARSE-time fire
+    // (`fire_action_via_transient`) reads this cursor's own arena to splice
+    // collection items into the transient builder. Collection-accumulation
+    // fix (2026-05-29): REALIZE-time readers no longer consult any cursor's
+    // arena — they read each derivation's `CollectionId` SPPF node's own
+    // `items` (snapshotted at the fire site). See
+    // `docs/design/notes/2026-05-18-cursor-explosion-rhocalc.md` and
+    // `docs/design/plans/collection-accumulation-fix.md`.
     /// Option C / C3: SPPF-side predicate payload arena.
     /// `emit_push_predicate` interns the `Arc<dyn Any + Send + Sync>` here
     /// and pushes a `SppfNode::Predicate { handle }` leaf. Realization
@@ -800,6 +915,16 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// revived cursors per key.
     pending_cohort_drain_keys:
         rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    /// Cohort-revive-rework M1 (2026-05-29): bounded re-drive counter for
+    /// EOI orphan revival. `run_to_end_of_input`'s `!progress_made` block
+    /// calls `revive_orphaned_cohort_members_once`, which injects
+    /// orphaned `InFlight` cohort members as fresh `Frame::Concrete`
+    /// workers and `continue`s to re-drive. Each such injection bumps
+    /// this counter; once it reaches the cap (`MAX_REVIVAL_ROUNDS = 4`)
+    /// the walker stops reviving and parks normally, so a pathological
+    /// orphan that re-dies every round cannot livelock the parse loop.
+    /// Reset to 0 in `reset()`.
+    revival_rounds: u32,
     /// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort
     /// cache. Memoizes `emit_recovery_fork`'s `Vec<ForkBranch<W>>`
     /// across cohort members at the same
@@ -892,6 +1017,19 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
 /// Pathological cases (infinite loops in cursor mutation, e.g., a Fork
 /// that re-emits the same Fork) trip this guard immediately.
 pub const STRICT_PENDING_OPS_LIMIT: usize = 1_000_000;
+
+/// Cohort-revive-rework M1 (2026-05-29): maximum number of times
+/// `run_to_end_of_input` will revive EOI-orphaned cohort members and
+/// re-drive the parse within a single parse. Each revival round
+/// re-injects orphaned `InFlight` cohort members as fresh workers
+/// (`revive_orphaned_cohort_members_once`). A small cap bounds the rare
+/// pathological case of an orphan whose re-driven sub-parse re-dies and
+/// re-orphans every round; in practice a successful revive resolves in a
+/// single round (the orphan becomes a worker and runs to EOI). 4 mirrors
+/// the conservative bound style used elsewhere in this walker (cohort
+/// caps, recovery depth) and is comfortably above the observed
+/// single-round need while preventing livelock.
+const MAX_REVIVAL_ROUNDS: u32 = 4;
 
 /// One branch of a [`WpdaStepAction::Fork`] action. Codegen emits a
 /// `Vec<ForkBranch<W>>` when a parser-side ambiguity needs WPDS-driven
@@ -1435,6 +1573,35 @@ pub struct BranchCursor<W: SemiringRef> {
     /// bumps, with `Arc::make_mut` only allocating on first per-cursor
     /// mutation.
     pub visited_dispatch: im::OrdSet<PackedDispatchConfig>,
+    /// Sig-B GLL-descriptor (2026-05-31, pgmcp experiment #9): per-cursor
+    /// set of progress-aware cross-cat-projection descriptors
+    /// ([`ProjDescriptorKey`]) at which a CrossCatDelegate dispatch has
+    /// already fired on this cursor's path. SUPERSEDES the `visited_dispatch`
+    /// role at the 5 cross-cat cycle-defense sites: where `visited_dispatch`
+    /// keyed on `(pos, cat_src, cur_bp)` = the GLL `(L, u, i)`,
+    /// `visited_proj_descriptors` keys on `(gss_node, sppf_stack, cat_src,
+    /// cur_bp)` = the GLL `(u, w, ..)` WITH the SPPF-progress `w`
+    /// discriminator. A no-progress cross-cat re-entry (e.g. the
+    /// `cross_cat_with_parens` H1' live-lock) reproduces the descriptor →
+    /// CYCLE, DROP; a productive SPPF-fold (e.g. `cross_cat_dispatch_chaining`)
+    /// advances `sppf_stack` → distinct descriptor → ALLOWED. The two cases
+    /// share identical `(pos, cat_src, cur_bp)` so NO position/wrap key can
+    /// separate them — only the `w`-bearing descriptor does (Scott &
+    /// Johnstone 2010, §3).
+    ///
+    /// CROSS-CAT-ONLY: populated ONLY at the 5 CrossCatDelegate sites, so it
+    /// stays empty on chain (operator-form) workloads → Memory Option A
+    /// (empty `im::OrdSet::clone()` is an O(1) Arc-bump, zero chain RSS).
+    /// `visited_recovery`/`visited_dispatch` stay UNCHANGED at M0 — recovery
+    /// is not the cross-cat blocker, and `visited_dispatch`'s cross-cat use
+    /// is retired only at M1.
+    /// Propagation mirrors `visited_dispatch`: cloned to each Fork child,
+    /// carried verbatim through cohort/Tomita shells, inserted with the
+    /// parent's descriptor after a projection dispatch (the H1' broadening
+    /// insert — but now carrying the parent's `sppf_stack_id`, which is the
+    /// crux: parens re-enters with the SAME StackId → caught, chaining
+    /// re-enters with an ADVANCED StackId → allowed).
+    pub visited_proj_descriptors: im::OrdSet<ProjDescriptorKey>,
     // Phase 5.6-tail-A (2026-05-12): `consistency_memo` field deleted.
     // It memoized `cursor_committed_ops_consistent`, which is also
     // deleted — the B13d-R/Resolution-R consistency override is
@@ -1743,6 +1910,10 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
             // use Arc::make_mut for copy-on-write semantics.
             visited_recovery: self.visited_recovery.clone(),
             visited_dispatch: self.visited_dispatch.clone(),
+            // Sig-B GLL-descriptor (#9): O(1) im::OrdSet clone (empty on
+            // chains → Arc-bump only). First per-cursor insert (M1 sites)
+            // triggers structural-share CoW.
+            visited_proj_descriptors: self.visited_proj_descriptors.clone(),
             // Phase F.3c.4 (2026-05-20): builder field deleted; the
             // Arc::clone is no longer needed.
             // Phase F.11 (2026-05-20): Arc bump — clone is O(1); first
@@ -1847,6 +2018,9 @@ impl<W: SemiringRef> BranchCursor<W> {
             // B12 / Candidate E (2026-05-07): seed cursor has not
             // dispatched any projection Fork yet — empty visited set.
             visited_dispatch: im::OrdSet::new(),
+            // Sig-B GLL-descriptor (#9): seed cursor has no projection
+            // descriptors yet — empty cross-cat-only set.
+            visited_proj_descriptors: im::OrdSet::new(),
             // B13d-R Step 2 (2026-05-08): empty pending = Consistent.
             // Phase 5.2 (2026-05-12): fresh empty Arc<SemanticBuilder>.
             // The seed cursor's builder is independent of the walker's
@@ -1919,6 +2093,10 @@ impl<W: SemiringRef> BranchCursor<W> {
             // visited set; the Fork-arm post-allocation step inserts the
             // current dispatch config when this fork IS a projection Fork.
             visited_dispatch: parent.visited_dispatch.clone(),
+            // Sig-B GLL-descriptor (#9): inherit parent's projection
+            // descriptors (O(1) clone). The M1 H1' broadening insert
+            // carries the parent's descriptor into all non-recovery children.
+            visited_proj_descriptors: parent.visited_proj_descriptors.clone(),
             // B13d-R Step 2 (2026-05-08): inherit parent's memo (the child
             // shares parent's recovery_deltas at construction time;
             // any subsequent push invalidates the child's memo).
@@ -2646,16 +2824,121 @@ impl PackedDispatchConfig {
     }
 }
 
-fn extract_dispatch_config<W: SemiringRef>(
+// Sig-B GLL-descriptor (#9, M1): `extract_dispatch_config` is DISABLED
+// (commented out, not deleted, per the no-delete mandate). It extracted the
+// `(pos, cat_src, cur_bp)` cross-cat cycle-defense key = the GLL `(L, u, i)`
+// WITHOUT the `w` (SPPF-progress) discriminator. All 5 cross-cat
+// cycle-defense sites now call [`extract_proj_descriptor`] (below) instead,
+// which adds the `w` (`sppf_stack_id`) discriminator — the load-bearing fix
+// for Sig-B (`cross_cat_with_parens` no-progress live-lock must be caught
+// AND `cross_cat_dispatch_chaining` SPPF-progress fold must be allowed; the
+// two share identical `(pos, cat_src, cur_bp)`, so no `pos`/wrap key can
+// separate them). The recovery path keeps its OWN
+// `extract_recovery_dispatch_config` (above) — recovery is not the cross-cat
+// blocker. Retained for reference / potential revert.
+//
+// fn extract_dispatch_config<W: SemiringRef>(
+//     cursor: &BranchCursor<W>,
+//     gss: &WpdaGss<W>,
+// ) -> Option<PackedDispatchConfig> {
+//     if let WpdaState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
+//         let cat_src = gss
+//             .node(cursor.node)
+//             .map(|n| n.symbol.category_src_idx)
+//             .unwrap_or(0);
+//         Some(PackedDispatchConfig::pack(*pos, cat_src, *cur_bp))
+//     } else {
+//         None
+//     }
+// }
+
+/// Sig-B GLL-descriptor (2026-05-31, pgmcp experiment #9): the
+/// progress-aware cross-cat cycle-defense key. A GLL descriptor is
+/// `(L, u, i, w)` where `w` is the SPPF node (Scott & Johnstone,
+/// "GLL Parsing", ENTCS 253(7):177-189, 2010, §3). The pre-#9 B14-C5
+/// cycle-defense key [`PackedDispatchConfig`] is `(pos, cat_src, cur_bp)`
+/// = `(L, u, i)` — it is MISSING the `w` (SPPF/progress) discriminator.
+///
+/// Two cross-cat re-entries that share identical `(pos, cat_src, cur_bp)`
+/// are PROVABLY indistinguishable under any position/wrap key — yet one
+/// (`cross_cat_with_parens`, a no-progress live-lock) must be CAUGHT and
+/// the other (`cross_cat_dispatch_chaining`, a legitimate SPPF-progress
+/// fold) must be ALLOWED. The literature discriminator is the SPPF stack
+/// state. `ProjDescriptorKey` adds it:
+///
+///   - `gss_node` (= `cursor.node`, a `u32`): the GSS tip.
+///   - `sppf_stack` (= `cursor.sppf_stack_id.0`, a `u32`): the
+///     interned, structurally-dedup'd `PathTreeArena` handle
+///     (`path_tree_arena.rs`, `sppf_stack_arena.rs`). Two cursors with
+///     identical pushed-SppfId chains share the SAME `StackId` (proven by
+///     `property_equal_push_sequences_dedup` /
+///     `property_distinct_permutations_distinguish`). ⇒ a no-progress
+///     re-entry reproduces the descriptor → CYCLE, DROP; a chaining fold
+///     pushes ≥1 reduced Symbol → distinct `StackId` → distinct descriptor
+///     → ALLOWED.
+///   - `cat_src` (u16) + `cur_bp` (u8): the dispatch's category + binding
+///     power, exactly as in `PackedDispatchConfig`.
+///
+/// `pos` is INTENTIONALLY DROPPED: at a fixed dispatch the `sppf_stack_id`
+/// is the discriminator, and `pos` is redundant (the chaining fold
+/// re-enters at the SAME `pos` with an ADVANCED `sppf_stack_id`, so a
+/// `pos`-bearing key would falsely separate it). 12 bytes, `Copy`, no Arc.
+///
+/// Memory Option A: this is a SEPARATE cross-cat-only set
+/// (`BranchCursor::visited_proj_descriptors`), empty on chain workloads,
+/// so the chain RSS ceiling is provably untouched (`im::OrdSet::clone()`
+/// of empty = O(1) Arc-bump). `PackedDispatchConfig` stays a u64 for
+/// `visited_recovery` (recovery is NOT the cross-cat blocker).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ProjDescriptorKey {
+    /// GSS tip node id (`cursor.node`). The `u` in the GLL descriptor.
+    pub gss_node: u32,
+    /// SPPF-stack arena handle (`cursor.sppf_stack_id.0`). The `w`
+    /// (progress) discriminator — the load-bearing addition over
+    /// `PackedDispatchConfig`. Structural arena dedup guarantees equal
+    /// pushed-SppfId chains share this id (so a no-progress re-entry
+    /// reproduces it) while a productive reduced-Symbol push advances it.
+    pub sppf_stack: u32,
+    /// Dispatch category source index (GSS node's `symbol.category_src_idx`).
+    pub cat_src: u16,
+    /// Current binding power at the `PrefixDispatch` (`cur_bp`).
+    pub cur_bp: u8,
+}
+
+impl ProjDescriptorKey {
+    #[inline(always)]
+    pub fn new(gss_node: u32, sppf_stack: u32, cat_src: u16, cur_bp: u8) -> Self {
+        ProjDescriptorKey {
+            gss_node,
+            sppf_stack,
+            cat_src,
+            cur_bp,
+        }
+    }
+}
+
+/// Sig-B GLL-descriptor (#9): extract the progress-aware
+/// [`ProjDescriptorKey`] for a cursor at a `PrefixDispatch` state.
+/// Returns `None` for any non-`PrefixDispatch` state (the cross-cat
+/// projection cycle defense only fires at dispatch sites). Mirrors
+/// [`extract_dispatch_config`] but reads the SPPF-stack `w` discriminator
+/// (`cursor.sppf_stack_id`) so a no-progress re-entry reproduces the
+/// descriptor while a productive fold advances it.
+fn extract_proj_descriptor<W: SemiringRef>(
     cursor: &BranchCursor<W>,
     gss: &WpdaGss<W>,
-) -> Option<PackedDispatchConfig> {
-    if let WpdaState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
+) -> Option<ProjDescriptorKey> {
+    if let WpdaState::PrefixDispatch { cur_bp, .. } = &cursor.inner_state {
         let cat_src = gss
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
             .unwrap_or(0);
-        Some(PackedDispatchConfig::pack(*pos, cat_src, *cur_bp))
+        Some(ProjDescriptorKey::new(
+            cursor.node,
+            cursor.sppf_stack_id.0,
+            cat_src,
+            *cur_bp,
+        ))
     } else {
         None
     }
@@ -2857,6 +3140,8 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
+            revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
@@ -2943,6 +3228,8 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
+            revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
@@ -3024,6 +3311,8 @@ where
             dispatch_branch_seen: std::collections::HashMap::new(),
             dispatch_cohort_cache: crate::dispatch_cohort::DispatchCohortCache::new(),
             pending_cohort_drain_keys: rustc_hash::FxHashSet::default(),
+            // Cohort-revive-rework M1 (2026-05-29): orphan re-drive cap.
+            revival_rounds: 0,
             recovery_cohort_cache: crate::recovery_cohort::RecoveryCohortCache::new(),
             // Phase F.13 chain_10000 Exp 14 Substage 3 (2026-05-27):
             // walker-global Tomita frontier merge map. Fresh = empty.
@@ -3106,6 +3395,10 @@ where
         // SPPF arena and would be unsound to reuse across resets.
         self.dispatch_cohort_cache.clear();
         self.pending_cohort_drain_keys.clear();
+        // Cohort-revive-rework M1 (2026-05-29): reset the orphan
+        // re-drive counter at the parse boundary so each parse gets a
+        // fresh `MAX_REVIVAL_ROUNDS` budget.
+        self.revival_rounds = 0;
         // Phase F.13 Task #117 (2026-05-23): recovery cache is per-
         // parse — `tokens` and `infra.token_id_map` keying are
         // parse-local. Clear at reset boundary.
@@ -3538,6 +3831,9 @@ where
                     // post-resolution singleton resets projection
                     // visited set.
                     visited_dispatch: im::OrdSet::new(),
+                    // Sig-B GLL-descriptor (#9): post-resolution singleton
+                    // resets the projection-descriptor set too.
+                    visited_proj_descriptors: im::OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -3718,7 +4014,15 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WpdaMaxStepsExceeded>
     where
-        W: 'static + std::fmt::Debug,
+        // M1.PERF (2026-05-31): the spurious-blowup gate in
+        // `revive_orphaned_cohort_members_once` calls `realize_root_to_terms`
+        // (the resolver's exact success condition) to distinguish a genuine
+        // cross-cat parse from the deep-mixfix spurious O(N) orphan tail,
+        // requiring `IdempotentSemiring + StarSemiringRef`. Every real
+        // walker instantiation (production + `ScriptedEngine` unit tests)
+        // uses `LexicographicWeight`, which satisfies both, so this adds no
+        // obligation at any existing call site.
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
         // Phase F.13 Task #117 (2026-05-23): pin recovery cache pointer
         // for the duration of the parse loop so the codegen-emitted
@@ -3839,7 +4143,22 @@ where
                 if !progress_made {
                     // True fixed point — every cursor's engine.step
                     // returned Idle (or transitioned to itself), so no
-                    // further state movement is possible. Exit cleanly.
+                    // further state movement is possible.
+                    //
+                    // Cohort-revive-rework M1 (2026-05-29): BEFORE exiting,
+                    // check whether any cross-cat cohort members were
+                    // silently orphaned on InFlight dispatch-cache entries
+                    // (their worker died without resolving, so the
+                    // end-of-step drain never fired). If so, re-inject them
+                    // as fresh workers and re-drive — they run their own
+                    // cross-cat sub-parse and reach EOI. Bounded by
+                    // `MAX_REVIVAL_ROUNDS`; returns 0 (and we exit) once
+                    // there are no orphans or the budget is exhausted.
+                    if self.revive_orphaned_cohort_members_once(tokens) > 0 {
+                        continue;
+                    }
+                    // No orphans to revive (or budget exhausted) — true
+                    // parked frontier. Exit cleanly.
                     return Ok(());
                 }
                 continue;
@@ -3920,6 +4239,29 @@ where
                 .unwrap_or(false)
             {
                 eprintln!("{}", self.stats);
+            }
+        }
+        // Cohort-revive-rework M0 (2026-05-29): orphan census at the
+        // parse boundary, BEFORE force-materialize / resolution. Snapshot
+        // the count of paused cohort members still parked on non-Resolved
+        // (InFlight / Failed) entries into the cache's cumulative
+        // counters so `write_summary` can print them and so a test
+        // harness can assert "≥1 orphan on a failing cross-cat test, 0 on
+        // a passing one" (the M0 prediction). Gated under the same
+        // PRATTAIL_WALKER_STATS env var as the cohort-cache summary so
+        // the hot path pays nothing in production.
+        {
+            if std::env::var_os("PRATTAIL_WALKER_STATS")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
+                let (inflight_orphans, failed_orphans) = self
+                    .dispatch_cohort_cache
+                    .orphaned_pending_members_count();
+                self.dispatch_cohort_cache.inflight_orphan_members_total +=
+                    inflight_orphans;
+                self.dispatch_cohort_cache.failed_orphan_members_total +=
+                    failed_orphans;
             }
         }
         // Phase F.13 H12 Stage 1.2 (2026-05-21): emit dispatch-cohort
@@ -4081,6 +4423,39 @@ where
         // by removing premature cursors from `branch_cursors` itself —
         // ensuring that any downstream commit_winner_at_eoi or SPPF
         // root extraction operates on the surviving (EOI-reached) set.
+        // Cluster H (2026-05-29): capture every VALID-PREFIX cursor's
+        // `(pos, weight, sppf_root)` BEFORE the Phase E Fix A retain (and
+        // before the accepting_indices filter consumes/commits cursors).
+        // A valid-prefix cursor is `is_accepting_config` (so its
+        // configuration genuinely accepts — Accepted / InfixLoop /
+        // Unwinding-at-entry) but parked STRICTLY before logical EOI.
+        // This single capture feeds both salvage sites below (the Phase E
+        // empty-branch case where the prefix is `Accepted`, and the
+        // `accepting_indices == 0` case where the prefix sits in
+        // `InfixLoop` waiting for an operator that never came — e.g.
+        // `Float "1.5 2.5"`). Realization (`realize_root_to_terms`) needs
+        // only the root id (reads the SPPF arena, not the cursor), so the
+        // captured root id survives any later cursor mutation.
+        let prefix_trailing_candidates: Vec<(usize, W, crate::sppf::SppfId)> = {
+            let eof = tokens.eof_node();
+            self.branch_cursors
+                .iter()
+                .filter_map(|frame| {
+                    let c = frame.as_concrete_expect();
+                    if !self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c) {
+                        let root = self
+                            .sppf_stack_arena
+                            .top(c.sppf_stack_id)
+                            .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                        // Defensive: only `pos < eof` (a true prefix).
+                        if c.pos < eof {
+                            return Some((c.pos, c.weight.clone(), root));
+                        }
+                    }
+                    None
+                })
+                .collect()
+        };
         {
             let eof = tokens.eof_node();
             let len_before = self.branch_cursors.len();
@@ -4091,6 +4466,33 @@ where
             });
             // No further work if all were premature.
             if self.branch_cursors.is_empty() && len_before > 0 {
+                // Cluster H (2026-05-29): before reporting the generic
+                // "premature lex-Fork acceptance" failure, salvage the
+                // VALID-PREFIX / trailing-tokens case. The retain above
+                // dropped every cursor in `WpdaState::Accepted` with
+                // `pos < eof`. If those dropped cursors include at least
+                // one whose configuration is genuinely accepting
+                // (`is_accepting_config`) and whose SPPF root realizes to
+                // a term, this is NOT a premature lex-Fork — it is a
+                // proper prefix parse with unconsumed trailing tokens.
+                //
+                // Crucially, this arm is reached only when NO cursor
+                // survived the retain, i.e. NO cursor reached logical
+                // EOI. So there is no longer-and-complete parse competing
+                // with the prefix; surfacing the prefix does not violate
+                // max-munch disambiguation (the Phase E Fix A drop still
+                // wins whenever a full-EOI cursor coexists, because then
+                // `branch_cursors` is non-empty and this arm is skipped).
+                //
+                // `resolve_prefix_with_trailing` picks the
+                // FURTHEST-reaching prefix (max `pos` = longest accepted
+                // prefix) and carries ALL cursors tied at that furthest
+                // position so genuine prefix ambiguity is preserved.
+                if let Some(trailing) =
+                    self.resolve_prefix_with_trailing(&prefix_trailing_candidates)
+                {
+                    return trailing;
+                }
                 return WpdaResolveResult::ParseError {
                     message: "all Accepted cursors had unconsumed input \
                               (premature lex-Fork acceptance)"
@@ -4124,10 +4526,30 @@ where
             .max()
             .unwrap_or(self.pos);
         match accepting_indices.len() {
-            0 => WpdaResolveResult::ParseError {
-                message: "no accepting branch reached end of input".to_string(),
-                position: max_dead_pos,
-            },
+            0 => {
+                // Cluster H (2026-05-29): no cursor reached logical EOI,
+                // but a VALID-PREFIX cursor may still exist (captured in
+                // `prefix_trailing_candidates` above, BEFORE the Phase E
+                // retain). This is the trailing-tokens case where the
+                // accepting prefix sits in `InfixLoop` — e.g.
+                // `Float "1.5 2.5"`: `1.5` is a complete FloatLit but the
+                // cursor is waiting for a binary operator, sees `2.5`
+                // (not an operator), and dies without ever transitioning
+                // to `WpdaState::Accepted`. Surface the prefix so the
+                // facade emits `TrailingTokens` instead of a misleading
+                // "no accepting branch" error. Disambiguation-safe: this
+                // arm is reached ONLY when zero cursors are at EOI, so no
+                // full parse competes with the prefix.
+                if let Some(trailing) =
+                    self.resolve_prefix_with_trailing(&prefix_trailing_candidates)
+                {
+                    return trailing;
+                }
+                WpdaResolveResult::ParseError {
+                    message: "no accepting branch reached end of input".to_string(),
+                    position: max_dead_pos,
+                }
+            }
             1 => {
                 // C8.1 (2026-05-16): the M11 multiset snapshot-iteration arm was
                 // deleted alongside the C10 W revert to LexicographicWeight.
@@ -4230,6 +4652,64 @@ where
                 WpdaResolveResult::Accepted { weights, terms, roots }
             }
         }
+    }
+
+    /// Cluster H (2026-05-29): build a `WpdaResolveResult::AcceptedWithTrailing`
+    /// from the prefix-accepting cursors captured by the Phase E Fix A
+    /// salvage path in `resolve_at_end_of_input`.
+    ///
+    /// `prefix_candidates` is `(pos, weight, sppf_root)` for every cursor
+    /// that was `is_accepting_config` but parked at `pos < eof_node`. This
+    /// is invoked ONLY when no full-EOI accepting cursor exists, so the
+    /// longest prefix is the best (and only) accepting derivation.
+    ///
+    /// Disambiguation contract: we select the cursors that reached the
+    /// FURTHEST position (max `pos` = longest accepted prefix per
+    /// max-munch) and carry ALL of them — preserving genuine prefix-level
+    /// ambiguity exactly as the `Accepted` multi-arm does. The returned
+    /// `position` is the furthest prefix boundary (the first unconsumed
+    /// token index), which the facade installs into `*pos` so the
+    /// generated wrapper emits a structured `TrailingTokens` error.
+    ///
+    /// Returns `None` (so the caller falls through to the generic
+    /// "premature lex-Fork acceptance" `ParseError`) when no candidate
+    /// has a realizable SPPF root — i.e. there is no genuine prefix parse
+    /// to surface.
+    fn resolve_prefix_with_trailing(
+        &self,
+        prefix_candidates: &[(usize, W, crate::sppf::SppfId)],
+    ) -> Option<WpdaResolveResult<W>>
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        // Longest accepted prefix wins (max-munch over the prefix set).
+        let max_pos = prefix_candidates.iter().map(|(p, _, _)| *p).max()?;
+        let mut weights: Vec<W> = Vec::new();
+        let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> = Vec::new();
+        let mut roots: Vec<crate::sppf::SppfId> = Vec::new();
+        for (pos, weight, root) in prefix_candidates.iter().filter(|(p, _, _)| *p == max_pos) {
+            let _ = pos;
+            let root = *root;
+            if root == crate::sppf::SPPF_ID_NONE {
+                continue;
+            }
+            if let Some(t) = self.realize_root_to_terms(root, Some(1)).into_iter().next() {
+                weights.push(weight.clone());
+                terms.push(t);
+                roots.push(root);
+            }
+        }
+        if terms.is_empty() {
+            // No realizable prefix term — not a genuine trailing-tokens
+            // case; let the caller surface the generic failure.
+            return None;
+        }
+        Some(WpdaResolveResult::AcceptedWithTrailing {
+            weights,
+            terms,
+            roots,
+            position: max_pos,
+        })
     }
 
     /// Option C / C7 (2026-05-15): Realize the user AST from a Shared
@@ -4375,18 +4855,18 @@ where
                                     }
                                 }
                             }
-                            Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
+                            Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
                                 // Recursively realize each collected SppfId so
                                 // the Collection arg's contents are materialized.
-                                // Phase F.4 (2026-05-18): consult winner cursor's
-                                // arena (post-commit) instead of walker-global.
-                                if let Some(items) =
-                                    self.winner_collection_arena().get(*cid as usize)
-                                {
-                                    for &item in items {
-                                        if colors.get(&item) != Some(&RealizeColor::Black) {
-                                            stack.push((item, Phase::Enter));
-                                        }
+                                // Collection-accumulation fix (2026-05-29): walk
+                                // the node's OWN derivation-local `items`
+                                // (snapshotted at the fire site) instead of the
+                                // post-commit `winner_collection_arena()` =
+                                // `branch_cursors[0]`, which truncated/emptied
+                                // collections belonging to non-winner cursors.
+                                for &item in items {
+                                    if colors.get(&item) != Some(&RealizeColor::Black) {
+                                        stack.push((item, Phase::Enter));
                                     }
                                 }
                             }
@@ -4514,7 +4994,7 @@ where
                     Vec::new()
                 }
             }
-            Some(crate::sppf::SppfNode::CollectionId { id: cid }) => {
+            Some(crate::sppf::SppfNode::CollectionId { id: cid, .. }) => {
                 // The CollectionId placeholder is consumed by the action
                 // alongside the collected items. The realization yields
                 // ActionArg::CollectionId(cid); the parent Packing's
@@ -4546,7 +5026,7 @@ where
                     W::one_ref(),
                 )]
             }
-            Some(crate::sppf::SppfNode::Symbol { .. }) => {
+            Some(crate::sppf::SppfNode::Symbol { lo_pos: sym_lo, hi_pos: sym_hi, .. }) => {
                 // Concat all packings' realizations. Phase C.6 preserves
                 // per-derivation weights; the Symbol-level ⊕-aggregation
                 // is captured in Sppf::Symbol.weight_sum at link time,
@@ -4572,16 +5052,164 @@ where
                 // (production `LexicographicWeight`) `star = one` so
                 // this is identity; for non-idempotent W the multiplier
                 // captures the cycle's closed-semiring contribution.
+                let sym_span: u32 = (*sym_hi).saturating_sub(*sym_lo);
                 let mut out: Vec<(ActionArg, W)> = Vec::new();
                 for &p in self.sppf.packings_of(id) {
                     let p_color = colors.get(&p).copied();
-                    let p_results = match memo.get(&p) {
+                    // Pass-2c token-soundness backstop (2026-05-30): reject a
+                    // packing whose result-Symbol span does NOT leave room for
+                    // the rule's in-span literal terminals — i.e. the rule
+                    // claims to have matched `"("`/`")"`/`,`/… that occupy zero
+                    // input. This is the EVIDENCE-based drop (yield != span)
+                    // that retires the former premature-disambiguation weight
+                    // crutch; a sound derivation always has slack >=
+                    // min_terminal_span (interior grouping only adds slack), so
+                    // no sound parse is dropped. See WpdaEngine::min_terminal_span.
+                    if let Some(crate::sppf::SppfNode::Packing { rule_idx: prule, children, .. }) =
+                        self.sppf.node(p)
+                    {
+                        let pcat = (*prule >> 16) as u16;
+                        let plocal = (*prule & 0xFFFF) as u16;
+                        let min_span = self.engine.min_terminal_span(pcat, plocal);
+                        if min_span > 0 {
+                            let child_span_sum: u32 = children
+                                .iter()
+                                .map(|&c| match self.sppf.node(c) {
+                                    Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) =>
+                                        (*hi_pos).saturating_sub(*lo_pos),
+                                    Some(crate::sppf::SppfNode::Terminal { .. })
+                                    | Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => 1,
+                                    _ => 0,
+                                })
+                                .sum();
+                            // Soundness filter applies ONLY when the result
+                            // Symbol carries a MEANINGFUL span that covers its
+                            // operands (sym_span >= child_span_sum). A
+                            // zero-width or under-covering span (sym_span <
+                            // child_span_sum) is a synthetic / recovery /
+                            // not-yet-finalized node whose lo/hi don't encode
+                            // real input extent — the span signal is unreliable
+                            // there, so we must NOT reject (doing so wrongly
+                            // dropped sound lambda `App`/`Lam` packings whose
+                            // Symbol had lo_pos==hi_pos==0). Restricting to
+                            // sym_span >= child_span_sum keeps the filter sound:
+                            // it fires only where the yield==span invariant is
+                            // actually observable.
+                            if sym_span >= child_span_sum {
+                                let slack = sym_span - child_span_sum;
+                                if slack < min_span {
+                                    // Token-unsound derivation: the rule claims
+                                    // to match in-span literals that occupy zero
+                                    // input (a fabricated cast). Drop this
+                                    // packing on evidence (yield != span).
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    let memo_results = match memo.get(&p) {
                         Some(v) => v,
                         None => continue,
                     };
-                    if p_results.is_empty() && p_color == Some(RealizeColor::Gray) {
+                    if memo_results.is_empty() && p_color == Some(RealizeColor::Gray) {
                         continue; // cycle back-edge — skip
                     }
+                    // ── Stale-finalization-under-in-progress-cycle repair
+                    //    (2026-05-31) ─────────────────────────────────────
+                    // ROOT FIX for the realize-DFS bug that DROPS a PRESENT
+                    // sound derivation (`int(-1 <= 0)` realized 0 terms for the
+                    // accepting Int Symbol despite a SOUND packing under it that
+                    // realizes to 1 standalone). EMPIRICAL MECHANISM (env-gated
+                    // `PRATTAIL_REALIZE_TRACE` ancestor-chain dump, all 336
+                    // gray-hits classified): the SPPF has a GENUINE same-span
+                    // ambiguity cycle — NOT a diamond/DAG re-convergence. Every
+                    // back-edge target is a true DFS-ancestor of the re-entry
+                    // node. The lost derivation rides a packing that sits ON A
+                    // PATH THROUGH the cycle but is ITSELF OUTSIDE it.
+                    //
+                    // Concretely (`int(-1<=0)`): the cycle node is Symbol 13 =
+                    // Bool(lo=2,hi=5), with TWO packings — an ACYCLIC one (12 =
+                    // `Le(-1,0)`, realizes to 1) and a CYCLIC one (43, whose
+                    // subtree loops back to 13 via cross-cat). The sound root
+                    // derivation is packing 28 = `BoolToInt(Symbol 13)`, a child
+                    // of the accepting Int Symbol 29. The iterative tri-color DFS
+                    // memoizes each node's realization EXACTLY ONCE (at its
+                    // `Phase::Leave`). The DFS descends to Symbol 13 (→Gray) and
+                    // explores its CYCLIC packing 43 FIRST; that traversal reaches
+                    // packing 28 as a cross-edge (28's only child is Symbol 13)
+                    // WHILE Symbol 13 is still Gray, so 28 reads 13's PROVISIONAL
+                    // empty back-edge memo (`memo.entry(13).or_insert(empty)` set
+                    // at the Gray-at-Enter back-edge) and Leave-finalizes EMPTY +
+                    // BLACK. Only LATER does the DFS explore 13's ACYCLIC packing
+                    // 12, so Symbol 13's own memo resolves empty→1 — but the
+                    // single-visit memo never recomputes the already-BLACK packing
+                    // 28. When the accepting Symbol 29 Leaves and consumes packing
+                    // 28 it reads the stale empty memo and drops the sound
+                    // derivation that is demonstrably PRESENT in the SPPF (the
+                    // same packing realizes to 1 standalone with a fresh memo).
+                    // The Newton/Tarjan post-pass cannot rescue this: it rewrites
+                    // SYMBOL memos in non-trivial SCCs by a `star()` multiplier
+                    // (identity for LexicographicWeight), and packing 28 is a
+                    // Packing node OUTSIDE every SCC — never touched.
+                    //
+                    // The repair: a BLACK packing with an EMPTY memo is the exact
+                    // (and only) stale signature — recompute it ONCE from the
+                    // CURRENT (monotone-grown, now-resolved) child memos via
+                    // `realize_packing_call`. This:
+                    //   • restores the sound derivation (packing 28 reads the
+                    //     now-resolved `memo[13]` → yields its 1 term);
+                    //   • is a NO-OP for a legitimately produces-nothing packing
+                    //     (OptAbsent under an empty optional, etc.) — recompute
+                    //     stays empty, behavior unchanged;
+                    //   • is INERT for a packing whose consumer Leaves while the
+                    //     cycle node is still unresolved: such a consumer sits
+                    //     INSIDE the cycle, so the child memo is still empty at
+                    //     recompute time → recompute yields empty → the cycle
+                    //     stays empty and the Newton/Tarjan closed-semiring
+                    //     post-pass remains the SOLE handler of true cycle
+                    //     contributions (`star = one` for LexicographicWeight).
+                    //     Only an OUTSIDE consumer (one that Leaves AFTER the cycle
+                    //     node resolves via its acyclic packing) recomputes
+                    //     non-empty — exactly the lost-derivation case;
+                    //   • adds ZERO cost to the common acyclic path (a non-empty
+                    //     cached packing memo is always correct — computed from
+                    //     then-resolved children — so it is never recomputed);
+                    //   • drops NO alternate — purely additive completeness
+                    //     (restores a present sound derivation); the Step-A
+                    //     token-soundness filter (already applied to `p` above)
+                    //     remains the sole evidence-based drop.
+                    // Termination: the recompute reads child memos directly (no
+                    // graph re-walk); `memo` only grows; fires at most once per
+                    // packing per Symbol-Leave. Nested cases compose because
+                    // Symbol Leaves run in post-order — a consumed child Symbol's
+                    // packings are already repaired before its parent Leaves.
+                    let recomputed_storage: Vec<(ActionArg, W)>;
+                    let p_results: &Vec<(ActionArg, W)> = if memo_results.is_empty()
+                        && p_color == Some(RealizeColor::Black)
+                    {
+                        if let Some(crate::sppf::SppfNode::Packing {
+                            rule_idx: prule,
+                            children: pchildren,
+                            weight: pweight,
+                        }) = self.sppf.node(p)
+                        {
+                            recomputed_storage = self.realize_packing_call(
+                                *prule,
+                                pchildren,
+                                pweight.clone(),
+                                memo,
+                                limit,
+                            );
+                            &recomputed_storage
+                        } else {
+                            // Black+empty but not a Packing node (defensive —
+                            // a Symbol's packings_of are always Packing nodes);
+                            // keep the empty memo result.
+                            memo_results
+                        }
+                    } else {
+                        memo_results
+                    };
                     for entry in p_results {
                         if let Some(cap) = limit {
                             if out.len() >= cap {
@@ -4894,22 +5522,37 @@ where
                         // the slot the CollectionId references, then
                         // push the CollectionId arg. action_fn will
                         // pop_args and drain the collection.
-                        // Phase F.4 (2026-05-18): consult winner
-                        // cursor's arena (post-commit).
-                        if let Some(items) = self.winner_collection_arena().get(*id as usize) {
-                            // Each item is realized as an ActionArg::Term
-                            // in `memo`; push them onto sb so
-                            // push_to_collection drains correctly.
-                            for &item in items {
-                                if let Some(item_realized) = memo.get(&item) {
-                                    if let Some((item_arg, _item_w)) = item_realized.first() {
-                                        match item_arg {
-                                            ActionArg::Term { value, .. } => {
-                                                sb.push_term_arc(Arc::clone(value));
-                                                sb.push_to_collection(*id);
-                                            }
-                                            _ => {}
+                        //
+                        // Collection-accumulation fix (2026-05-29): read the
+                        // element SppfIds from the matching `CollectionId`
+                        // child node's own derivation-local `items` (in scope
+                        // as `children: &[SppfId]`), NOT from the post-commit
+                        // `winner_collection_arena()` = `branch_cursors[0]`
+                        // (the WRONG cursor — it truncated/emptied collections
+                        // belonging to non-winner derivations). Each item
+                        // SppfId is realized via the existing `memo`.
+                        let items: &[crate::sppf::SppfId] = children
+                            .iter()
+                            .find_map(|&c| match self.sppf.node(c) {
+                                Some(crate::sppf::SppfNode::CollectionId {
+                                    id: cid,
+                                    items,
+                                }) if *cid == *id as u32 => Some(items.as_slice()),
+                                _ => None,
+                            })
+                            .unwrap_or(&[]);
+                        // Each item is realized as an ActionArg::Term
+                        // in `memo`; push them onto sb so
+                        // push_to_collection drains correctly.
+                        for &item in items {
+                            if let Some(item_realized) = memo.get(&item) {
+                                if let Some((item_arg, _item_w)) = item_realized.first() {
+                                    match item_arg {
+                                        ActionArg::Term { value, .. } => {
+                                            sb.push_term_arc(Arc::clone(value));
+                                            sb.push_to_collection(*id);
                                         }
+                                        _ => {}
                                     }
                                 }
                             }
@@ -5271,6 +5914,9 @@ where
                     // B12 / Candidate E (2026-05-07): same rationale —
                     // post-Drop reset clears projection visited set.
                     visited_dispatch: im::OrdSet::new(),
+                    // Sig-B GLL-descriptor (#9): post-Drop reset clears the
+                    // projection-descriptor set too.
+                    visited_proj_descriptors: im::OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-Drop reset has
                     // empty pending → Consistent memo.
                             // Phase 5.2 (2026-05-12): fresh empty Arc — the
@@ -5432,22 +6078,29 @@ where
                 // `prefix.rs::emit_unified_arm` UnifiedDescriptor::
                 // CrossCatProjection branch's singleton emission. This
                 // path bypasses the Fork-arm cycle defense, so we mirror
-                // the same check here: if the new_state is CrossCatDelegate
-                // (the projection mechanism) AND the cursor has already
-                // dispatched a projection at the current (pos, cat_src,
-                // cur_bp), drop. Otherwise insert into visited_dispatch
-                // before transitioning so the next projection at the same
-                // configuration on this cursor's path is caught.
+                // the same check here.
+                //
+                // Sig-B GLL-descriptor (#9, M1 site 1): the cycle-defense key
+                // is now the PROGRESS-AWARE [`ProjDescriptorKey`] (carrying
+                // `sppf_stack_id` as the GLL `w`), NOT the `(pos,cat_src,cur_bp)`
+                // `extract_dispatch_config`. A no-progress re-entry reproduces
+                // the descriptor (same StackId) → drop; a productive SPPF-fold
+                // advances the StackId → distinct descriptor → allowed. The
+                // singleton path mutates the cursor's set in place (check +
+                // insert) so the next projection at the same descriptor on
+                // this cursor's path is caught.
                 if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
-                    if let Some(key) = extract_dispatch_config(cursor, &self.gss) {
-                        if cursor.visited_dispatch.contains(&key) {
-                            let (pos, cat_src, cur_bp) = key.unpack();
+                    if let Some(desc) = extract_proj_descriptor(cursor, &self.gss) {
+                        if cursor.visited_proj_descriptors.contains(&desc) {
                             let msg = format!(
                                 "cross-cat projection cycle detected at \
-                                 (pos={}, cat_src={}, cur_bp={}) — refusing \
-                                 to re-dispatch projection Push (B12 cycle \
-                                 defense, singleton-bucket path)",
-                                pos, cat_src, cur_bp,
+                                 descriptor (gss_node={}, sppf_stack={}, \
+                                 cat_src={}, cur_bp={}) — refusing to \
+                                 re-dispatch projection Push (Sig-B GLL \
+                                 descriptor cycle defense, singleton-bucket \
+                                 path)",
+                                desc.gss_node, desc.sppf_stack, desc.cat_src,
+                                desc.cur_bp,
                             );
                             self.set_cursor_inner_state(
                                 cursor,
@@ -5455,8 +6108,8 @@ where
                             );
                             return CursorOutcome::Drop;
                         }
-                        // Phase F.13 Stage L4.1 (2026-05-25): Arc::make_mut CoW.
-                        cursor.visited_dispatch.insert(key);
+                        // im::OrdSet structural-share insert (CoW).
+                        cursor.visited_proj_descriptors.insert(desc);
                     }
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01): symbol-kind-driven
@@ -5807,30 +6460,27 @@ where
                 // `is_cursor_accepting_terminal` at EOI / lex-dominated —
                 // exactly as under the chart path (verified 112 MB).
                 {
-                    // Defensive peek-ahead: at least 4 atoms remaining
-                    // in the chain (cursor.pos is on the operator
-                    // about to be consumed by this arm; next atom is
-                    // at cursor.pos + 1).
-                    let probe_start = cursor.pos + 1;
-                    let mut remaining_atoms = 0usize;
-                    let mut probe = probe_start;
-                    loop {
-                        let atom_here = tokens.peek_kind(probe);
-                        if atom_here.is_none() {
-                            break;
-                        }
-                        remaining_atoms += 1;
-                        // Look for the next operator at probe+1.
-                        let op_next = tokens.peek_kind(probe + 1);
-                        if op_next.is_none() {
-                            break;
-                        }
-                        probe += 2;
-                        if remaining_atoms >= 4 {
-                            break;
-                        }
-                    }
-                    if remaining_atoms >= 4 {
+                    // Cluster B fix (regr-WALK-S3, 2026-05-29): kind-validated
+                    // chain gate. The prior loop counted ANY token as an atom
+                    // and ANY following token as an operator, so it bled across
+                    // `)`/`(` and across different-precedence operators —
+                    // spuriously triggering left-assoc `synth_binary_chain`
+                    // absorption on grouped (`(1+2)+(3+4)`), comparison
+                    // (`a<b<c`), and mixed-precedence (`1+2==3 and 4==4`)
+                    // expressions, then desyncing the parse (semantic-action
+                    // elide / no-accepting-branch) and writing a bogus
+                    // `chain_absorbed_intervals` suppression interval.
+                    // Delegate to `peek_binary_chain` — the SAME kind-validated
+                    // recognizer the right-assoc / mixfix pre-fork triggers use
+                    // (engine_impl.rs) and that `synth_binary_chain` itself
+                    // re-validates — so the gate fires ONLY on a genuine flat
+                    // `atom (op atom)*` chain over one (atom_kind, op_kind)
+                    // pair. `cursor.pos` is on the leading operator (head atom
+                    // at cursor.pos - 1); `min_atoms = 5` matches the prior
+                    // "≥ 4 atoms AFTER the head" threshold (head + 4 = 5 total,
+                    // m >= 5). Flat single-op literal chains absorb
+                    // byte-identically (perf preserved; chain Welch unaffected).
+                    if peek_binary_chain(tokens, cursor.pos, 5) {
                         let cat = symbol.category_src_idx;
                         let rule = symbol.rule_index_in_category;
                         crate::stats_inc!(self, chain_earley_trigger_count);
@@ -6250,14 +6900,26 @@ where
                 // Fork pass through unchanged — atomic prefix, lex-alt,
                 // multi-rule, Opt-Group dispatches keep their lex-min
                 // ambiguity-resolution semantics.
-                let parent_dispatch_config: Option<PackedDispatchConfig> =
+                // Sig-B GLL-descriptor (#9, M1 sites 2+3+4): the per-branch
+                // / per-Fork cross-cat cycle-defense key is now the
+                // PROGRESS-AWARE [`ProjDescriptorKey`] (carrying the
+                // `sppf_stack_id` `w`), replacing `extract_dispatch_config`'s
+                // `(pos,cat_src,cur_bp)`. `parent_proj_descriptor` is computed
+                // ONCE here and reused by (a) the pure-projection fast-path
+                // drop below [site 2], (b) the per-branch skip gate [site 3],
+                // and (c) the `child_visited_proj_descriptors` H1' broadening
+                // insert [site 4]. The descriptor carries the parent's
+                // `sppf_stack_id`: a no-progress re-entry (parens) reproduces
+                // it → caught; a productive SPPF-fold (chaining) advances it
+                // → allowed.
+                let parent_proj_descriptor: Option<ProjDescriptorKey> =
                     if is_recovery {
                         None
                     } else {
-                        extract_dispatch_config(cursor, &self.gss)
+                        extract_proj_descriptor(cursor, &self.gss)
                     };
-                let parent_in_visited: bool = parent_dispatch_config
-                    .map(|k| cursor.visited_dispatch.contains(&k))
+                let parent_in_visited: bool = parent_proj_descriptor
+                    .map(|d| cursor.visited_proj_descriptors.contains(&d))
                     .unwrap_or(false);
                 // Fast-path retained: pure-projection Fork already-visited
                 // would have every branch skipped by the per-branch gate
@@ -6267,13 +6929,15 @@ where
                 let is_pure_projection_fork =
                     !is_recovery && is_projection_fork(&branches);
                 if is_pure_projection_fork && parent_in_visited {
-                    if let Some(key) = parent_dispatch_config {
-                        let (pos, cat_src, cur_bp) = key.unpack();
+                    if let Some(desc) = parent_proj_descriptor {
                         let msg = format!(
                             "cross-cat projection cycle detected at \
-                             (pos={}, cat_src={}, cur_bp={}) — refusing \
-                             to re-dispatch projection Fork (B14 C5 cycle defense)",
-                            pos, cat_src, cur_bp,
+                             descriptor (gss_node={}, sppf_stack={}, \
+                             cat_src={}, cur_bp={}) — refusing to \
+                             re-dispatch projection Fork (Sig-B GLL \
+                             descriptor cycle defense)",
+                            desc.gss_node, desc.sppf_stack, desc.cat_src,
+                            desc.cur_bp,
                         );
                         self.set_cursor_inner_state(
                             cursor,
@@ -6342,14 +7006,34 @@ where
                 } else {
                     (cursor.visited_recovery.clone(), cursor.recovery_depth)
                 };
-                let child_visited_dispatch: im::OrdSet<PackedDispatchConfig> = if !is_recovery {
-                    let mut set = cursor.visited_dispatch.clone();
-                    if let Some(key) = parent_dispatch_config {
-                        set.insert(key);
+                // Sig-B GLL-descriptor (#9, M1): the cross-cat H1' broadening
+                // insert MOVED from `visited_dispatch` (the `(pos,cat,bp)` key,
+                // now dead for cross-cat) to `visited_proj_descriptors` (the
+                // progress-aware descriptor) below. `child_visited_dispatch`
+                // is now a pure pass-through of the parent's set — it is no
+                // longer mutated by the cross-cat cycle defense (the descriptor
+                // set owns that), but the field is retained (still structurally
+                // compared in the Tomita merge gate + carried through all
+                // ctors) so the soundness boundary is unchanged.
+                let child_visited_dispatch: im::OrdSet<PackedDispatchConfig> =
+                    cursor.visited_dispatch.clone();
+                // Sig-B GLL-descriptor (#9, M1 site 4 — THE crux): insert the
+                // PARENT's descriptor — which carries the parent's
+                // `sppf_stack_id` — into every non-recovery child. A no-progress
+                // cross-cat re-entry (parens) re-enters at the SAME StackId →
+                // descriptor reproduced → caught at the per-branch [site 3] /
+                // pure-projection [site 2] gates; a productive SPPF-fold
+                // (chaining) re-enters at an ADVANCED StackId → distinct
+                // descriptor → allowed. `parent_proj_descriptor` was computed
+                // once at the Site-2 block above and is reused here.
+                let child_visited_proj_descriptors: im::OrdSet<ProjDescriptorKey> = if !is_recovery {
+                    let mut set = cursor.visited_proj_descriptors.clone();
+                    if let Some(desc) = parent_proj_descriptor {
+                        set.insert(desc);
                     }
                     set
                 } else {
-                    cursor.visited_dispatch.clone()
+                    cursor.visited_proj_descriptors.clone()
                 };
                 let mut children = Vec::with_capacity(branches.len());
                 // B14 C5: parallel tracker — for each child pushed below,
@@ -6359,10 +7043,17 @@ where
                     Vec::with_capacity(branches.len());
                 let branches_count = branches.len() as u32;
                 for (branch_idx, branch) in branches.into_iter().enumerate() {
-                    // B14 C5 per-branch gate: skip CrossCatDelegate branches
-                    // that would re-enter the same dispatch config (GLL
-                    // descriptor uniqueness). Productive non-projection
-                    // siblings in the same Fork are unaffected.
+                    // B14 C5 per-branch gate (Sig-B GLL-descriptor #9, M1
+                    // site 3): skip CrossCatDelegate branches that would
+                    // re-enter the same PROGRESS-AWARE descriptor (GLL
+                    // descriptor uniqueness, Scott & Johnstone 2010).
+                    // `parent_in_visited` is now computed from
+                    // `visited_proj_descriptors` (the `(gss_node, sppf_stack,
+                    // cat_src, cur_bp)` key) at the Site-2 block above — so a
+                    // no-progress re-entry is skipped while a productive
+                    // SPPF-fold (advanced StackId) passes. Productive
+                    // non-projection siblings in the same Fork are unaffected
+                    // (the `&& is_cross_cat_delegate_branch` guard is retained).
                     let is_cross_cat_delegate_branch =
                         matches!(&branch.new_state, WpdaState::CrossCatDelegate { .. });
                     if !is_recovery
@@ -6406,6 +7097,7 @@ where
                                 child_recovery_depth,
                                 child_visited_recovery.clone(),
                                 child_visited_dispatch.clone(),
+                                child_visited_proj_descriptors.clone(),
                                 child_source_priority,
                             );
                             for child in new_children {
@@ -6454,6 +7146,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6554,6 +7249,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6630,6 +7328,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6699,6 +7400,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6800,6 +7504,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6881,6 +7588,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -6963,6 +7673,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -7096,6 +7809,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 // Phase F.13 chain_10000 Plan D E3 Substage 2
                                 // (2026-05-26): arena-interned StackId (Copy u32).
@@ -7218,6 +7934,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Option C / C2: Fork-children inherit parent SPPF stack.
                                 // Phase F.13 chain_10000 Plan D E3 Substage 2
                                 // (2026-05-26): arena-interned StackId (Copy u32).
@@ -7373,6 +8092,9 @@ where
                                 recovery_depth: child_recovery_depth,
                                 visited_recovery: child_visited_recovery.clone(),
                                 visited_dispatch: child_visited_dispatch.clone(),
+                                // Sig-B GLL-descriptor (#9): O(1) shared
+                                // clone of the parent-extended descriptor set.
+                                visited_proj_descriptors: child_visited_proj_descriptors.clone(),
                                 // Phase 5.2 (2026-05-12): O(1) Arc bump.
                                 // Child shares parent's `SemanticBuilder`
                                 // until a 5.3+ mutator triggers
@@ -8250,6 +8972,177 @@ where
     ///
     /// L3.6 invariant: after this call, every entry in
     /// `self.branch_cursors` is `Frame::Concrete(_)`.
+    /// Cohort-revive-rework M1 (2026-05-29): at an EOI parked fixpoint,
+    /// revive cohort members that are still orphaned on `InFlight`
+    /// dispatch-cache entries (their worker died without resolving, so
+    /// the end-of-step drain never fired for them — the cross-cat cursor
+    /// loss documented in `drive-suite-green-ledger.md` "⚑ Cross-cat
+    /// cluster ROOT CAUSE"). Each orphan is re-materialized via
+    /// `cohort_lazy::materialize_branch_cursor` (reconstructing the
+    /// cursor in its pre-Fork dispatch state at the dispatch position)
+    /// and pushed onto `branch_cursors` as a fresh `Frame::Concrete`.
+    /// `drain_orphaned_inflight_members` REMOVED the stale `InFlight`
+    /// entry, so when the walker re-drives the injected cursor it
+    /// re-emits its Fork and re-registers as `WorkerInserted` — becoming
+    /// the worker for its own sub-parse and reaching EOI on its own
+    /// return context (which the dead worker's context could not).
+    ///
+    /// Returns the number of cursors injected. The caller
+    /// (`run_to_end_of_input`) `continue`s the parse loop iff this is
+    /// `> 0`, re-driving the freshly-injected cursors.
+    ///
+    /// **Bounded.** Guarded by `revival_rounds < MAX_REVIVAL_ROUNDS`.
+    /// Each call that injects ≥1 cursor bumps `revival_rounds`. A
+    /// pathological orphan that re-dies every round (e.g. a genuinely
+    /// unparseable cross-cat alternate) is revived at most
+    /// `MAX_REVIVAL_ROUNDS` times, after which this returns 0 and the
+    /// walker parks normally and resolution proceeds (yielding the same
+    /// "no accepting branch" the pre-M1 walker would have — no
+    /// regression, just a bounded number of extra attempts). Hitting the
+    /// cap is benign (NOT a panic).
+    ///
+    /// **Disambiguation-safe.** Injected cursors carry `cohort_origin =
+    /// None` (the shell's origin, which is `None` for a normal
+    /// pre-dispatch parent) so they behave as ordinary worker cursors:
+    /// they flow through `merge_equivalent_cursors` + SPPF dedup and
+    /// collapse with a live alternate ONLY when observationally
+    /// equivalent (same `ConfigKey` AND same `sppf_stack` tip). A
+    /// genuinely distinct derivation survives as a first-class
+    /// `Ambiguous` alternate; an already-covered one merges (no
+    /// double-count). The `-3!` ladder / `wpda_parity_*` /
+    /// `h3_chain_correctness` invariants are preserved.
+    fn revive_orphaned_cohort_members_once(
+        &mut self,
+        tokens: &dyn WpdaTokenSource,
+    ) -> usize
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        // Bounded re-drive: stop reviving once the per-parse budget is
+        // exhausted. Benign — the walker parks and resolves normally.
+        if self.revival_rounds >= MAX_REVIVAL_ROUNDS {
+            return 0;
+        }
+        let orphans = self.dispatch_cohort_cache.drain_orphaned_inflight_members();
+        if orphans.is_empty() {
+            return 0;
+        }
+        // Cohort-revive-rework M1.PERF (2026-05-31): SPURIOUS-BLOWUP GATE.
+        //
+        // M1 revives EVERY orphaned cohort member at the EOI fixpoint and
+        // re-drives each as an independent worker cursor. Two regimes:
+        //
+        //  (1) GENUINE cross-cat: the orphan set is bounded by GRAMMAR
+        //      complexity, INDEPENDENT of input length. Empirically
+        //      (2026-05-31 trace) the heaviest cross-cat tests peak at 101
+        //      orphans/round (`simulator_regression_cross_cat_dispatch_
+        //      chaining`); the full calculator.rs corpus peaks at 123
+        //      (incl. the already-failing Exp-15 doubly-nested casts); the
+        //      op-suites + edge_case produce ZERO. These NEED revival to
+        //      surface a term-bearing / promoted-category derivation (e.g.
+        //      `"42"` → `Int` rather than bare `NumLit`; `float(x)`,
+        //      `int(a > b == c)`), and that parse does NOT yet have an
+        //      accepting, REALIZABLE winner on the frontier — revival is
+        //      the only way to reach one.
+        //
+        //  (2) DEEP-PARENTHESIZED-MIXFIX SPURIOUS blowup: one cross-cat
+        //      dispatch per nesting level, so the orphan set scales with
+        //      input length N (`test_deep_ternary_100` drains 1067 in one
+        //      round, ~10×N). Re-driving ~N cursors to EOI turns an O(N)
+        //      parse into O(N²) (`test_deep_ternary_500` 67.5 s; _1000
+        //      > 240 s). Crucially this parse ALREADY has a winning,
+        //      term-bearing cursor on the frontier; the O(N) orphans are
+        //      spurious dead-ends that all die.
+        //
+        // The two regimes are separated by the CONJUNCTION of two
+        // independent signals — neither alone is sufficient (each was
+        // empirically falsified in isolation, 2026-05-31):
+        //
+        //  • orphan count > `SPURIOUS_ORPHAN_THRESHOLD` (256 — 2× the 123
+        //    grammar-bounded ceiling, matching `MAX_COHORT_FRAME_MEMBERS`).
+        //    A grammar-bounded cross-cat parse NEVER exceeds this; only the
+        //    N-scaling deep-mixfix does. (Count alone is insufficient: a
+        //    blind cap/truncate still leaves O(N²) because each capped
+        //    cursor re-parses O(N) structure and re-spawns — `_1000`
+        //    measured 116 s under a blind cap=256.)
+        //
+        //  • `parse_already_succeeds`: the frontier already contains a
+        //    cursor at logical-EOI in an accepting config whose SPPF root
+        //    realizes to ≥1 term — i.e. `resolve_at_end_of_input`'s exact
+        //    success condition (wpda_walker.rs:4293-4419: `is_logical_eoi`
+        //    ∧ `is_accepting_config` ∧ `cursor_root != SPPF_ID_NONE` ∧
+        //    non-empty `realize_root_to_terms`). (This signal alone is
+        //    insufficient: it is ALSO true for `"42"` / `float(x)`, where
+        //    the realizable winner is the WRONG/un-promoted category and
+        //    revival is REQUIRED to add the right one — skipping there
+        //    regressed `test_unambiguous_int_literal` /
+        //    `test_nfa_spillover_float_int_var`, 2026-05-31.)
+        //
+        // When BOTH hold, the parse is the spurious-blowup regime: it
+        // already resolves to an accepting, term-bearing derivation AND its
+        // orphan set is the N-scaling spurious tail. Skipping revival is
+        // then exactly equivalent to M1 not having fired — the resolver
+        // finds the SAME winner — while eliminating the O(N²) re-drive
+        // (`test_deep_ternary_1000` → ~baseline). Genuine cross-cat parses
+        // (≤256 orphans) NEVER hit this branch and revive byte-for-byte as
+        // original M1, so no green cross-cat test regresses. Disambiguation-
+        // safe: a real ambiguity is grammar-bounded (≤256) and surfaces via
+        // the normal Fork/SPPF path; M1 never manufactures >256 first-class
+        // alternates for a single input.
+        const SPURIOUS_ORPHAN_THRESHOLD: usize = 256;
+        if orphans.len() > SPURIOUS_ORPHAN_THRESHOLD {
+            let parse_already_succeeds = {
+                let candidate_roots: Vec<crate::sppf::SppfId> = self
+                    .branch_cursors
+                    .iter()
+                    .filter_map(|frame| match frame {
+                        crate::cohort_lazy::Frame::Concrete(c)
+                            if self.is_logical_eoi(c.pos, tokens)
+                                && self.is_accepting_config(c) =>
+                        {
+                            self.sppf_stack_arena.top(c.sppf_stack_id)
+                        }
+                        _ => None,
+                    })
+                    .filter(|&sid| sid != crate::sppf::SPPF_ID_NONE)
+                    .collect();
+                candidate_roots
+                    .iter()
+                    .any(|&root| !self.realize_root_to_terms(root, Some(1)).is_empty())
+            };
+            if parse_already_succeeds {
+                // Spurious-blowup regime: an accepting, term-bearing winner
+                // is already on the frontier and the orphans are the
+                // N-scaling spurious tail. Skip revival entirely. Re-insert
+                // the (now-drained) orphans is unnecessary: they were
+                // removed from the cache by `drain_orphaned_inflight_members`
+                // and the parse already succeeds without them.
+                return 0;
+            }
+        }
+        let injected = orphans.len();
+        // Preallocate for the cursors we are about to push.
+        self.branch_cursors.reserve(injected);
+        for (shell, state) in orphans {
+            // Reconstruct the orphan's pre-Fork cursor. `inner_state` =
+            // shell.inner_state (the dispatch state that emits the Fork);
+            // `pos` = shell.pos (the dispatch position). Re-driving it
+            // re-emits the Fork → the CrossCatDelegate branch re-registers
+            // at the (now-removed) key as a fresh WorkerInserted worker.
+            let cursor = crate::cohort_lazy::materialize_branch_cursor(&shell, &state);
+            self.branch_cursors
+                .push(crate::cohort_lazy::Frame::Concrete(cursor));
+        }
+        self.revival_rounds += 1;
+        // Re-driving requires the walker to be in fanout mode so
+        // `step_fanout` processes the injected cursors. At an EOI parked
+        // fixpoint the walker is already in `AmbiguityFanout` (the only
+        // state that reaches the `!progress_made` hook); the injected
+        // Frame::Concrete cursors join `branch_cursors` and are stepped
+        // on the next `step_fanout` iteration.
+        injected
+    }
+
     fn force_materialize_cohort_frames(&mut self) {
         // Fast path: nothing to do if all frames are already concrete.
         if self.branch_cursors.iter().all(|f| f.is_concrete()) {
@@ -8328,6 +9221,334 @@ where
             CursorOutcome::Resolved
         } else {
             CursorOutcome::Alive
+        }
+    }
+
+    /// Sig-B Blocker-3 M7.0 (2026-06-01, pgmcp experiment #9, INERT): a
+    /// throwaway `BranchCursor` for the read-only `[C7-3]`/`[C7-5]`
+    /// transient-fire probe. `fire_action_via_transient`'s
+    /// `reconstruct_action_arg` Symbol arm reads `sppf_symbol_terms` by
+    /// SppfId (walker-global), NOT cursor fields, so a default-shaped cursor
+    /// is sufficient context. Used ONLY by `sigb_m70_span_diagnostic`;
+    /// removed before merge.
+    fn make_probe_cursor(&self) -> BranchCursor<W> {
+        BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            0,
+            W::one_ref(),
+            WpdaState::Ready { min_bp: 0 },
+        )
+    }
+
+    /// Sig-B Blocker-3 M7.0 DIAGNOSTIC-CONFIRM (2026-06-01, pgmcp experiment
+    /// #9, INERT/temporary). Reproduces the six `[C7-n]` predicates of the
+    /// span-anchored design §1 at the EOI/pre-Error drop boundary — PURELY
+    /// READ-ONLY, NO behavioral change. Extends the M6.0 survey with the
+    /// SPPF SPAN print (`(lo_pos, hi_pos)`) AND the SPAN-ANCHORED pairing
+    /// scan (`R.span_lo == K_sib.pos`) that the M6.0 survey did NOT do (it
+    /// only checked SAME-pos pairings, `K_sib.pos == R.pos_at_dispatch` —
+    /// which is precisely why M6.0 R1 never saw the cross-pos full-span body).
+    ///
+    /// For each Resolved entry `R` it prints `self.sppf.node(R.symbol_id)`'s
+    /// `(lo_pos, hi_pos)` SPAN alongside `R.pos_at_dispatch` (the KEY pos).
+    /// Then it scans for span-anchored category-compatible pairings:
+    ///
+    ///   - `[C7-2]` — does a Resolved `R` exist whose SPPF span `[lo,hi]`
+    ///     satisfies `lo == K_sib.pos` (a paused outer-cast member) AND
+    ///     `body_cat` is category-compatible with the member's arg cat
+    ///     (`tgt_cat = K_sib.source_src_idx`)? The existence proof is
+    ///     `sym=91 span=[2,9] cat=7` against `K_sib{pos:2,src:7}`.
+    ///   - `[C7-3]` — fire the candidate over `R.symbol_id` via the existing
+    ///     `fire_action_via_transient` (read-only) and report whether it
+    ///     returns `Some(_)` with `output_cat == Int` (the cast's result) +
+    ///     pos-alignment (member.pos → R.span_hi consumes `)`).
+    ///   - `[C7-4]`/`[C7-5]` — the Float family: report `outer_cast_revival`
+    ///     candidate counts + whether `single_hop_coercion(Float,Proc)≠∅` +
+    ///     fire the `ProcFloat`-coerced inner Float.
+    ///   - `[C7-6]` — `min_terminal_span` per-rule counts.
+    ///
+    /// Gated by `SIGB_CROSSWRAP`; removed before merge.
+    fn sigb_m70_span_diagnostic(&self, tokens: &dyn WpdaTokenSource) {
+        use crate::dispatch_cohort::DispatchCacheEntry;
+        let _ = tokens;
+        // ── §0. [C7-6] min_terminal_span backstop counts for the key cast
+        //    rules (Bool→Int = (1, 11=BoolToInt); FloatBin = cat Float=6;
+        //    ProcFloat = (0, 8)). Confirms the token-soundness realize filter
+        //    is the EVIDENCE backstop (unchanged). Static engine lookup.
+        eprintln!(
+            "[SIGB_M70] [C7-6] min_terminal_span: BoolToInt(1,11)={} FloatBin-fold(6,?)... ProcFloat(0,8)={} ProcInt(0,9)={}",
+            self.engine.min_terminal_span(1, 11),
+            self.engine.min_terminal_span(0, 8),
+            self.engine.min_terminal_span(0, 9),
+        );
+        // ── §A. Resolved-entry survey: print KEY pos AND the SPPF SPAN
+        //    (lo_pos, hi_pos) + body_cat. This is the [C7-2]/[C7-4](a) data.
+        eprintln!(
+            "[SIGB_M70] ── Resolved-entry survey (KEY pos_at_dispatch vs SPPF span [lo,hi]) ──"
+        );
+        let mut resolved_count = 0usize;
+        // (R.symbol_id, span_lo, span_hi, body_cat, pos_at_dispatch, members)
+        let mut resolved_rows: Vec<(crate::sppf::SppfId, u32, u32, u16, u32, usize)> = Vec::new();
+        for (key, entry) in self.dispatch_cohort_cache.entries.iter() {
+            if let DispatchCacheEntry::Resolved {
+                symbol_id,
+                hi_pos: _cohort_hi,
+                pos_at_dispatch,
+                worker_snapshots,
+                pending_members,
+                ..
+            } = entry
+            {
+                resolved_count += 1;
+                let body_cat = match self.sppf.node(*symbol_id) {
+                    Some(crate::sppf::SppfNode::Symbol {
+                        non_terminal_tag, ..
+                    }) => Some(*non_terminal_tag),
+                    _ => None,
+                };
+                let span_lo = self.sppf.span_lo(*symbol_id);
+                let span_hi = self.sppf.span_hi(*symbol_id);
+                let live = worker_snapshots
+                    .iter()
+                    .filter(|s| !s.worker_inner_state.is_terminal())
+                    .count();
+                eprintln!(
+                    "[SIGB_M70]   R key{{pos:{},src:{},bp:{},wrap:({},{})}} sym={} \
+                     SPPF_span=[{:?},{:?}] body_cat={:?} pos_at_dispatch={} live_snaps={} members={}",
+                    key.pos,
+                    key.source_src_idx,
+                    key.inner_cur_bp,
+                    key.wrap_cat,
+                    key.wrap_rule,
+                    symbol_id,
+                    span_lo,
+                    span_hi,
+                    body_cat,
+                    pos_at_dispatch,
+                    live,
+                    pending_members.len(),
+                );
+                if let (Some(lo), Some(hi), Some(bc)) = (span_lo, span_hi, body_cat) {
+                    if live > 0 {
+                        resolved_rows.push((*symbol_id, lo, hi, bc as u16, *pos_at_dispatch, live));
+                    }
+                }
+            }
+        }
+        eprintln!("[SIGB_M70] resolved_total={}", resolved_count);
+
+        // ── §B. SPAN-ANCHORED pairing scan (THE [C7-2]/[C7-3] core, NEW vs
+        //    M6.0). For each Resolved `R` with SPPF span [lo,hi] and each
+        //    paused member key `K_sib` (non-empty pending_members), test the
+        //    span anchor `R.span_lo == K_sib.pos` + category compat
+        //    `body_cat == tgt_cat || single_hop_coercion(body_cat,tgt_cat)≠∅`
+        //    where `tgt_cat = K_sib.source_src_idx`. If compatible, fire the
+        //    cast/coercion over R via the read-only transient probe.
+        eprintln!(
+            "[SIGB_M70] ── SPAN-ANCHORED (R.span_lo == K_sib.pos) pairing scan + [C7-3]/[C7-5] fire ──"
+        );
+        let probe_cursor = self.make_probe_cursor();
+        let mut span_pairs = 0usize;
+        let mut span_cat_compat = 0usize;
+        let mut span_fire_ok = 0usize;
+        let mut span_pos_aligned = 0usize;
+        for &(r_symbol_id, lo, hi, body_cat, _r_pos_at_dispatch, _r_live) in resolved_rows.iter() {
+            let r_equiv_src; // computed per resolved key below
+            // recover the resolved key's equiv from any entry that owns this
+            // symbol_id (cheap: scan once). We only need source/bp for the
+            // EquivKey read-only narrow check.
+            let r_key_opt = self
+                .dispatch_cohort_cache
+                .entries
+                .iter()
+                .find_map(|(k, e)| match e {
+                    DispatchCacheEntry::Resolved { symbol_id, .. } if *symbol_id == r_symbol_id => {
+                        Some(k.clone())
+                    }
+                    _ => None,
+                });
+            r_equiv_src = r_key_opt.map(|k| k.equiv());
+            for (k_sib, entry) in self.dispatch_cohort_cache.entries.iter() {
+                let sib_members = match entry {
+                    DispatchCacheEntry::InFlight {
+                        pending_members, ..
+                    } if !pending_members.is_empty() => pending_members.len(),
+                    DispatchCacheEntry::Resolved {
+                        hi_pos: sib_hi,
+                        pending_members,
+                        ..
+                    } if *sib_hi < hi && !pending_members.is_empty() => pending_members.len(),
+                    _ => continue,
+                };
+                // Span anchor (clause 3 of §2.4a): the body starts where the
+                // member delegated.
+                if k_sib.pos != lo {
+                    continue;
+                }
+                // EquivKey narrow read (clause 2, R5): report it but DON'T
+                // gate the scan on it — we want to SEE whether the genuine
+                // pairing is equiv-matched (it should be: same source cat).
+                let equiv_match = r_equiv_src
+                    .map(|e| e == k_sib.equiv())
+                    .unwrap_or(false);
+                span_pairs += 1;
+                let tgt_cat = k_sib.source_src_idx;
+                let coercions = self.engine.single_hop_coercion(body_cat, tgt_cat);
+                let cat_compatible = body_cat == tgt_cat || !coercions.is_empty();
+                if cat_compatible {
+                    span_cat_compat += 1;
+                }
+                // [C7-3]/[C7-5]: fire over R.symbol_id. When body_cat ==
+                // tgt_cat fire the CAST directly (the member's own wrap rule);
+                // else interpose the coercion then the cast fires next step.
+                // For the diagnostic we fire (a) the member's OWN cast over
+                // the raw body when direct, and (b) the coercion over the body
+                // when coerced (proving the wrapped body downcasts).
+                let fire_report: String;
+                if body_cat == tgt_cat {
+                    // Direct: fire the member's wrap rule (K_sib.wrap_cat,
+                    // K_sib.wrap_rule) over [R.symbol_id].
+                    let cast_symbol = crate::wpda_runtime::StackSymbolV2::rule_at(
+                        k_sib.wrap_cat,
+                        k_sib.wrap_rule,
+                        0,
+                        None,
+                    );
+                    match self.fire_action_via_transient(
+                        &probe_cursor,
+                        cast_symbol,
+                        &[r_symbol_id],
+                    ) {
+                        Some((_arc, output_cat, _drains)) => {
+                            span_fire_ok += 1;
+                            // pos-alignment: the member's next pos becomes
+                            // R.span_hi (=hi); the cast consumes `)` there.
+                            span_pos_aligned += 1;
+                            fire_report = format!(
+                                "DIRECT cast({},{}) → fire Some output_cat={:?} | member.pos={} → R.span_hi={} (consumes `)` at {})",
+                                k_sib.wrap_cat, k_sib.wrap_rule, output_cat, k_sib.pos, hi, hi
+                            );
+                        }
+                        None => {
+                            fire_report = format!(
+                                "DIRECT cast({},{}) → fire ELIDE (None)",
+                                k_sib.wrap_cat, k_sib.wrap_rule
+                            );
+                        }
+                    }
+                } else if let Some(&(coerce_cat, coerce_rule)) = coercions.first() {
+                    let coercion_symbol = crate::wpda_runtime::StackSymbolV2::rule_at(
+                        coerce_cat, coerce_rule, 0, None,
+                    );
+                    match self.fire_action_via_transient(
+                        &probe_cursor,
+                        coercion_symbol,
+                        &[r_symbol_id],
+                    ) {
+                        Some((_arc, output_cat, _drains)) => {
+                            let ok = output_cat == Some(tgt_cat);
+                            if ok {
+                                span_fire_ok += 1;
+                                span_pos_aligned += 1;
+                            }
+                            fire_report = format!(
+                                "COERCE via ({},{}) → fire Some output_cat={:?} matches_tgt={} | member.pos={} → R.span_hi={}",
+                                coerce_cat, coerce_rule, output_cat, ok, k_sib.pos, hi
+                            );
+                        }
+                        None => {
+                            fire_report = format!(
+                                "COERCE via ({},{}) → fire ELIDE (None)",
+                                coerce_cat, coerce_rule
+                            );
+                        }
+                    }
+                } else {
+                    fire_report = "NO single-hop coercion (cat-incompatible)".to_string();
+                }
+                eprintln!(
+                    "[SIGB_M70]   SPAN-PAIR R{{sym={},span=[{},{}],body_cat={}}} | \
+                     K_sib{{pos:{},src:{},bp:{},wrap:({},{}),members={}}} tgt_cat={} \
+                     equiv_match={} cat_compatible={} coercions={:?} | {}",
+                    r_symbol_id,
+                    lo,
+                    hi,
+                    body_cat,
+                    k_sib.pos,
+                    k_sib.source_src_idx,
+                    k_sib.inner_cur_bp,
+                    k_sib.wrap_cat,
+                    k_sib.wrap_rule,
+                    sib_members,
+                    tgt_cat,
+                    equiv_match,
+                    cat_compatible,
+                    coercions,
+                    fire_report,
+                );
+            }
+        }
+        eprintln!(
+            "[SIGB_M70] SPAN-SUMMARY span_anchored_pairs={} cat_compatible={} fire_ok={} pos_aligned={}",
+            span_pairs, span_cat_compat, span_fire_ok, span_pos_aligned,
+        );
+
+        // ── §C. [C7-4](a): how many Resolved entries have NO span-anchored
+        //    paused member at all (the Float-family no-cohort-entry signal)?
+        //    Count Resolved entries whose span_lo has NO paused member key.
+        let mut resolved_with_paused_member = 0usize;
+        for &(_sym, lo, _hi, _bc, _pad, _live) in resolved_rows.iter() {
+            let has_member = self.dispatch_cohort_cache.entries.iter().any(|(k, e)| {
+                k.pos == lo
+                    && matches!(
+                        e,
+                        DispatchCacheEntry::InFlight { pending_members, .. }
+                            if !pending_members.is_empty()
+                    )
+            });
+            if has_member {
+                resolved_with_paused_member += 1;
+            }
+        }
+        eprintln!(
+            "[SIGB_M70] C7-4 resolved_rows={} with_span_anchored_paused_member={}",
+            resolved_rows.len(),
+            resolved_with_paused_member,
+        );
+
+        // ── §D. [C7-4](b) FULL-SPPF scan (NOT just cohort cache). The Float
+        //    family's inner FloatBin result may be a pure SPPF Symbol that is
+        //    never a cohort Resolved entry. Scan the whole arena for Symbol
+        //    nodes and report their (non_terminal_tag, lo, hi). This tells us
+        //    whether a [2,7]-inner / [2,10]-outer Float Symbol EXISTS in the
+        //    SPPF even though it is not a cohort entry — the d-i (cohort) vs
+        //    d-ii (pure-Pratt forward) discriminator for the Float family.
+        let arena_len = self.sppf.len();
+        let mut sppf_symbol_hist: std::collections::BTreeMap<(u32, u32, u32), usize> =
+            std::collections::BTreeMap::new();
+        for sid in 0..arena_len {
+            let sid = sid as crate::sppf::SppfId;
+            if let Some(crate::sppf::SppfNode::Symbol {
+                non_terminal_tag,
+                lo_pos,
+                hi_pos,
+                ..
+            }) = self.sppf.node(sid)
+            {
+                *sppf_symbol_hist
+                    .entry((*non_terminal_tag, *lo_pos, *hi_pos))
+                    .or_default() += 1;
+            }
+        }
+        eprintln!(
+            "[SIGB_M70] C7-4(b) FULL-SPPF symbol histogram (cat, lo, hi) x count [arena_len={}]:",
+            arena_len
+        );
+        for ((cat, lo, hi), n) in sppf_symbol_hist.iter() {
+            eprintln!(
+                "[SIGB_M70]   SPPF-SYM cat={} span=[{},{}] count={}",
+                cat, lo, hi, n
+            );
         }
     }
 
@@ -8580,14 +9801,19 @@ where
                 if safe_for_fast_path {
                     // Lazy redesign L2a (2026-05-27): per-arc B12 cycle
                     // defense BEFORE shell mutation. Mirrors the
-                    // apply_action_to_cursor Push arm's B12 check at
-                    // wpda_walker.rs:5206-5226 — only fires for
-                    // CategoryEntryRoot + CrossCatDelegate transitions.
-                    // Each arc's visited_dispatch is checked and (if no
-                    // cycle) inserted with the dispatch_config key. Arcs
-                    // whose visited_dispatch already contains the key
-                    // accumulate in `b12_dropped_indices` and are skipped
-                    // in the post-mutation routing loop.
+                    // apply_action_to_cursor Push arm's B12 check — only
+                    // fires for CategoryEntryRoot + CrossCatDelegate
+                    // transitions.
+                    //
+                    // Sig-B GLL-descriptor (#9, M1 site 5): each arc's
+                    // PROGRESS-AWARE [`ProjDescriptorKey`] set
+                    // (`visited_proj_descriptors`) is checked and (if no
+                    // cycle) inserted; arcs whose set already contains the
+                    // descriptor accumulate in `b12_dropped_indices` and are
+                    // skipped in the post-mutation routing loop. The
+                    // descriptor carries the arc's `sppf_stack_id` (the GLL
+                    // `w`) so a no-progress broadcast re-entry is caught while
+                    // a productive fold advances the StackId and survives.
                     let needs_b12_defense = matches!(
                         kind,
                         crate::gss::EdgeKind::CategoryEntryRoot
@@ -8598,24 +9824,26 @@ where
                     let mut b12_dropped_indices: Vec<usize> = Vec::new();
                     if needs_b12_defense {
                         for (idx, arc) in node.arcs.iter_mut().enumerate() {
-                            // Materialize a temp cursor for key extraction.
-                            // The shell still has the OLD inner_state at
-                            // this point (mutation happens below); the
-                            // cursor.inner_state for extract_dispatch_config
-                            // is the pre-push state — exactly the
-                            // semantic the eager Push arm relies on.
+                            // Materialize a temp cursor for descriptor
+                            // extraction. The shell still has the OLD
+                            // inner_state at this point (mutation happens
+                            // below); the cursor.inner_state for
+                            // extract_proj_descriptor is the pre-push state —
+                            // exactly the semantic the eager Push arm relies
+                            // on. `sppf_stack_id` is read from the arc, so the
+                            // descriptor's `w` is the arc's own progress state.
                             let temp_cursor =
                                 crate::tomita_frontier::materialize_branch_cursor_from_arc(
                                     &node.shell,
                                     &*arc,
                                 );
-                            if let Some(key) =
-                                extract_dispatch_config(&temp_cursor, &self.gss)
+                            if let Some(desc) =
+                                extract_proj_descriptor(&temp_cursor, &self.gss)
                             {
-                                if arc.visited_dispatch.contains(&key) {
+                                if arc.visited_proj_descriptors.contains(&desc) {
                                     b12_dropped_indices.push(idx);
                                 } else {
-                                    arc.visited_dispatch.insert(key);
+                                    arc.visited_proj_descriptors.insert(desc);
                                 }
                             }
                         }
@@ -8952,6 +10180,8 @@ where
                                     hi_pos,
                                     key.source_src_idx,
                                     key.inner_cur_bp,
+                                    key.wrap_cat,
+                                    key.wrap_rule,
                                     snap,
                                 )
                             })
@@ -8996,6 +10226,58 @@ where
                                 Box::new(cf),
                             ));
                         }
+                    }
+                }
+                // ── Sig-B Blocker-2 M2.1 (2026-05-31, pgmcp experiment #9):
+                //    end-of-step CROSS-WRAP body-splice trigger (§3b). AFTER
+                //    the same-wrap `take_pending_for_drain(&key)` above, also
+                //    drain the own-wrap-gated cross-wrap jobs for this
+                //    RESOLVED `key`: each job is a paused cast member of a
+                //    sibling key `K_sib(W1)` whose body resolved under THIS
+                //    outer wrap `key(W2)` at the same dispatch site (§1
+                //    DEFECT). Revive each via the EXISTING
+                //    `revive_cohort_member_with_snapshot` — the SAME entry
+                //    point the normal drain uses — pushing the spliced cursor
+                //    into `new_cursors`. The revive re-pushes
+                //    `CategoryEntry(source)` with the RESOLVED wrap; the
+                //    member's next walker step fires its cast action →
+                //    `apply_pop_body_to_cursor` splices the body →
+                //    `is_accepting_config` true → `accepting_indices > 0`.
+                //
+                //    Soundness (§3c): only ADDS sound cursors; structural §2
+                //    predicate (no heuristic); `K_sib` NOT removed (its own
+                //    worker may still resolve its own span); `crosswrap_drained`
+                //    makes repeated passes idempotent (R3). Empty on
+                //    single-wrap chain steps → byte-identical → Welch-neutral
+                //    (R4). Does NOT touch `revive_orphaned_cohort_members_once`
+                //    / `MAX_REVIVAL_ROUNDS` / the 256-gate.
+                //
+                //    `B2_DISABLE` env gate (benchmark control ONLY, R4): when
+                //    set, the cross-wrap drain is skipped so the SAME binary
+                //    reproduces the base[sigb-gll] behavior — the control arm
+                //    of the interleaved Welch chain panel. Off by default
+                //    (one memoized `OnceLock` read; zero behavioral effect on
+                //    the production path). Chains never reach here anyway
+                //    (this whole block is behind `!pending_cohort_drain_keys
+                //    .is_empty()`, which is empty for cast-free chains), so the
+                //    gate exists solely to A/B the cross-cat workloads.
+                if !b2_crosswrap_disabled() {
+                    let crosswrap_jobs = self
+                        .dispatch_cohort_cache
+                        .take_pending_for_drain_crosswrap(&key);
+                    for job in crosswrap_jobs {
+                        let revived = self.revive_cohort_member_with_snapshot(
+                            job.member,
+                            job.symbol_id,
+                            job.pos_at_dispatch,
+                            job.hi_pos,
+                            job.source_src_idx,
+                            job.inner_cur_bp,
+                            job.wrap_cat,
+                            job.wrap_rule,
+                            &job.snap,
+                        );
+                        new_cursors.push(crate::cohort_lazy::Frame::Concrete(revived));
                     }
                 }
             }
@@ -9059,6 +10341,13 @@ where
         // `feedback_never_disambiguate_early` memo.
 
         if self.branch_cursors.is_empty() {
+            // Sig-B Blocker-3 M7.0 DIAGNOSTIC-CONFIRM (2026-06-01, INERT):
+            // reproduce the six [C7-n] predicates at this pre-Error drop
+            // boundary. READ-ONLY; printed BEFORE the Error so the verdict
+            // reflects the un-revived cache state. Gated by SIGB_CROSSWRAP.
+            if sigb_m70_trace() {
+                self.sigb_m70_span_diagnostic(tokens);
+            }
             // CASE 1: all branches dropped.
             let s = WpdaState::Error {
                 message: "all fork branches dropped".to_string(),
@@ -9692,10 +10981,17 @@ where
                             (Some(crate::gss::EdgeKind::CrossCatProjection {
                                 source_src_idx: a_s,
                                 inner_cur_bp: a_b,
+                                ..
                             }), Some(crate::gss::EdgeKind::CrossCatProjection {
                                 source_src_idx: b_s,
                                 inner_cur_bp: b_b,
+                                ..
                             })) => a_s == b_s && a_b == b_b,
+                            // M4 (2026-05-30): DELIBERATELY ignores
+                            // wrap_cat/wrap_rule here (via `..`) — this is the
+                            // cohort-MERGE comparison, which must stay at the
+                            // narrow EquivKey granularity `(source, bp)`. Only
+                            // the cohort CACHE key widens on the wrap.
                             // Generic uses identity — already counted as
                             // differing because edge_diff was true.
                             _ => false,
@@ -10316,6 +11612,9 @@ where
             // visited set so post-commit projection cycle defense
             // continues to apply across the parse path.
             visited_dispatch: winner.visited_dispatch,
+            // Sig-B GLL-descriptor (#9): preserve winner's projection
+            // descriptors so post-commit cross-cat cycle defense persists.
+            visited_proj_descriptors: winner.visited_proj_descriptors,
             // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
             // The post-commit singleton no longer carries a builder
             // Arc; the winner's SPPF-side state (sppf_stack,
@@ -10340,9 +11639,10 @@ where
             // collection arena. Sibling cursors' Arcs drop when
             // `branch_cursors` is cleared above, reclaiming any
             // per-lineage splice content orphaned by the merge
-            // tiebreak. Post-commit, this Arc is the SOLE source of
-            // truth for realize_*'s CollectionId resolution. See
-            // `WpdaWalker::winner_collection_arena()`.
+            // tiebreak. Collection-accumulation fix (2026-05-29): this arena
+            // is no longer read at realize time (CollectionId nodes carry
+            // their own `items`); it is retained because parse-time fire
+            // (`fire_action_via_transient`) still reads it before commit.
             sppf_collection_arena: winner.sppf_collection_arena,
             // Phase F.3a (2026-05-20): preserve winner's mirror.
             last_action_output_cat: winner.last_action_output_cat,
@@ -10551,7 +11851,10 @@ where
                 // mirror by interning the CollectionId leaf on the SPPF
                 // side and pushing the SppfId onto sppf_stack so the
                 // subsequent emit_fire_action's arity check passes.
-                let sid = self.sppf.intern_collection_id(*id as u32);
+                // Collection-accumulation fix (2026-05-29): EMPTY items here
+                // — elements are spliced separately into the per-cursor arena
+                // and snapshotted into the node at the fire site.
+                let sid = self.sppf.intern_collection_id(*id as u32, Vec::new());
                 // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                 // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
                 cursor.sppf_stack_id =
@@ -10577,9 +11880,33 @@ where
                 // from `builder.args_stack` into `builder.collections`.
                 // Mirror by popping the corresponding symbol from
                 // `cursor.sppf_stack` and appending to the per-cursor SPPF
-                // arena slot. Bounds-check on `id` matches the helper's
-                // defensive guard at `emit_splice_into_collection`.
-                if (*id as usize) < cursor.sppf_collection_arena.len() {
+                // arena slot.
+                //
+                // Cluster A fix (2026-05-29): resolve the target slot at
+                // RUNTIME as the innermost open collection
+                // (`collection_stack_depth - 1`), NOT the static per-rule
+                // `slot_idx` carried in `id`. The Class-3 ZIP-MAP-SEP names
+                // splice codegen bakes the static `slot_idx` (0 for PInputs
+                // `ns`), which is only correct with NO outer-collection
+                // nesting. When a PInputs nests inside a PPar bag (PPar bag =
+                // runtime slot 0, `ns` = runtime slot 1) the static id 0
+                // mis-routes the channel name into the OUTER bag, leaving
+                // `ns` empty → comm `multi_substitute_name([x],[])` → subst
+                // OOB. The `ns` CollectionMarker push (emit_push_side_effects)
+                // and the fire-site item snapshot already use the runtime id,
+                // so the splice must too. This mirrors the generic
+                // Pratt-element-close splice's runtime `acc_id` resolution
+                // (see the InfixLoop close path). `id` is retained in the
+                // variant as a debug cross-check (static slot_idx <= runtime
+                // innermost slot, since runtime accounts for outer nesting).
+                let acc_id = cursor.collection_stack_depth.saturating_sub(1) as usize;
+                debug_assert!(
+                    *id as usize <= acc_id,
+                    "SpliceIntoCollection: static slot_idx {} exceeds runtime \
+                     innermost slot {} (collection_stack_depth = {})",
+                    id, acc_id, cursor.collection_stack_depth,
+                );
+                if acc_id < cursor.sppf_collection_arena.len() {
                     // Phase F.13 chain_10000 Plan D E3 Substage 2
                     // (2026-05-26): arena.top + intern_pop replaces
                     // Arc::make_mut(&mut sppf_stack).pop. Read top first
@@ -10588,7 +11915,7 @@ where
                         cursor.sppf_stack_id =
                             self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                         Arc::make_mut(&mut cursor.sppf_collection_arena)
-                            [*id as usize]
+                            [acc_id]
                             .push(top);
                     }
                 }
@@ -10906,28 +12233,14 @@ where
             .unwrap_or(0)
     }
 
-    /// Phase F.4 (2026-05-18): post-commit accessor for the winner
-    /// cursor's SPPF collection arena.
-    ///
-    /// In multi-cursor pre-commit state, this returns the FIRST
-    /// branch_cursor's arena (any one of the live fanout cursors) —
-    /// which reflects ONLY that one cursor's splice history. Other
-    /// live cursors' content is invisible to this accessor. Pre-fix,
-    /// the walker-global arena held content from ALL live cursors
-    /// smashed together, which was the bug; the post-fix conservative
-    /// view (only one cursor's splices) is correct for the production
-    /// realize_* paths, all of which are called POST-COMMIT after
-    /// `commit_winner_at_eoi` has installed the surviving cursor at
-    /// `branch_cursors[0]`.
-    #[inline]
-    fn winner_collection_arena(&self) -> &[Vec<crate::sppf::SppfId>] {
-        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-        self.branch_cursors
-            .first()
-            .and_then(|f| f.as_concrete())
-            .map(|c| c.sppf_collection_arena.as_ref().as_slice())
-            .unwrap_or(&[])
-    }
+    // Collection-accumulation fix (2026-05-29): `winner_collection_arena()`
+    // GENUINELY REMOVED — both former callers (the realize DFS Enter arm and
+    // `realize_packing_call`'s `ActionArg::CollectionId` arm) now read each
+    // derivation's collection from the `CollectionId` SPPF node's own `items`
+    // field (snapshotted at the `emit_fire_action` fire site). Reading
+    // `branch_cursors[0]` was the root-cause bug: it returned ONE cursor's
+    // arena post-commit, truncating/emptying collections belonging to other
+    // (non-winner) derivations in an `Ambiguous([...])` result.
 
     /// Phase F.3c.2 (2026-05-20): reconstruct an `ActionArg` from a single
     /// SPPF node id, using `cursor.sppf_symbol_terms` as the memo for
@@ -11007,7 +12320,7 @@ where
                 // None defensively.
                 None
             }
-            SppfNode::CollectionId { id } => Some(ActionArg::CollectionId(*id as u8)),
+            SppfNode::CollectionId { id, .. } => Some(ActionArg::CollectionId(*id as u8)),
             SppfNode::OptAbsent { .. } => Some(ActionArg::Optional(None)),
             SppfNode::Predicate { handle } => self
                 .sppf_predicate_arena
@@ -11362,6 +12675,41 @@ where
                 .is_some();
             let transient_result =
                 self.fire_action_via_transient(cursor, symbol, &children);
+            // Collection-accumulation fix (2026-05-29): re-intern each
+            // CollectionId child carrying a SNAPSHOT of the OWNING cursor's
+            // arena slot, so the element SppfIds become derivation-local in
+            // the SPPF. Realize then reads `items` from the node (not the
+            // post-commit `branch_cursors[0]` arena, which truncated
+            // collections belonging to non-winner cursors). Each CollectionId
+            // child is handled independently (multi-slot rules have several).
+            // This does NOT change `lo_pos` (CollectionId nodes have no span)
+            // nor the already-fired transient (which read the arena directly).
+            //
+            // Two-phase to satisfy the borrow checker: first snapshot
+            // (immutable read of `self.sppf` + `cursor.sppf_collection_arena`),
+            // then re-intern (mutable `self.sppf`).
+            let collection_snapshots: Vec<Option<(u32, Vec<crate::sppf::SppfId>)>> =
+                children
+                    .iter()
+                    .map(|&c| match self.sppf.node(c) {
+                        Some(crate::sppf::SppfNode::CollectionId { id, .. }) => {
+                            let slot_id = *id;
+                            let items: Vec<crate::sppf::SppfId> = cursor
+                                .sppf_collection_arena
+                                .get(slot_id as usize)
+                                .cloned()
+                                .unwrap_or_default();
+                            Some((slot_id, items))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+            let mut children = children;
+            for (slot, snap) in children.iter_mut().zip(collection_snapshots.into_iter()) {
+                if let Some((slot_id, items)) = snap {
+                    *slot = self.sppf.intern_collection_id(slot_id, items);
+                }
+            }
             match (has_action, transient_result) {
                 (true, None) => {
                     // Elide / arity mismatch — action_fn returned without
@@ -11516,7 +12864,12 @@ where
     fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
         // C3 dual-mode: push a CollectionId placeholder onto sppf_stack so
         // the fire_action arity check matches builder.stack arity.
-        let sid = self.sppf.intern_collection_id(id as u32);
+        // Collection-accumulation fix (2026-05-29): this placeholder push
+        // happens BEFORE elements are spliced into the cursor's arena, so it
+        // carries EMPTY items here. `emit_fire_action` re-interns each
+        // CollectionId child with the snapshot of the owning cursor's arena
+        // slot immediately before `intern_packing`.
+        let sid = self.sppf.intern_collection_id(id as u32, Vec::new());
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
         cursor.sppf_stack_id =
@@ -12614,6 +13967,11 @@ where
         // bumps to the cursor's field via Arc::clone are O(1).
         child_visited_recovery: im::OrdSet<PackedDispatchConfig>,
         child_visited_dispatch: im::OrdSet<PackedDispatchConfig>,
+        // Sig-B GLL-descriptor (#9): the progress-aware cross-cat
+        // cycle-defense set, pre-extended with the parent's descriptor by
+        // the caller (mirrors `child_visited_dispatch`). Moved into the
+        // worker cursor below.
+        child_visited_proj_descriptors: im::OrdSet<ProjDescriptorKey>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache
@@ -12626,6 +13984,11 @@ where
         {
             let s = *source_src_idx;
             let b = *inner_cur_bp;
+            // M4 (2026-05-30, re-landed): the WRAPPING rule's (cat, rule)
+            // discriminator, from the branch's pushed symbol. Widens ONLY the
+            // cohort CACHE key (DispatchKey), not the merge EquivKey.
+            let wrap_cat = branch.symbol.category_src_idx;
+            let wrap_rule = branch.symbol.rule_index_in_category;
             // R4 (2026-05-28): suppress cross-cat cohort registration at
             // positions strictly inside an Earley-absorbed chain interval.
             // The chain interior at `pos_after` has already been fully
@@ -12639,7 +14002,9 @@ where
             if self.pos_in_absorbed_chain_interval(pos_after) {
                 return Vec::new();
             }
-            let key = crate::dispatch_cohort::DispatchKey::new(pos_after, s, b);
+            let key = crate::dispatch_cohort::DispatchKey::new(
+                pos_after, s, b, wrap_cat, wrap_rule,
+            );
             // COQ-S0 (2026-05-27): track distinct DispatchKey vs
             // EquivKey to confirm the cohort_origin pos discriminator
             // is the super-linear scaling root cause.
@@ -12676,13 +14041,56 @@ where
                             .weight
                             .times_ref(&branch.weight),
                     };
+                    // Sig-B Blocker-2 §3d (2026-05-31, pgmcp experiment #9):
+                    // SYMMETRIC revive-on-pause backstop. The member is
+                    // pausing onto `key`; if a DISTINCT-wrap sibling at the
+                    // same dispatch site has ALREADY resolved (so the
+                    // end-of-step drain for it ran before this member
+                    // existed and will never revive it — the `boollit`
+                    // ordering `int(y != true > x < "qua")`), splice this
+                    // member from that resolution NOW. Same §2 predicate;
+                    // shares `crosswrap_drained` for idempotence; the
+                    // already-resolved sibling is NOT removed. Computed
+                    // BEFORE the pause consumes `key`/`member`.
+                    // `B2_DISABLE` (benchmark control, R4): skip the §3d
+                    // backstop too so the control arm == base[sigb-gll].
+                    let backstop_jobs = if b2_crosswrap_disabled() {
+                        Vec::new()
+                    } else {
+                        self.dispatch_cohort_cache
+                            .crosswrap_backstop_for_pausing_member(&key, &member)
+                    };
                     if self
                         .dispatch_cohort_cache
                         .pause_cohort_member(key, member)
                     {
-                        return Vec::new();
+                        // Pause succeeded. Revive any §3d backstop jobs and
+                        // return them (the member also remains paused so the
+                        // forward drain can still fire if a LATER sibling
+                        // resolves). Empty backstop ⇒ Vec::new() as before.
+                        let mut revived_backstop: Vec<BranchCursor<W>> =
+                            Vec::with_capacity(backstop_jobs.len());
+                        for job in backstop_jobs {
+                            let revived = self
+                                .revive_cohort_member_with_snapshot(
+                                    job.member,
+                                    job.symbol_id,
+                                    job.pos_at_dispatch,
+                                    job.hi_pos,
+                                    job.source_src_idx,
+                                    job.inner_cur_bp,
+                                    job.wrap_cat,
+                                    job.wrap_rule,
+                                    &job.snap,
+                                );
+                            revived_backstop.push(revived);
+                        }
+                        return revived_backstop;
                     }
                     // Cap exceeded — fall through to allocate as worker.
+                    // (Drop the backstop jobs; the member will run its own
+                    // sub-parse per-cursor, so no soundness loss.)
+                    drop(backstop_jobs);
                 }
                 RegisterOutcome::ResolvedHit {
                     symbol_id,
@@ -12724,6 +14132,8 @@ where
                             hi_pos,
                             s,
                             b,
+                            wrap_cat,
+                            wrap_rule,
                             snap,
                         );
                         revived_cursors.push(revived);
@@ -12751,6 +14161,12 @@ where
         }
         // Worker / non-CrossCatDelegate path: allocate normally.
         let mut symbol = branch.symbol;
+        // M4 (2026-05-30, re-landed): capture the WRAPPING rule's
+        // (cat, rule) discriminator from the pushed symbol so the
+        // CrossCatProjection EdgeKind (and, via the resolve site, the cohort
+        // cache key) keeps distinct wrap injections distinct.
+        let wrap_cat = symbol.category_src_idx;
+        let wrap_rule = symbol.rule_index_in_category;
         let mut child = BranchCursor {
             node: parent.node,
             pos: pos_after,
@@ -12764,6 +14180,9 @@ where
             recovery_depth: child_recovery_depth,
             visited_recovery: child_visited_recovery,
             visited_dispatch: child_visited_dispatch,
+            // Sig-B GLL-descriptor (#9): move the caller's pre-extended
+            // projection-descriptor set into the worker cursor.
+            visited_proj_descriptors: child_visited_proj_descriptors,
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // arena-interned StackId (Copy u32).
             sppf_stack_id: parent.sppf_stack_id,
@@ -12788,6 +14207,8 @@ where
             let kind = crate::gss::EdgeKind::CrossCatProjection {
                 source_src_idx: *source_src_idx,
                 inner_cur_bp: *inner_cur_bp,
+                wrap_cat,
+                wrap_rule,
             };
             let _ = self.cursor_gss_push_with_kind(
                 &mut child,
@@ -12845,6 +14266,12 @@ where
         hi_pos: u32,
         source_src_idx: u16,
         inner_cur_bp: u8,
+        // M4 (2026-05-30, re-landed): wrapping rule (cat, rule) of the
+        // resolved cohort key — threaded so the re-pushed CrossCatProjection
+        // edge + cohort_origin DispatchKey carry the same wrap discriminator
+        // the member was registered/resolved under.
+        wrap_cat: u16,
+        wrap_rule: u16,
         snap: &crate::dispatch_cohort::WorkerSnapshot<W>,
     ) -> BranchCursor<W> {
         let mut cursor = member.return_frame;
@@ -12856,10 +14283,16 @@ where
         // cursor's incoming_edge_stack length AFTER the CategoryEntry
         // re-push below, so graduation fires when the cohort cursor
         // exits the dispatch's return frame.
+        //
+        // M4 note: cohort_origin's `.equiv()` projection (used by ConfigKey)
+        // stays narrow `(source, bp)`, so the wrap_cat/wrap_rule recorded here
+        // do NOT affect cohort MERGE — they only keep the full key faithful.
         cursor.cohort_origin = Some(crate::dispatch_cohort::DispatchKey {
             pos: pos_at_dispatch,
             source_src_idx,
             inner_cur_bp,
+            wrap_cat,
+            wrap_rule,
         });
         // worker_pre_dispatch_weight retained on schema; reserved for
         // a future per-packing weight delta scheme (Stage 1.5.3
@@ -12882,6 +14315,8 @@ where
         let kind = crate::gss::EdgeKind::CrossCatProjection {
             source_src_idx,
             inner_cur_bp,
+            wrap_cat,
+            wrap_rule,
         };
         let _ = self.cursor_gss_push_with_kind(
             &mut cursor,
@@ -13359,6 +14794,8 @@ where
             if let Some(crate::gss::EdgeKind::CrossCatProjection {
                 source_src_idx,
                 inner_cur_bp,
+                wrap_cat,
+                wrap_rule,
             }) = self.gss.edge_kind(eid)
             {
                 if let Some(node) = self.gss.node(cursor.node) {
@@ -13368,10 +14805,16 @@ where
                     // (2026-05-26): arena.top replaces sppf_stack.last().
                     let symbol_id_opt = self.sppf_stack_arena.top(cursor.sppf_stack_id);
                     if let Some(symbol_id) = symbol_id_opt {
+                        // M4 (2026-05-30, re-landed): reconstruct the WIDENED
+                        // cohort key from the EdgeKind's wrap discriminator so
+                        // resolve() targets the SAME entry the worker
+                        // registered under (per distinct wrap rule).
                         let key = crate::dispatch_cohort::DispatchKey::new(
                             dispatch_pos_usize,
                             source_src_idx,
                             inner_cur_bp,
+                            wrap_cat,
+                            wrap_rule,
                         );
                         // Stage 1.5 (2026-05-21): construct a per-pop
                         // WorkerSnapshot. The resolve() call accumulates
@@ -14058,7 +15501,9 @@ where
         tokens: &dyn WpdaTokenSource,
     ) -> Result<(), WpdaMaxStepsExceeded>
     where
-        W: 'static + std::fmt::Debug,
+        // M1.PERF (2026-05-31): propagated from `run_to_end_of_input`
+        // (the spurious-blowup gate's `realize_root_to_terms` call).
+        W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
         let max_steps = std::env::var("PRATTAIL_MAX_STEPS")
             .ok()

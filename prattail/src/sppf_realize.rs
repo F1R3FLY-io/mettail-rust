@@ -216,7 +216,14 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     Some(SppfNode::Epsilon { pos }) => {
                         vec![resolver.resolve_epsilon(*pos)]
                     }
-                    Some(SppfNode::CollectionId { id: cid }) => {
+                    // Collection-accumulation fix (2026-05-29): `items` now
+                    // live on the node, but this pluggable-resolver path
+                    // (test scaffolding; `resolve_collection_id` panics by
+                    // default and is not used for production collection
+                    // realization — see the WPDA engine path in
+                    // `wpda_walker.rs::realize_packing_call`) keeps its
+                    // existing id-only contract. Ignore `items` here.
+                    Some(SppfNode::CollectionId { id: cid, .. }) => {
                         vec![resolver.resolve_collection_id(*cid)]
                     }
                     Some(SppfNode::OptAbsent { pos }) => {

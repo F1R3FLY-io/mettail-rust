@@ -2195,6 +2195,63 @@ fn simulator_regression_bool_prefix_tokens() {
     }
 }
 
+/// Pass-2c token-soundness probe (permanent regression test, 2026-05-30).
+///
+/// PRINCIPLE (non-negotiable): never prematurely disambiguate — drop a parse
+/// alternative ONLY when EVIDENCE rejects it. For a parser the cardinal
+/// evidence is TOKEN-SOUNDNESS: a derivation's terminal yield must equal the
+/// input it spans. The Pass-2c implicit-cast wrap could fire a trigger-bearing
+/// syntactic cast's action over just its operand WITHOUT the cast's
+/// `"("`/`")"` keyword being matched, so `bool(0)` produced the token-UNSOUND
+/// `FloatToBool(IntToFloat(0))` (display `bool(float(0))`, whose yield
+/// `bool ( float ( 0 ) )` != the input `bool(0)`). The realize-time
+/// `min_terminal_span` span filter (prattail `WpdaEngine::min_terminal_span` +
+/// `realize_node_leave`) now rejects any derivation whose result-Symbol span
+/// leaves no room for a rule's in-span literals.
+///
+/// This permanent probe asserts that for a fabrication-prone corpus EVERY
+/// alternative returned by `parse_via_wpda_all` (the multi-result entry point
+/// surfacing ALL surviving derivations) re-displays to EXACTLY the input — no
+/// surviving alternative inserts a syntactic-cast keyword absent from the
+/// input. `parse_via_wpda_all` may legitimately return `Err` (no derivation)
+/// for an input — that is sound (zero alts); the probe fails ONLY if a
+/// SURVIVING alt has yield != input.
+#[test]
+fn pass2c_token_soundness_probe() {
+    use mettail_languages::calculator::{Bool, Float, Int, Str};
+    macro_rules! probe {
+        ($cat:ty, $input:expr) => {{
+            mettail_runtime::clear_var_cache();
+            if let Ok(alts) = <$cat>::parse_via_wpda_all($input) {
+                for (i, t) in alts.iter().enumerate() {
+                    let displayed = format!("{}", t);
+                    assert_eq!(
+                        displayed, $input,
+                        "TOKEN-SOUNDNESS VIOLATION: parse_via_wpda_all({:?}) alt #{} \
+                         re-displays as {:?} (yield != input) — a derivation fabricated \
+                         terminals absent from the input. The Pass-2c span backstop regressed.",
+                        $input, i, displayed,
+                    );
+                }
+            }
+        }};
+    }
+    // Canonical: bool(0) must NOT yield bool(float(0)) (the original bug).
+    probe!(Bool, "bool(0)");
+    probe!(Bool, "bool(0.0)");
+    probe!(Bool, "bool(a)");
+    probe!(Int, "int(0)");
+    probe!(Int, "int(0.0)");
+    probe!(Int, "int(a)");
+    probe!(Float, "float(0)");
+    probe!(Float, "float(a)");
+    probe!(Str, "str(0)");
+    // Legitimate nested casts must stay SOUND (yield == input), not be dropped.
+    probe!(Bool, "bool(float(0))");
+    probe!(Float, "float(float(3))");
+    probe!(Int, "int(int(3))");
+}
+
 #[test]
 fn simulator_regression_nested_casts() {
     use mettail_languages::calculator::Int;

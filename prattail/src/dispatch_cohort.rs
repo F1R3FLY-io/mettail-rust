@@ -43,6 +43,16 @@ use crate::automata::semiring::SemiringRef;
 use crate::sppf::SppfId;
 use crate::wpda_runtime::WpdaState;
 
+/// Sig-B Blocker-2 (2026-05-31): is the `SIGB_CROSSWRAP` trace gate on?
+/// Read from the environment exactly once (first call) and memoized. Off
+/// by default — when unset, the cross-wrap drain path emits NO trace and
+/// the walker never calls the drain (M2.0 inert; gauntlet byte-identical).
+#[inline]
+fn sigb_crosswrap_trace() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| std::env::var_os("SIGB_CROSSWRAP").is_some())
+}
+
 /// Cache key for cross-cat-projection dispatch sites. Mirrors the
 /// payload of `WpdaState::CrossCatDelegate { source_src_idx,
 /// inner_cur_bp }` together with the dispatch position.
@@ -64,15 +74,41 @@ pub struct DispatchKey {
     pub pos: u32,
     pub source_src_idx: u16,
     pub inner_cur_bp: u8,
+    /// M4 (2026-05-30, re-landed): the WRAPPING rule's category +
+    /// rule-within-category index (`branch.symbol.{category_src_idx,
+    /// rule_index_in_category}` at the dispatch site). Distinct cross-cat
+    /// WRAP injections that share `(pos, source, bp)` but wrap via DIFFERENT
+    /// rules (e.g. `int(int(5,32),32)` schedules 4 distinct wrap rules
+    /// `(0,0)/(1,1)/(6,1)/(7,34)` at the same `(pos, source=Proc, bp=0)`)
+    /// previously COLLAPSED to one DispatchKey → all but one were
+    /// `pause_cohort_member`'d and lost (the cast-family root cause). Adding
+    /// the wrap discriminator un-conflates them so each distinct injection
+    /// gets its own cache entry and reaches EOI.
+    ///
+    /// NOTE: this widens ONLY the cohort-CACHE key (this struct), NOT the
+    /// cohort-MERGE equivalence key [`EquivKey`] (see [`Self::equiv`]), which
+    /// stays `(source_src_idx, inner_cur_bp)` so the chain workload's
+    /// O(1)-bounded ConfigKey.cohort_origin merge (and its memory ceiling)
+    /// is provably untouched.
+    pub wrap_cat: u16,
+    pub wrap_rule: u16,
 }
 
 impl DispatchKey {
     #[inline(always)]
-    pub fn new(pos: usize, source_src_idx: u16, inner_cur_bp: u8) -> Self {
+    pub fn new(
+        pos: usize,
+        source_src_idx: u16,
+        inner_cur_bp: u8,
+        wrap_cat: u16,
+        wrap_rule: u16,
+    ) -> Self {
         DispatchKey {
             pos: pos as u32,
             source_src_idx,
             inner_cur_bp,
+            wrap_cat,
+            wrap_rule,
         }
     }
 
@@ -86,6 +122,11 @@ impl DispatchKey {
     /// Empirical chain_50 LEFT-assoc: 300 distinct DispatchKeys collapse
     /// to 6 distinct EquivKeys (50× collision rate). See COQ-S0
     /// instrumentation in walker_stats.rs.
+    ///
+    /// M4 (2026-05-30): DELIBERATELY drops `wrap_cat`/`wrap_rule` too — the
+    /// merge quotient stays narrow `(source_src_idx, inner_cur_bp)` so the
+    /// cohort-MERGE (chain O(N²) defense) is unaffected by the cache-key
+    /// widening. Only the cohort CACHE keys on the wrap discriminator.
     #[inline(always)]
     pub fn equiv(&self) -> EquivKey {
         EquivKey {
@@ -307,6 +348,69 @@ impl<W: SemiringRef> std::fmt::Debug for CohortMember<W> {
     }
 }
 
+/// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): one own-wrap-gated
+/// cross-wrap body-splice job. Produced by
+/// [`DispatchCohortCache::take_pending_for_drain_crosswrap`] for each
+/// `(paused cohort member M of a sibling key `K_sib`, worker snapshot of the
+/// RESOLVED sibling `R`)` pair that passes the §2 eligibility predicate.
+///
+/// The walker revives each job via the EXISTING
+/// `revive_cohort_member_with_snapshot` (the same entrypoint the normal
+/// same-wrap drain uses), passing `member` + the resolved `R`'s
+/// `(symbol_id, hi_pos, pos_at_dispatch)` and the RESOLVED wrap
+/// `(wrap_cat, wrap_rule)`. The member is the LIVE cast cursor that paused
+/// under `K_pause(W1)` awaiting its body; the resolution it needs is the
+/// OUTERMOST-wrap `R(W2)`'s full-body SPPF symbol. Splicing it re-pushes
+/// `CategoryEntry(source)` so the member's next walker step fires its cast
+/// action → `is_accepting_config` true.
+///
+/// **Soundness (§3c):** this only ADDS sound cursors; the eligibility is the
+/// purely-structural §2 predicate (no count/weight/cap/threshold). The
+/// member's own-wrap `K_sib` entry is NOT removed — its own worker may still
+/// resolve its own span; the cross-wrap splice only ADDS the body it needs.
+pub struct CrossWrapSpliceJob<W: SemiringRef> {
+    /// The paused cohort member of `K_sib` (materialized from its lazy
+    /// `CohortShell` + `CohortMemberState`), to be revived/spliced.
+    pub member: CohortMember<W>,
+    /// `R.symbol_id` — the resolved sibling's full-body SPPF symbol.
+    pub symbol_id: SppfId,
+    /// `R.hi_pos` — the resolved sibling's body end position.
+    pub hi_pos: u32,
+    /// `R.pos_at_dispatch` — the shared dispatch-site position
+    /// (== `K_sib.pos` by the eligibility predicate).
+    pub pos_at_dispatch: u32,
+    /// Shared dispatch source category (== `resolved_key.source_src_idx`
+    /// == `K_sib.source_src_idx`, since `equiv()` matches).
+    pub source_src_idx: u16,
+    /// Shared dispatch inner binding-power (== `resolved_key.inner_cur_bp`).
+    pub inner_cur_bp: u8,
+    /// The RESOLVED wrap's category (`resolved_key.wrap_cat`). The revived
+    /// member carries the RESOLVED wrap so its re-pushed CrossCatProjection
+    /// edge + `cohort_origin` reflect the body that completed it (§3b).
+    pub wrap_cat: u16,
+    /// The RESOLVED wrap's rule index (`resolved_key.wrap_rule`).
+    pub wrap_rule: u16,
+    /// One `R` worker snapshot. `revive_cohort_member_with_snapshot` reads
+    /// `worker_inner_state` / `worker_last_action_output_cat` /
+    /// `worker_pending_packing_weight` from this. One job is produced per
+    /// (member × snapshot), mirroring the same-wrap drain's fanout.
+    pub snap: WorkerSnapshot<W>,
+}
+
+impl<W: SemiringRef> std::fmt::Debug for CrossWrapSpliceJob<W> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CrossWrapSpliceJob")
+            .field("symbol_id", &self.symbol_id)
+            .field("hi_pos", &self.hi_pos)
+            .field("pos_at_dispatch", &self.pos_at_dispatch)
+            .field("source_src_idx", &self.source_src_idx)
+            .field("inner_cur_bp", &self.inner_cur_bp)
+            .field("wrap_cat", &self.wrap_cat)
+            .field("wrap_rule", &self.wrap_rule)
+            .finish()
+    }
+}
+
 /// Walker-global cohort cache.
 pub struct DispatchCohortCache<W: SemiringRef> {
     pub entries: rustc_hash::FxHashMap<DispatchKey, DispatchCacheEntry<W>>,
@@ -326,6 +430,37 @@ pub struct DispatchCohortCache<W: SemiringRef> {
     pub resolved_total: u64,
     pub failed_total: u64,
     pub snapshot_appends_total: u64,
+    /// Cohort-revive-rework M0 (2026-05-29): cumulative count of paused
+    /// cohort members orphaned on `InFlight` entries (worker never
+    /// reached `Resolved`, so the end-of-step drain never fired). These
+    /// are the cross-cat cursors silently lost per the
+    /// `drive-suite-green-ledger.md` "⚑ Cross-cat cluster ROOT CAUSE".
+    /// Tallied at EOI by `orphaned_pending_members_count` and revived by
+    /// M1's `drain_orphaned_inflight_members`.
+    pub inflight_orphan_members_total: u64,
+    /// Cohort-revive-rework M0 (2026-05-29): cumulative count of paused
+    /// cohort members orphaned on `Failed` entries. (At this milestone
+    /// the `Failed` variant is unit-shaped and carries NO pending_members,
+    /// so this is structurally always 0 until M2 stashes them; counted
+    /// separately so the census can confirm M0's prediction that the
+    /// loss is entirely in the `InFlight` branch.)
+    pub failed_orphan_members_total: u64,
+    /// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): take-once
+    /// idempotence set for `take_pending_for_drain_crosswrap`. Keyed by
+    /// `(K_sib, R.symbol_id)` — the sibling key whose member was
+    /// cross-wrap-spliced, paired with the resolved symbol that supplied
+    /// the body. A repeated drain pass over the SAME `(K_sib, symbol)` is
+    /// suppressed so a member is cross-revived AT MOST once per
+    /// resolved-body symbol (R3: prevents the re-injection loop). The
+    /// member's own-wrap entry is left intact, so this set — not entry
+    /// removal — is the sole idempotence guard for the cross-wrap path.
+    /// Cleared at the parse boundary by `clear`.
+    pub crosswrap_drained: rustc_hash::FxHashSet<(DispatchKey, SppfId)>,
+    /// Sig-B Blocker-2 (2026-05-31): cumulative count of cross-wrap
+    /// body-splice jobs emitted (one per member × snapshot). Observability
+    /// for experiment #9 — a non-zero count on a failing cross-cat test is
+    /// the empirical signature that the body-splice fired.
+    pub crosswrap_splices_total: u64,
 }
 
 impl<W: SemiringRef> DispatchCohortCache<W> {
@@ -342,6 +477,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             snapshot_appends_total: 0,
             cohort_cursors_emitted_total: 0,
             cohort_cursors_graduated_total: 0,
+            inflight_orphan_members_total: 0,
+            failed_orphan_members_total: 0,
+            // Sig-B Blocker-2 (2026-05-31): fresh idempotence set + counter.
+            crosswrap_drained: rustc_hash::FxHashSet::default(),
+            crosswrap_splices_total: 0,
         }
     }
 
@@ -357,6 +497,14 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         self.snapshot_appends_total = 0;
         self.cohort_cursors_emitted_total = 0;
         self.cohort_cursors_graduated_total = 0;
+        self.inflight_orphan_members_total = 0;
+        self.failed_orphan_members_total = 0;
+        // Sig-B Blocker-2 (2026-05-31): clear the cross-wrap idempotence
+        // set + counter at the parse boundary. SPPF SymbolIds are
+        // per-parse; a stale `(DispatchKey, SppfId)` from a prior parse
+        // would be unsound to honor against a fresh SPPF arena.
+        self.crosswrap_drained.clear();
+        self.crosswrap_splices_total = 0;
     }
 
     /// Phase F.13 H12 Stage 1.5 — register a cross-cat-projection
@@ -598,6 +746,401 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
     }
 
+    /// Sig-B Blocker-2 (2026-05-31, pgmcp experiment #9): own-wrap-gated
+    /// CROSS-WRAP body-splice drain. Companion to
+    /// [`Self::take_pending_for_drain`] (the SAME-wrap drain).
+    ///
+    /// **Root cause it closes (§1).** A cross-cat cast member paused under
+    /// `K_pause(W1)` (its own wrap), but the body it awaits — the whole
+    /// chain — resolves under the OUTERMOST wrap `K_resolve(W2)` at the
+    /// SAME dispatch site. The same-wrap drain keys on the FULL widened
+    /// `K_resolve`, so it never reaches the `K_pause(W1)` member → the cast
+    /// `BinderRule` is never spliced → `is_accepting_config` stays false →
+    /// "no accepting branch ... `(`". `K_resolve.equiv() == K_pause.equiv()`
+    /// but `K_resolve != K_pause`.
+    ///
+    /// **THE structural eligibility predicate (§2) — NO count/weight/cap.**
+    /// Cross-revive a paused member `M` of sibling key `K_sib` from the
+    /// `Resolved` sibling `R = entries[resolved_key]` iff ALL hold:
+    /// 1. `K_sib.equiv() == resolved_key.equiv()`  (narrow READ — same
+    ///    `(source_src_idx, inner_cur_bp)` dispatch equivalence class);
+    /// 2. `K_sib != resolved_key`  (DISTINCT wrap — same-wrap is the normal
+    ///    drain's job);
+    /// 3. `K_sib.pos == R.pos_at_dispatch`  (dispatch-site identity);
+    /// 4. `K_sib` is `InFlight` (its own wrap has NOT resolved) **OR**
+    ///    `K_sib` is `Resolved` with `hi_pos < R.hi_pos` (it resolved a
+    ///    strictly SHORTER inner span) — THE load-bearing own-wrap-
+    ///    non-resolution gate.
+    ///
+    /// Clause 4 is what excludes the PARENS-INNER steal (§2): the inner
+    /// `(-0.5<0.5)` SELF-RESOLVES at its OWN required `hi_pos` (== `R.hi_pos`),
+    /// so `hi_pos < R.hi_pos` is FALSE → not eligible → no steal →
+    /// `cross_cat_with_parens` STAYS GREEN. The GENUINE floats/chain case has
+    /// the cast member's own wrap `InFlight` (or a shorter span) → eligible.
+    ///
+    /// **Only ADDS sound cursors (§3c).** `K_sib` is NOT removed (its own
+    /// worker may still resolve its own span); we only ADD the body it needs.
+    /// `resolved_key`'s EquivKey is READ-only; the cache stays full
+    /// `DispatchKey` (R5). One job per `(member × non-terminal R snapshot)`.
+    ///
+    /// **Take-once idempotence (§3a / R3).** `crosswrap_drained` records
+    /// `(K_sib, R.symbol_id)`; a repeated drain pass over the same pair is
+    /// suppressed so a member is cross-revived at most once per resolved
+    /// body symbol — no entry removal, no re-injection loop.
+    #[allow(clippy::type_complexity)]
+    pub fn take_pending_for_drain_crosswrap(
+        &mut self,
+        resolved_key: &DispatchKey,
+    ) -> Vec<CrossWrapSpliceJob<W>> {
+        // ── Read `R` (the resolved sibling). Require Resolved; clone the
+        //    fields the jobs need so the subsequent sibling scan can borrow
+        //    `self.entries` immutably without aliasing.
+        let (r_symbol_id, r_hi_pos, r_pos_at_dispatch, r_snaps): (
+            SppfId,
+            u32,
+            u32,
+            Vec<WorkerSnapshot<W>>,
+        ) = match self.entries.get(resolved_key) {
+            Some(DispatchCacheEntry::Resolved {
+                symbol_id,
+                hi_pos,
+                pos_at_dispatch,
+                worker_snapshots,
+                ..
+            }) => {
+                // Filter terminal snapshots: a worker that ended in
+                // Error/Accept terminal would not produce a revivable
+                // cursor (mirrors the same-wrap drain's terminal filter at
+                // the walker site). Empty snapshot set ⇒ nothing to splice.
+                let live: Vec<WorkerSnapshot<W>> = worker_snapshots
+                    .iter()
+                    .filter(|s| !s.worker_inner_state.is_terminal())
+                    .cloned()
+                    .collect();
+                if live.is_empty() {
+                    return Vec::new();
+                }
+                (*symbol_id, *hi_pos, *pos_at_dispatch, live)
+            }
+            _ => return Vec::new(),
+        };
+        let r_equiv = resolved_key.equiv();
+
+        // ── Scan siblings (immutable borrow). Collect, per eligible
+        //    `K_sib`, its materialized members. `crosswrap_drained` is
+        //    consulted to skip already-spliced `(K_sib, R.symbol_id)` pairs
+        //    so we do not materialize members we would only discard.
+        let mut eligible: Vec<(DispatchKey, Vec<CohortMember<W>>)> = Vec::new();
+        for (k_sib, entry) in self.entries.iter() {
+            // Clause 1 + 2 + 3: equiv match, distinct wrap, dispatch-site
+            // identity (`K_sib.pos == R.pos_at_dispatch`).
+            if k_sib == resolved_key {
+                continue;
+            }
+            if k_sib.equiv() != r_equiv {
+                continue;
+            }
+            if k_sib.pos != r_pos_at_dispatch {
+                continue;
+            }
+            // Take-once: skip if this `(K_sib, R.symbol_id)` already spliced.
+            if self
+                .crosswrap_drained
+                .contains(&(k_sib.clone(), r_symbol_id))
+            {
+                continue;
+            }
+            // Clause 4 + member materialization. Eligible iff own wrap is
+            // InFlight (with members) OR Resolved with a STRICTLY shorter
+            // span (with members). `R.hi_pos` is the full-body span; an own
+            // resolution at `>= R.hi_pos` means the member already has (or
+            // can get) its own body — not a cross-wrap orphan.
+            let (shell_opt, states): (
+                &Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
+                &Vec<crate::cohort_lazy::CohortMemberState<W>>,
+            ) = match entry {
+                DispatchCacheEntry::InFlight {
+                    cohort_shell,
+                    pending_members,
+                    ..
+                } if !pending_members.is_empty() => (cohort_shell, pending_members),
+                DispatchCacheEntry::Resolved {
+                    hi_pos: sib_hi,
+                    cohort_shell,
+                    pending_members,
+                    ..
+                } if *sib_hi < r_hi_pos && !pending_members.is_empty() => {
+                    (cohort_shell, pending_members)
+                }
+                // Clause-4 FAIL (or empty members). This is the EXCLUDED
+                // branch — most importantly the PARENS-INNER steal: a
+                // sibling that passed clauses 1-3 but is self-`Resolved` at
+                // `hi_pos >= R.hi_pos` (it already has its own body). M2.0
+                // GATE evidence: trace it so we can confirm parens2's inner
+                // member is self-Resolved at EQUAL hi_pos (the discriminator).
+                other => {
+                    if sigb_crosswrap_trace() {
+                        let (st, sib_hi_dbg, mem_dbg) = match other {
+                            DispatchCacheEntry::InFlight { pending_members, .. } => {
+                                ("InFlight(empty)", u32::MAX, pending_members.len())
+                            }
+                            DispatchCacheEntry::Resolved {
+                                hi_pos: sh,
+                                pending_members,
+                                ..
+                            } => ("Resolved(>=hi)", *sh, pending_members.len()),
+                            DispatchCacheEntry::Failed => ("Failed", u32::MAX, 0),
+                        };
+                        eprintln!(
+                            "[SIGB_CROSSWRAP] EXCLUDED K_sib={{pos:{},src:{},bp:{},wrap:({},{})}} \
+                             state={} sib_hi={} members={} | clause4-fail vs R.hi_pos={} \
+                             (parens-inner-steal guard)",
+                            k_sib.pos,
+                            k_sib.source_src_idx,
+                            k_sib.inner_cur_bp,
+                            k_sib.wrap_cat,
+                            k_sib.wrap_rule,
+                            st,
+                            sib_hi_dbg,
+                            mem_dbg,
+                            r_hi_pos,
+                        );
+                    }
+                    continue;
+                }
+            };
+            let shell = match shell_opt {
+                Some(s) => s,
+                // Invariant: a non-empty pending_members implies Some(shell)
+                // (pause_cohort_member always sets the shell first). Skip
+                // defensively if somehow absent.
+                None => continue,
+            };
+            let members: Vec<CohortMember<W>> = states
+                .iter()
+                .map(|state| CohortMember {
+                    return_frame: crate::cohort_lazy::materialize_branch_cursor(
+                        shell, state,
+                    ),
+                    weight_at_dispatch: state.weight_at_dispatch.clone(),
+                })
+                .collect();
+            // M2.0 trace-checkpoint (§4): log the eligible (K_sib, R) pair's
+            // predicate fields under the SIGB_CROSSWRAP env gate. Confirms
+            // the discriminator empirically (floats/chain: K_sib InFlight /
+            // shorter; parens2 inner: excluded because self-Resolved at
+            // EQUAL hi_pos).
+            if sigb_crosswrap_trace() {
+                let sib_state = match entry {
+                    DispatchCacheEntry::InFlight { .. } => "InFlight",
+                    DispatchCacheEntry::Resolved { hi_pos: sh, .. } => {
+                        if *sh < r_hi_pos {
+                            "Resolved(shorter)"
+                        } else {
+                            "Resolved(>=)"
+                        }
+                    }
+                    DispatchCacheEntry::Failed => "Failed",
+                };
+                eprintln!(
+                    "[SIGB_CROSSWRAP] ELIGIBLE K_sib={{pos:{},src:{},bp:{},wrap:({},{})}} \
+                     state={} members={} | R=resolved_key{{wrap:({},{})}} \
+                     R.symbol_id={} R.hi_pos={} R.pos_at_dispatch={} equiv=({},{})",
+                    k_sib.pos,
+                    k_sib.source_src_idx,
+                    k_sib.inner_cur_bp,
+                    k_sib.wrap_cat,
+                    k_sib.wrap_rule,
+                    sib_state,
+                    members.len(),
+                    resolved_key.wrap_cat,
+                    resolved_key.wrap_rule,
+                    r_symbol_id,
+                    r_hi_pos,
+                    r_pos_at_dispatch,
+                    r_equiv.source_src_idx,
+                    r_equiv.inner_cur_bp,
+                );
+            }
+            eligible.push((k_sib.clone(), members));
+        }
+        if eligible.is_empty() {
+            return Vec::new();
+        }
+
+        // ── Build jobs (immutable borrow dropped). One job per
+        //    (eligible K_sib × member × non-terminal R snapshot). Mark each
+        //    `(K_sib, R.symbol_id)` drained so repeat passes are idempotent.
+        let mut jobs: Vec<CrossWrapSpliceJob<W>> = Vec::with_capacity(
+            eligible.iter().map(|(_, m)| m.len()).sum::<usize>() * r_snaps.len(),
+        );
+        for (k_sib, members) in eligible {
+            self.crosswrap_drained.insert((k_sib.clone(), r_symbol_id));
+            for member in members {
+                for snap in &r_snaps {
+                    jobs.push(CrossWrapSpliceJob {
+                        member: member.clone(),
+                        symbol_id: r_symbol_id,
+                        hi_pos: r_hi_pos,
+                        pos_at_dispatch: r_pos_at_dispatch,
+                        // equiv() match ⇒ source_src_idx + inner_cur_bp are
+                        // identical between K_sib and resolved_key; read from
+                        // resolved_key (the resolution's authoritative key).
+                        source_src_idx: resolved_key.source_src_idx,
+                        inner_cur_bp: resolved_key.inner_cur_bp,
+                        // The RESOLVED wrap (§3b): the spliced member carries
+                        // the wrap of the body that completed it.
+                        wrap_cat: resolved_key.wrap_cat,
+                        wrap_rule: resolved_key.wrap_rule,
+                        snap: snap.clone(),
+                    });
+                }
+            }
+        }
+        self.crosswrap_splices_total += jobs.len() as u64;
+        jobs
+    }
+
+    /// Cohort-revive-rework M1 (2026-05-29): drain every paused cohort
+    /// member still orphaned on an `InFlight` entry, returning one
+    /// `(Arc<CohortShell>, CohortMemberState)` pair per member so the
+    /// walker can re-materialize each as an independent worker via
+    /// `cohort_lazy::materialize_branch_cursor`.
+    ///
+    /// **Take-semantics + entry removal (idempotent).** An `InFlight`
+    /// entry whose owning worker reached `Resolved` would have been
+    /// transitioned to `Resolved` and drained by `take_pending_for_drain`
+    /// at end-of-step; an entry that is STILL `InFlight` at EOI fixpoint
+    /// is one whose worker died (dropped / errored) without resolving —
+    /// its paused members are the silently-lost cross-cat cursors. We
+    /// **remove** the whole entry (not merely take its members): the
+    /// re-injected orphan, when re-driven from `shell.inner_state` (its
+    /// pre-Fork dispatch state), re-emits the same Fork and re-registers
+    /// at this key. With the stale `InFlight` entry gone, that
+    /// re-registration returns `WorkerInserted` (dispatch_cohort.rs:376)
+    /// instead of `InflightCollision` — so the orphan becomes the WORKER
+    /// for its own sub-parse and can run it to completion / EOI, rather
+    /// than re-pausing behind the dead worker forever. Removing the entry
+    /// is strictly idempotent: a second call finds no matching entry and
+    /// returns empty.
+    ///
+    /// `Resolved` entries are left untouched (their members are not
+    /// orphans). `Failed` is unit-shaped here (no members) — M2 will
+    /// extend this to a `Failed` side-queue.
+    ///
+    /// Returns an empty `Vec` when there is nothing to revive (the
+    /// common case — most parses leave no orphans).
+    #[allow(clippy::type_complexity)]
+    pub fn drain_orphaned_inflight_members(
+        &mut self,
+    ) -> Vec<(
+        std::sync::Arc<crate::cohort_lazy::CohortShell<W>>,
+        crate::cohort_lazy::CohortMemberState<W>,
+    )> {
+        // First pass: identify InFlight keys that carry revivable
+        // orphans (Some(shell) + non-empty pending_members). We collect
+        // keys then remove, because `FxHashMap` cannot be mutated while
+        // its `values()` iterator is borrowed.
+        let orphan_keys: Vec<DispatchKey> = self
+            .entries
+            .iter()
+            .filter_map(|(k, entry)| match entry {
+                DispatchCacheEntry::InFlight {
+                    cohort_shell: Some(_),
+                    pending_members,
+                    ..
+                } if !pending_members.is_empty() => Some(k.clone()),
+                _ => None,
+            })
+            .collect();
+        if orphan_keys.is_empty() {
+            return Vec::new();
+        }
+        // Upper bound on output size: sum of pending_members lengths.
+        // Re-read each entry to size the Vec exactly (members are capped
+        // at MAX_PENDING_COHORT_PER_KEY = 16, keys are few at EOI).
+        let total: usize = orphan_keys
+            .iter()
+            .filter_map(|k| match self.entries.get(k) {
+                Some(DispatchCacheEntry::InFlight { pending_members, .. }) => {
+                    Some(pending_members.len())
+                }
+                _ => None,
+            })
+            .sum();
+        let mut out: Vec<(
+            std::sync::Arc<crate::cohort_lazy::CohortShell<W>>,
+            crate::cohort_lazy::CohortMemberState<W>,
+        )> = Vec::with_capacity(total);
+        for key in orphan_keys {
+            // `remove` drops the stale InFlight entry so re-registration
+            // of a re-injected orphan returns `WorkerInserted`.
+            if let Some(DispatchCacheEntry::InFlight {
+                cohort_shell,
+                pending_members,
+                ..
+            }) = self.entries.remove(&key)
+            {
+                let shell = cohort_shell.expect(
+                    "drain_orphaned_inflight_members: cohort_shell is Some by the \
+                     orphan_keys filter (pause_cohort_member always sets it before \
+                     pushing a member)",
+                );
+                for state in pending_members {
+                    out.push((std::sync::Arc::clone(&shell), state));
+                }
+            }
+        }
+        out
+    }
+
+    /// Cohort-revive-rework M0 (2026-05-29): census of paused cohort
+    /// members that are still orphaned at EOI — i.e. parked on
+    /// `InFlight` entries whose owning worker never reached `Resolved`
+    /// (so the end-of-step drain at `wpda_walker.rs:9068` never fired
+    /// for them) or — once M2 lands — on `Failed` entries. Returns
+    /// `(inflight_orphans, failed_orphans)`.
+    ///
+    /// `InFlight` orphans with a `cohort_shell` are the cross-cat
+    /// cursors silently lost per the ledger's "⚑ Cross-cat cluster ROOT
+    /// CAUSE": each is a valid alternate sub-parse (ProcStr / PVar /
+    /// binder / nested-cast) that would have reached EOI but for the
+    /// `(pos, source, bp)` cohort collision pausing it behind a worker
+    /// that subsequently died. M1's `drain_orphaned_inflight_members`
+    /// revives exactly this set.
+    ///
+    /// `Resolved` entries are EXCLUDED — their members were (or could
+    /// still be) drained by the normal end-of-step path; they are not
+    /// orphans. `Failed` is unit-shaped at this milestone (carries no
+    /// `pending_members`) so its orphan count is structurally 0 until
+    /// M2; counted separately so the census validates the prediction
+    /// that the loss is entirely in the `InFlight` branch.
+    pub fn orphaned_pending_members_count(&self) -> (u64, u64) {
+        let mut inflight_orphans: u64 = 0;
+        let failed_orphans: u64 = 0;
+        for entry in self.entries.values() {
+            if let DispatchCacheEntry::InFlight {
+                cohort_shell,
+                pending_members,
+                ..
+            } = entry
+            {
+                // Only members with a materializable shell are revivable.
+                // (pause_cohort_member always sets the shell before
+                // pushing a member, so a non-empty pending_members
+                // implies Some(shell); the guard is belt-and-suspenders.)
+                if cohort_shell.is_some() {
+                    inflight_orphans += pending_members.len() as u64;
+                }
+            }
+            // DispatchCacheEntry::Failed is a unit variant at M0/M1 —
+            // it discards pending_members on the InFlight→Failed
+            // transition (`fail`), so there is nothing to count here.
+            // M2 will stash them into a side-queue and extend this.
+        }
+        (inflight_orphans, failed_orphans)
+    }
+
     /// Phase F.13 H12 Stage 1.5.3 — read the cached worker
     /// pre-dispatch weight for a key. Returns None if the key has no
     /// entry. Used by the walker's resolve site to populate
@@ -696,6 +1239,164 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         }
     }
 
+    /// Sig-B Blocker-2 §3d (2026-05-31, pgmcp experiment #9): SYMMETRIC
+    /// revive-on-pause backstop. The end-of-step drain
+    /// ([`Self::take_pending_for_drain_crosswrap`]) handles the ordering
+    /// "`R` resolves → find the paused members of a sibling `K_sib`". This
+    /// method handles the OPPOSITE ordering: "member `M` pauses onto
+    /// `K_pause` → a sibling `R'` has ALREADY resolved" — in which case the
+    /// drain for `R'` already ran (before `M` existed) and would never
+    /// revive `M`. The `boollit` case `int(y != true > x < "qua")` is
+    /// exactly this: the cast member registers/pauses AFTER its body's
+    /// outer-wrap sibling resolved.
+    ///
+    /// Call this at the walker's `InflightCollision` pause site, AFTER
+    /// `pause_cohort_member`, passing the pausing member's `key`
+    /// (`K_pause`) and the member. Returns one [`CrossWrapSpliceJob`] per
+    /// `(already-Resolved distinct-wrap sibling R' × non-terminal R'
+    /// snapshot)` that passes the SAME §2 eligibility predicate, with `M`
+    /// (cloned) as the member to splice.
+    ///
+    /// **Predicate (identical to the drain, §2).** Splice `M` (under
+    /// `K_pause`) from `Resolved` sibling `R'` iff:
+    /// 1. `R'.equiv() == K_pause.equiv()`;
+    /// 2. `R' != K_pause`;
+    /// 3. `R'.pos_at_dispatch == K_pause.pos`;
+    /// 4. `K_pause` is `InFlight` (it is — `M` just paused onto it) **OR**
+    ///    `K_pause` is `Resolved` with `hi_pos < R'.hi_pos`. Since `M`
+    ///    pauses onto an `InFlight` (or `Resolved`) entry, clause 4 holds
+    ///    by construction for the `InFlight` case; for the `Resolved`-arm
+    ///    pause we additionally require `K_pause.hi_pos < R'.hi_pos` so the
+    ///    parens-inner self-resolution (equal hi) is still excluded.
+    ///
+    /// **Idempotence.** Shares `crosswrap_drained` keyed `(K_pause,
+    /// R'.symbol_id)` with the drain, so a member is cross-revived at most
+    /// once per resolved-body symbol regardless of which path fires first.
+    /// `R'` is NOT removed (only ADDS the body `M` needs).
+    #[allow(clippy::type_complexity)]
+    pub fn crosswrap_backstop_for_pausing_member(
+        &mut self,
+        k_pause: &DispatchKey,
+        member: &CohortMember<W>,
+    ) -> Vec<CrossWrapSpliceJob<W>> {
+        let pause_equiv = k_pause.equiv();
+        // Read `K_pause`'s own state to evaluate clause 4 for the
+        // `Resolved`-pause case (own span must be strictly shorter than R'
+        // to be eligible; InFlight is always eligible).
+        let pause_own_hi: Option<u32> = match self.entries.get(k_pause) {
+            Some(DispatchCacheEntry::Resolved { hi_pos, .. }) => Some(*hi_pos),
+            // InFlight / absent / Failed: treat as "own wrap not resolved"
+            // (eligible by clause 4's InFlight disjunct). Failed members
+            // would not have been paused here, so this is conservative.
+            _ => None,
+        };
+        // Scan for already-Resolved distinct-wrap siblings R'. Capture R''s
+        // OWN wrap (`wrap_cat`/`wrap_rule`) so the spliced member adopts the
+        // RESOLVED body's wrap — symmetric with the drain (§3b: the revive
+        // re-pushes `CategoryEntry(source)` with the RESOLVED wrap).
+        let mut sources: Vec<(SppfId, u32, u32, u16, u16, Vec<WorkerSnapshot<W>>)> =
+            Vec::new();
+        for (k_sib, entry) in self.entries.iter() {
+            if k_sib == k_pause {
+                continue;
+            }
+            if k_sib.equiv() != pause_equiv {
+                continue;
+            }
+            if let DispatchCacheEntry::Resolved {
+                symbol_id,
+                hi_pos,
+                pos_at_dispatch,
+                worker_snapshots,
+                ..
+            } = entry
+            {
+                // Clause 3: dispatch-site identity.
+                if *pos_at_dispatch != k_pause.pos {
+                    continue;
+                }
+                // Clause 4 (Resolved-pause refinement): if K_pause itself
+                // already resolved, require its own span strictly shorter
+                // than R' (excludes equal-hi self-resolution = the parens
+                // inner steal). InFlight K_pause: always eligible.
+                if let Some(own_hi) = pause_own_hi {
+                    if own_hi >= *hi_pos {
+                        continue;
+                    }
+                }
+                // Idempotence: skip if (K_pause, R'.symbol_id) already done.
+                if self
+                    .crosswrap_drained
+                    .contains(&(k_pause.clone(), *symbol_id))
+                {
+                    continue;
+                }
+                let live: Vec<WorkerSnapshot<W>> = worker_snapshots
+                    .iter()
+                    .filter(|s| !s.worker_inner_state.is_terminal())
+                    .cloned()
+                    .collect();
+                if live.is_empty() {
+                    continue;
+                }
+                if sigb_crosswrap_trace() {
+                    eprintln!(
+                        "[SIGB_CROSSWRAP] BACKSTOP-PAUSE K_pause={{pos:{},src:{},bp:{},wrap:({},{})}} \
+                         <= R'=K_sib{{wrap:({},{})}} R'.symbol_id={} R'.hi_pos={} \
+                         R'.pos_at_dispatch={} equiv=({},{})",
+                        k_pause.pos,
+                        k_pause.source_src_idx,
+                        k_pause.inner_cur_bp,
+                        k_pause.wrap_cat,
+                        k_pause.wrap_rule,
+                        k_sib.wrap_cat,
+                        k_sib.wrap_rule,
+                        symbol_id,
+                        hi_pos,
+                        pos_at_dispatch,
+                        pause_equiv.source_src_idx,
+                        pause_equiv.inner_cur_bp,
+                    );
+                }
+                sources.push((
+                    *symbol_id,
+                    *hi_pos,
+                    *pos_at_dispatch,
+                    k_sib.wrap_cat,
+                    k_sib.wrap_rule,
+                    live,
+                ));
+            }
+        }
+        if sources.is_empty() {
+            return Vec::new();
+        }
+        let mut jobs: Vec<CrossWrapSpliceJob<W>> = Vec::with_capacity(
+            sources.iter().map(|(_, _, _, _, _, s)| s.len()).sum::<usize>(),
+        );
+        for (symbol_id, hi_pos, pos_at_dispatch, sib_wrap_cat, sib_wrap_rule, snaps) in
+            sources
+        {
+            self.crosswrap_drained.insert((k_pause.clone(), symbol_id));
+            for snap in snaps {
+                jobs.push(CrossWrapSpliceJob {
+                    member: member.clone(),
+                    symbol_id,
+                    hi_pos,
+                    pos_at_dispatch,
+                    source_src_idx: k_pause.source_src_idx,
+                    inner_cur_bp: k_pause.inner_cur_bp,
+                    // The RESOLVED sibling R''s wrap — the body `M` adopts.
+                    wrap_cat: sib_wrap_cat,
+                    wrap_rule: sib_wrap_rule,
+                    snap,
+                });
+            }
+        }
+        self.crosswrap_splices_total += jobs.len() as u64;
+        jobs
+    }
+
     /// Transition InFlight → Failed (sub-parse drop without a usable
     /// SPPF symbol). Reserved for Stage 1.5+.
     #[allow(dead_code)]
@@ -739,6 +1440,25 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             "  cohort_cursors_emitted={}  cohort_cursors_graduated={}",
             self.cohort_cursors_emitted_total,
             self.cohort_cursors_graduated_total,
+        )?;
+        // Cohort-revive-rework M0/M1 (2026-05-29): orphan census +
+        // revive accounting. `inflight_orphan_members` / `failed_orphan_members`
+        // are the snapshots taken at EOI by `orphaned_pending_members_count`
+        // (see `resolve_at_end_of_input`); a non-zero InFlight count on a
+        // failing cross-cat test is the empirical signature of the root
+        // cause this rework targets.
+        writeln!(
+            f,
+            "  inflight_orphan_members={}  failed_orphan_members={}",
+            self.inflight_orphan_members_total,
+            self.failed_orphan_members_total,
+        )?;
+        // Sig-B Blocker-2 (2026-05-31): cross-wrap body-splice accounting.
+        writeln!(
+            f,
+            "  crosswrap_splices={}  crosswrap_drained_pairs={}",
+            self.crosswrap_splices_total,
+            self.crosswrap_drained.len(),
         )?;
         Ok(())
     }

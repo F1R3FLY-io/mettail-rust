@@ -940,6 +940,54 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                         )),
                                     });
                                 }
+                                // Unbalanced-delimiter detection (2026-05-29):
+                                // the walker can ACCEPT a prefix that elides a
+                                // required closing delimiter — e.g.
+                                // `sin(1.0` realizes the inner `1.0` as a Float
+                                // and consumes every token (`pos == len`), so
+                                // the trailing check above never fires, yet a
+                                // `)` was required by the `SinFloat` rule's
+                                // syntax. (`(1.0` behaves the same for the
+                                // grouping paren.) The token text carries the
+                                // bare literal `(`/`[`/`{` (see `token_text`),
+                                // identically across every generated grammar,
+                                // so a net open-vs-close count is a
+                                // grammar-general detector. We only synthesize
+                                // an error when (a) NO error was already
+                                // reported (so balanced inputs and inputs the
+                                // walker already rejected are untouched) and
+                                // (b) opens strictly exceed closes (a missing
+                                // close — the symmetric `1 )` over-close case is
+                                // already surfaced as TrailingTokens above).
+                                // This is a recovery-wrapper diagnostic; it does
+                                // not change the returned partial AST.
+                                if errors.is_empty() {
+                                    let mut __delim_balance: i32 = 0;
+                                    let mut __last_open_range: Option<Range> = None;
+                                    for (__tok, __rng) in tokens.iter() {
+                                        match token_text(__tok, input, *__rng) {
+                                            "(" | "[" | "{" => {
+                                                __delim_balance += 1;
+                                                __last_open_range = Some(*__rng);
+                                            }
+                                            ")" | "]" | "}" => {
+                                                __delim_balance -= 1;
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    if __delim_balance > 0 {
+                                        errors.push(ParseError::UnexpectedEof {
+                                            expected: Cow::Borrowed("a closing delimiter"),
+                                            range: __last_open_range
+                                                .or_else(|| tokens.last().map(|(_, r)| *r))
+                                                .unwrap_or(Range::zero()),
+                                            hint: Some(Cow::Borrowed(
+                                                "an opening delimiter was never closed; add the matching `)`/`]`/`}`",
+                                            )),
+                                        });
+                                    }
+                                }
                                 (Some(v), errors)
                             }
                             Err(WpdaParseError::EmptyResult) => {

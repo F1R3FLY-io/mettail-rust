@@ -143,7 +143,7 @@ impl<W: SemiringRef> TomitaShell<W> {
             // cursor verbatim; Substage 6 may refine to enforce strict
             // shell-invariance via classifier predicates.
             dispatch_key: cursor.cohort_origin.clone().unwrap_or(DispatchKey::new(
-                cursor.pos, 0, 0,
+                cursor.pos, 0, 0, 0, 0,
             )),
             sppf_stack_baseline_id: cursor.sppf_stack_id,
             recovery_depth: cursor.recovery_depth,
@@ -204,6 +204,12 @@ pub struct FrontierArc<W: SemiringRef> {
     pub visited_dispatch: im::OrdSet<PackedDispatchConfig>,
     /// Per-cursor recovery dispatch defense set.
     pub visited_recovery: im::OrdSet<PackedDispatchConfig>,
+    /// Sig-B GLL-descriptor (2026-05-31, pgmcp experiment #9): per-arc
+    /// progress-aware cross-cat projection-descriptor set. Carried verbatim
+    /// through Tomita ingest/materialize so the cross-cat cycle-defense `w`
+    /// discriminator survives the frontier round-trip (Site 5, the Tomita
+    /// B12 broadcast, depends on it). Empty on chains (Memory Option A).
+    pub visited_proj_descriptors: im::OrdSet<crate::wpda_walker::ProjDescriptorKey>,
     /// Per-cursor binder scope marks.
     pub binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
     /// Per-cursor optional scope marks.
@@ -231,6 +237,9 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
         recovery_deltas: Arc<Vec<BuilderDelta>>,
         visited_dispatch: im::OrdSet<PackedDispatchConfig>,
         visited_recovery: im::OrdSet<PackedDispatchConfig>,
+        // Sig-B GLL-descriptor (#9): per-arc cross-cat projection-descriptor
+        // set (appended last to keep the existing positional args stable).
+        visited_proj_descriptors: im::OrdSet<crate::wpda_walker::ProjDescriptorKey>,
         binder_scope_marks: Arc<Vec<(u16, Vec<String>)>>,
         optional_scope_marks: Arc<Vec<usize>>,
         sppf_collection_arena: Arc<Vec<Vec<SppfId>>>,
@@ -250,6 +259,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             recovery_deltas,
             visited_dispatch,
             visited_recovery,
+            visited_proj_descriptors,
             binder_scope_marks,
             optional_scope_marks,
             sppf_collection_arena,
@@ -279,6 +289,8 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             recovery_deltas: Arc::clone(&cursor.recovery_deltas),
             visited_dispatch: cursor.visited_dispatch.clone(),
             visited_recovery: cursor.visited_recovery.clone(),
+            // Sig-B GLL-descriptor (#9): O(1) shared clone from the cursor.
+            visited_proj_descriptors: cursor.visited_proj_descriptors.clone(),
             binder_scope_marks: Arc::new(cursor.binder_scope_marks.clone()),
             optional_scope_marks: Arc::new(cursor.optional_scope_marks.clone()),
             sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
@@ -340,6 +352,10 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         recovery_deltas: Arc::clone(&arc.recovery_deltas),
         visited_dispatch: arc.visited_dispatch.clone(),
         visited_recovery: arc.visited_recovery.clone(),
+        // Sig-B GLL-descriptor (#9): read the projection-descriptor set
+        // from the ARC (the soundness boundary — preserves each cursor's
+        // own cross-cat cycle-defense `w` state across the round-trip).
+        visited_proj_descriptors: arc.visited_proj_descriptors.clone(),
         binder_scope_marks: (*arc.binder_scope_marks).clone(),
         optional_scope_marks: (*arc.optional_scope_marks).clone(),
         sppf_collection_arena: Arc::clone(&arc.sppf_collection_arena),
@@ -583,6 +599,13 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                         )
                         && existing.visited_dispatch == arc.visited_dispatch
                         && existing.visited_recovery == arc.visited_recovery
+                        // Sig-B GLL-descriptor (#9): two arcs whose
+                        // cross-cat projection-descriptor sets differ have
+                        // distinct cycle-defense `w` histories and MUST NOT
+                        // merge (soundness — preserves the descriptor's
+                        // progress discriminant through frontier aggregation).
+                        && existing.visited_proj_descriptors
+                            == arc.visited_proj_descriptors
                 }) {
                     // Aggregate weight: existing.weight ← existing.weight ⊕ arc.weight.
                     let existing = &mut node.arcs[idx];
@@ -739,7 +762,7 @@ mod tests {
             inner_state: WpdaState::Ready { min_bp: 0 },
             incoming_edge_stack_id: EDGE_STACK_ID_ROOT,
             collection_depth: 0,
-            dispatch_key: DispatchKey::new(0, 0, 0),
+            dispatch_key: DispatchKey::new(0, 0, 0, 0, 0),
             sppf_stack_baseline_id: STACK_ID_ROOT,
             recovery_depth: 0,
             _phantom: std::marker::PhantomData,
@@ -761,6 +784,8 @@ mod tests {
             0,
             Arc::new(Vec::new()),
             im::OrdSet::new(),
+            im::OrdSet::new(),
+            // Sig-B GLL-descriptor (#9): empty projection-descriptor set.
             im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
@@ -794,6 +819,11 @@ mod tests {
             recovery_deltas,
             visited_dispatch,
             visited_recovery,
+            // Sig-B GLL-descriptor (#9): empty projection-descriptor set
+            // (no test currently round-trips a non-empty descriptor set
+            // through this helper; the dedicated descriptor round-trip
+            // coverage is added below).
+            im::OrdSet::new(),
             binder_scope_marks,
             optional_scope_marks,
             sppf_collection_arena,
@@ -1229,6 +1259,7 @@ mod tests {
             recovery_deltas: Arc::new(Vec::new()),
             visited_dispatch: im::OrdSet::new(),
             visited_recovery: im::OrdSet::new(),
+            visited_proj_descriptors: im::OrdSet::new(),
             binder_scope_marks: Vec::new(),
             optional_scope_marks: Vec::new(),
             sppf_collection_arena: Arc::new(Vec::new()),
