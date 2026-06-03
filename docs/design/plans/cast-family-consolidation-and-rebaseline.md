@@ -25,3 +25,41 @@ Artifacts: `/var/tmp/suite-green/{wfst-PRE-consolidation-fullsuite,wfst-consolid
 
 ## Next (on the shipping branch, carefully)
 Drive the 56 to green. Start with the dominant, likely-systemic **roundtrip cluster (Cluster J ~30)** — root-cause one representative failure to find the common root (vs heterogeneous), then prove-root → design → red-team → implement per the standing discipline. Then rhocalc (~15), the 2 deterministic regressions, the scattered, the Float residual, and the hang.
+
+---
+
+## ★ NEXT-SESSION HANDOFF (2026-06-03; paused to reserve tokens — RESUME FROM HERE) ★
+
+### Branch reality (verify FIRST, every session)
+- **Work ON `feature/wfst-architecture`** (the shipping branch; HEAD `ba5790c` at handoff). The cast-family consolidation is **LANDED** as `315cfc3` (parents `d14fc4c` + `d2d9a3b`). **Reversibility anchor: `d14fc4c`** (`git reset --hard d14fc4c` undoes the consolidation). `d2d9a3b` (tag `sigb-b3-span-FINAL`) is NOW in `feature/wfst` history — do NOT work on it directly.
+- Before ANY work: `git merge-base --is-ancestor <base> feature/wfst-architecture` + reproduce the target failure ON `feature/wfst-architecture`. (The whole prior detour was an unmerged `d2d9a3b` worktree — see `memory/feedback_verify_base_branch_before_work.md`.) NOTE: `Agent isolation:worktree` may base from `main`, NOT the current branch — the `a9d79f3b` agent landed on `7eb035c`(main) and had to detach-checkout `ba5790c`. Always confirm the worktree HEAD/branch.
+
+### Full-suite baseline on `feature/wfst-architecture @ 315cfc3`: 9678 passed / **56 failed** / 20 skipped (was 68 pre-consolidation; net −12). Backlog by cluster + PROVEN roots:
+
+**Cluster J — display↔parse roundtrip (~30) — HETEROGENEOUS, 3 roots (root-cause agent `a9d79f3b`, `/var/tmp/suite-green/clusterj-VERDICT.txt`):**
+- **ROOT A (DOMINANT ~65-70%, cross-grammar):** implicit cross-cat coercion/injection (`BoolToInt`/`IntToBigRat`/`UInt32ToBigInt`/`BoolToFloat`/`CastNum`/`CastPred`…) OR operand-level category-mix whose Display emits no wrapper → on re-parse, `arg.into_term::<TargetCat>()` returns **None** for NON-LEAF inners → "all fork branches dropped" at WFST fork/realize. **Code fix-point: the `into_term::<T>()→None` site in the SPPF cross-cat realize path** (`prattail/src/wpda_walker.rs:10471` + resolve/realize). Build self-diagnoses it: `pipeline.rs:235-280` `DeadRuleWarning::WfstUnreachable`; `lint.rs:2175-2218` K01 KAT (Calc 65 / RhoCalc 38 / LedTest 8 / GuardedRho 5 failing A→B pairs). **NEGATIVE flip: `B2/B3/B3_SPAN_DISABLE` + caps (`MAX_COHORT_FRAME_MEMBERS`/`MAX_REVIVAL_ROUNDS`/`SPURIOUS_ORPHAN_THRESHOLD`) have ZERO effect → the `315cfc3` cohort cache is NOT the root; it's upstream at WFST fork/realize.** Sub-roots: **A′** operand-category-mix (FLIP-2: toggling one operand's cat flips FAIL↔PASS); **A″** same-keyword cast overload 1-arg vs 2-arg (`wpda_walker.rs:9075` "Exp-15 doubly-nested casts"; **FLIP-1 DECISIVE**: `int`→`intw` keyword rename fixes `int(str(5),3)`). FLIP-3: mixedmath `BoolToInt`, inner Bool complexity flips it.
+- **ROOT B (~10%, calculator-only):** ternary `?:`(`Tern`, `calculator.rs:142`) adjacent to a comparison — `e` arm greedily extends across the Bool op (`1 ? 2 : 3 > 4 ~ 5`). FLIP-4 control-confirmed (not code-flipped).
+- **ROOT C (~25-30%, process-calculus grammars):** Name/binder-led production (`POutput` `rhocalc.rs:74`, `NQuote` `@(…)`, `for`/`where`, multi-`Binder` `Scope`) NOT admitted in nested-delimited operand position. `a!(error)` parses standalone; `len(a!(error))`/`@(a!(b))` fail at the leading identifier (NOT the `error` term). Min-pair isolated (not code-flipped).
+
+**rhocalc_tests (~15):** parse "no accepting branch" (e.g. `parsing::receive` `(x?y).{y!(0)}`) — **overlaps ROOT C** (nested Name/binder in operand) + ROOT A (cross-cat). Likely cleared substantially by the Root C and Root A fixes.
+
+**Cast residual (2):** `test_nested_float_float_int`, `test_triple_nested_float` = **ROOT A″** (the same-keyword `float(`-overload doubly-nested cast). The prior `d2d9a3b` cohort-detachment investigation (now superseded — it was the WRONG layer per the NEGATIVE flip) is moot; the REAL fix is A″ (per-keyword cast disambiguation / the `into_term` realize site). FLIP-1's `intw` rename is the proof-of-mechanism.
+
+**2 deterministic consolidation regressions:** `recovery_integration_tests::test_calc_recovery_deeply_nested_with_error`, `rhocalc_tests::new_and_extrusion::new_multi_binder_parses` (introduced by `315cfc3`; fix or accept).
+
+**Scattered (~6):** `roundtrip_tests::{roundtrip_int_parse_display, idempotent_int_display}`, `led_delegation_tests::test_p1_10_parenthesized_sub_expressions`, `casting_example_files_calculator`, `class2_opt_collection_smoke::choosemaybe_parse_none_via_wpda`, `gen_class3multi_prop::proc_parse_determinism`, `calculator::test_bool_from_list_elem`. **1 HANG:** `gen_ambient_prop::proc_display_parse_roundtrip` (>900s) — needs input-bounding / the parse pathology.
+
+### THE UNIFYING INSIGHT
+ROOT A (+ A″) is the single highest-yield target: it spans the bulk of Cluster J across grammars, the 2 Float targets, and (via ROOT C-adjacency) much of rhocalc. **The fix lives at the SPPF cross-cat realize path (`into_term::<T>()→None` for non-leaf inners) + the same-keyword cast overload disambiguation — NOT the cohort cache** (flip-proven NEGATIVE). Tackle ROOT A first (design → red-team-to-convergence → implement), then ROOT C (process-calculus nested operand), then ROOT B, the 2 regressions, scattered, the hang.
+
+### RESUME STEPS (next session)
+1. Confirm `feature/wfst-architecture @ ≥315cfc3`; re-confirm the 56-baseline (`/var/tmp/suite-green/POST-clean.txt`).
+2. **ROOT A**: prove the code fix-point (toggle/trace the `into_term::<T>()→None` realize site + the A″ keyword-overload) → design → **red-team to convergence** (per `memory/feedback_red_team_design_until_convergence.md`) → implement → verify (full-suite diff vs the 56) → commit. Highest yield (Cluster J bulk + Float residual + rhocalc-adjacent).
+3. Then ROOT C, ROOT B, the 2 regressions, the scattered, the hang. Each: prove-root → design → red-team → implement → verify → commit.
+4. Disciplines: prove-root-before-claiming; verify-base-branch; red-team-to-convergence; one 32G build at a time; Welch for any perf-path change; commit at stable points.
+
+### Pending cleanup (needs user approval — `git worktree remove --force` was DENIED as destructive)
+Stray worktrees (all commits recoverable via branches/tags/feature-wfst-history): `/var/tmp/wt-realize`, `/var/tmp/wt-genfactor`, `/var/tmp/wt-consolidate`, `/var/tmp/wt-wfst`, `.claude/worktrees/agent-a19f5e8f55e0db73f`, `.claude/worktrees/agent-a9d79f3b45f2dd40d`. Ask before removing.
+
+### Artifacts
+`/var/tmp/suite-green/`: `wfst-{PRE-consolidation,consolidated}-fullsuite.log`, `{PRE,POST}-clean.txt`, `clusterj-VERDICT.txt` + `clusterj-step*.log`, `consolidate-VERDICT.txt`. pgmcp experiment #9.
