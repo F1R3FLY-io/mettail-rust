@@ -139,6 +139,12 @@ pub struct CohortShell<W: SemiringRef> {
     /// member that would mutate this triggers materialization.
     pub visited_dispatch: im::OrdSet<crate::wpda_walker::PackedDispatchConfig>,
     pub visited_recovery: im::OrdSet<crate::wpda_walker::PackedDispatchConfig>,
+    /// Sig-B GLL-descriptor (2026-05-31, pgmcp experiment #9): the
+    /// progress-aware cross-cat-projection descriptor set shared at cohort
+    /// formation. Carried verbatim so materialized members preserve the
+    /// cross-cat cycle-defense `w` discriminator. Empty on chain workloads
+    /// (Memory Option A).
+    pub visited_proj_descriptors: im::OrdSet<crate::wpda_walker::ProjDescriptorKey>,
     /// Recovery depth (Phase L12 / Stage 3.20). Mirrors
     /// `BranchCursor::recovery_depth` (u8); cohort formation captures
     /// the parent's depth verbatim (all members share by ~_obs def).
@@ -502,6 +508,10 @@ impl<W: SemiringRef> CohortShell<W> {
             parent.visited_dispatch.clone();
         let visited_recovery_arc: im::OrdSet<crate::wpda_walker::PackedDispatchConfig> =
             parent.visited_recovery.clone();
+        // Sig-B GLL-descriptor (#9): O(1) shared clone of the parent's
+        // cross-cat projection-descriptor set.
+        let visited_proj_descriptors_set: im::OrdSet<crate::wpda_walker::ProjDescriptorKey> =
+            parent.visited_proj_descriptors.clone();
         let optional_scope_marks_arc: std::sync::Arc<Vec<usize>> =
             std::sync::Arc::new(parent.optional_scope_marks.clone());
         let binder_scope_marks_arc: std::sync::Arc<Vec<(u16, Vec<String>)>> =
@@ -527,6 +537,7 @@ impl<W: SemiringRef> CohortShell<W> {
             sppf_collection_arena: std::sync::Arc::clone(&parent.sppf_collection_arena),
             visited_dispatch: visited_dispatch_arc,
             visited_recovery: visited_recovery_arc,
+            visited_proj_descriptors: visited_proj_descriptors_set,
             recovery_depth: parent.recovery_depth,
             recovery_deltas: recovery_deltas_arc,
             inner_state: parent.inner_state.clone(),
@@ -612,6 +623,9 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         // triggers Arc::make_mut copy-on-write.
         visited_recovery: shell.visited_recovery.clone(),
         visited_dispatch: shell.visited_dispatch.clone(),
+        // Sig-B GLL-descriptor (#9): materialized member inherits the
+        // shell's shared projection-descriptor set (O(1) clone).
+        visited_proj_descriptors: shell.visited_proj_descriptors.clone(),
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena-interned StackId (Copy u32) replaces Arc<Vec<SppfId>>.
         sppf_stack_id: shell.sppf_stack_baseline_id,
@@ -1027,7 +1041,7 @@ mod tests {
             inner_state: WpdaState::Ready { min_bp: 0 },
             incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
             collection_depth: 0,
-            dispatch_key: crate::dispatch_cohort::DispatchKey::new(0, 0, 0),
+            dispatch_key: crate::dispatch_cohort::DispatchKey::new(0, 0, 0, 0, 0),
             sppf_stack_baseline_id: crate::sppf_stack_arena::STACK_ID_ROOT,
             recovery_depth: 0,
             _phantom: std::marker::PhantomData,
@@ -1050,6 +1064,8 @@ mod tests {
             0,
             Arc::new(Vec::new()),
             im::OrdSet::new(),
+            im::OrdSet::new(),
+            // Sig-B GLL-descriptor (#9): empty projection-descriptor set.
             im::OrdSet::new(),
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),

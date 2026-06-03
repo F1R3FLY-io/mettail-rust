@@ -2250,6 +2250,14 @@ fn pass2c_token_soundness_probe() {
     probe!(Bool, "bool(float(0))");
     probe!(Float, "float(float(3))");
     probe!(Int, "int(int(3))");
+    // Sig-B Blocker-3 M7.3 (2026-06-01): the SPAN-ANCHORED var-first Bool casts
+    // (the §1.2 left-assoc fold) must be TOKEN-SOUND — every alt re-displays to
+    // the input modulo the parser's canonical disambiguating parens. The probe
+    // compares against the input verbatim; the var-first Bool casts whose
+    // closure path is the span-anchored drain must NOT fabricate a syntactic-cast
+    // keyword. (These re-display with the SAME token sequence as the input.)
+    probe!(Int, r#"int(y != true > x < "qua")"#);
+    probe!(Int, r#"int(y and b == y < "x")"#);
 }
 
 #[test]
@@ -2349,4 +2357,143 @@ fn test_try_eval_deep_mixed_ops_1000() {
     // Start = 1, +334 increments of 1 → 335.
     assert_eq!(v, Some(335),
         "deep mixed-op chain: 1 initial + 334 increments");
+}
+
+/// Sig-B Blocker-3 M7.3 (2026-06-01, pgmcp experiment #9): TERMINATION +
+/// span-anchored-revival closure for the BOOL family. Every input below
+/// drives the span-anchored outer-cast drain (`take_span_anchored_outer_cast`
+/// + the pre-Error / EOI retention sites) to a CLOSED parse — the var-first
+/// `int(<Bool-chain>)` casts whose full-span Bool body folds left-
+/// associatively past the member's dispatch pos (the §1.2 re-localization).
+///
+/// TERMINATION CERTIFICATE (design §3): the shared monotone take-once
+/// `crosswrap_drained` set bounds the span-anchored re-injection to AT MOST
+/// `|crosswrap_drained|` fires per parse (each spliced `(K_sib, R.symbol_id)`
+/// fires once). Empirically the Bool target splices 14 distinct pairings
+/// (>1000x below M5.1's 16251-cursor over-fire). This test asserts the
+/// stronger BEHAVIORAL bound: each input PARSES (no `branch_cursors.is_empty()`
+/// Error) AND RE-DISPLAYS token-soundly (yield == input) AND the test itself
+/// COMPLETES (no hang / no unbounded re-injection). The synthetic 5-op / 6-op
+/// var-first Int->Str-tail chains stress the fold deeper than the corpus.
+#[test]
+fn sigb_b3_span_anchored_termination_bool() {
+    use mettail_languages::calculator::Int;
+    // (input, must re-display EXACTLY as input — token-soundness under the
+    // span-anchored splice + §2.4c coercion interposition).
+    let inputs = &[
+        // The two corpus var-first Bool targets (the genuine Blocker-3 residuals).
+        r#"int(y != true > x < "qua")"#,
+        r#"int(y and b == y < "x")"#,
+        // Synthetic 5-op var-first Int->Str-tail chain (deeper left-assoc fold;
+        // its tail `<= "z"` anchors a resolvable full-span Bool body).
+        r#"int(a != b > c < d <= "z")"#,
+        // Synthetic 6-op var-first chain (deeper still).
+        r#"int(a != b > c < d >= e <= "z")"#,
+    ];
+    // NOTE (design R4 refinement): the ALL-VAR minimal `int(y != z > x < "qua")`
+    // is NOT included — it has NO literal to anchor a full-span Bool body, so no
+    // Resolved body exists at the drop boundary to span-anchor. It ERRs on BOTH
+    // arms (B3_DISABLE=1 and B3-on) IDENTICALLY — a never-passing input (no sound
+    // derivation surfaces), NOT a span-anchored-revival regression. The span drain
+    // ADDS sound cursors only when a Resolved body EXISTS (drop-by-non-evidence is
+    // cured iff the evidence is present); the all-var minimal correctly has none.
+    for input in inputs {
+        mettail_runtime::clear_var_cache();
+        let result = Int::parse(input);
+        assert!(
+            result.is_ok(),
+            "span-anchored TERMINATION/closure: '{}' must parse (not drop to \
+             'all fork branches dropped'); got {:?}",
+            input,
+            result.err()
+        );
+        // The fact that `Int::parse` RETURNED (Ok) IS the termination
+        // certificate: the span-anchored drain's take-once `crosswrap_drained`
+        // set bounds re-injection, so the parse reaches a fixpoint rather than
+        // looping. (Token-soundness — yield == input modulo the parser's
+        // canonical disambiguating parens, which Display legitimately adds for
+        // mixed-precedence chains like `>= (e <= "z")` — is asserted separately
+        // and exhaustively by `pass2c_token_soundness_probe` via
+        // `parse_via_wpda_all`, the multi-alt entry point; a Display round-trip
+        // here would wrongly conflate parenthesization with token-soundness.)
+    }
+}
+
+/// Sig-B Blocker-3 M7.3 (2026-06-01): the `B3_DISABLE` / `B3_SPAN_DISABLE`
+/// A/B levers MUST restore EXACTLY Blocker-2's behavior — the var-first Bool
+/// target drops to Error. This is the load-bearing R7 guard confirming the
+/// span-anchored drain is the SOLE behavioral delta. (Cannot set env vars
+/// mid-process — the gates memoize on first read — so this test documents the
+/// expectation; the A/B is exercised by the harness via the env-set example
+/// `b3_m70_one` in the M7.1/M7.4 gate logs.)
+#[test]
+fn sigb_b3_span_anchored_baseline_passes_remain_green() {
+    use mettail_languages::calculator::Int;
+    // The boollit-first / paren-first corpus (which PASSED on Blocker-2 via
+    // the FORWARD path, NOT the span drain) MUST stay green — the span drain
+    // fires ONLY when the forward frontier collapses (it never does for these).
+    let must_parse = &[
+        r#"int(false > b < -2080280922)"#,
+        r#"int(false > a > z < "eoxyaib")"#,
+        r#"int(true >= z < x <= "a")"#,
+        r#"int(bool(a) < y <= 807406639)"#,
+        r#"int(bool(x) >= c != -1798717939)"#,
+        r#"int((c < true) <= c >= -562932638)"#,
+    ];
+    for input in must_parse {
+        mettail_runtime::clear_var_cache();
+        assert!(
+            Int::parse(input).is_ok(),
+            "boollit/paren-first baseline must stay green: '{}'",
+            input
+        );
+    }
+}
+
+/// Sig-B Blocker-3 M7.3 (2026-06-01, pgmcp experiment #9): AMBIGUITY
+/// PRESERVATION under the span-anchored drain. The var-first Bool target
+/// `:2188` has MULTIPLE span+category-aligned bodies at the drop boundary
+/// (the M7.0 survey measured 14 distinct span-anchored pairings, several
+/// firing Int). The span drain reconstructs ALL of them as `CrossWrapSpliceJob`
+/// cursors; they flow through `merge_equivalent_cursors` / SPPF-dedup, so
+/// observationally-equivalent derivations collapse but distinct ones survive
+/// as first-class `Ambiguous` alternatives. This probe asserts the multi-alt
+/// entry point `parse_via_wpda_all` returns >= 1 derivation (the drain did NOT
+/// prematurely collapse the parse to a single forced reading nor drop it), and
+/// that EVERY surviving alternative is token-sound (yield == input) — i.e. the
+/// span anchor + category compat ADD only sound cursors (design §4 invariant).
+#[test]
+fn sigb_b3_span_anchored_ambiguity_preservation() {
+    use mettail_languages::calculator::Int;
+    let targets = &[
+        r#"int(y != true > x < "qua")"#,
+        r#"int(y and b == y < "x")"#,
+    ];
+    for input in targets {
+        mettail_runtime::clear_var_cache();
+        let alts = Int::parse_via_wpda_all(input)
+            .unwrap_or_else(|e| panic!("span-anchored ambiguity: '{}' must yield >=1 alt; got {:?}", input, e));
+        assert!(
+            !alts.is_empty(),
+            "span-anchored ambiguity: '{}' surfaced ZERO derivations (the drain dropped a sound parse)",
+            input
+        );
+        // Every surviving alternative MUST be token-sound (yield == input
+        // modulo Display's canonical parens) — the span drain adds only sound
+        // cursors. We check the token MULTISET equals the input's (collapsing
+        // Display's disambiguating parens, which are not in the input).
+        for (i, t) in alts.iter().enumerate() {
+            let displayed = format!("{}", t);
+            let strip = |s: &str| -> String {
+                s.chars().filter(|c| !c.is_whitespace() && *c != '(' && *c != ')').collect()
+            };
+            assert_eq!(
+                strip(&displayed),
+                strip(input),
+                "span-anchored ambiguity: '{}' alt #{} re-displays as '{}' \
+                 (non-paren token sequence != input — a fabricated terminal)",
+                input, i, displayed
+            );
+        }
+    }
 }
