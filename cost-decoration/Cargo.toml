@@ -1,0 +1,19 @@
+[package]
+name = "cost-decoration"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+ascent = "0.8"
+# Pin transitive deps to versions that build under cargo/rustc 1.75 (no edition2024).
+indexmap = "=2.2.6"
+hashbrown = "=0.14.5"
+zerocopy = "=0.8.20"
+litemap = "=0.7.3"
+zerofrom = "=0.1.5"
+
+[[bin]]
+name = "cost-decoration"
+path = "src/main.rs"
