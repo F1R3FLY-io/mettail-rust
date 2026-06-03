@@ -1,0 +1,312 @@
+================================================================================
+BEDROCK FROM-SCRATCH ROOT-CAUSE — Float cast-family last 2 tests
+pgmcp experiment #9 | 2026-06-03 | worktree /var/tmp/wt-realize @ d2d9a3b
+================================================================================
+Targets (FAIL): test_nested_float_float_int = float(float(10,64),64)
+                test_triple_nested_float     = float(float(float(10,64),64),64)
+Failure: "no accepting branch reached end of input" — 0 cursors at EOI.
+Controls (PASS): int(int(5,32),32), float(10,64), float(float(10.5)), Bool win,
+                 int(str(...)).
+
+This investigation DISCARDED every prior localization and re-derived the root
+from the observable failure, validating each claim against direct traces and a
+flip experiment.  All traces taken on a fresh d2d9a3b build of the calculator
+integration test (target/debug/deps/calculator-f54f65910603f8aa), via untracked
+env-gated scratch instrumentation in prattail/src/wpda_walker.rs (BEDROCK_TRACE,
+BEDROCK_POP, BEDROCK_PUSH) + macros/.../binder.rs (FLIP_NOUNARY, FLIP_FOLDWINS).
+
+================================================================================
+PHASE 0 — CATEGORY NUMBERING RECONCILIATION  (the task flagged this as possibly
+THE explanation; it resolves a contradiction between the prior two verdicts)
+================================================================================
+AUTHORITATIVE src_idx -> category map at d2d9a3b, read from the GENERATED
+target/generated/calculator/wpda.rs WPDA_CATEGORIES table (lines 3-16) AND
+cross-confirmed against the emitted dispatch code (CosFloat = rule_at(5,8) at
+:1303-1306; "bigint" trigger = state_cat_src_idx==6 at :1099):
+
+    0=Proc  1=BigRat  2=Int  3=UInt32  4=Fixed  5=FLOAT  6=BigInt
+    7=Bool  8=Str  9=List  10=Bag  11=Map
+
+  => FLOAT = src_idx 5.  Fixed = src_idx 4.  BigInt = 6.
+
+WHY the two prior verdicts disagreed:
+- The codegen REORDERS categories. collect_category_names_with_literals()
+  (macros/.../wpda_codegen/mod.rs:250) Pass-1-orders categories by first
+  rule-LHS appearance, NOT by the source types{} declaration order. So the
+  source order (Proc,Int,UInt32,BigInt,BigRat,Fixed,Float,...) != runtime
+  src_idx order (Proc,BigRat,Int,UInt32,Fixed,Float,BigInt,...).
+
+- The realize root-cause (adcd526d, float-forward-projection-root-PROVEN.md)
+  used cat_src=5 = Float. **This was CORRECT.**
+- The IFP M0 verdict (ifp-M0-VERDICT.txt, tag ifp-STOP-M0) claimed Float=6 /
+  Fixed=5 and called the realize numbering a "drift". **The IFP M0 numbering is
+  the one that is WRONG** — its author read the SOURCE types{} block instead of
+  the generated WPDA_CATEGORIES, exactly the error it accused the realize doc of.
+
+CONSEQUENCE for the IFP M0 conclusion: IFP M0 annotated dispatch_cat_src=6 (87x)
+as "Float is a dispatch context" — that 6 is BigInt, not Float.  The REAL Float
+dispatch context is dispatch_cat_src=5 (274x in the IFP trace).  And IFP claimed
+"ProcFloat ... ALL parent_in_visited=false (NEVER suppressed)" by inspecting
+source=6 (=BigInt).  Under correct numbering, source=5 (Float-as-projected)
+DOES carry parent_in_visited=true 13x (all dispatch_cat_src=7(Bool) Float==Float
+comparison projections at pos 0, c1c4=false).  So IFP M0's category reasoning was
+mislabeled throughout.  (Its narrow CONCLUSION — the IFP self-projection mechanism
+is inert because no dispatch==source==Float self-projection exists — still happens
+to hold: source=5 never equals dispatch_cat_src=5 in the trace.  But it reached
+that conclusion through a mislabeled census, so the IFP STOP's blanket
+"realize localization mislocated" claim is NOT trustworthy and was re-derived
+below from scratch.)
+
+VERDICT on Phase 0: the numbering error is REAL but it lived in the IFP M0
+verdict, not the realize doc.  It does NOT by itself explain the bug; the realize
+doc analyzed the correct category (Float=5) yet still mislocated the MECHANISM
+(see Phase 1-4).  So Phase 0 clears the contradiction but the root is elsewhere.
+
+================================================================================
+PHASE 1 + 2 — THE ACTUAL DEATH (assumption-free) + INT/FLOAT TRACE-DIFF
+================================================================================
+Token stream float(float(10,64),64): float(0) ((1) float(2) ((3) 10(4) ,(5)
+  64(6) )(7) ,(8) 64(9) )(10)  — 11 tokens, EOI at pos 11.
+
+WHERE THE CURSORS DIE (PRATTAIL_TRACE=cursors panorama; max-pos census):
+  FLOAT: cursors reach pos 8 and STOP. ZERO cursors at pos 9, 10, 11.
+  INT  : cursors reach pos 9 (130x), 10 (736x), 11 (4,000,075x = Accepted).
+  => The divergence is the pos 8 -> pos 9 transition: consuming the OUTER ","
+     and parsing the outer w:Int.  Both inner folds parse fine (both reach 8).
+  => This REFUTES the realize doc's "outer a:Proc slot is STARVED" framing: the
+     outer Bin's a:Proc IS filled in BOTH cases (see next).
+
+CURSOR STATES AT pos=8 (the death frontier) are STRUCTURALLY IDENTICAL:
+  FLOAT: BinderRule{result=5,rule=15(FloatBin),body=0(Proc)} x698 + InfixLoop x235
+         + FloatId(14) x203 + BoolToFloat(12) x24
+  INT  : BinderRule{result=2,rule=20(IntBin), body=0(Proc)} x678 + InfixLoop x243
+         + IntId(18) x157 + ...
+  Both have the outer Bin with body_src_idx=0 (Proc operand) sitting at pos 8.
+
+BinderRule RuleAt-position census (BEDROCK_TRACE), by TOKEN pos — the smoking gun:
+  FloatBin(5,15):  RuleAt(1)@pos1,3   RuleAt(2)@pos2,4   RuleAt(3)@pos5 ONLY
+                   RuleAt(4)@pos6      RuleAt(5)@pos7      RuleAt(6)@pos8
+                   -> NO RuleAt(3) at pos 8.  The OUTER FloatBin never reaches
+                      its ","-consume position.  Only the INNER one does (pos 5).
+  IntBin(2,20):    RuleAt(2)@pos2,4    RuleAt(3)@pos5 [inner] AND pos8 x42 [OUTER]
+                   RuleAt(4)@pos6 [inner] AND pos9 x42 [OUTER]
+                   -> The OUTER IntBin REACHES RuleAt(3)@pos8 and RuleAt(4)@pos9.
+
+  => Both rules' BinderRule continuation codegen is byte-identical (generated
+     wpda.rs (5,15,1..6) vs (2,20,1..6) — same "(", a, ",", w, ")" skeleton).
+     The OUTER IntBin's a:Proc operand RETURNS and the outer advances; the
+     OUTER FloatBin's a:Proc operand never returns it to RuleAt(3).
+
+THE RETURN/POP DELIVERY (BEDROCK_POP — popped EdgeKind at inner completion):
+  At cur.pos=8 (inner fold done, result must pop into outer a:Proc slot):
+    INT : 10,490 CrossCatProjection pops, node_pos in {2 (3814x), 4 (6676x)}.
+          The node_pos=2 pops ARE the inner result returning to the outer a:Proc
+          dispatch (which happened at pos 2).
+    FLOAT: ZERO CrossCatProjection pops at cur.pos=8.  Only PrefixRuleEntry
+          (698x, node_pos=7 — the inner FloatBin's own rule frame) + a few
+          CategoryEntryRoot.
+  Float-as-source (source_src_idx=5) NEVER pops as CrossCatProjection anywhere in
+  the death window.  The inner Float result is produced but never wraps as Proc
+  (ProcFloat) to pop into the paused outer FloatBin's a:Proc slot.
+
+  => PINNED DIVERGENCE: the inner cast-fold's result is delivered to the outer
+     Bin's a:Proc slot via a CrossCatProjection pop at the OPERAND dispatch pos
+     (node_pos=2) for INT, but NOT for FLOAT.  This is a FORWARD-PATH delivery
+     failure at the inner->outer operand return, occurring at cur.pos=8 (NOT the
+     realize doc's claimed "no CrossCatProjection at dispatch_pos=2" — the edge
+     IS dispatched at pos 2; the pop is what's missing).
+
+[Phases 3-4 below — FLIP drills + flip-proof]
+
+================================================================================
+PHASE 3 — FLIP ANCHOR DRILLS (three independent flips triangulate the bedrock)
+================================================================================
+All three flips were implemented as untracked env-gated scratch toggles in
+macros/.../wpda_codegen/binder.rs (FLIP_NOUNARY, FLIP_FOLDWINS) and
+prattail/src/wpda_walker.rs (FLIP_NOCOHORT, runtime lever).
+
+FLIP #1 — FLIP_NOUNARY (the known anchor): drop the 4 single-arg unary-cast
+  branches from the inner "float(" trigger Fork, leaving only FloatBin (the Fork
+  collapses to a single ConsumeAndPush -> FloatBin).
+    RESULT: BOTH targets PASS (test_nested_float_float_int + test_triple_nested_
+    float). INT control PASS, float(10,64) PASS.  Standalone unary casts BREAK
+    (test_float_cast_in_expr, test_float_float_nested) — expected, they need the
+    branches.  Under FLIP_NOUNARY the source=5 wrap_cat=0 ProcFloat projection
+    pops 1078x (baseline 0x) and the outer FloatBin reaches RuleAt(3)@pos8 x183.
+  => the unary Fork branches are causally implicated, AND the projection-delivery
+     is restored when they're gone.
+
+FLIP #2 — FLIP_FOLDWINS (DISCRIMINATING flip): KEEP all 5 branches but give the
+  fold (FloatBin) a strictly-winning lex weight (rule_idx 0 in the WEIGHT only,
+  symbol keeps real rule_idx 15) so FloatBin WINS the lex-min tiebreak over the
+  unaries — WITHOUT removing them.
+    RESULT: BOTH targets STILL FAIL.  Standalone unaries now PASS (kept).  The
+    source=5 ProcFloat pops STILL 0x; outer FloatBin RuleAt(3) STILL only @pos5.
+    Byte-identical to baseline behavior.
+  => **FALSIFIES the float-root-PROVEN.md "premature rule_idx tiebreak" ROOT.**
+     Making FloatBin win the tiebreak does NOTHING.  The bedrock is NOT the
+     rule_idx commit order — it is the PRESENCE of the unary branches in the Fork
+     (the multi-cursor Fork structure), not their lex ranking.  (This also
+     contradicts float-root-PROVEN.md line 10 "FloatBin never parses": the inner
+     FloatBin DOES parse to completion (RuleAt 6, Pop @pos8) in baseline — it is
+     the DELIVERY that fails, not the parse.)
+
+FLIP #3 — FLIP_NOCOHORT (the BEDROCK flip): force every CrossCatDelegate dispatch
+  to run as its own WORKER (register always returns WorkerInserted; never pause
+  into a cohort member, never short-circuit on a Resolved/Failed hit).  This
+  bypasses the H12 dispatch-cohort sharing so each operand sub-parse runs in-line
+  on the forward path.
+    RESULT (same binary, runtime lever):
+      FLIP_NOCOHORT=0: test_nested_float_float_int FAIL (baseline).
+      FLIP_NOCOHORT=1: test_nested_float_float_int PASS (correct AST: 10.0).
+        source=5 wrap_cat=0 ProcFloat now pops 104x (baseline 0x).
+        ALL controls GREEN: test_nested_int_int, float(10,64), nested_int_float,
+        float_float_nested, all_to_int, nested_float_int_arithmetic,
+        float_cast_in_expr — 7/7.
+      test_triple_nested_float: does NOT cleanly pass — it EXPLODES (14.1M cursors
+        reaching pos 16 / EOI, 120s timeout) because the cohort's whole purpose is
+        to SHARE these dispatches; bypassing it trades the bug for combinatorial
+        blowup.  So FLIP_NOCOHORT is a complete flip-proof for the DOUBLE-nested
+        target only; for the triple it confirms the cohort is load-bearing.
+      6 NEW regressions on cohort-dependent cross-cat tests (parse_int_cross_cat_
+        comparison_le, simulator_regression_cross_cat_dispatch_chaining,
+        simulator_regression_original_6, test_cross_category_infix_backtracking,
+        sigb_b3_span_anchored_termination_bool, pass2c_token_soundness_probe) —
+        EXPECTED: this is a PROOF flip, not a fix; it breaks the cohort's
+        legitimate uses.
+  => the dispatch-cohort pause/resolve IS the bedrock for the double-nested
+     delivery failure.
+
+================================================================================
+PHASE 4 — THE BEDROCK ROOT (flip-proven for the double-nested target)
+================================================================================
+ROOT (flip-proven by FLIP_NOCOHORT, FAIL->PASS, controls green):
+
+  The Float->Proc projection (ProcFloat: source_src_idx=5, wrap_cat=0, wrap_rule=1)
+  for the OUTER FloatBin's a:Proc operand is dispatched ONLY ONCE, at the outer
+  operand boundary (pos=2).  Its cohort WORKER must resolve by fully parsing the
+  inner float(10,64) fold to a Float and popping its CrossCatProjection edge.
+  Under the H12 dispatch-cohort, that single source=5 worker NEVER resolves:
+  the inner FloatBin's completion pops via its own PrefixRuleEntry (RuleAt 6 ->
+  InfixLoop@pos8 -> Unwinding) at LOW gss-depth, DETACHED from the pos=2 source=5
+  worker entry — so the entry stays InFlight forever and all 289 cohort members
+  paused on key (pos=2, source=5, wrap_cat=0, wrap_rule=1) via InflightCollision
+  are LOST.  Result: 0 CrossCatProjection pops for source=5, outer a:Proc never
+  filled, outer FloatBin never reaches RuleAt(3)@pos8, 0 cursors at EOI.
+
+WHY INT (int(int(5,32),32)) PASSES at the SAME layer (the precise asymmetry,
+proven by the BEDROCK_REG register/resolve census):
+
+  INT's Int->Proc projection (ProcInt: source=2, wrap_cat=0, wrap_rule=0) is
+  dispatched at pos=2 (outer a:Proc) AND AGAIN at pos=4 (the inner IntBin's a:Proc
+  — the literal `5`), where it RESOLVES IMMEDIATELY (402 ResolvedHit @pos4: the
+  `5` is a bare Int literal that parses and pops at once).  That pos=4 resolution
+  bootstraps the cohort: the resolved entry lets the chain of paused members
+  revive and propagate the inner result up to the outer a:Proc slot.
+
+  FLOAT has NO such deeper same-category re-dispatch: source=5 (Float->anything)
+  is dispatched ONLY at pos 0 and pos 2 — NEVER at pos 4 or deeper.  The inner
+  float(10,64)'s a:Proc operand is the LITERAL `10`, which is an Int — so at pos=4
+  the projection is source=2 (Int->Proc), NOT source=5 (Float->Proc).  The Float->
+  Proc projection therefore has no trivially-resolving deeper instance to
+  bootstrap from; its lone pos=2 worker must carry the entire recursive inner fold
+  to resolution by itself, and the cohort's collision routing fails to deliver the
+  inner FloatBin's completion back to that worker entry.
+
+  => This is the GENUINE content behind the realize doc's "rich vs sparse lattice"
+     observation (Int32 lossless_targets = {Int64,Int128,BigInt,BigRat} (rich) vs
+     Float64 = {BigRat} (sparse), ast/src/language.rs:1066 vs :1111) — BUT the
+     lattice is NOT itself the mechanism.  The mechanism is the cohort
+     pause/resolve: FLIP_NOCOHORT fixes the double-nested WITHOUT touching the
+     lattice (source=5 resolves once the cohort is bypassed).  The lattice merely
+     determines whether a same-category projection re-presents at a deeper,
+     trivially-resolving position to bootstrap the cohort chain — INT's does,
+     FLOAT's does not.
+
+RELATION TO THE 7 PRIOR (FALSIFIED) LOCALIZATIONS:
+  - float-root-PROVEN.md "premature rule_idx tiebreak": FALSIFIED by FLIP_FOLDWINS
+    (FloatBin winning the tiebreak changes nothing).  It correctly fingered the
+    unary branches via FLIP_NOUNARY but mis-stated the MECHANISM as lex ranking;
+    it is the Fork's multi-cursor cohort interaction.  Also its claim "FloatBin
+    never parses" is observably false (FloatBin completes; delivery fails).
+  - float-forward-projection-root-PROVEN.md "CrossCatProjection-only resolve gate
+    at cursor_gss_pop_via_edge:15013 + outer a:Proc STARVED": PARTIALLY RIGHT
+    (delivery IS via a CrossCatProjection pop at the operand dispatch; the gate at
+    :15012 is real) but MIS-FRAMED: (a) the outer a:Proc is NOT starved — it is
+    FILLED in baseline (the outer FloatBin sits at pos 8 with body=Proc); the
+    failure is the inner->outer RETURN at cur.pos=8, not operand starvation at
+    dispatch_pos=2; (b) the Float inner fold DOES pop CrossCatProjection (at
+    node_pos=6, pos=7) — the SPECIFIC missing pop is source=5,wrap_cat=0 at
+    node_pos=2; (c) its category identification (cat_src=5=Float) was CORRECT
+    (contra the IFP M0 "Float=6" claim).  Its proposed fix surface (the lattice /
+    transparent-projection emission) is the RIGHT general lever but for the wrong
+    stated reason — the cohort resolve, not the edge availability, is the gate.
+  - IFP M0 (GLL projection-cycle gate): its self-projection mechanism is inert
+    (correct), but it reasoned under WRONG category numbering (Float=6) and its
+    blanket "realize localization mislocated" was not trustworthy.  This
+    investigation re-derived from scratch and lands NEAR the realize doc's surface
+    (the cohort/projection layer) but with the precise mechanism (InflightCollision
+    non-resolution of the lone source=5 worker) the realize doc did not state.
+  - The cohort/InflightCollision was glanced at before ("InflightCollision flip-
+    refuted" per float-root-PROVEN.md preamble) but under the wrong numbering and
+    without the FLIP_NOCOHORT proof; this is the first flip-grounded confirmation.
+
+WHY THE GENFACTOR PREFIX-TRIE (Layer 1) ADVANCED BUT DID NOT CLOSE:
+  The genfactor prefix-trie left-factors the "float(" prefix group so the unary/
+  fold disambiguation is evidence-driven (the trie advances past "float(" then
+  branches on the ","/")" lookahead) and it recovers standalone unaries.  That
+  fixes the SURFACE Layer-1 symptom (premature unary commit) — which is why it
+  "advanced the parse + recovered standalone unaries".  But it operates purely on
+  the inner trigger-group dispatch; it does NOT change the dispatch-COHORT
+  pause/resolve for the OUTER a:Proc Float->Proc projection.  The lone source=5
+  worker at pos=2 still fails to resolve under the cohort regardless of how the
+  inner trigger group is factored, so the inner result still never delivers to the
+  outer a:Proc slot.  Layer 1 is necessary (clean inner disambiguation) but not
+  sufficient — exactly as float-forward-projection-root-PROVEN.md observed, though
+  the SUFFICIENT layer is the cohort resolve, not a "forward Proc-projection
+  emission" per se.
+
+================================================================================
+WHAT A REAL FIX MUST ADDRESS (NOT designed/implemented here — per the STOP mandate)
+================================================================================
+The fix must make the dispatch-cohort source=5 (Float->Proc) worker RESOLVE so the
+inner fold's result is delivered to the paused outer a:Proc members — WITHOUT
+disabling cohort sharing (which FLIP_NOCOHORT shows explodes the triple-nested and
+breaks 6 cross-cat tests).  Candidate surfaces (to be Plan-confirmed, NOT chosen):
+  (i)  route the inner FloatBin's completion (its InfixLoop->Unwinding pop) back
+       to the pos=2 source=5 worker ENTRY so register transitions InFlight->Resolved
+       — i.e. the cohort resolve must fire when a same-cat home-Fork (PrefixRuleEntry)
+       pop of a cast-fold result occurs UNDER an outstanding cross-cat projection
+       worker, not only when a CrossCatProjection edge is the one popped
+       (generalize the gate at cursor_gss_pop_via_edge :15012);
+  (ii) guarantee every cast-result category re-presents a Proc projection at a
+       resolvable position (close the lattice asymmetry so Float behaves like Int)
+       — the realize doc's surface, but understood as "give the cohort a resolving
+       instance", not "add an edge";
+  (iii) detect the single-worker-no-deeper-bootstrap case and run that projection
+       worker in-line (a targeted, structural FLIP_NOCOHORT — only for the lone
+       same-cat-fold projection that has no deeper re-dispatch).
+Must preserve: the 6 cross-cat tests FLIP_NOCOHORT regressed, the triple-nested
+non-explosion, the Bool win, chains, op-suites, gauntlet.
+
+================================================================================
+ARTIFACTS (all in /var/tmp/suite-green/)
+================================================================================
+  bedrock-phase0-build.log        d2d9a3b calculator regen (Float=5 confirmed)
+  bedrock-p1-float-trace.log      PRATTAIL_TRACE cursor panorama (FLOAT, dies pos 8)
+  bedrock-p1-int-trace.log        INT (reaches pos 11)
+  bedrock-p1-float-full.log       BEDROCK_TRACE BinderRule RuleAt census (FLOAT)
+  bedrock-p1-int-full.log         BEDROCK_TRACE (INT)
+  bedrock-p1-float-pop.log        BEDROCK_POP popped-EdgeKind (FLOAT, 0 source=5 pops)
+  bedrock-p1-int-pop.log          BEDROCK_POP (INT, source=2 pops 1069x)
+  bedrock-p1-float-push.log       BEDROCK_PUSH proj-edge pushes (source=5 IS pushed)
+  bedrock-p1-int-push.log         BEDROCK_PUSH (INT)
+  bedrock-p4-float-reg.log        BEDROCK_REG register outcomes (source=5 0 ResolvedHit)
+  bedrock-p4-int-reg.log          BEDROCK_REG (INT source=2 402 ResolvedHit @pos4)
+  bedrock-p3-flip-float-pop.log   FLIP_NOUNARY pop (source=5 pops 1078x)
+  builds: bedrock-p1-scratch-build{,2,3,4}.log, bedrock-p3-flip-build.log,
+          bedrock-p4-foldwins-build.log, bedrock-p4-baseline-reg-build.log,
+          bedrock-p4-nocohort-build.log
+================================================================================
+END OF VERDICT
+================================================================================

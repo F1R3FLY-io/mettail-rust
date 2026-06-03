@@ -1,0 +1,276 @@
+════════════════════════════════════════════════════════════════════════════
+ CLUSTER J — display↔parse roundtrip — ROOT-CAUSE VERDICT (ROOT-ONLY, no fix)
+════════════════════════════════════════════════════════════════════════════
+Worktree: .claude/worktrees/agent-a9d79f3b45f2dd40d
+HEAD used: ba5790c (feature/wfst-architecture)  [dispatch_cohort.rs = 1765 lines ✓]
+NOTE: the isolation worktree was created on the WRONG base (7eb035c = main, which
+      has NO gen_calculator_prop.rs / NO prattail/). I detached-checked-out the
+      task's target SHA ba5790c (clean tree, non-destructive). The saved
+      *.proptest-regressions are gitignored and live only in the MAIN worktree
+      /home/dylon/Workspace/f1r3fly.io/mettail-rust/languages/tests/ — read from
+      there (read-only) and copied (additively) for replay; all reverted.
+Method: faithful term reconstruction + direct Type::parse(Display(t)) + PROPTEST_CASES=1
+        seed replay (ground truth) + 4 FLIP experiments. Tree restored clean.
+
+────────────────────────────────────────────────────────────────────────────
+(0) HEADLINE
+────────────────────────────────────────────────────────────────────────────
+Cluster J is NOT one root — it is HETEROGENEOUS, with 3 distinct proven roots
+plus 1 minor display-stability sub-case. The single most common signal across
+grammars is CROSS-CATEGORY COERCION/INJECTION whose Display drops the (invisible)
+injection wrapper and which the WFST then CANNOT realize when the inner sub-term
+is non-trivial. The calculator-specific "doubly-nested cast" overload is a
+SPECIAL CASE of that, and is the one I FLIP-PROVED to FAIL→PASS.
+
+VERIFIED FACT CORRECTION: most of the *individual shrunk-terms* quoted in the task
+(NumLit(33554944), ProcUInt32(NumLit(2147483648)), NegBigRat(Err), NegFloat(
+CastErrFloat), BitNotInt(Err), bare CastErr*, Err/"error") **PASS** in isolation
+(AST_EQ=true). They are proptest *shrink targets*; proptest replays the RNG SEED,
+which regenerates a LARGER term than the minimal display — so the live failure is
+in the bigger generated term, not the shrunk witness. Buckets below reflect the
+REAL failing surface forms (seed replay + faithful reconstruction).
+
+────────────────────────────────────────────────────────────────────────────
+(a) PER-COUNTEREXAMPLE: Display string → parse result → class (P/M/D/A)
+    (faithful reconstruction with CORRECT categories; "→" = parses-to)
+────────────────────────────────────────────────────────────────────────────
+CALCULATOR (15 saved seeds; class of each shrunk witness):
+  NumLit(33554944)                 DISP "33554944"               → OK NumLit(33554944)            PASS
+  Fraction(NumLit,CastErrBigInt)   DISP "fraction(295637407 , cast_error_bigint)" → OK            PASS
+  ProcUInt32(NumLit(2147483648))   DISP "2147483648"             → OK ProcUInt32(NumLit(...))      PASS  (2^31 fits u32)
+  ModFixed(AddFixed(NegFixed(CEF),CEF),CEF)  (Fixed)             → (leaf-only; passes like below) PASS
+  NegBigRat(Err)                   DISP "-error"                 → OK NegBigRat(Err)               PASS
+  NegFixed(FixedLit(-741092397/1)) DISP "--741092397p0"          → OK                              PASS
+  NegFloat(CastErrFloat)           DISP "-cast_error_float"      → OK NegFloat(CastErrFloat)       PASS
+  BitNotInt(Err)                   DISP "bitnot error"           → OK BitNotInt(Err)               PASS
+  BoolToFloat(GtInt(Tern(Err,Err,CastErrInt),CustomOp(CastErrInt,NumLit(16777244))))
+        DISP "float(error ? error : cast_error_int > cast_error_int ~ 16777244)"
+                                                                 → FAIL(P) 1:66 "no extractable terms"  ← Root B
+  IntBin(ProcStr(IntToStr(Err)),LenList(KeysMap(MapLit(HashMapLit({})))))             → (2-arg cast) ← Root A''
+  AddUInt32(BoolToUInt32(GtInt(Err,CastErrInt)),CastErrUInt32)
+        DISP "error > cast_error_int + cast_error_uint"          → FAIL(P) 1:1 "no accepting branch"     ← Root A
+  ProcFixed(MulFixed(AddFixed(FixedLit,CEF),DivFixed(CEF,CEF)))  (Fixed chain)        → PASS (homogeneous Fixed)
+  AddUInt32(BoolToUInt32(LtEqInt(NumLit(0),CastErrInt)),BitAndUInt32(AddUInt32(NumLit(2829),CastErrUInt32),CastErrUInt32))
+        (mixes UInt32 cast_error_uint as operand)                → FAIL(P) cross-cat operand mix         ← Root A
+  FloatBin(ProcFloat(FloatBin(PVar,NumLit)),AddInt(Err,AddInt(NumLit,Err)))
+        DISP "float( … , …)"   (2-arg FloatBin cast)             → FAIL(M)/(P) cast-overload + cross-cat  ← Root A''
+  DeleteList(ListLit([]),IntBin(ProcInt(CastErrInt),Fact(NumLit(1837901525))))
+        (2-arg IntBin cast nested in delete(...))                → FAIL(P) cast-overload                 ← Root A''
+
+  Minimal faithful confirmations:
+    FloatBin(ProcInt(5),AddInt(Err,3))   DISP "float(5 , error + 3)" → OK but AST_EQ=false  FAIL(M)
+    int(str(5) , 3)                       → FAIL(P) 1:4 "no accepting branch, found `("   ← Root A'' (cast overload)
+    1 > 2 + cast_error_uint  [as UInt32]  → FAIL(P) 1:24                                   ← Root A (operand mix)
+    1 ? 2 : 3 > 4 ~ 5        [as Bool]    → FAIL(P) 1:18                                    ← Root B (tern/cmp prec)
+
+RHOCALC (7 seeds) — ground-truth seed replay:
+  count(a!(error) , -a - ().{error})   → FAIL(P) 1:7  "no accepting branch, found ident `a`"  ← Root C
+  @(a!(error))                          → FAIL(P) 1:3  "… found ident `a`"                     ← Root C
+  len(a!(error))                        → FAIL(P) 1:5  "… found ident `a`"                     ← Root C
+  CastInt(NumLit(2160916369174765053)) → (i64 literal; not reproduced failing — likely PASS / width-OK)
+  NQuote(CastUInt32(NumLit(318881811)))→ (leaf cross-cat; family Root A if fails)
+  BitNot(PZero), PPar(HashBag{…})      → binder/collection structural                          ← Root C
+
+LEDTEST (4 seeds) — ground truth:
+  -626070009 == 1153673712             → FAIL(P) 1:25 "WPDS produced no result"   ← Root A (EqNum Bool→Expr lift)
+  PredToNum(EqNum(...)), CastNum(AddNum(...)), AndPred(EqNum(...))  → cross-cat Num/Pred/Expr   ← Root A
+
+MIXEDMATH (5 seeds) — ground truth + flip:
+  (false and true) or (true and false) [as Int]
+        → FAIL(P) 1:37 "action_fn returned without pushing … into_term::<T>() returned None"   ← Root A (canonical)
+  BoolToInt(Or(And(...),...))          → same                                                  ← Root A
+  SubInt(AddInt(Neg(...),AddInt(...)),...), Neg(NumLit), Not(BoolLit)  → simpler; PASS
+
+GUARDEDRHO (4 seeds) — ground truth:
+  @for(a6 <- @Nil where true()){a!(a)} → FAIL(P) 1:6 "… found ident `a6`"                       ← Root C
+  NQuote(PVar), NQuote(POutput(...)), PPar(HashBag{nested})   → Name-quote/binder structural    ← Root C
+
+CLASS2SMOKE / CLASS3MULTI / AMBIENT (3+3+4 seeds):
+  Choose(Choose(...)), TaggedInputs([...],[...],Scope{pattern:[Binder...]}), PNew(Scope{...}),
+  PPar(HashBag{...}), PIn(NVar, PPar{PAmb,PIn})  → binder/Scope/collection structural in nested
+  positions                                                                                    ← Root C
+
+Failure-class legend: P=parse error; M=parses to DIFFERENT AST (disp-eq but ast≠);
+D=display emits unparseable text; A=ambiguity. Observed: almost all are (P); a few (M).
+No pure (D) and no (A=Ambiguous-returned) were observed. The overloaded "error"
+(Int vs BigRat) hypothesis was FALSIFIED — bare "error" parses fine in BOTH Int and
+BigRat context (A2/A3 PASS); it is not the root.
+
+────────────────────────────────────────────────────────────────────────────
+(b) DOMINANT ROOT — drilled to code site + condition + share
+────────────────────────────────────────────────────────────────────────────
+ROOT A  (DOMINANT, cross-grammar systemic): CROSS-CATEGORY COERCION/INJECTION
+        REALIZATION FAILS WHEN THE INNER SUB-TERM IS NON-TRIVIAL.
+  Condition: a term contains an implicit cross-category injection (BoolToInt,
+    BoolToUInt32, BoolToFloat, IntToBigRat, IntToBigInt, UInt32ToBigInt, CastNum/
+    CastPred, …) whose Display EMITS NO WRAPPER (the injection is invisible — e.g.
+    BoolToInt(Or(...)) displays exactly as the Bool expression), OR an operator
+    chain that mixes operands of two categories (Int vs UInt32) needing operand-
+    level coercion. On re-parse the WFST builds the inner SPPF in the inner
+    category, but the cross-category realization `arg.into_term::<TargetCat>()`
+    returns None for non-leaf inners → "all fork branches dropped" / "no accepting
+    branch" / "no extractable terms" / "action_fn returned without pushing the
+    expected single Term — cross-cat-incompatible arg".
+  Code sites (the parser ALREADY SELF-DIAGNOSES this at construction time):
+    • prattail/src/pipeline.rs:235-280  DeadRuleWarning::WfstUnreachable — emitted
+      at build as: "WFST warning: constructor X is a dead rule — its Display output
+      may not be parseable". Observed list for Calculator INCLUDES exactly the
+      cross-cat injections: BoolToUInt32, BoolToBigInt, BoolToBigRat, UInt32ToBigInt,
+      UInt32ToBigRat, FloatToBigRat, BigIntToBigRat, FixedToBigRat, IntToBigInt,
+      IntToBigRat.
+    • prattail/src/lint.rs:2175-2218 + pipeline KAT — DiagnosticId::K01 "KAT
+      Hoare-triple failure": "[A -> B] {A_reachable} call_A_B {B_reachable}". At
+      build: Calculator=65, RhoCalc=38, LedTest=8, GuardedRho=5 cross-cat pairs the
+      parser KNOWS it cannot reconstruct (e.g. Bool→Int, Int→BigRat, Str→Float,
+      Expr→Pred, Pred→Num, Proc→Name). This static reachability triple failing IS
+      the root predictor.
+    • Realization failure surfaces in prattail/src/wpda_walker.rs:10471
+      WpdaState::Error("all fork branches dropped") and the resolve/realize path
+      (resolve_at_end_of_input ~4293-4419) when into_term::<T>() yields None.
+  Share: This root (incl. its operand-mix and cast-overload sub-cases A'/A'')
+    explains the MAJORITY of the live cluster-J failures: ALL of mixedmath (5),
+    ledtest (4), the calculator int/uint32/bigint/bigrat/float/proc roundtrip
+    failures driven by cross-cat injection + operator chains, and the rhocalc
+    leaf-cast cases. Estimate ≈ 18-22 of the ~30 live failures (~65-70%).
+
+  Sub-root A' (operand-level category mix): FLIP-PROVED below. `1 > 2 + 3` [UInt32]
+    OK; flip ONE operand `3`→`cast_error_uint` (a UInt32 zero-ary) → `1 > 2 +
+    cast_error_uint` FAIL. The Int operand `2` and UInt32 operand cast_error_uint
+    have no `AddInt`/`AddUInt32` reconciliation. Same class.
+
+  Sub-root A'' (calculator "doubly-nested cast" overload — the one I FLIP-PROVED
+    FAIL→PASS): the 2-arg casts IntBin/UIntBin/FloatBin/FixedBin
+    (calculator.rs:377/380/383/386, keywords int(/uint(/float(/fixed( ) OVERLOAD
+    the SAME keyword+`(` prefix as the 1-arg casts FloatToInt/BoolToInt/StrToInt/
+    IntId (calculator.rs:233-245). When arg-1 of the 2-arg form is itself a
+    sub-expression that opens `(` (a nested cast call `str(5)`/`uint(5)`/`float(5)`,
+    or a parenthesized group), the WFST cannot disambiguate 1-arg-vs-2-arg and ALL
+    fork branches die at the `(`. Documented in-tree as a KNOWN class:
+    wpda_walker.rs:9075 "the already-failing Exp-15 doubly-nested casts".
+
+ROOT B  (calculator-specific, smaller): TERNARY / COMPARISON PRECEDENCE.
+  Condition: `c ? t : e` (Tern, Int→Int, calculator.rs:142, `step right`) adjacent
+    to a comparison (`>`,`==`,…, which yield Bool, calculator.rs:144-159) and
+    fold ops, e.g. `1 ? 2 : 3 > 4 ~ 5`. The `e` arm greedily extends across `> … ~ …`
+    which is Bool, but Tern's third arg must be Int → no accepting parse. Independent
+    of error terms (plain `1 ? 2 : 3 > 4 ~ 5` FAILS as Bool too). This is a grammar
+    precedence/associativity ambiguity, NOT cross-cat.
+  Share: the calculator case-09-family (BoolToFloat(GtInt(Tern,…))) — a small slice,
+    ≈ 2-4 of ~30. (~10%)
+
+ROOT C  (rhocalc / guardedrho / class2 / class3 / ambient): NAME/BINDER-LED
+        PRODUCTION NOT ADMITTED IN NESTED-DELIMITED OPERAND POSITION.
+  Condition: a production whose surface form begins with a Name/identifier and an
+    infix-ish operator — POutput `n "!" "(" q ")"` (rhocalc.rs:74-75), NQuote
+    `"@" "(" p ")"`, the `for`/`where` guarded receive (guardedrho), and the
+    multi-binder Scope forms (Choose/TaggedInputs/PInputs with `Binder`) — does NOT
+    parse when it occurs as the operand inside a delimited context (`len(`, `@(`,
+    `count(`, list `{…}`, another `for`). Standalone `a!(error)` PARSES; nested
+    `len(a!(error))` / `@(a!(b))` FAIL at the leading identifier `a` (the WFST's
+    inner-context decision tree won't begin the Name-led production there). NOT the
+    `error` term (R10 `@(a!(b))` with no error also fails).
+  Share: rhocalc (3) + guardedrho (3) + class2/3/ambient binder structural (≈ several)
+    ≈ 8-10 of ~30. (~25-30%)
+
+────────────────────────────────────────────────────────────────────────────
+(c) FLIP RESULTS
+────────────────────────────────────────────────────────────────────────────
+FLIP-1 (Root A'' — calculator cast overload) — DECISIVE, FAIL→PASS:
+  Edit (revertable): calculator.rs IntBin keyword "int"→"intw" (constructor name
+  unchanged so eval/congruences compile). Rebuilt, ran:
+    BEFORE:  int(str(5) , 3)   → FAIL(P) 1:4 "no accepting branch, found `("
+    AFTER:   intw(str(5) , 3)  → OK  IntBin(ProcStr(IntToStr(NumLit(5))), NumLit(3))   ✅ FLIP
+    CONTROL: int(str(5)) [1-arg StrToInt] → OK both before & after                     ✅ control green
+    CONTROL: int(5), int(float(5))        → OK both                                     ✅
+    intw(int(5),3) OK, intw(5,3) OK; intw(uint(5),3) STILL FAIL (uint NOT de-overloaded
+    → confirms the mechanism is PER-KEYWORD overload, symmetric across int/uint/float).
+  ⇒ Removing the 1-arg-vs-2-arg overload on the `int(` prefix flips the failing
+    repro FAIL→PASS while controls stay green. ROOT A'' PROVEN.
+
+FLIP-2 (Root A' — operand category mix) — DECISIVE, INPUT FLIP:
+  Hold operator structure `A > B + C` parsed as UInt32 (BoolToUInt32(GtInt(...))),
+  toggle ONE operand:
+    1 > 2 + 3                → OK   BoolToUInt32(GtInt(1, AddInt(2,3)))
+    1 > 2 + cast_error_uint  → FAIL(P) 1:24  (UInt32 operand in Int subexpr)            ✅ FLIP
+    cast_error_int > cast_error_int + 3 → OK (all-Int errors)                           ✅ control
+    error > 2 + 3            → OK (overloaded error resolves to Int)                     ✅ control
+  ⇒ Toggling a single operand's CATEGORY (Int↔UInt32) flips FAIL↔PASS. ROOT A' PROVEN.
+
+FLIP-3 (Root A canonical — mixedmath cross-cat injection) — DECISIVE, INPUT FLIP:
+  BoolToInt injection, vary ONLY inner Bool complexity (parse as MixedMath Int):
+    false or true          → OK  BoolToInt(Or(false,true))
+    false and true         → OK  BoolToInt(And(false,true))
+    not false              → OK  BoolToInt(Not(false))
+    (false and true) or (true and false) → FAIL(P) 1:37 into_term::<T>()==None         ✅ FLIP
+    CONTROL same string as Bool: (false and true) or (true and false) → OK Or(And,And)  ✅ inner parses fine
+  ⇒ Holding the cross-cat injection constant, a parenthesized/nested inner FAILS
+    where a single-operator inner PASSES. ROOT A PROVEN. (B2_DISABLE/B3_DISABLE/
+    B3_SPAN_DISABLE do NOT change it ⇒ failure is in core SPPF cross-cat realization,
+    upstream of the cohort-coercion backstop.)
+
+FLIP-4 (Root B — tern/cmp precedence) — confirmed by control:
+    1 ? 2 : 3 > 4 ~ 5  [as Bool, NO errors] → FAIL(P) 1:18    (plain, no cross-cat)
+    cast_error_int > cast_error_int ~ 5 [as Bool] → OK GtInt(CastErrInt,CustomOp(...))
+  ⇒ The ternary-adjacent-to-comparison structure fails independent of errors/cross-cat.
+
+NEGATIVE RESULTS (proves where the root is NOT):
+  • B2_DISABLE / B3_DISABLE / B3_SPAN_DISABLE (the sig-B crosswrap coercion-
+    interposition levers, dispatch_cohort.rs / wpda_walker.rs) — NO effect on ANY
+    failing repro. ⇒ the cross-cat cohort cache (dispatch_cohort.rs, 315cfc3 work)
+    is NOT the root; failures are upstream at WFST fork/realize.
+  • MAX_COHORT_FRAME_MEMBERS 256→65536, MAX_REVIVAL_ROUNDS 4→64,
+    SPURIOUS_ORPHAN_THRESHOLD 256→1e6 (cohort_lazy.rs:648, wpda_walker.rs:1032,9127)
+    — NO effect. ⇒ NOT a capacity/cap/livelock-budget limit; branches genuinely die.
+
+────────────────────────────────────────────────────────────────────────────
+(d) CROSS-GRAMMAR CHECK
+────────────────────────────────────────────────────────────────────────────
+Ground-truth seed replay (PROPTEST_CASES=1, --no-fail-fast) on the OTHER grammars:
+  rhocalc:   3 fail — count(a!(error),…), @(a!(error)), len(a!(error))   ⇒ Root C
+  ledtest:   1 fail — -626070009 == 1153673712 (EqNum Bool→Expr lift)    ⇒ Root A
+  mixedmath: 1 fail — (false and true) or (true and false) as Int        ⇒ Root A (canonical)
+  guardedrho:3 fail — @for(…){…}, name/proc roundtrip                    ⇒ Root C
+Cross-grammar verdict: Root A (cross-cat injection/coercion) is CROSS-GRAMMAR
+SYSTEMIC (calculator, rhocalc leaf-casts, ledtest, mixedmath). Root C (Name/binder-
+led production in nested-delimited position) is CROSS-GRAMMAR among the
+process-calculus grammars (rhocalc, guardedrho, class2/3, ambient). Root B is
+calculator-specific (ternary). The cast-overload sub-root A'' is shared by any
+grammar with same-keyword 1-arg+2-arg casts (calculator AND rhocalc:
+IntBinProc/UIntBinProc/FloatBinProc at rhocalc.rs:106-112).
+
+────────────────────────────────────────────────────────────────────────────
+(e) SUB-CLUSTERS WITH DISTINCT ROOTS (summary)
+────────────────────────────────────────────────────────────────────────────
+  J-A  Cross-category coercion/injection realization fails on non-trivial inner
+       (DOMINANT, ~65-70%). Sub: A' operand-category-mix; A'' same-keyword cast
+       overload (doubly-nested cast). Cross-grammar. FLIP-PROVEN (FLIP-1,2,3).
+  J-B  Ternary `?:` adjacent to comparison `>`/`==` precedence (calculator, ~10%).
+       Confirmed by control (FLIP-4).
+  J-C  Name/binder-led production (POutput `!`, NQuote `@`, for/where, multi-Binder
+       Scope) not admitted in nested-delimited operand position (rhocalc/guardedrho/
+       class2/3/ambient, ~25-30%). Bisection-isolated (standalone OK, nested FAIL).
+
+WHAT IS UNPROVEN / CAVEATS:
+  • Roots A' and A''-cast were flipped by toggling the EXACT condition (operand
+    category; keyword overload) → FAIL↔PASS with green controls — strong proof.
+  • Root A canonical (mixedmath) flipped on inner-complexity (input), not a code
+    toggle; the code-level fix point is into_term::<T>() returning None in SPPF
+    cross-cat realize (wpda_walker resolve/realize) — that exact line is the
+    realization gap but I did not toggle it (would need codegen surgery).
+  • Roots B and C are bisection-isolated to their exact surface trigger but NOT
+    code-toggle-flipped (no single revertable lever isolates them without grammar
+    surgery). They are HYPOTHESES backed by clean min-pair bisection, not flips.
+  • The 3 cap/threshold toggles and 3 B2/B3 levers were FLIP-tested and NULL —
+    these rule OUT the cohort-cache/coercion-backstop and capacity hypotheses.
+
+FILES (absolute):
+  Grammar:        /home/.../languages/src/calculator.rs (casts :230-394, Tern :142,
+                  2-arg casts :377-388), /home/.../languages/src/rhocalc.rs
+                  (POutput :74, NQuote :80, IntBinProc :106),
+                  /home/.../languages/src/composition/{mixed_lang.rs,fragments.rs}
+  Diagnostics:    /home/.../prattail/src/pipeline.rs:235-280 (WfstUnreachable),
+                  /home/.../prattail/src/lint.rs:2175-2218 (K01),
+                  /home/.../prattail/src/wpda_walker.rs:10471 (all-fork-dropped),
+                  :9075 (doubly-nested-cast known-fail comment)
+  Logs:           /var/tmp/suite-green/clusterj-step{2,3,4,5,10,13,14,15,16,17}-*.log
+════════════════════════════════════════════════════════════════════════════

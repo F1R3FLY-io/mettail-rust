@@ -1,0 +1,214 @@
+================================================================================
+CONSOLIDATE-STAGED — CAST-FAMILY MERGE VERDICT (pgmcp experiment #9)
+================================================================================
+Date:         2026-06-03
+Worktree:     /var/tmp/wt-consolidate  (DETACHED HEAD — left intact)
+Staged merge: 315cfc3021d6ad12c739bb53d3448b4641903d8a   (tag: consolidate-staged)
+Merge parents: d14fc4c (OURS, feature/wfst-architecture) + d2d9a3b (THEIRS, sigb-b3-span-FINAL)
+Merge base:    6507b9c
+Reversibility anchor: feature/wfst-architecture = d14fc4c (UNCHANGED, verified)
+
+VERDICT: SUCCESS — all 4 verification steps PASS, zero new failures vs either
+baseline. The realize-DFS shared-node fix (feature/wfst-unique) is PRESERVED
+byte-for-byte. Calc dropped from feature/wfst's 18 failures to the expected 6
+(== d2d9a3b baseline). READY FOR USER TO LAND on feature/wfst-architecture.
+
+================================================================================
+(0) RELATIONSHIP OF THE TWO SIDES  (established before resolving)
+================================================================================
+Both branches forked from 6507b9c.
+
+OURS (feature/wfst, tip d14fc4c) over base = 380cc94 ("drive-suite-green:
+cast-family prerequisites + realize-DFS shared-node fix") + 18 design-doc-only
+commits investigating the Float root. CRITICAL FINDING: NO commit after 380cc94
+on OURS touched ANY of the 5 conflicted CODE files (verified: git log
+380cc94..d14fc4c -- <each file> = empty). Therefore OURS code == 380cc94 code
+for every conflict; d14fc4c itself is a 42-line doc-only commit.
+
+THEIRS (d2d9a3b) over base = 4 commits (231ff8c, b6340ee, 37b1481, d2d9a3b) =
+the full Sig-B Blocker-3 cast-family work (Bool-cast closure via span-anchored
+reconstruction + cohort-sharing machinery; dispatch_cohort.rs grows to ~1765 L).
+
+KEY STRUCTURAL FACT (proven, not assumed): d2d9a3b SHARES most of 380cc94's
+cast-family prerequisites — its sppf.rs and sppf_realize.rs diffs vs base are
+BYTE-IDENTICAL to 380cc94's (verified via diff of the two patch texts; same
+hunk headers @@ -39 / -216 / -361 / -569), and d2d9a3b's dispatch_cohort.rs
+ALSO contains OURS's M1 methods/fields (drain_orphaned_inflight_members,
+orphaned_pending_members_count, inflight_orphan_members_total,
+failed_orphan_members_total — counts match 4/3/4/4 in both). That is WHY every
+conflict's OURS-side is empty at the conflict point: git auto-merged the shared
+content and only THEIRS's Sig-B-unique EXTENSIONS appear as conflicts.
+
+THE ONE THING d2d9a3b LACKS = the REALIZE-DFS SHARED-NODE FIX in
+realize_node_leave (380cc94: recompute a BLACK+empty packing once from the
+now-resolved child memos, to restore a sound derivation dropped on a path
+through a same-span ambiguity cycle). It lives in a NON-conflicting region of
+wpda_walker.rs and merged cleanly. PRESERVATION VERIFIED byte-for-byte (below).
+
+================================================================================
+(a) PER-CONFLICT RESOLUTION DECISIONS + RATIONALE
+================================================================================
+11 conflict hunks across 5 files. Every hunk: OURS-side empty at the conflict
+point (its matching content auto-merged elsewhere); resolved by TAKING THEIRS to
+add the Sig-B-unique extension while the auto-merged OURS content is preserved.
+This is Case-1 (THEIRS subsumes OURS) at each conflict point, with OURS's unique
+contributions living in auto-merged (non-conflicting) regions.
+
+macros/src/gen/runtime/wpda_codegen/semantic_actions.rs  [1 hunk]
+  - DECISION: take THEIRS (+emit_single_hop_coercion_body fn).
+  - RATIONALE: complementary functions. OURS's emit_min_terminal_span_body
+    auto-merged (present at line 116); THEIRS adds emit_single_hop_coercion_body
+    (line 208). Both survive. Confirmed both fns present post-resolve.
+
+macros/src/gen/runtime/wpda_codegen/engine_impl.rs  [2 hunks]
+  - DECISION: take THEIRS at both (+single_hop_coercion_body let-binding;
+    +single_hop_coercion trait-impl method).
+  - RATIONALE: THEIRS strictly subsumes OURS. Both add the IDENTICAL
+    min_terminal_span_body let + min_terminal_span method (auto-merged); THEIRS
+    additionally emits the single_hop_coercion let + method. single_hop_coercion
+    is a DEFAULT trait method (has a body in the trait), so emitting an impl is
+    sound and other engine impls don't break.
+
+prattail/src/wpda_walker.rs  [2 hunks]
+  - HUNK 1 (WpdaEngine trait, ~L319): take THEIRS (+single_hop_coercion default
+    trait method). OURS's min_terminal_span trait method auto-merged above;
+    both sides add it identically. THEIRS adds single_hop_coercion default.
+  - HUNK 2 (run_to_end_of_input EOI-fixpoint, ~L4160): take THEIRS (+Sig-B
+    §2.4a span-anchored outer-cast EOI retention block, calling
+    revive_span_anchored_outer_cast_members). OURS's M1 orphan-revival
+    (revive_orphaned_cohort_members_once) auto-merged directly above (preserved).
+  - *** REALIZE-DFS FIX PRESERVATION (the load-bearing requirement) ***
+    The realize-DFS shared-node fix is in realize_node_leave (NOT in either
+    conflict hunk). It auto-merged cleanly because THEIRS did not touch that
+    realize loop conflictingly. VERIFIED PRESERVED BYTE-FOR-BYTE:
+      • "Stale-finalization-under-in-progress-cycle repair" BLACK+empty recompute
+        block (merged L5155-5256): 97-line region diffed against 380cc94's
+        post-image = IDENTICAL (0 diff).
+      • Pass-2c token-soundness backstop (slack < min_span filter, merged
+        L5111-5139): 52-line region diffed against 380cc94 = IDENTICAL.
+      • Collection-accumulation fix in realize_packing_call (reads items from the
+        CollectionId node, merged L5561): present.
+    All helper symbols referenced by the kept THEIRS §2.4a block are defined in
+    the merged file: revive_span_anchored_outer_cast_members (1 def, L14424),
+    b3_disabled (L98), b3_span_disabled (L113), sigb_m70_trace (L125),
+    crosswrap_drained (5 uses); the method calls
+    cache.take_span_anchored_outer_cast(sppf, engine) (dispatch_cohort L1058).
+
+prattail/src/dispatch_cohort.rs  [5 hunks]
+  - HUNK 1 (struct fields): take THEIRS (+crosswrap_drained:
+    FxHashSet<(DispatchKey,SppfId)>, +crosswrap_splices_total: u64). OURS's
+    inflight_orphan_members_total + failed_orphan_members_total auto-merged above.
+  - HUNK 2 (new()): take THEIRS (+crosswrap_drained/splices inits). OURS's two
+    orphan-field inits auto-merged above.
+  - HUNK 3 (clear()): take THEIRS (+crosswrap resets). OURS's orphan resets
+    auto-merged above.
+  - HUNK 4 (the BIG ~518-line hunk): take THEIRS (+take_pending_for_drain_crosswrap,
+    +take_span_anchored_outer_cast<E: WpdaEngine>). OURS's M1
+    drain_orphaned_inflight_members + orphaned_pending_members_count are
+    auto-merged DIRECTLY BELOW the hunk (verified present, counts == d2d9a3b).
+  - HUNK 5 (write_summary): take THEIRS (+crosswrap_splices accounting writeln).
+    OURS's orphan-census writeln auto-merged above.
+  - RATIONALE: THEIRS's dispatch_cohort already contains OURS's M1 census/drain;
+    the conflicts are purely THEIRS's cross-wrap + span-anchored ADDITIONS.
+
+languages/tests/calculator.rs  [1 hunk]  — UNION OF TESTS
+  - DECISION: take THEIRS (+2 span-anchored probe lines inside
+    pass2c_token_soundness_probe).
+  - RATIONALE: UNION preserved. OURS added ONLY pass2c_token_soundness_probe;
+    THEIRS added the SAME fn (a superset — same body + 2 extra probe! lines) PLUS
+    3 new top-level test fns. Verified post-resolve: all 4 test fns present
+    (pass2c_token_soundness_probe + sigb_b3_span_anchored_ambiguity_preservation
+    + sigb_b3_span_anchored_baseline_passes_remain_green +
+    sigb_b3_span_anchored_termination_bool); all OURS probe lines retained
+    (subset of THEIRS). No dedup needed beyond the identical-name/body merge.
+
+POST-RESOLVE INTEGRITY: repo-wide scan for leftover merge markers = CLEAN
+(git grep '^(<<<<<<<|>>>>>>>)' returns nothing). All 5 files: 0 markers.
+
+================================================================================
+(b) BUILD RESULT  (Step 1)
+================================================================================
+cmd: systemd-run --user --scope -p MemoryMax=32G -p CPUQuota=1600% \
+       cargo build --release -p mettail-languages
+log: /var/tmp/suite-green/consolidate-build.log
+RESULT: PASS — "Finished `release` profile [optimized] target(s) in 16m 10s",
+        0 errors (grep '^error' = 0). Proc-macro codegen emitted both the
+        single_hop_coercion and min_terminal_span impls into the generated
+        target/generated/*/wpda.rs and they compiled — the real test that the
+        merge produced compilable code. (Only snake_case lint warnings on
+        generated parse_<Cat>_via_wpda_* fns, pre-existing.)
+
+================================================================================
+(c) CALC SUITE  (Step 2) — the behavioral test
+================================================================================
+cmd: systemd-run ... cargo test --release -p mettail-languages --test calculator
+log: /var/tmp/suite-green/consolidate-calc.log
+RESULT: 214 passed; 6 failed; 4 ignored   (finished in 3.90s)
+
+  DIFF vs feature/wfst's 18-failure baseline: 18 → 6  (12 int/float nested-cast +
+  conversion tests FIXED by consolidating d2d9a3b's span-anchored Bool work +
+  the preserved realize-DFS fix).
+  MATCH vs d2d9a3b baseline (214/6, from sigb-blocker3-span-anchored-RESULTS.md
+  M7.4): EXACT — same count, same 6 failures.
+  MATCH vs task's expected ~6: EXACT.
+
+  The 6 remaining failures (ALL pre-existing on d2d9a3b; NONE new):
+    1. test_nested_float_float_int      — Float STOP. parse err "expected no
+                                           accepting branch ... found `float`".
+    2. test_triple_nested_float         — Float STOP (same float(-prefix
+                                           unary-vs-binary-fold Fork defect;
+                                           OUT OF SCOPE per d2d9a3b results doc).
+    3. test_bool_from_list_elem         — eval-ambiguity: bool(at(list(3,2.0,true),2))
+                                           yields many alt NFs, not the expected
+                                           "true".
+    4. test_int_add_overflow_wraps_in_release   — eval: NF set has unwrapped
+                                           "2147483648", not release-wrapped
+                                           "-2147483648".
+    5. test_int_pow_31_wraps_in_release          — eval (same release-wrap class):
+                                           "2^31" NF set lacks "-2147483648".
+    6. test_uint32_add_overflow_wraps_in_release — eval (same class):
+                                           "4294967295u32 + 1u32" lacks "0".
+
+  NEW failures not on either baseline: NONE.
+
+================================================================================
+(d) GAUNTLET + OP-SUITES  (Steps 3 & 4)
+================================================================================
+GAUNTLET  (Step 3)
+  cmd: systemd-run ... cargo test --release -p mettail-prattail --lib
+  log: /var/tmp/suite-green/consolidate-gauntlet.log
+  RESULT: ok. 4220 passed; 0 failed; 0 ignored   (test exec 0.34s)
+  MATCH vs d2d9a3b baseline (4220/0): EXACT. No new failures.
+
+OP-SUITES  (Step 4)
+  cmd: systemd-run ... cargo nextest run --release -p mettail-languages \
+         --test gen_calculator_op --test gen_rhocalc_op
+  log: /var/tmp/suite-green/consolidate-opsuites.log
+  RESULT: Summary [2.557s] 1863 tests run: 1863 passed, 0 skipped
+          (gen_calculator_op 1331 + gen_rhocalc_op 532 = 1863; PASS lines 1863,
+           FAIL lines 0; both binaries confirmed run).
+  MATCH vs d2d9a3b baseline (1863/1863): EXACT. No new failures.
+
+================================================================================
+(e) STAGED MERGE COMMIT SHA + TAG
+================================================================================
+  Commit: 315cfc3021d6ad12c739bb53d3448b4641903d8a
+  Tag:    consolidate-staged
+  Parents: d14fc4c (OURS) + d2d9a3b (THEIRS)
+  feature/wfst-architecture = d14fc4c (UNCHANGED — NOT merged/fast-forwarded;
+    the user lands it).
+  Worktree /var/tmp/wt-consolidate left intact, working tree clean.
+
+================================================================================
+(f) STOP ITEMS — hunks that could NOT be confidently resolved
+================================================================================
+  NONE. Every one of the 11 hunks resolved with high confidence:
+    - Each conflict's OURS-side was empty at the conflict point.
+    - OURS's matching content was independently confirmed present via auto-merge
+      (and, for the prerequisites, proven byte-identical to THEIRS's copy).
+    - The single feature/wfst-unique contribution (realize-DFS shared-node fix)
+      was confirmed byte-for-byte preserved in a non-conflicting region.
+    - The full verification (build + calc 214/6 + gauntlet 4220/0 +
+      op-suites 1863/1863) corroborates the resolution: results match the
+      d2d9a3b baseline exactly with zero new failures.
+================================================================================
