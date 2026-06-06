@@ -23,8 +23,78 @@ Defined.
 
 Record arc : Type := {
   arc_key : frontier_key;
+  arc_stack : nat;
+  arc_origin : option nat;
+  arc_lex_alt : nat;
+  arc_weight_src : nat;
+  arc_weight_rule : nat;
+  arc_lex_stamp : option nat;
   arc_payload : nat
 }.
+
+Record arc_merge_disambiguator : Type := {
+  amd_stack : nat;
+  amd_origin : option nat;
+  amd_lex_alt : nat;
+  amd_weight_src : nat;
+  amd_weight_rule : nat;
+  amd_lex_stamp : option nat
+}.
+
+Definition arc_disambiguator (a : arc) : arc_merge_disambiguator :=
+  {| amd_stack := arc_stack a;
+     amd_origin := arc_origin a;
+     amd_lex_alt := arc_lex_alt a;
+     amd_weight_src := arc_weight_src a;
+     amd_weight_rule := arc_weight_rule a;
+     amd_lex_stamp := arc_lex_stamp a |}.
+
+Lemma arc_disambiguator_eq_preserves_weight_provenance :
+  forall a b,
+    arc_disambiguator a = arc_disambiguator b ->
+    arc_lex_alt a = arc_lex_alt b /\
+    arc_weight_src a = arc_weight_src b /\
+    arc_weight_rule a = arc_weight_rule b.
+Proof.
+  intros a b Heq.
+  inversion Heq.
+  repeat split; assumption.
+Qed.
+
+Lemma arc_disambiguator_eq_preserves_lex_stamp :
+  forall a b,
+    arc_disambiguator a = arc_disambiguator b ->
+    arc_lex_stamp a = arc_lex_stamp b.
+Proof.
+  intros a b Heq.
+  now inversion Heq.
+Qed.
+
+Theorem distinct_lex_stamps_prevent_arc_aggregation :
+  forall a b,
+    arc_lex_stamp a <> arc_lex_stamp b ->
+    arc_disambiguator a <> arc_disambiguator b.
+Proof.
+  intros a b Hdiff Heq.
+  apply Hdiff.
+  now apply arc_disambiguator_eq_preserves_lex_stamp.
+Qed.
+
+Theorem distinct_weight_provenance_prevents_arc_aggregation :
+  forall a b,
+    (arc_lex_alt a <> arc_lex_alt b \/
+     arc_weight_src a <> arc_weight_src b \/
+     arc_weight_rule a <> arc_weight_rule b) ->
+    arc_disambiguator a <> arc_disambiguator b.
+Proof.
+  intros a b Hdiff Heq.
+  apply arc_disambiguator_eq_preserves_weight_provenance in Heq.
+  destruct Heq as [Halt [Hsrc Hrule]].
+  destruct Hdiff as [Hdiff | [Hdiff | Hdiff]].
+  - now apply Hdiff.
+  - now apply Hdiff.
+  - now apply Hdiff.
+Qed.
 
 Definition insert_frontier_key
   (k : frontier_key) (ks : list frontier_key) : list frontier_key :=

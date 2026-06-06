@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::automata::semiring::SemiringRef;
+use crate::automata::semiring::{LexProvenance, SemiringRef};
 use crate::dispatch_cohort::DispatchKey;
 use crate::edge_stack_arena::EdgeStackId;
 use crate::gss::{GssEdgeId, GssNodeId};
@@ -267,6 +267,28 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
         }
     }
 
+    /// Disambiguator for arc-level merge: arcs with equal disambiguator
+    /// are mergeable at the same frontier under
+    /// `LexicographicWeight`-style idempotent ⊕ aggregation.
+    ///
+    /// Per the Exp 14 plan §3.6 risk register R6/R8: divergent arc
+    /// state (sppf_stack_id, lex provenance, cohort origin) MUST keep
+    /// arcs distinct; only same-disambiguator arcs may collapse.
+    pub fn merge_disambiguator(
+        &self,
+    ) -> (StackId, Option<DispatchKey>, u16, u16, u16, Option<LexForkStamp>) {
+        (
+            self.sppf_stack_id,
+            self.cohort_origin.clone(),
+            self.lex_alt_idx,
+            self.weight_src_idx,
+            self.weight_rule_idx,
+            self.lex_fork_path.last().copied(),
+        )
+    }
+}
+
+impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
     /// Construct an arc from a BranchCursor — captures every per-arc
     /// divergent axis (the 11 light + 6 heavy fields). Each Arc is
     /// O(1) refcount bump; the underlying storage is shared until a
@@ -281,11 +303,9 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             last_action_output_cat: cursor.last_action_output_cat,
             cohort_revive_depth: cursor.cohort_revive_depth,
             lex_fork_path: Arc::clone(&cursor.lex_fork_path),
-            // Lex provenance — read from weight if the weight supports
-            // it. For now, default to 0 (Substage 6 may refine).
-            lex_alt_idx: 0,
-            weight_src_idx: 0,
-            weight_rule_idx: 0,
+            lex_alt_idx: cursor.weight.lex_alt_idx(),
+            weight_src_idx: cursor.weight.lex_src_idx(),
+            weight_rule_idx: cursor.weight.lex_rule_idx(),
             // Substage 1.5+2.5 soundness-fix heavy fields: per-arc Arcs.
             recovery_deltas: Arc::clone(&cursor.recovery_deltas),
             visited_dispatch: cursor.visited_dispatch.clone(),
@@ -296,23 +316,6 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             optional_scope_marks: Arc::new(cursor.optional_scope_marks.clone()),
             sppf_collection_arena: Arc::clone(&cursor.sppf_collection_arena),
         }
-    }
-
-    /// Disambiguator for arc-level merge: arcs with equal disambiguator
-    /// are mergeable at the same frontier under
-    /// `LexicographicWeight`-style idempotent ⊕ aggregation.
-    ///
-    /// Per the Exp 14 plan §3.6 risk register R6/R8: divergent arc
-    /// state (sppf_stack_id, lex provenance, cohort origin) MUST keep
-    /// arcs distinct; only same-disambiguator arcs may collapse.
-    pub fn merge_disambiguator(&self) -> (StackId, Option<DispatchKey>, u16, u16, u16) {
-        (
-            self.sppf_stack_id,
-            self.cohort_origin.clone(),
-            self.lex_alt_idx,
-            self.weight_src_idx,
-            self.weight_rule_idx,
-        )
     }
 }
 
@@ -821,6 +824,36 @@ mod tests {
         )
     }
 
+    fn cursor_with_weight_and_stamp(
+        weight: LexicographicWeight,
+        stamp: Option<LexForkStamp>,
+    ) -> BranchCursor<LexicographicWeight> {
+        let lex_fork_path = stamp.into_iter().collect::<Vec<_>>();
+        BranchCursor {
+            node: 42,
+            pos: 7,
+            inner_state: WpdaState::InfixLoop { cur_bp: 10 },
+            incoming_edge_stack_id: EDGE_STACK_ID_ROOT,
+            collection_stack_depth: 3,
+            recovery_depth: 1,
+            weight,
+            pending_packing_weight: LexicographicWeight::default(),
+            sppf_stack_id: STACK_ID_ROOT,
+            source_priority: 0,
+            cohort_origin: None,
+            last_action_output_cat: None,
+            cohort_revive_depth: 0,
+            lex_fork_path: Arc::new(lex_fork_path),
+            recovery_deltas: Arc::new(Vec::new()),
+            visited_dispatch: im::OrdSet::new(),
+            visited_recovery: im::OrdSet::new(),
+            visited_proj_descriptors: im::OrdSet::new(),
+            binder_scope_marks: Vec::new(),
+            optional_scope_marks: Vec::new(),
+            sppf_collection_arena: Arc::new(Vec::new()),
+        }
+    }
+
     #[test]
     fn map_starts_empty() {
         let map: TomitaFrontierMap<LexicographicWeight> = TomitaFrontierMap::new();
@@ -960,6 +993,62 @@ mod tests {
         let mut arc2 = fresh_arc();
         arc2.sppf_stack_id = StackId(1234);
         assert_ne!(arc1.merge_disambiguator(), arc2.merge_disambiguator());
+    }
+
+    #[test]
+    fn frontier_arc_from_cursor_captures_weight_lex_provenance() {
+        let cursor = cursor_with_weight_and_stamp(
+            LexicographicWeight::from_cost_with_lex(0.0, 7, 11, 3),
+            None,
+        );
+        let arc = FrontierArc::from_cursor(&cursor);
+        assert_eq!(arc.lex_alt_idx, 3);
+        assert_eq!(arc.weight_src_idx, 7);
+        assert_eq!(arc.weight_rule_idx, 11);
+    }
+
+    #[test]
+    fn arc_merge_disambiguator_distinguishes_lex_fork_stamp() {
+        let mut arc1 = fresh_arc();
+        arc1.lex_fork_path = Arc::new(vec![LexForkStamp {
+            pos: 5,
+            alt_idx: 0,
+            src_idx: 1,
+            rule_idx: 2,
+        }]);
+        let mut arc2 = arc1.clone();
+        arc2.lex_fork_path = Arc::new(vec![LexForkStamp {
+            pos: 5,
+            alt_idx: 1,
+            src_idx: 1,
+            rule_idx: 2,
+        }]);
+        assert_ne!(arc1.merge_disambiguator(), arc2.merge_disambiguator());
+    }
+
+    #[test]
+    fn aggregation_keeps_distinct_lex_fork_stamps_as_separate_arcs() {
+        let mut map: TomitaFrontierMap<LexicographicWeight> = TomitaFrontierMap::new();
+        let mut arc1 = fresh_arc();
+        arc1.lex_fork_path = Arc::new(vec![LexForkStamp {
+            pos: 5,
+            alt_idx: 0,
+            src_idx: 1,
+            rule_idx: 2,
+        }]);
+        let mut arc2 = arc1.clone();
+        arc2.lex_fork_path = Arc::new(vec![LexForkStamp {
+            pos: 5,
+            alt_idx: 1,
+            src_idx: 1,
+            rule_idx: 2,
+        }]);
+
+        map.register_arc_with_aggregation(fresh_key(), fresh_shell(), arc1);
+        map.register_arc_with_aggregation(fresh_key(), fresh_shell(), arc2);
+
+        let node = map.get(&fresh_key()).expect("node present");
+        assert_eq!(node.arcs.len(), 2);
     }
 
     #[test]
