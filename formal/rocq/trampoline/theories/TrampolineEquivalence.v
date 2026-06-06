@@ -112,8 +112,9 @@ Section TrampolineEquivalence.
     induction n as [| m IH].
     - intros st Hterm. unfold tramp_iter. simpl. reflexivity.
     - intros st Hterm. unfold tramp_iter. simpl.
-      rewrite (terminal_fixed st Hterm).
-      apply IH. exact Hterm.
+      change (tramp_step (tramp_iter m st) = st).
+      rewrite (IH st Hterm).
+      apply terminal_fixed. exact Hterm.
   Qed.
 
   Lemma tramp_iter_mono :
@@ -125,7 +126,8 @@ Section TrampolineEquivalence.
     intros n st Hterm m Hle.
     induction Hle as [| m' Hle' IH].
     - reflexivity.
-    - unfold tramp_iter in *. simpl.
+    - unfold tramp_iter. simpl.
+      change (tramp_step (tramp_iter m' st) = tramp_iter n st).
       rewrite IH.
       apply terminal_fixed.
       exact Hterm.
@@ -194,8 +196,8 @@ Section TrampolineEquivalence.
     unfold extract_result in Hext.
     destruct (tst_result (tramp_iter n (make_init_state cat s bp0)))
       as [[v' s''] | ] eqn:Hres.
-    - injection Hext; intros Hs Hv; subst.
-      exact (tramp_implies_rec n cat s bp0 v' s'' Hterm Hres).
+    - inversion Hext; subst.
+      exact (tramp_implies_rec n cat s bp0 v s' Hterm Hres).
     - discriminate.
   Qed.
 
@@ -284,14 +286,3 @@ Section TrampolineEquivalence.
   Qed.
 
 End TrampolineEquivalence.
-
-(* ===================================================================== *)
-(*  Verification: key theorems accessible                                  *)
-(* ===================================================================== *)
-
-Check cek1_trampoline_equivalence.
-Check cek1_forward.
-Check cek1_backward.
-Check tramp_convergence.
-Check tramp_rec_agree_on_success.
-Check rec_fuel_independence.

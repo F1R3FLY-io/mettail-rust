@@ -695,7 +695,7 @@ End TropicalMultisetSemiring.
 (*     Rust achieves this through the finite map representation (empty   *)
 (*     map = zero, which annihilates under HashMap-based multiplication).*)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)
 
 (* ===================================================================== *)
@@ -727,5 +727,5 @@ End TropicalMultisetSemiring.
 (*    tmw_times_comm             (add is commutative, bonus)             *)
 (*    tmw_plus_idempotent        (min is idempotent, bonus)              *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)

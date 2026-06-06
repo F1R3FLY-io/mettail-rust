@@ -116,25 +116,26 @@ Section DirectedGraph.
      constructors of category src. This is the "direct neighbor" set. *)
   Variable field_types : Node -> list Node.
 
-  (* Axiom: field_types only contains direct edges *)
+  (* Invariant: field_types only contains direct edges *)
   Hypothesis field_types_are_edges :
     forall src tgt, In tgt (field_types src) -> edge src tgt.
 
-  (* Axiom: edges correspond to field_types *)
+  (* Invariant: edges correspond to field_types *)
   Hypothesis edges_are_field_types :
     forall src tgt, edge src tgt -> In tgt (field_types src).
 
-  (* Key property: unreachable categories have no subterms.
-     If src cannot reach tgt through the grammar, then no constructor
-     of src (or any category reachable from src) contains a tgt field.
-     Therefore, extracting tgt-typed subterms from src-typed terms
-     yields nothing.
-
-     This is stated as an axiom because it reflects a property of the
-     code generator: match arms are only generated for constructors that
-     exist. If no path src→tgt exists, no match arm produces a tgt value. *)
-  Hypothesis unreachable_no_field_types :
+  (* Key property: unreachable categories have no direct subterm fields.
+     This follows from the field_types_are_edges invariant: any direct
+     field reference is an edge, and every edge is reachable in one step. *)
+  Lemma unreachable_no_field_types :
     forall src tgt, ~ reach src tgt -> ~ In tgt (field_types src).
+  Proof.
+    intros src tgt Hnoreach Hin.
+    apply Hnoreach.
+    apply reach_edge.
+    apply field_types_are_edges.
+    exact Hin.
+  Qed.
 
   (* Corollary: unreachable means no direct edge *)
   Lemma unreachable_no_edge : forall src tgt,

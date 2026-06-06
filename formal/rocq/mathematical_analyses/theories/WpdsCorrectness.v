@@ -943,7 +943,8 @@ Section Composition.
 End Composition.
 
 (* ===================================================================== *)
-(*  Verification: Check that classic is available                          *)
+(*  Verification: classic is available                                    *)
 (* ===================================================================== *)
 
-Check classic.
+Lemma classic_available : forall P : Prop, P \/ ~ P.
+Proof. exact classic. Qed.

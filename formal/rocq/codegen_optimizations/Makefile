@@ -1,6 +1,9 @@
 COQFLAGS = -Q theories CodegenOptimizations
 COQC = coqc
 
+FORMAL_CAPPED_TARGET_HINT := rocq-codegen-optimizations
+include ../../capped.mk
+
 SOURCES = $(wildcard theories/*.v)
 OBJECTS = $(SOURCES:.v=.vo)
 

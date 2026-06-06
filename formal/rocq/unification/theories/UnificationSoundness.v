@@ -24,7 +24,7 @@
  *   App constructor             | TermExpr::App { head, args }       | unification.rs:72
  *   apply_subst                 | TermExpr::apply_subst()            | unification.rs:100
  *   occurs_in                   | occurs_in()                        | unification.rs
- *   unify (axiomatized)         | UnificationStore::unify()          | unification.rs
+ *   unify soundness contract    | UnificationStore::unify()          | unification.rs
  *   TheoryAlgebra               | TheoryAlgebra<T>                   | logict.rs
  *
  * Reference: Martelli & Montanari (1982), Robinson (1965)
@@ -177,9 +177,6 @@ Section UnificationSoundness.
   (* The unification algorithm returns either a substitution (success)
      or a failure indicator. We model this as option Subst. *)
 
-  (* Axiomatize the unification algorithm's behavior.
-     These hypotheses capture what the Rust implementation guarantees. *)
-
   Variable unify : list (Term * Term) -> option Subst.
 
   (* U1: If unify succeeds, the returned substitution satisfies all
@@ -188,21 +185,13 @@ Section UnificationSoundness.
     unify eqs = Some sigma ->
     satisfies_all sigma eqs.
 
-  (* U2: If unify returns None, no substitution can satisfy all
-     equations (completeness of failure detection). *)
-  Hypothesis unify_complete_hyp : forall eqs,
-    unify eqs = None ->
-    forall sigma, ~ satisfies_all sigma eqs.
-
   (* ===================================================================== *)
   (*  Theorem: Unification Soundness                                        *)
   (* ===================================================================== *)
 
-  (* NOTE: unify_sound is axiomatized via unify_sound_hyp. The theorem
-     assumes the Rust UnificationStore::unify() satisfies the soundness
-     contract and derives consequences (single-equation, occurs-check,
-     clash detection). The value is in the derived theorems below, not
-     in this base case which serves as the trust boundary. *)
+  (* NOTE: unify_sound depends on the Rust UnificationStore::unify()
+     success contract. No completeness/failure-detection contract is assumed
+     here because the derived theorems below do not consume it. *)
 
   (* If unify succeeds with substitution sigma, then sigma satisfies
      every equation in the input. *)

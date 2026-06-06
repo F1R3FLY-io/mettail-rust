@@ -167,14 +167,39 @@ Fixpoint path_weight (delta : nat -> Symbol -> nat -> Weight)
   | _, _ => w_one
   end.
 
-(* A recognizable series is one that can be computed by some WFA.
-   We define a placeholder WFA evaluation function (the full summation
-   over all paths would require decidable finiteness of the path space).
-   The proof uses a simpler characterization: a series is recognizable
-   if it can be expressed as a concrete function Word -> Weight. *)
+Fixpoint sum_weights (ws : list Weight) : Weight :=
+  match ws with
+  | [] => w_zero
+  | w :: rest => w_plus w (sum_weights rest)
+  end.
 
+Fixpoint state_sequences (states : list nat) (len : nat) : list (list nat) :=
+  match len with
+  | 0 => [[]]
+  | S n =>
+      concat (map (fun q =>
+        map (fun suffix => q :: suffix) (state_sequences states n)
+      ) states)
+  end.
+
+Definition path_contribution (A : WFA) (states : list nat) (w : Word) : Weight :=
+  match states with
+  | [] => w_zero
+  | q0 :: _ =>
+      w_times (wfa_initial A q0)
+        (w_times
+          (path_weight (wfa_delta A) states w)
+          (wfa_final A (last states q0)))
+  end.
+
+(* A recognizable series is one that can be computed by some WFA.  Evaluation
+   sums every state path of length |w| + 1 over the finite state set
+   {0, ..., wfa_states A - 1}. *)
 Definition wfa_eval_series (A : WFA) : Series :=
-  fun _ => w_zero.  (* placeholder — actual eval would sum over all accepting paths *)
+  fun w =>
+    sum_weights
+      (map (fun states => path_contribution A states w)
+           (state_sequences (seq 0 (wfa_states A)) (S (length w)))).
 
 Definition recognizable (s : Series) : Prop :=
   exists A : WFA, forall w, s w = wfa_eval_series A w.
@@ -332,10 +357,10 @@ Section MsoRecognizability.
 End MsoRecognizability.
 
 (* ===================================================================== *)
-(*  Concrete Closure Proofs (without axioms)                               *)
+(*  Concrete Closure Proofs                                                  *)
 (*                                                                         *)
-(*  We prove the closure properties directly for our nat-valued series    *)
-(*  to ensure they hold without relying on axioms.                         *)
+(*  We prove definability of each series operation directly for our         *)
+(*  nat-valued model.                                                       *)
 (* ===================================================================== *)
 
 Section ConcreteClosure.
@@ -483,7 +508,7 @@ Qed.
 (*     theoretical closure properties (Droste-Gastin Thm 3.7). The      *)
 (*     ConcreteClosure section proves these concretely for nat.          *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)
 
 (* ===================================================================== *)
@@ -509,5 +534,5 @@ Qed.
 (*  T9-T10: Semantic correctness                                           *)
 (*      Or = pointwise sum, And = pointwise product.                      *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)

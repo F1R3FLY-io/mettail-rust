@@ -344,7 +344,7 @@ Qed.
 (*  5. Dead state removal: The Rust removes unreachable states during    *)
 (*     normalization.  The Rocq model does not model reachability.       *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)
 
 (* ===================================================================== *)
@@ -389,5 +389,5 @@ Qed.
 (*  T6: all_transitions_bounded                                            *)
 (*      All transitions from any state are bounded by the total.          *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)

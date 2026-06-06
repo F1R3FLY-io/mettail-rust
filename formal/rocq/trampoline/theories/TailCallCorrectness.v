@@ -254,11 +254,12 @@ Section TailCallCorrectness.
   (* A chain of tail wraps is a list of (tag, bp) pairs. *)
   Definition tail_wrap_chain := list (op_tag * bp).
 
-  (* Apply a chain of wrappers to a value, innermost first. *)
+  (* Apply a chain of wrappers to a value. The head of the list is the
+     outermost wrapper, so the tail is applied to the operand first. *)
   Fixpoint apply_chain (chain : tail_wrap_chain) (v : value) : value :=
     match chain with
     | [] => v
-    | (tag, _bp) :: rest => apply_chain rest (apply_wrapper tag v)
+    | (tag, _bp) :: rest => apply_wrapper tag (apply_chain rest v)
     end.
 
   (* The full cycle for a chain: nested frame push/pops. *)
@@ -341,20 +342,7 @@ Section TailCallCorrectness.
       intros nt_bp v bp' Hparse.
       simpl.
       rewrite (IH nt_bp v bp' Hparse).
-      destruct rest as [| [tag' saved_bp'] rest'].
-      + (* rest = [] *)
-        simpl. reflexivity.
-      + (* rest = (tag', saved_bp') :: rest' *)
-        simpl. reflexivity.
+      destruct rest as [| [tag' saved_bp'] rest']; reflexivity.
   Qed.
 
 End TailCallCorrectness.
-
-(* ===================================================================== *)
-(*  Verification: key theorems accessible                                  *)
-(* ===================================================================== *)
-
-Check cek4_tail_call_correctness.
-Check eligible_implies_tail_wrap_correct.
-Check chain_correctness.
-Check full_cycle_captures_empty_compat.

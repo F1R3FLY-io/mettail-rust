@@ -13,7 +13,7 @@
  *   mark_sweep               | MarkSweepGc::collect()                | gc.rs
  *   reachable                | live_locations()                      | gc.rs
  *
- * Rocq 9.1 compatible. Zero Admitted.
+ * Rocq 9.1 compatible. No proof holes.
  *)
 
 From Stdlib Require Import List.
@@ -63,7 +63,7 @@ Section MutationModel.
       get_store (set_store sigma a v) a' = get_store sigma a'.
   Proof.
     intros sigma a a' v Hneq.
-    induction sigma as [| [a'', v''] rest IH].
+    induction sigma as [| [a'' v''] rest IH].
     - simpl. reflexivity.
     - simpl.
       destruct (Nat.eqb a a'') eqn:Ha.
@@ -86,7 +86,7 @@ Section MutationModel.
       get_store (set_store sigma a v_new) a = Some v_new.
   Proof.
     intros sigma a v_old v_new Hget.
-    induction sigma as [| [a', v'] rest IH].
+    induction sigma as [| [a' v'] rest IH].
     - simpl in Hget. discriminate.
     - simpl. simpl in Hget.
       destruct (Nat.eqb a a') eqn:Heq.
@@ -228,11 +228,12 @@ Section GcSoundness.
       reachable roots2 refs a.
   Proof.
     intros roots1 roots2 refs a Hreach Hsub.
-    induction Hreach.
-    - apply reach_root. apply Hsub. exact H.
-    - eapply reach_trans.
-      + apply IHHreach. exact Hsub.
-      + exact H.
+    revert roots2 Hsub.
+    induction Hreach as [a Hin | a b Hreach IH Hin]; intros roots2 Hsub.
+    - apply reach_root. apply Hsub. exact Hin.
+    - apply (reach_trans roots2 refs a b).
+      + apply IH. exact Hsub.
+      + exact Hin.
   Qed.
 
 End GcSoundness.

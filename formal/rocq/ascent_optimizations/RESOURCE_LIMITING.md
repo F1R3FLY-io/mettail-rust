@@ -3,22 +3,21 @@
 ## Standard Build
 
 ```bash
-cd formal/rocq/ascent_optimizations
-coq_makefile -f _CoqProject -o CoqMakefile
-systemd-run --user --scope -p MemoryMax=16G -p CPUQuota=400% make -f CoqMakefile
+make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-ascent-optimizations
 ```
 
 ## Notes
 
-- Memory: 16GB limit is generous for these proofs (they're lightweight)
-- CPU: 400% = 4 cores, sufficient for parallel compilation
+- The top-level harness applies `MemoryMax=34359738368` (32 GiB),
+  `MemorySwapMax=0`, `TasksMax=128`, and serial `make -j1`.
+- Direct builds from this directory are refused by `../../capped.mk`; route
+  every verification run through `check-capped`.
 - SCCSplitting.v may take slightly longer due to induction on iteration count
-- Serial compilation (`-j1`) is not needed here -- no memory-intensive modules
 
 ## Clean Build
 
 ```bash
-make -f CoqMakefile clean
+make -C formal/rocq/ascent_optimizations clean
 ```
 
 ## Verification

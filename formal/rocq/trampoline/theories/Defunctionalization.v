@@ -368,8 +368,11 @@ Section Defunctionalization.
       + simpl in Hcorr. contradiction.
       + simpl in Hcorr. destruct Hcorr as [Hc Hrest].
         simpl.
-        rewrite (correspond_same_result c f v Hc).
-        destruct (apply_frame f v) as [v' bp'].
+        destruct (apply_closure c v) as [v_closure bp_closure] eqn:Hclosure.
+        pose proof (correspond_same_result c f v Hc) as Hsame.
+        rewrite Hclosure in Hsame.
+        unfold apply_frame in Hsame.
+        inversion Hsame; subst.
         apply IH. exact Hrest.
   Qed.
 
@@ -409,15 +412,3 @@ Section Defunctionalization.
   Qed.
 
 End Defunctionalization.
-
-(* ===================================================================== *)
-(*  Verification: key theorems accessible                                  *)
-(* ===================================================================== *)
-
-Check cek5_defunctionalization_correctness.
-Check defunc_soundness.
-Check infix_defunc_correct.
-Check prefix_defunc_correct.
-Check group_defunc_correct.
-Check stack_unwind_correct.
-Check refunctionalization_complete.

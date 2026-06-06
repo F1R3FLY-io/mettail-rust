@@ -1,6 +1,9 @@
 COQMAKEFILE := CoqMakefile
 COQMAKEFILEFLAGS := -f _CoqProject
 
+FORMAL_CAPPED_TARGET_HINT := rocq-logict
+include ../../capped.mk
+
 all: $(COQMAKEFILE)
 	$(MAKE) -f $(COQMAKEFILE)
 

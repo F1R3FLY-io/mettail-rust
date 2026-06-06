@@ -474,7 +474,7 @@ Qed.
 (*     properties rather than proving them for the concrete bounded      *)
 (*     iteration implementation.                                          *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)
 
 (* ===================================================================== *)
@@ -519,5 +519,5 @@ Qed.
 (*  T5: termination_measure_decreases                                      *)
 (*      The termination measure strictly decreases on each recursive call.*)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)

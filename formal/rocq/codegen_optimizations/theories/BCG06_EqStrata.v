@@ -1,6 +1,5 @@
 (*
- * BCG06_EqStrata: Stratified equation evaluation produces the same
- * fixpoint as monolithic evaluation.
+ * BCG06_EqStrata: Dependency facts for stratified equation evaluation.
  *
  * Status: Implemented as intra-struct rule ordering.  The Rust implementation
  * (equations.rs:671) performs SCC-based stratification analysis and passes
@@ -18,10 +17,12 @@
  * framework (all Ascent rules are monotone by construction).
  *
  * Equation stratification (B-CG06) partitions equations into strata
- * (SCCs of the equation dependency graph) and evaluates each stratum
- * independently in topological order.  This file proves:
- *   1. Evaluating strata in topological order = single monolithic fixpoint
- *   2. Reflexivity stratum is independent (no cross-stratum deps)
+ * (SCCs of the equation dependency graph).  This file proves local
+ * dependency facts used by that model:
+ *   1. Independent strata have no cross-stratum reads
+ *   2. Stratified evaluation is monotone in the initial state
+ *   3. Reflexivity strata are independent and do not alter non-target
+ *      relations
  *
  * Spec-to-Code Traceability:
  *   Rocq Definition              | Rust Code                                | Location
@@ -155,23 +156,19 @@ Section StratificationModel.
    We model convergence after some bounded number of steps. *)
 Variable stratum_fixpoint : Stratum -> State -> State.
 
-(* Axiom: stratum_fixpoint is a fixpoint of stratum_step *)
-Hypothesis stratum_fixpoint_is_fp : forall strat S,
-  state_eq (stratum_fixpoint strat S)
-           (stratum_step strat (stratum_fixpoint strat S)).
-
-(* Axiom: stratum_fixpoint is the least fixpoint (contains only derivable facts) *)
+(* Model contract: stratum_fixpoint is the least fixpoint, so it contains
+   only facts derivable from the initial state and the stratum. *)
 Hypothesis stratum_fixpoint_least : forall strat S S',
   state_eq S' (stratum_step strat S') ->
   (forall r, fs_subset (S r) (S' r)) ->
   forall r, fs_subset (stratum_fixpoint strat S r) (S' r).
 
-(* Axiom: stratum_fixpoint is monotone in the initial state *)
+(* Model contract: stratum_fixpoint is monotone in the initial state. *)
 Hypothesis stratum_fixpoint_mono : forall strat S1 S2,
   (forall r, fs_subset (S1 r) (S2 r)) ->
   forall r, fs_subset (stratum_fixpoint strat S1 r) (stratum_fixpoint strat S2 r).
 
-(* Axiom: stratum_fixpoint contains the initial state *)
+(* Model contract: stratum_fixpoint contains the initial state. *)
 Hypothesis stratum_fixpoint_extensive : forall strat S,
   forall r, fs_subset (S r) (stratum_fixpoint strat S r).
 
@@ -183,25 +180,18 @@ Fixpoint stratified_eval (strata : list Stratum) (S : State) : State :=
   end.
 
 (* ===================================================================== *)
-(*  Theorem 1: Stratified = Monolithic for Independent Strata              *)
+(*  Lemma 1: Independent Strata Have No Cross-Reads                        *)
 (*                                                                         *)
-(*  If strata are independent (no cross-stratum dependencies), then       *)
-(*  evaluating each stratum independently produces the same result as     *)
-(*  evaluating all rules in a single fixpoint.                             *)
+(*  If strata are independent (no cross-stratum dependencies), then a rule *)
+(*  in one stratum cannot read a relation written by a rule in another.    *)
 (* ===================================================================== *)
 
 Section IndependentStrata.
 
-  Variable all_rules : list Rule.
   Variable strata : list Stratum.
-  Hypothesis partition : partitions strata all_rules.
 
   (* Independence: no stratum depends on any other *)
   Hypothesis independent : forall s1 s2, In s1 strata -> In s2 strata -> s1 <> s2 -> ~ depends_on s1 s2.
-
-  (* All rules are monotone and local *)
-  Hypothesis all_monotone : forall r, In r all_rules -> rule_monotone r.
-  Hypothesis all_local : forall r, In r all_rules -> rule_local r.
 
   (* For independent strata, each stratum's fixpoint is completely determined
      by the initial state restricted to relations not written by other strata.
@@ -226,24 +216,14 @@ Section IndependentStrata.
 End IndependentStrata.
 
 (* ===================================================================== *)
-(*  Theorem 2: Topologically Ordered Stratified = Monolithic               *)
+(*  Lemma 2: Stratified Evaluation Monotonicity                            *)
 (*                                                                         *)
-(*  For general (possibly dependent) strata in topological order, the     *)
-(*  stratified evaluation produces a state that is a fixpoint of the      *)
-(*  monolithic step.  Each stratum's fixpoint correctly incorporates      *)
-(*  facts from earlier strata because of the topological ordering.        *)
+(*  Stratified evaluation is monotone in its initial state whenever each  *)
+(*  stratum fixpoint is monotone. This structural lemma does not require  *)
+(*  partition or topological-order assumptions.                           *)
 (* ===================================================================== *)
 
-Section TopologicalStrata.
-
-  Variable all_rules : list Rule.
-  Variable strata : list Stratum.
-  Hypothesis partition : partitions strata all_rules.
-  Hypothesis topo : topologically_sorted strata.
-  Hypothesis all_monotone : forall r, In r all_rules -> rule_monotone r.
-
-  (* The key property: after evaluating strata 0..k, the state contains
-     all facts derivable by rules in strata 0..k. *)
+Section StratifiedEvalMonotonicity.
 
   (* Monotonicity of stratified evaluation *)
   Lemma stratified_eval_mono : forall strats S1 S2,
@@ -257,7 +237,7 @@ Section TopologicalStrata.
       intros r'. apply stratum_fixpoint_mono. exact Hsub.
   Qed.
 
-End TopologicalStrata.
+End StratifiedEvalMonotonicity.
 
 (* ===================================================================== *)
 (*  Theorem 3: Reflexivity Stratum Independence                            *)
@@ -355,9 +335,10 @@ End StratificationModel.
 (*  Abstraction Gaps                                                       *)
 (*  1. SCC computation: The Rust uses Tarjan's algorithm for SCC          *)
 (*     computation.  The Rocq model takes strata as given.                *)
-(*  2. Ascent monotonicity: All Ascent rules are monotone by              *)
-(*     construction.  The all_monotone hypothesis is always satisfied.    *)
-(*  3. Fixpoint convergence: The Rocq model axiomatizes                   *)
+(*  2. Ascent monotonicity: All Ascent rules are monotone by construction *)
+(*     in Rust; this file only proves the structural monotonicity of      *)
+(*     stratified_eval from the stratum_fixpoint monotonicity contract.   *)
+(*  3. Fixpoint convergence: The Rocq model assumes contracts for         *)
 (*     stratum_fixpoint.  The actual convergence of Ascent's semi-naive   *)
 (*     iteration is outside the scope of this proof.                       *)
 (*  4. Implementation status: This optimization is analysis-only in the   *)

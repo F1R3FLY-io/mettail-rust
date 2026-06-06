@@ -331,7 +331,7 @@ Qed.
 (*     (combines like terms).  The Rocq model works with raw coefficient *)
 (*     lists.                                                              *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)
 
 (* ===================================================================== *)
@@ -364,5 +364,5 @@ Qed.
 (*  L3: poly_eval_aux_zero_power / poly_eval_at_zero                      *)
 (*      Zero power yields 0; evaluation at 0 yields constant term.        *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)

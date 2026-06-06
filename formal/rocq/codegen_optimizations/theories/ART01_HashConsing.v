@@ -216,12 +216,12 @@ Qed.
 Definition Epoch := nat.
 
 (* ===================================================================== *)
-(*  Intern Function (Axiomatized)                                          *)
+(*  Intern Function Model                                                  *)
 (*                                                                         *)
 (*  The intern function models the hash-consing table: given an epoch and *)
-(*  a term, return the canonical representative.  We axiomatize its key   *)
-(*  properties rather than implementing the hash table, since the Rust    *)
-(*  implementation uses Rc + HashMap which has no direct Rocq analogue.   *)
+(*  a term, return the canonical representative.  We assume the two key  *)
+(*  contracts needed from the Rust Rc + HashMap implementation rather     *)
+(*  than implementing that table directly in Rocq.                         *)
 (*                                                                         *)
 (*  All properties are parameterized over a single epoch.  Cross-epoch    *)
 (*  guarantees are weaker: interning the same term in different epochs    *)
@@ -233,17 +233,13 @@ Section Interning.
 
 Variable intern : Epoch -> Term -> Term.
 
-(* Axiom I1: intern maps alpha-equivalent terms to equal results (within an epoch) *)
+(* Contract I1: intern maps alpha-equivalent terms to equal results within an epoch. *)
 Hypothesis intern_canonical : forall e t1 t2,
   alpha_eq t1 t2 -> intern e t1 = intern e t2.
 
-(* Axiom I2: intern preserves the structure (result is alpha-equivalent to input) *)
+(* Contract I2: intern preserves structure, producing an alpha-equivalent term. *)
 Hypothesis intern_preserves : forall e t,
   alpha_eq (intern e t) t.
-
-(* Axiom I3: intern is idempotent within a single epoch *)
-Hypothesis intern_idempotent_ax : forall e t,
-  intern e (intern e t) = intern e t.
 
 (* ===================================================================== *)
 (*  Theorem 1: intern preserves alpha-equivalence                         *)
@@ -326,21 +322,18 @@ Definition intern_compatible (e : Epoch) (F : TermSet -> TermSet) : Prop :=
   forall S t, F S t -> F (interned_set e S) (intern e t).
 
 (* ===================================================================== *)
-(*  Theorem 2: intern preserves fixpoint semantics                         *)
+(*  Theorem 2: interned operator image                                      *)
 (*                                                                         *)
-(*  For an alpha-compatible, intern-compatible operator F, the fixpoint    *)
-(*  over interned terms equals the interned fixpoint over original terms.  *)
-(*  I.e., interning the fixpoint = fixpoint of interned operator.          *)
-(*  All operations are within a single epoch e.                            *)
+(*  Applying F and then interning the result is extensionally equal to     *)
+(*  the explicit interned operator used by the model. This is a structural *)
+(*  equality over the two definitions and does not need monotonicity or    *)
+(*  compatibility assumptions about F.                                     *)
 (* ===================================================================== *)
 
 Section FixpointPreservation.
 
   Variable e : Epoch.
   Variable F : TermSet -> TermSet.
-  Hypothesis F_mono : monotone F.
-  Hypothesis F_alpha : alpha_compatible F.
-  Hypothesis F_intern : intern_compatible e F.
 
   (* The interned operator: apply F, then intern results *)
   Definition F_interned (S : TermSet) : TermSet :=
@@ -361,7 +354,7 @@ Section FixpointPreservation.
     intros S t HFi. unfold F_interned in HFi. exact HFi.
   Qed.
 
-  (* Main theorem: the interned image of F(S) equals F_interned(S) *)
+  (* Main theorem: the interned image of F(S) equals F_interned(S). *)
   Theorem intern_preserves_fixpoint : forall S,
     ts_eq (interned_set e (F S)) (F_interned S).
   Proof.
@@ -393,7 +386,9 @@ End FixpointPreservation.
 Theorem intern_idempotent : forall e t,
   intern e (intern e t) = intern e t.
 Proof.
-  exact intern_idempotent_ax.
+  intros e t.
+  apply intern_canonical.
+  apply intern_preserves.
 Qed.
 
 (* ===================================================================== *)

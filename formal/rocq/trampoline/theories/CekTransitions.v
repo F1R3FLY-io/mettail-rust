@@ -281,6 +281,8 @@ Section CekModel.
     p' = Accept v /\ ts' = ts /\ K' = [].
   Proof.
     intros cat v ts p' ts' K' Hstep.
+    remember (@nil frame) as K eqn:HK.
+    replace (@nil frame) with K in Hstep by (subst; reflexivity).
     inversion Hstep; subst.
     - (* TR_Unwind_Infix: K = mkFrame ... :: K0, but K = [] *)
       discriminate.
@@ -307,8 +309,8 @@ Section CekModel.
     ts <> [].
   Proof.
     intros cat bp0 ts K p' ts' K' Hstep Hempty.
-    inversion Hstep; subst.
-    rewrite Hempty in *. simpl in *. discriminate.
+    subst ts.
+    inversion Hstep; subst; simpl in *; congruence.
   Qed.
 
   (* Drive produces Prefix. *)
@@ -365,7 +367,7 @@ Section CekModel.
   Proof.
     intros p K.
     unfold alpha. simpl.
-    rewrite map_length. reflexivity.
+    rewrite length_map. reflexivity.
   Qed.
 
   (* ================================================================= *)
@@ -391,16 +393,3 @@ Section CekModel.
     ts_length ts + length K.
 
 End CekModel.
-
-(* ===================================================================== *)
-(*  Verification: key types and lemmas are accessible                     *)
-(* ===================================================================== *)
-
-Check cek_step.
-Check cek_reachable.
-Check alpha.
-Check accept_is_final.
-Check error_is_final.
-Check unwind_empty_accepts.
-Check step_depth_bound.
-Check drive_produces_prefix.

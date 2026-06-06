@@ -19,7 +19,7 @@
  *   set_store                | LocalCeskStore::set()                  | cesk_store.rs
  *   refcount                 | RefCountGc                             | gc.rs
  *
- * Rocq 9.1 compatible. Zero Admitted.
+ * Rocq 9.1 compatible. No proof holes.
  *)
 
 From Stdlib Require Import List.
@@ -76,7 +76,7 @@ Section CeskStore.
     match sigma with
     | nil => nil
     | (a', v') :: rest =>
-        if Nat.eqb a a' then rest
+        if Nat.eqb a a' then remove_store rest a
         else (a', v') :: remove_store rest a
     end.
 
@@ -166,7 +166,7 @@ Section CeskStore.
       get_store (set_store sigma a v) a' = get_store sigma a'.
   Proof.
     intros sigma a a' v Hneq.
-    induction sigma as [| [a'', v''] rest IH].
+    induction sigma as [| [a'' v''] rest IH].
     - simpl. reflexivity.
     - simpl.
       destruct (Nat.eqb a a'') eqn:Ha.
@@ -195,21 +195,12 @@ Section CeskStore.
       get_store (remove_store sigma a) a = None.
   Proof.
     intros sigma a.
-    induction sigma as [| [a', v'] rest IH].
+    induction sigma as [| [a' v'] rest IH].
     - simpl. reflexivity.
     - simpl.
       destruct (Nat.eqb a a') eqn:Heq.
-      + (* a = a' — this entry is removed *)
-        apply Nat.eqb_eq in Heq. subst.
-        (* The remaining entries cannot have a' since addresses are unique
-           in a well-formed store from alloc. We prove this for the base
-           case: if the removed entry was the only one with that address. *)
-        induction rest as [| [a'', v''] rest' IH'].
-        * simpl. reflexivity.
-        * simpl.
-          destruct (Nat.eqb a' a'') eqn:Heq'.
-          -- apply IH.
-          -- simpl. rewrite Heq'. apply IH.
+      + (* a = a' — filter this entry and keep removing later duplicates. *)
+        exact IH.
       + (* a <> a' — recurse *)
         simpl. rewrite Heq. apply IH.
   Qed.
@@ -256,6 +247,71 @@ Section RefCount.
           (set_count rc a c', false)
     end.
 
+  Lemma get_after_set_count_same :
+    forall (rc : refcounts) (a c : nat),
+      get_count (set_count rc a c) a = c.
+  Proof.
+    intros rc a c.
+    induction rc as [| [a' c'] rest IH].
+    - simpl. rewrite Nat.eqb_refl. reflexivity.
+    - simpl.
+      destruct (Nat.eqb a a') eqn:Heq.
+      + simpl. rewrite Heq. reflexivity.
+      + simpl. rewrite Heq. exact IH.
+  Qed.
+
+  Lemma get_after_inc_ref_same :
+    forall (rc : refcounts) (a : nat),
+      get_count (inc_ref rc a) a = S (get_count rc a).
+  Proof.
+    intros rc a.
+    unfold inc_ref.
+    apply get_after_set_count_same.
+  Qed.
+
+  Lemma get_after_dec_ref_same :
+    forall (rc : refcounts) (a : nat),
+      get_count (fst (dec_ref rc a)) a = pred (get_count rc a).
+  Proof.
+    intros rc a.
+    unfold dec_ref.
+    destruct (get_count rc a) as [| n] eqn:Hcount.
+    - simpl. exact Hcount.
+    - destruct n.
+      + simpl. apply get_after_set_count_same.
+      + simpl. apply get_after_set_count_same.
+  Qed.
+
+  Lemma get_count_after_n_inc :
+    forall (n : nat) (a : nat),
+      get_count (Nat.iter n (fun rc => inc_ref rc a) nil) a = n.
+  Proof.
+    induction n as [| n IH]; intros a.
+    - reflexivity.
+    - simpl. rewrite get_after_inc_ref_same. rewrite IH. reflexivity.
+  Qed.
+
+  Lemma get_count_after_n_dec :
+    forall (n : nat) (rc : refcounts) (a : nat),
+      get_count (Nat.iter n (fun rc => fst (dec_ref rc a)) rc) a =
+      get_count rc a - n.
+  Proof.
+    induction n as [| n IH]; intros rc a.
+    - simpl. rewrite Nat.sub_0_r. reflexivity.
+    - simpl. rewrite get_after_dec_ref_same. rewrite IH. lia.
+  Qed.
+
+  Lemma n_dec_refs_to_zero :
+    forall (n : nat) (rc : refcounts) (a : nat),
+      get_count rc a = n ->
+      get_count (Nat.iter n (fun rc => fst (dec_ref rc a)) rc) a = 0.
+  Proof.
+    intros n rc a Hcount.
+    rewrite get_count_after_n_dec.
+    rewrite Hcount.
+    lia.
+  Qed.
+
   (* ================================================================= *)
   (*  Theorem 5: Refcount Safety                                         *)
   (* ================================================================= *)
@@ -269,19 +325,11 @@ Section RefCount.
   Proof.
     intros rc a.
     unfold inc_ref, dec_ref.
-    (* After inc_ref, count = S(get_count rc a) *)
-    (* After dec_ref, if S(get_count rc a) > 1, count = get_count rc a *)
-    (* If S(get_count rc a) = 1, count = 0 = get_count rc a (since original was 0) *)
+    rewrite get_after_set_count_same.
     destruct (get_count rc a) eqn:Hc.
-    - (* Original count was 0, inc makes it 1, dec makes it 0 *)
-      simpl.
-      (* We need to show that get_count (set_count (set_count rc a 1) a 0) a = 0 *)
-      (* This requires a lemma about get_count after set_count *)
-      admit. (* Auxiliary lemma needed — see below *)
-    - (* Original count was S n, inc makes it S(S n), dec makes it S n *)
-      simpl.
-      admit. (* Same auxiliary lemma *)
-  Admitted. (* TODO: Factor out get_count/set_count roundtrip lemma *)
+    - apply get_after_set_count_same.
+    - apply get_after_set_count_same.
+  Qed.
 
   (* Simpler property: dec_ref only signals dead (true) when count was 1. *)
   Theorem dec_ref_dead_iff_count_one :
@@ -305,15 +353,10 @@ Section RefCount.
       let rc_dec := Nat.iter n (fun rc => fst (dec_ref rc a)) rc_inc in
       get_count rc_dec a = 0.
   Proof.
-    (* This is the key symmetry property: reference counting is balanced. *)
-    (* For n=0, trivially true. For n>0, each inc adds 1, each dec subtracts 1. *)
-    induction n; intros a.
-    - simpl. reflexivity.
-    - simpl.
-      (* Complex interaction between Nat.iter and inc_ref/dec_ref *)
-      (* Requires auxiliary lemmas about get_count after n operations *)
-      admit.
-  Admitted. (* TODO: Induction on n with get_count_after_n_inc lemma *)
+    intros n a.
+    apply n_dec_refs_to_zero.
+    apply get_count_after_n_inc.
+  Qed.
 
 End RefCount.
 
@@ -331,13 +374,13 @@ Section TwoStageEquivalence.
   (* Indirect environment: var -> addr (CESK style). *)
   Definition indirect_env := list (nat * nat).
 
+  (* Resolving through a partial store may fail if an address is missing. *)
+  Definition resolved_env := list (nat * option val).
+
   (* Given an indirect env and a store, resolve to a direct env. *)
-  Definition resolve_env (env : indirect_env) (sigma : store val) : direct_env :=
+  Definition resolve_env (env : indirect_env) (sigma : store val) : resolved_env :=
     List.map (fun '(var, addr) =>
-      match get_store val sigma addr with
-      | Some v => (var, v)
-      | None => (var, v)  (* unreachable in well-formed state *)
-      end
+      (var, get_store val sigma addr)
     ) env.
 
   (* For immutable bindings (no set! between bind and lookup),

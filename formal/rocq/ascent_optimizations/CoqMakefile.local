@@ -1,0 +1,6 @@
+# Included by the generated CoqMakefile; keeps explicit
+# `make -f CoqMakefile` invocations under the formal RSS cap policy.
+
+FORMAL_CAPPED_TARGET_HINT ?= rocq-ascent-optimizations
+FORMAL_CLEAN_GOALS ?= clean cleanall archclean
+include ../../capped.mk

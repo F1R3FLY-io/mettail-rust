@@ -1,0 +1,6 @@
+# Included by the generated Makefile; keeps explicit `make -f Makefile`
+# invocations under the same cap policy as the GNUmakefile wrapper.
+
+FORMAL_CAPPED_TARGET_HINT ?= rocq-rule-consolidation
+FORMAL_CLEAN_GOALS ?= clean cleanall archclean
+include ../../capped.mk

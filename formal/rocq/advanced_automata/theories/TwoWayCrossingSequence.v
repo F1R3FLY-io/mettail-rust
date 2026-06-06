@@ -167,7 +167,7 @@ Qed.
 (*  + same position = same future behavior = infinite repetition).       *)
 (* ===================================================================== *)
 
-(* Check if a crossing entry appears in a crossing sequence *)
+(* Membership test for crossing entries. *)
 Fixpoint entry_in_cs (e : CrossingEntry) (cs : CrossingSeq) : bool :=
   match cs with
   | [] => false
@@ -401,11 +401,11 @@ Section OneWayConstruction.
   Proof.
     exists (mkOneWay
       one_way_state_count
-      0
-      (fun _ => false)
-      (fun q _ => q)     (* identity transitions as placeholder *)
-      (fun _ _ => 1)     (* unit weight *)
-      (fun _ _ => None)  (* no output *)
+      (w2t_initial T)
+      (w2t_accepting T)
+      (fun q a => w2t_next_state (w2t_delta T q a))
+      (fun q a => w2t_weight (w2t_delta T q a))
+      (fun q a => w2t_output (w2t_delta T q a))
     ).
     simpl. reflexivity.
   Qed.
@@ -534,7 +534,7 @@ Qed.
 (*  5. Semiring generality: The Rust uses arbitrary semirings.  The      *)
 (*     Rocq model uses nat with standard multiplication.                 *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)
 
 (* ===================================================================== *)
@@ -564,5 +564,5 @@ Qed.
 (*  L6: cs_append_length / cs_append_last                                  *)
 (*      Crossing sequence append is correct.                              *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)

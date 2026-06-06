@@ -3,22 +3,21 @@
 ## Standard Build
 
 ```bash
-cd formal/rocq/rule_consolidation
-coq_makefile -f _CoqProject -o CoqMakefile
-systemd-run --user --scope -p MemoryMax=16G -p CPUQuota=400% make -f CoqMakefile
+make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-rule-consolidation
 ```
 
 ## Notes
 
-- Memory: 16GB limit is generous for these proofs (they're lightweight)
-- CPU: 400% = 4 cores, sufficient for parallel compilation
+- The top-level harness applies `MemoryMax=34359738368` (32 GiB),
+  `MemorySwapMax=0`, `TasksMax=128`, and serial `make -j1`.
+- Direct builds from this directory are refused by `../../capped.mk`; route
+  every verification run through `check-capped`.
 - These proofs are straightforward case analyses; they should compile in under 30 seconds
-- Serial compilation (`-j1`) is not needed here -- no memory-intensive modules
 
 ## Clean Build
 
 ```bash
-make -f CoqMakefile clean
+make -C formal/rocq/rule_consolidation clean
 ```
 
 ## Verification

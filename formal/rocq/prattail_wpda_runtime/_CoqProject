@@ -1,0 +1,9 @@
+-Q theories PrattailWpdaRuntime
+
+theories/RuntimeModel.v
+theories/RecoveryBound.v
+theories/RecoverySignature.v
+theories/FiniteHarness.v
+theories/CohortQuotient.v
+theories/ChainAbsorb.v
+theories/TomitaAggregation.v

@@ -396,7 +396,7 @@ Qed.
 (*  5. Complexity: The actual complexity is O(k! * |Q|^2 * |Sigma|) for *)
 (*     partition refinement.  The Rocq bound is more conservative.       *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)
 
 (* ===================================================================== *)
@@ -426,5 +426,5 @@ Qed.
 (*  T5: self_bisimilar                                                     *)
 (*      Every automaton is bisimilar to itself.                           *)
 (*                                                                         *)
-(*  All proofs are COMPLETE -- zero Admitted.                               *)
+(*  All proofs are complete; no proof holes remain.                         *)
 (* ===================================================================== *)

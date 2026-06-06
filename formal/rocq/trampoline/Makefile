@@ -5,9 +5,11 @@
 #   make clean        Clean build artifacts
 #   make CoqMakefile  Regenerate CoqMakefile from _CoqProject
 #
-# Resource-limited build (recommended):
-#   systemd-run --user --scope -p MemoryMax=126G -p CPUQuota=1800% \
-#     -p IOWeight=30 -p TasksMax=200 make -j1
+# Resource-limited build (recommended, from repository root):
+#   make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-trampoline
+
+FORMAL_CAPPED_TARGET_HINT := rocq-trampoline
+include ../../capped.mk
 
 CoqMakefile: _CoqProject
 	coq_makefile -f $< -o $@

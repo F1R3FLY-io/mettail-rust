@@ -11,12 +11,8 @@
 #   5. Fold Triggers           (if-match boolean)
 #   6. Fold Identities         (if-match boolean)
 #
-# Build:
-#   coq_makefile -f _CoqProject -o CoqMakefile && make -f CoqMakefile
-#
-# With resource limits (recommended):
-#   coq_makefile -f _CoqProject -o CoqMakefile && \
-#   systemd-run --user --scope -p MemoryMax=16G -p CPUQuota=400% make -f CoqMakefile
+# Build from the repository root:
+#   make -C formal check-capped FORMAL_CAPPED_TARGET=rocq-rule-consolidation
 #
 # Prerequisites:
 #   - Rocq 9.0+ (tested with 9.1.0)

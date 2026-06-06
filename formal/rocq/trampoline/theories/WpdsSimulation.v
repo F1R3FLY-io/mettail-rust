@@ -427,18 +427,9 @@ Section WpdsSimulation.
   Proof.
     intros gamma0 c Hcek gamma w Heq.
     subst c.
-    apply poststar_sound with gamma0.
+    apply (poststar_sound gamma0 gamma w).
     apply cek2_multi_step_simulation.
     exact Hcek.
   Qed.
 
 End WpdsSimulation.
-
-(* ===================================================================== *)
-(*  Verification: key theorems accessible                                  *)
-(* ===================================================================== *)
-
-Check cek2_forward_simulation.
-Check cek2_multi_step_simulation.
-Check cek3_dead_rule_soundness.
-Check cek3_abstract_dead_rule.
