@@ -92,6 +92,10 @@ prattail/target/*
 **/CoqMakefile.conf
 **/.CoqMakefile.d
 
+# Formal verification build/model-checker artifacts
+**/_apalache-out/
+**/.lake/
+
 *.mm_profdata
 
 *.sw?
