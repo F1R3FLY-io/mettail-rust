@@ -39,7 +39,7 @@ fn write_if_changed(path: &Path, content: &str) -> std::io::Result<bool> {
 pub fn write_simulation_binary(language: &LanguageDef) {
     let lang_name = language.name.to_string();
     let lang_lower = lang_name.to_lowercase();
-    let content = generate_simulation_binary(language);
+    let content = super::format_generated_rust_source(&generate_simulation_binary(language));
 
     match write_binary_to_disk(&lang_lower, &content) {
         Ok((path, true)) => {

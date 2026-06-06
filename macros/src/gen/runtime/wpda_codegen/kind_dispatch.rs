@@ -149,23 +149,18 @@ fn emit_prefix_primary_dispatch_arms(
         for rule in rules {
             match classify_atomic(rule, language) {
                 AtomicShape::TerminalKeyword { terminal_text, .. }
-                | AtomicShape::PrefixOperator {
-                    trigger: terminal_text, ..
-                }
-                | AtomicShape::CrossCatPrefixUnary {
-                    trigger: terminal_text, ..
-                } => {
+                | AtomicShape::PrefixOperator { trigger: terminal_text, .. }
+                | AtomicShape::CrossCatPrefixUnary { trigger: terminal_text, .. } => {
                     fixed_triggers.insert((cat_src_idx, terminal_text));
-                }
+                },
                 AtomicShape::NonAtomic => {
                     if let Some(sp) = rule.syntax_pattern.as_ref() {
-                        if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) = sp.first()
-                        {
+                        if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) = sp.first() {
                             fixed_triggers.insert((cat_src_idx, text.clone()));
                         }
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -228,12 +223,9 @@ fn emit_arms_for_shape(
                 quote! { mettail_prattail::automata::TokenKind::Integer },
                 prefix_arms,
             );
-        }
+        },
         AtomicShape::LiteralBoolean => {
-            push_simple_atomic(
-                quote! { mettail_prattail::automata::TokenKind::True },
-                prefix_arms,
-            );
+            push_simple_atomic(quote! { mettail_prattail::automata::TokenKind::True }, prefix_arms);
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::False },
                 prefix_arms,
@@ -242,22 +234,20 @@ fn emit_arms_for_shape(
                 quote! { mettail_prattail::automata::TokenKind::BooleanLit },
                 prefix_arms,
             );
-        }
+        },
         AtomicShape::LiteralString => {
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::StringLit },
                 prefix_arms,
             );
-        }
+        },
         AtomicShape::LiteralFloat => {
             push_simple_atomic(
                 quote! { mettail_prattail::automata::TokenKind::Float },
                 prefix_arms,
             );
-        }
-        AtomicShape::LiteralPatterned {
-            cat_name, family, ..
-        } => {
+        },
+        AtomicShape::LiteralPatterned { cat_name, family, .. } => {
             let cat_name_lit = cat_name.as_str();
             // M6c.5.fix (2026-05-14): the calculator/rhocalc codegen
             // emits `TokenKind::Custom(cat_name)` for BigInt/BigRat/
@@ -296,7 +286,7 @@ fn emit_arms_for_shape(
                         cat_name_lit,
                         prefix_arms,
                     );
-                }
+                },
                 LiteralFamily::Rational => {
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
@@ -308,7 +298,7 @@ fn emit_arms_for_shape(
                         cat_name_lit,
                         prefix_arms,
                     );
-                }
+                },
                 LiteralFamily::FixedPoint => {
                     push_payload_eq_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Custom(__cat) },
@@ -320,13 +310,13 @@ fn emit_arms_for_shape(
                         cat_name_lit,
                         prefix_arms,
                     );
-                }
+                },
                 LiteralFamily::Float => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::Float },
                         prefix_arms,
                     );
-                }
+                },
                 LiteralFamily::Boolean => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::True },
@@ -340,15 +330,15 @@ fn emit_arms_for_shape(
                         quote! { mettail_prattail::automata::TokenKind::BooleanLit },
                         prefix_arms,
                     );
-                }
+                },
                 LiteralFamily::String => {
                     push_simple_atomic(
                         quote! { mettail_prattail::automata::TokenKind::StringLit },
                         prefix_arms,
                     );
-                }
+                },
             }
-        }
+        },
         AtomicShape::VarRule { .. } => {
             // Var rules are prefix-site token-consuming rules. When a lex DAG
             // position has both a keyword primary (`Fixed("merge")`) and an
@@ -361,7 +351,7 @@ fn emit_arms_for_shape(
                 quote! { mettail_prattail::automata::TokenKind::Ident },
                 prefix_arms,
             );
-        }
+        },
 
         // M6c.6.4.b (2026-05-14): same-cat unary prefix operator.
         // Emits a PrefixDispatch-site arm binding `Fixed(trigger)` to
@@ -373,10 +363,7 @@ fn emit_arms_for_shape(
         // `body_src_idx` is the operand cat's src_idx — for same-cat
         // unary prefix it equals `cat_src_idx`. Looked up via
         // `categories` slice (codegen-baked).
-        AtomicShape::PrefixOperator {
-            trigger,
-            operand_cat_name,
-        } => {
+        AtomicShape::PrefixOperator { trigger, operand_cat_name } => {
             let body_src_idx = categories
                 .iter()
                 .position(|c| c == operand_cat_name)
@@ -394,20 +381,20 @@ fn emit_arms_for_shape(
                         }
                     ),
             });
-        }
+        },
         // The remaining shapes don't directly consume a single TokenKind
         // via the lex-Fork code path. TerminalKeyword's `Fixed(text)` is
         // never a lex-DAG ambiguity producer (terminals are exact byte
         // matches, never multi-alt); CrossCatProjection/PrefixUnary
         // depend on cross-cat dispatch which the walker handles
         // separately; NonAtomic doesn't apply.
-        | AtomicShape::TerminalKeyword { .. }
+        AtomicShape::TerminalKeyword { .. }
         | AtomicShape::CrossCatProjection { .. }
         | AtomicShape::CrossCatPrefixUnary { .. }
         | AtomicShape::NonAtomic => {
             // InfixLoop-site lex-alt arms are generated from the binding-power
             // table, not from AtomicShape.
-        }
+        },
     }
 }
 

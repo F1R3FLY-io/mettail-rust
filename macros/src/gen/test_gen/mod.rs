@@ -44,7 +44,45 @@ pub mod recovery_corruption;
 
 use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
+use std::io::Write;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+/// Format generated Rust source before comparing/writing generated files.
+///
+/// The generated integration tests and simulation binaries are tracked source
+/// artifacts, but the macro also refreshes them during language compilation.
+/// Formatting the generated text at the write boundary keeps `cargo fmt` and
+/// macro regeneration from dirtying the worktree in opposite directions. If
+/// `rustfmt` is unavailable or rejects a transient generated fragment, keep the
+/// old behavior and write the unformatted text.
+fn format_generated_rust_source(content: &str) -> String {
+    let mut child = match Command::new("rustfmt")
+        .args(["--edition", "2021", "--emit", "stdout"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return content.to_string(),
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        if stdin.write_all(content.as_bytes()).is_err() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return content.to_string();
+        }
+    }
+
+    match child.wait_with_output() {
+        Ok(output) if output.status.success() => {
+            String::from_utf8(output.stdout).unwrap_or_else(|_| content.to_string())
+        },
+        _ => content.to_string(),
+    }
+}
 
 /// Write generated test files for the language, split into multiple
 /// test-binary files to bound rustc peak memory per compilation unit.
@@ -154,7 +192,8 @@ fn write_test_section(lang_name: &str, section: &str, content: &str) {
     let filename = format!("gen_{}_{}.rs", lang_name.to_lowercase(), section);
     match get_test_output_path(&filename) {
         Ok(path) => {
-            match write_if_changed(&path, content) {
+            let formatted = format_generated_rust_source(content);
+            match write_if_changed(&path, &formatted) {
                 Ok(true) => {
                     eprintln!("  ({}) Generated test file: {}", lang_name, path.display());
                 },
