@@ -1,5 +1,6 @@
 # Rust
 /target/
+**/target/
 **/*.rs.bk
 *.pdb
 
@@ -79,8 +80,6 @@ target/tests/trybuild/
 
 .claude/projects/*
 .claude/scheduled_tasks.lock
-
-prattail/target/*
 
 # Rocq/Coq build artifacts
 **/*.vo

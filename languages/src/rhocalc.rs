@@ -876,7 +876,8 @@ language! {
 
         NewCong . | S ~> T |- (PNew ^[xs].S) ~> (PNew ^[xs].T);
 
-        // TODO: shorthand to make these in the term declarations
+        // Congruence remains explicit here until the language macro derives
+        // rewrite congruence directly from term declarations.
         AddCongL . | S ~> T |- (Add S X) ~> (Add T X);
 
         AddCongR . | S ~> T |- (Add X S) ~> (Add X T);
@@ -1004,7 +1005,7 @@ language! {
         // growing Vec<Proc> facts ([a,b,c] + [a,b,c] → [a,b,c,b,c] → ...).
         // Empirically this caused 8 GB OOM in ~6 min on `{1+2+3}` reducer
         // tests (chained_add, grouped_mul, str_of_add, str_of_eq,
-        // str_of_zero_gt_zero). The author's own TODO comment at the (now
+        // str_of_zero_gt_zero). The author's own note at the (now
         // removed) `shrinking_path` stub acknowledged the issue.
         //
         // Future direction: if shrinking-step semantics are wanted, the
@@ -1012,7 +1013,7 @@ language! {
         // if p.to_string().len() > q.to_string().len()` — bounded by
         // |rw_proc|, no transitive Vec<Proc> accumulation.
 
-        // contexts for testing (TODO: auto-generate)
+        // Disabled example contexts for parser and reducer experiments.
         // proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
         // proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
 
