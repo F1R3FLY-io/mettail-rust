@@ -13,7 +13,7 @@ formal verification entry point is protected as well. `check-capped` uses
 `MemoryMax=34359738368` (32 GiB), `MemoryHigh=30064771072` (28 GiB),
 `MemorySwapMax=0`, `TasksMax=128`, `make -j1`, `CARGO_BUILD_JOBS=1`,
 `cargo test -j1` for the Rust formal regression target, and the
-repository-local `target/tmp` scratch directory. `FORMAL_MEMORY_MAX_BYTES` and
+repository-local `.formal-tmp` scratch directory. `FORMAL_MEMORY_MAX_BYTES` and
 `FORMAL_MEMORY_HIGH_BYTES` may be lowered for tighter local runs, but
 `check-capped` rejects any `FORMAL_MEMORY_MAX_BYTES` above 34359738368 bytes.
 The capped service receives a deterministic `PATH` prefix through
@@ -55,7 +55,7 @@ The capped entry point runs:
   still parse through identifier alternatives when the target category requires
   the variable rule
 
-The formal Makefiles default `TMPDIR` to the repository-local `target/tmp`
+The formal Makefiles default `TMPDIR` to the repository-local `.formal-tmp`
 directory and create it before invoking subtools. Override `TMPDIR` explicitly
 only when you want a different non-tmpfs scratch location.
 

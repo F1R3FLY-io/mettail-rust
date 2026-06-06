@@ -1,7 +1,7 @@
 SHELL := /bin/sh
 
 REPO_ROOT := ..
-FORMAL_TMPDIR ?= $(abspath $(REPO_ROOT)/target/tmp)
+FORMAL_TMPDIR ?= $(abspath $(REPO_ROOT)/.formal-tmp)
 TMPDIR ?= $(FORMAL_TMPDIR)
 export TMPDIR
 

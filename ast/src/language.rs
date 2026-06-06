@@ -331,6 +331,30 @@ impl BehavioralPred {
     /// suitable for runtime evaluation.
     pub fn to_quantified_formula(&self) -> proc_macro2::TokenStream {
         use quote::quote;
+        match self.try_to_quantified_formula() {
+            Ok(expr) => expr,
+            Err(msg) => {
+                let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
+                quote! {{
+                    compile_error!(#msg_lit);
+                    prattail::logict::QuantifiedFormula::atom(
+                        "__unsupported_behavioral_pred__",
+                        vec![],
+                    )
+                }}
+            },
+        }
+    }
+
+    /// Fallible variant of [`to_quantified_formula`](Self::to_quantified_formula).
+    ///
+    /// `AcMatch` is structural: it binds variables while enumerating multiset
+    /// partitions and therefore has no faithful `QuantifiedFormula` encoding.
+    /// Codegen paths that support it lower it through specialized Ascent
+    /// clauses; callers that need a formula can use this method to reject
+    /// unsupported shapes without a macro-expansion panic.
+    pub fn try_to_quantified_formula(&self) -> Result<proc_macro2::TokenStream, String> {
+        use quote::quote;
         match self {
             BehavioralPred::RelationQuery { relation_name, args, negated } => {
                 let rel_str = relation_name.to_string();
@@ -354,14 +378,14 @@ impl BehavioralPred {
                     )
                 };
                 if *negated {
-                    quote! { prattail::logict::QuantifiedFormula::not(#atom) }
+                    Ok(quote! { prattail::logict::QuantifiedFormula::not(#atom) })
                 } else {
-                    atom
+                    Ok(atom)
                 }
             },
             BehavioralPred::Quantified { quantifier, var, domain, bound, body } => {
                 let var_str = var.to_string();
-                let body_expr = body.to_quantified_formula();
+                let body_expr = body.try_to_quantified_formula()?;
                 let domain_expr = if let Some(dom) = domain {
                     let dom_str = dom.to_string();
                     if let Some(b) = bound {
@@ -384,55 +408,51 @@ impl BehavioralPred {
                     }
                 };
                 match quantifier {
-                    Quantifier::ForAll => quote! {
+                    Quantifier::ForAll => Ok(quote! {
                         prattail::logict::QuantifiedFormula::forall(
                             #var_str,
                             #domain_expr,
                             #body_expr,
                         )
-                    },
-                    Quantifier::Exists => quote! {
+                    }),
+                    Quantifier::Exists => Ok(quote! {
                         prattail::logict::QuantifiedFormula::exists(
                             #var_str,
                             #domain_expr,
                             #body_expr,
                         )
-                    },
+                    }),
                 }
             },
             BehavioralPred::And(a, b) => {
-                let a_expr = a.to_quantified_formula();
-                let b_expr = b.to_quantified_formula();
-                quote! {
+                let a_expr = a.try_to_quantified_formula()?;
+                let b_expr = b.try_to_quantified_formula()?;
+                Ok(quote! {
                     prattail::logict::QuantifiedFormula::and(#a_expr, #b_expr)
-                }
+                })
             },
             BehavioralPred::Or(a, b) => {
-                let a_expr = a.to_quantified_formula();
-                let b_expr = b.to_quantified_formula();
-                quote! {
+                let a_expr = a.try_to_quantified_formula()?;
+                let b_expr = b.try_to_quantified_formula()?;
+                Ok(quote! {
                     prattail::logict::QuantifiedFormula::or(#a_expr, #b_expr)
-                }
+                })
             },
             BehavioralPred::Not(inner) => {
-                let inner_expr = inner.to_quantified_formula();
-                quote! {
+                let inner_expr = inner.try_to_quantified_formula()?;
+                Ok(quote! {
                     prattail::logict::QuantifiedFormula::not(#inner_expr)
-                }
+                })
             },
             BehavioralPred::Implies(a, b) => {
-                let a_expr = a.to_quantified_formula();
-                let b_expr = b.to_quantified_formula();
-                quote! {
+                let a_expr = a.try_to_quantified_formula()?;
+                let b_expr = b.try_to_quantified_formula()?;
+                Ok(quote! {
                     prattail::logict::QuantifiedFormula::implies(#a_expr, #b_expr)
-                }
+                })
             },
             BehavioralPred::AcMatch { .. } => {
-                // AcMatch does not translate to QuantifiedFormula —
-                // it generates specialized partition enumeration code
-                // in the codegen layer (rules.rs). This arm should never
-                // be reached; AcMatch is intercepted before this point.
-                panic!("BUG: AcMatch should be handled by specialized codegen, not to_quantified_formula()")
+                Err("ac_match behavioral predicates require specialized Ascent partition lowering and cannot be embedded in QuantifiedFormula".to_string())
             },
             BehavioralPred::Top => {
                 // Top is the always-true identity predicate used when the guard
@@ -440,12 +460,12 @@ impl BehavioralPred {
                 // predicate is per-instance runtime data. The Ascent rule
                 // body has no join clause for Top (the rule fires
                 // unconditionally on its structural pattern).
-                quote! {
+                Ok(quote! {
                     prattail::logict::QuantifiedFormula::atom(
                         "__top__",
                         vec![],
                     )
-                }
+                })
             },
         }
     }
@@ -4843,6 +4863,52 @@ mod guards_parse_tests {
 
     fn parse_lang(src: proc_macro2::TokenStream) -> LanguageDef {
         parse2::<LanguageDef>(src).expect("language parse failed")
+    }
+
+    fn ident(name: &str) -> Ident {
+        Ident::new(name, proc_macro2::Span::call_site())
+    }
+
+    fn ac_match_pred() -> BehavioralPred {
+        BehavioralPred::AcMatch {
+            bag: ident("bag"),
+            elements: vec![ident("head"), ident("tail")],
+            rest: Some(ident("rest")),
+        }
+    }
+
+    #[test]
+    fn ac_match_quantified_formula_lowering_is_rejected_explicitly() {
+        let err = ac_match_pred()
+            .try_to_quantified_formula()
+            .expect_err("AcMatch must not be embedded in QuantifiedFormula");
+
+        assert!(err.contains("ac_match"));
+        assert!(err.contains("QuantifiedFormula"));
+    }
+
+    #[test]
+    fn ac_match_formula_codegen_emits_compile_error_instead_of_panicking() {
+        let tokens = ac_match_pred().to_quantified_formula().to_string();
+
+        assert!(tokens.contains("compile_error"));
+        assert!(tokens.contains("__unsupported_behavioral_pred__"));
+    }
+
+    #[test]
+    fn nested_ac_match_quantified_formula_lowering_propagates_error() {
+        let relation = BehavioralPred::RelationQuery {
+            relation_name: ident("halts"),
+            args: vec![PredArg::Var(ident("x"))],
+            negated: false,
+        };
+        let pred = BehavioralPred::And(Box::new(relation), Box::new(ac_match_pred()));
+        let err = pred
+            .try_to_quantified_formula()
+            .expect_err("compound predicates must reject nested AcMatch");
+
+        assert!(err.contains("ac_match"));
+        assert!(err.contains("QuantifiedFormula"));
     }
 
     #[test]

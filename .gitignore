@@ -95,6 +95,7 @@ prattail/target/*
 # Formal verification build/model-checker artifacts
 **/_apalache-out/
 **/.lake/
+/.formal-tmp/
 
 *.mm_profdata
 

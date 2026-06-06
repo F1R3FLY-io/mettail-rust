@@ -27,7 +27,7 @@ Run the green checks with:
 make -C formal/tla/prattail_wpda check
 ```
 
-This Makefile defaults `TMPDIR` to the repository-local `target/tmp` directory
+This Makefile defaults `TMPDIR` to the repository-local `.formal-tmp` directory
 for short-lived expected-counterexample logs.
 
 `WrapSensitiveExpectedFail.cfg` is deliberately not part of this directory's

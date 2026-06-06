@@ -2,7 +2,7 @@ APALACHE ?= apalache-mc
 TLA := PrattailWpda.tla
 LENGTH ?= 4
 REPO_ROOT := ../../..
-LOCAL_TMPDIR ?= $(abspath $(REPO_ROOT)/target/tmp)
+LOCAL_TMPDIR ?= $(abspath $(REPO_ROOT)/.formal-tmp)
 TMPDIR ?= $(LOCAL_TMPDIR)
 export TMPDIR
 
