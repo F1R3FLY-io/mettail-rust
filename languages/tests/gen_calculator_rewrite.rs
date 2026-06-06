@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::calculator::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Rewrite tests (one per rewrite rule)
@@ -1776,8 +1776,14 @@ fn rewrite_calculator_normcastuint32tobigintinproc() {
     let rw = &rewrites[215];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastUInt32ToBigIntInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigIntInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigIntInProc RHS should be non-empty"
+    );
 }
 
 // Rewrite test for UInt32ToBigRatCong skipped: congruence rule (needs triggering context)
@@ -1802,8 +1808,14 @@ fn rewrite_calculator_normcastuint32tobigratinproc() {
     let rw = &rewrites[217];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastUInt32ToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigRatInProc RHS should be non-empty"
+    );
 }
 
 // Rewrite test for FloatToBigRatCong skipped: congruence rule (needs triggering context)
@@ -1828,8 +1840,14 @@ fn rewrite_calculator_normcastfloattobigratinproc() {
     let rw = &rewrites[219];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastFloatToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastFloatToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastFloatToBigRatInProc RHS should be non-empty"
+    );
 }
 
 // Rewrite test for BigIntToBigRatCong skipped: congruence rule (needs triggering context)
@@ -1854,8 +1872,14 @@ fn rewrite_calculator_normcastbiginttobigratinproc() {
     let rw = &rewrites[221];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastBigIntToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastBigIntToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastBigIntToBigRatInProc RHS should be non-empty"
+    );
 }
 
 // Rewrite test for FixedToBigRatCong skipped: congruence rule (needs triggering context)
@@ -1880,7 +1904,12 @@ fn rewrite_calculator_normcastfixedtobigratinproc() {
     let rw = &rewrites[223];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastFixedToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastFixedToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastFixedToBigRatInProc RHS should be non-empty"
+    );
 }
-

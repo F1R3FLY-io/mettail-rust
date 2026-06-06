@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::calculator::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -237,14 +237,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -274,15 +282,11 @@ impl<'a> TapeReader<'a> {
 fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     if depth == 0 {
         let result = {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-};
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        };
         return result.unwrap_proc();
     }
 
@@ -290,15 +294,12 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_proc(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_proc(),
         1 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::ProcInt(f0)
@@ -368,7 +369,9 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
         let result = match choice {
             0 => AnyTerm::WrapInt(Int::Err),
             1 => AnyTerm::WrapInt(Int::CastErrInt),
-            _ => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)),
+            _ => {
+                AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX))
+            },
         };
         return result.unwrap_int();
     }
@@ -378,7 +381,8 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     match choice {
         0 => AnyTerm::WrapInt(Int::Err).unwrap_int(),
         1 => AnyTerm::WrapInt(Int::CastErrInt).unwrap_int(),
-        2 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_int(),
+        2 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX))
+            .unwrap_int(),
         3 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
@@ -546,7 +550,9 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
         let choice = (reader.next_byte() as usize) % 2;
         let result = match choice {
             0 => AnyTerm::WrapBigInt(BigInt::CastErrBigInt),
-            _ => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32())))),
+            _ => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(
+                num_bigint::BigInt::from(reader.next_i32()),
+            ))),
         };
         return result.unwrap_bigint();
     }
@@ -555,7 +561,10 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapBigInt(BigInt::CastErrBigInt).unwrap_bigint(),
-        1 => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32())))).unwrap_bigint(),
+        1 => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(
+            num_bigint::BigInt::from(reader.next_i32()),
+        )))
+        .unwrap_bigint(),
         2 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             BigInt::IntToBigInt(f0)
@@ -614,7 +623,9 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
         let choice = (reader.next_byte() as usize) % 2;
         let result = match choice {
             0 => AnyTerm::WrapBigRat(BigRat::Err),
-            _ => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32()))))),
+            _ => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+                num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32())),
+            ))),
         };
         return result.unwrap_bigrat();
     }
@@ -623,7 +634,10 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapBigRat(BigRat::Err).unwrap_bigrat(),
-        1 => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32()))))).unwrap_bigrat(),
+        1 => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+            num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32())),
+        )))
+        .unwrap_bigrat(),
         2 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             BigRat::IntToBigRat(f0)
@@ -704,7 +718,10 @@ fn build_fixed_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Fixed {
         let choice = (reader.next_byte() as usize) % 2;
         let result = match choice {
             0 => AnyTerm::WrapFixed(Fixed::CastErrFixed),
-            _ => AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(reader.next_i32()), 0))),
+            _ => AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(
+                num_bigint::BigInt::from(reader.next_i32()),
+                0,
+            ))),
         };
         return result.unwrap_fixed();
     }
@@ -713,7 +730,11 @@ fn build_fixed_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Fixed {
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapFixed(Fixed::CastErrFixed).unwrap_fixed(),
-        1 => AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(reader.next_i32()), 0))).unwrap_fixed(),
+        1 => AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(
+            num_bigint::BigInt::from(reader.next_i32()),
+            0,
+        )))
+        .unwrap_fixed(),
         2 => {
             let f0 = std::sync::Arc::new(build_fixed_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_fixed_from_tape(reader, child_depth));
@@ -776,7 +797,9 @@ fn build_float_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Float {
         let choice = (reader.next_byte() as usize) % 2;
         let result = match choice {
             0 => AnyTerm::WrapFloat(Float::CastErrFloat),
-            _ => AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(reader.next_f64().abs()))),
+            _ => AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(
+                reader.next_f64().abs(),
+            ))),
         };
         return result.unwrap_float();
     }
@@ -785,7 +808,10 @@ fn build_float_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Float {
     let child_depth = depth - 1;
     match choice {
         0 => AnyTerm::WrapFloat(Float::CastErrFloat).unwrap_float(),
-        1 => AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(reader.next_f64().abs()))).unwrap_float(),
+        1 => AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(
+            reader.next_f64().abs(),
+        )))
+        .unwrap_float(),
         2 => {
             let f0 = std::sync::Arc::new(build_float_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_float_from_tape(reader, child_depth));
@@ -2614,7 +2640,24 @@ fn sim_calculator_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["fraction ( 0 , 0 )", "0 + 0", "0 * 0", "0 / 0", "- 0", "0 bitand 0", "0 bitor 0", "bitnot 0", "1 ? 1 : 1", "1 == 1", "1.0 == 1.0", "true == true", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "fraction ( 0 , 0 )",
+        "0 + 0",
+        "0 * 0",
+        "0 / 0",
+        "- 0",
+        "0 bitand 0",
+        "0 bitor 0",
+        "bitnot 0",
+        "1 ? 1 : 1",
+        "1 == 1",
+        "1.0 == 1.0",
+        "true == true",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -2631,10 +2674,10 @@ fn sim_calculator_normal_form_reachability() {
                 if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
                     reached_nf += 1;
                 }
-            }
+            },
             _ => {
                 // Skip inputs that fail to parse, evaluate, or panic.
-            }
+            },
         }
     }
 
@@ -2666,7 +2709,24 @@ fn sim_calculator_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["fraction ( 0 , 0 )", "0 + 0", "0 * 0", "0 / 0", "- 0", "0 bitand 0", "0 bitor 0", "bitnot 0", "1 ? 1 : 1", "1 == 1", "1.0 == 1.0", "true == true", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "fraction ( 0 , 0 )",
+        "0 + 0",
+        "0 * 0",
+        "0 / 0",
+        "- 0",
+        "0 bitand 0",
+        "0 bitor 0",
+        "bitnot 0",
+        "1 ? 1 : 1",
+        "1 == 1",
+        "1.0 == 1.0",
+        "true == true",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -2728,7 +2788,24 @@ fn sim_calculator_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["fraction ( 0 , 0 )", "0 + 0", "0 * 0", "0 / 0", "- 0", "0 bitand 0", "0 bitor 0", "bitnot 0", "1 ? 1 : 1", "1 == 1", "1.0 == 1.0", "true == true", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "fraction ( 0 , 0 )",
+        "0 + 0",
+        "0 * 0",
+        "0 / 0",
+        "- 0",
+        "0 bitand 0",
+        "0 bitor 0",
+        "bitnot 0",
+        "1 ? 1 : 1",
+        "1 == 1",
+        "1.0 == 1.0",
+        "true == true",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -2763,7 +2840,24 @@ fn sim_calculator_eval_determinism() {
     let lang = CalculatorLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["fraction ( 0 , 0 )", "0 + 0", "0 * 0", "0 / 0", "- 0", "0 bitand 0", "0 bitor 0", "bitnot 0", "1 ? 1 : 1", "1 == 1", "1.0 == 1.0", "true == true", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "fraction ( 0 , 0 )",
+        "0 + 0",
+        "0 * 0",
+        "0 / 0",
+        "- 0",
+        "0 bitand 0",
+        "0 bitor 0",
+        "bitnot 0",
+        "1 ? 1 : 1",
+        "1 == 1",
+        "1.0 == 1.0",
+        "true == true",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {
@@ -2872,4 +2966,3 @@ proptest! {
         // are tolerated — they are covered by dedicated non-proptest simulation tests.
     }
 }
-

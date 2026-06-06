@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::ledtest::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -120,14 +120,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -156,14 +164,16 @@ impl<'a> TapeReader<'a> {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_num_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Num {
     if depth == 0 {
-        let result = AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
+        let result =
+            AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
         return result.unwrap_num();
     }
 
     let choice = (reader.next_byte() as usize) % 7;
     let child_depth = depth - 1;
     match choice {
-        0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_num(),
+        0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX))
+            .unwrap_num(),
         1 => {
             let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
@@ -236,15 +246,11 @@ fn build_pred_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Pred {
 fn build_expr_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Expr {
     if depth == 0 {
         let result = {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapExpr(Expr::EVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-};
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapExpr(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        };
         return result.unwrap_expr();
     }
 
@@ -252,15 +258,12 @@ fn build_expr_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Expr {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapExpr(Expr::EVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_expr(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapExpr(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_expr(),
         1 => {
             let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             Expr::CastNum(f0)
@@ -642,7 +645,8 @@ fn sim_ledtest_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> =
+        vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -659,10 +663,10 @@ fn sim_ledtest_normal_form_reachability() {
                 if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
                     reached_nf += 1;
                 }
-            }
+            },
             _ => {
                 // Skip inputs that fail to parse, evaluate, or panic.
-            }
+            },
         }
     }
 
@@ -694,7 +698,8 @@ fn sim_ledtest_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> =
+        vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -756,7 +761,8 @@ fn sim_ledtest_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> =
+        vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -791,7 +797,8 @@ fn sim_ledtest_eval_determinism() {
     let lang = LedTestLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
+    let test_inputs: Vec<&str> =
+        vec!["1 == 1", "1 != 1", "1 + 1", "1 * 1", "- 1", "1 !", "true and true", "1", "true"];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {
@@ -900,4 +907,3 @@ proptest! {
         // are tolerated — they are covered by dedicated non-proptest simulation tests.
     }
 }
-

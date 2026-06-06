@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::guardedrho::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -120,14 +120,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -160,15 +168,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         let result = match choice {
             0 => AnyTerm::WrapProc(Proc::PNil),
             _ => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-},
+                let _ = reader.next_byte(); // consume tape byte for replay determinism
+                AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))))
+            },
         };
         return result.unwrap_proc();
     }
@@ -178,26 +182,23 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     match choice {
         0 => AnyTerm::WrapProc(Proc::PNil).unwrap_proc(),
         1 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_proc(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_proc(),
         2 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Proc::CastInt(f0)
         },
         3 => {
             let num_elems = (reader.next_byte() % 4) as usize;
-let mut bag = mettail_runtime::HashBag::new();
-for _ in 0..num_elems {
-bag.insert(build_proc_from_tape(reader, child_depth));
-}
-Proc::PPar(bag)
+            let mut bag = mettail_runtime::HashBag::new();
+            for _ in 0..num_elems {
+                bag.insert(build_proc_from_tape(reader, child_depth));
+            }
+            Proc::PPar(bag)
         },
         4 => {
             let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
@@ -208,9 +209,9 @@ Proc::PPar(bag)
             let pre_0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             let pred_1 = mettail_runtime::BehavioralPred::Top;
             let binder_name = format!("a{}", reader.next_byte() % 8);
-let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
-let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
+            let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
+            let body = build_proc_from_tape(reader, child_depth);
+            let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
             Proc::PGuardedInput(pre_0, pred_1, scope)
         },
         _ => {
@@ -229,15 +230,11 @@ let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
 fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     if depth == 0 {
         let result = {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapName(Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-};
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        };
         return result.unwrap_name();
     }
 
@@ -245,15 +242,12 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapName(Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_name(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_name(),
         _ => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Name::NQuote(f0)
@@ -269,7 +263,8 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     if depth == 0 {
-        let result = AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX));
+        let result =
+            AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX));
         return result.unwrap_int();
     }
 
@@ -617,4 +612,3 @@ proptest! {
     }
 
 }
-

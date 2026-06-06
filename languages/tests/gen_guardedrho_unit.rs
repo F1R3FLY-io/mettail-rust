@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::guardedrho::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -33,8 +33,11 @@ fn unit_guardedrho_proc_pnil() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PNil");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PNil: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PNil: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -46,8 +49,11 @@ fn unit_guardedrho_proc_castint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -56,22 +62,42 @@ fn unit_guardedrho_proc_castint() {
 #[test]
 fn unit_guardedrho_proc_poutput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PNil));
+    let term = Proc::POutput(
+        std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Proc::PNil),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POutput");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for POutput: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutput: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_guardedrho_proc_pguardedinput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PGuardedInput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), mettail_runtime::BehavioralPred::Top, mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")), std::sync::Arc::new(Proc::PNil)));
+    let term = Proc::PGuardedInput(
+        std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        mettail_runtime::BehavioralPred::Top,
+        mettail_runtime::Scope::new(
+            mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")),
+            std::sync::Arc::new(Proc::PNil),
+        ),
+    );
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for PGuardedInput");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for PGuardedInput"
+    );
 }
 
 #[test]
@@ -82,34 +108,38 @@ fn unit_guardedrho_name_nquote() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuote");
     if let Ok(parsed) = Name::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NQuote: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NQuote: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_guardedrho_proc_pdrop() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PDrop(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Proc::PDrop(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PDrop");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PDrop: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PDrop: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_guardedrho_auto_proc_pvar() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PVar");
 }
@@ -117,13 +147,9 @@ fn unit_guardedrho_auto_proc_pvar() {
 #[test]
 fn unit_guardedrho_auto_name_nvar() {
     mettail_runtime::clear_var_cache();
-    let term = Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NVar");
 }
@@ -135,8 +161,10 @@ fn unit_guardedrho_auto_int_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
-

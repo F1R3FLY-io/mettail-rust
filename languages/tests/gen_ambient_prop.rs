@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::ambient::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -107,14 +107,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -147,15 +155,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         let result = match choice {
             0 => AnyTerm::WrapProc(Proc::PZero),
             _ => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-},
+                let _ = reader.next_byte(); // consume tape byte for replay determinism
+                AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))))
+            },
         };
         return result.unwrap_proc();
     }
@@ -165,15 +169,12 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     match choice {
         0 => AnyTerm::WrapProc(Proc::PZero).unwrap_proc(),
         1 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_proc(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_proc(),
         2 => {
             let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
@@ -196,18 +197,18 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         },
         6 => {
             let binder_name = format!("a{}", reader.next_byte() % 8);
-let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
-let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
+            let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
+            let body = build_proc_from_tape(reader, child_depth);
+            let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
             Proc::PNew(scope)
         },
         _ => {
             let num_elems = (reader.next_byte() % 4) as usize;
-let mut bag = mettail_runtime::HashBag::new();
-for _ in 0..num_elems {
-bag.insert(build_proc_from_tape(reader, child_depth));
-}
-Proc::PPar(bag)
+            let mut bag = mettail_runtime::HashBag::new();
+            for _ in 0..num_elems {
+                bag.insert(build_proc_from_tape(reader, child_depth));
+            }
+            Proc::PPar(bag)
         },
     }
 }
@@ -221,15 +222,11 @@ Proc::PPar(bag)
 fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     if depth == 0 {
         let result = {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapName(Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-};
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        };
         return result.unwrap_name();
     }
 
@@ -482,7 +479,8 @@ fn sim_ambient_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
+    let test_inputs: Vec<&str> =
+        vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -499,10 +497,10 @@ fn sim_ambient_normal_form_reachability() {
                 if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
                     reached_nf += 1;
                 }
-            }
+            },
             _ => {
                 // Skip inputs that fail to parse, evaluate, or panic.
-            }
+            },
         }
     }
 
@@ -534,7 +532,8 @@ fn sim_ambient_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
+    let test_inputs: Vec<&str> =
+        vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -596,7 +595,8 @@ fn sim_ambient_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
+    let test_inputs: Vec<&str> =
+        vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -631,7 +631,8 @@ fn sim_ambient_eval_determinism() {
     let lang = AmbientLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
+    let test_inputs: Vec<&str> =
+        vec!["0", "in( 0 , 0 )", "out( 0 , 0 )", "open( 0 , 0 )", "0 [ 0 ]", "new ( 0 , 0 )"];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {
@@ -740,4 +741,3 @@ proptest! {
         // are tolerated — they are covered by dedicated non-proptest simulation tests.
     }
 }
-

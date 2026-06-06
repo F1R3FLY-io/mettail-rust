@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::mixedmath::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -29,65 +29,89 @@ fn mixedmath_metadata_populated() {
 #[test]
 fn unit_mixedmath_int_addint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_mixedmath_int_subint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for SubInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SubInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_mixedmath_int_mulint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MulInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MulInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_mixedmath_bool_and() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::And(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for And");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for And: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for And: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_mixedmath_bool_or() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::Or(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Or");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Or: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Or: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -99,8 +123,11 @@ fn unit_mixedmath_bool_not() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Not");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Not: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Not: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -112,8 +139,11 @@ fn unit_mixedmath_int_neg() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Neg");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Neg: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Neg: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -125,8 +155,11 @@ fn unit_mixedmath_int_booltoint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -137,8 +170,11 @@ fn unit_mixedmath_auto_int_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -149,8 +185,10 @@ fn unit_mixedmath_auto_bool_boollit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolLit");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
-

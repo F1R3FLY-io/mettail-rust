@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::rhocalc::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -250,14 +250,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -291,15 +299,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
             0 => AnyTerm::WrapProc(Proc::PZero),
             1 => AnyTerm::WrapProc(Proc::Err),
             _ => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-},
+                let _ = reader.next_byte(); // consume tape byte for replay determinism
+                AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))))
+            },
         };
         return result.unwrap_proc();
     }
@@ -310,26 +314,23 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         0 => AnyTerm::WrapProc(Proc::PZero).unwrap_proc(),
         1 => AnyTerm::WrapProc(Proc::Err).unwrap_proc(),
         2 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_proc(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_proc(),
         3 => {
             let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
             Proc::PDrop(f0)
         },
         4 => {
             let num_elems = (reader.next_byte() % 4) as usize;
-let mut bag = mettail_runtime::HashBag::new();
-for _ in 0..num_elems {
-bag.insert(build_proc_from_tape(reader, child_depth));
-}
-Proc::PPar(bag)
+            let mut bag = mettail_runtime::HashBag::new();
+            for _ in 0..num_elems {
+                bag.insert(build_proc_from_tape(reader, child_depth));
+            }
+            Proc::PPar(bag)
         },
         5 => {
             let f0 = std::sync::Arc::new(build_name_from_tape(reader, child_depth));
@@ -338,28 +339,30 @@ Proc::PPar(bag)
         },
         6 => {
             let n_0 = (reader.next_byte() % 3) as usize;
-let pre_0: Vec<_> = (0..n_0).map(|_| build_name_from_tape(reader, child_depth)).collect();
+            let pre_0: Vec<_> = (0..n_0)
+                .map(|_| build_name_from_tape(reader, child_depth))
+                .collect();
             let num_binders = ((reader.next_byte() % 3) + 1) as usize;
-let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
-.map(|j| {
-let name = format!("a{}", j);
-mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
-})
-.collect();
-let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
+            let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
+                .map(|j| {
+                    let name = format!("a{}", j);
+                    mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
+                })
+                .collect();
+            let body = build_proc_from_tape(reader, child_depth);
+            let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
             Proc::PInputs(pre_0, scope)
         },
         7 => {
             let num_binders = ((reader.next_byte() % 3) + 1) as usize;
-let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
-.map(|j| {
-let name = format!("a{}", j);
-mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
-})
-.collect();
-let body = build_proc_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
+            let binders: Vec<mettail_runtime::Binder<String>> = (0..num_binders)
+                .map(|j| {
+                    let name = format!("a{}", j);
+                    mettail_runtime::Binder(mettail_runtime::get_or_create_var(&name))
+                })
+                .collect();
+            let body = build_proc_from_tape(reader, child_depth);
+            let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
             Proc::PNew(scope)
         },
         8 => {
@@ -614,15 +617,11 @@ let scope = mettail_runtime::Scope::new(binders, std::sync::Arc::new(body));
 fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     if depth == 0 {
         let result = {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapName(Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-};
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        };
         return result.unwrap_name();
     }
 
@@ -630,15 +629,12 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapName(Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_name(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapName(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_name(),
         _ => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             Name::NQuote(f0)
@@ -654,14 +650,16 @@ fn build_name_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Name {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     if depth == 0 {
-        let result = AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX));
+        let result =
+            AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX));
         return result.unwrap_int();
     }
 
     let choice = (reader.next_byte() as usize) % 5;
     let child_depth = depth - 1;
     match choice {
-        0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX)).unwrap_int(),
+        0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i64().unsigned_abs() as i64) & i64::MAX))
+            .unwrap_int(),
         1 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             Int::NegInt(f0)
@@ -713,14 +711,19 @@ fn build_uint32_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> UInt32 {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
     if depth == 0 {
-        let result = AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32()))));
+        let result = AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(
+            num_bigint::BigInt::from(reader.next_i32()),
+        )));
         return result.unwrap_bigint();
     }
 
     let choice = (reader.next_byte() as usize) % 4;
     let child_depth = depth - 1;
     match choice {
-        0 => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(num_bigint::BigInt::from(reader.next_i32())))).unwrap_bigint(),
+        0 => AnyTerm::WrapBigInt(BigInt::NumLit(mettail_runtime::CanonicalBigInt::from(
+            num_bigint::BigInt::from(reader.next_i32()),
+        )))
+        .unwrap_bigint(),
         1 => {
             let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             BigInt::BoolToBigInt(f0)
@@ -744,14 +747,19 @@ fn build_bigint_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigInt {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
     if depth == 0 {
-        let result = AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32())))));
+        let result = AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+            num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32())),
+        )));
         return result.unwrap_bigrat();
     }
 
     let choice = (reader.next_byte() as usize) % 7;
     let child_depth = depth - 1;
     match choice {
-        0 => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32()))))).unwrap_bigrat(),
+        0 => AnyTerm::WrapBigRat(BigRat::RatLit(mettail_runtime::CanonicalBigRat::from(
+            num_rational::Ratio::from_integer(num_bigint::BigInt::from(reader.next_i32())),
+        )))
+        .unwrap_bigrat(),
         1 => {
             let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
             BigRat::BoolToBigRat(f0)
@@ -787,7 +795,11 @@ fn build_bigrat_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> BigRat {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_fixed_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Fixed {
     if depth == 0 {
-        let result = AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(num_bigint::BigInt::from(reader.next_i32()), 0)));
+        let result =
+            AnyTerm::WrapFixed(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::new(
+                num_bigint::BigInt::from(reader.next_i32()),
+                0,
+            )));
         return result.unwrap_fixed();
     }
 
@@ -803,7 +815,9 @@ fn build_fixed_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Fixed {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_float_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Float {
     if depth == 0 {
-        let result = AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(reader.next_f64().abs())));
+        let result = AnyTerm::WrapFloat(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(
+            reader.next_f64().abs(),
+        )));
         return result.unwrap_float();
     }
 
@@ -2390,7 +2404,24 @@ fn sim_rhocalc_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "int ( 0 , 1 )",
+        "uint ( 0 , 1 )",
+        "float ( 0 , 1 )",
+        "fixed ( 0 , 1 )",
+        "bigint ( 0 )",
+        "bigrat ( 0 )",
+        "- 1",
+        "fraction ( 0 , 0 )",
+        "0 or 0",
+        "0 and 0",
+        "0 bitor 0",
+        "0 bitand 0",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -2407,10 +2438,10 @@ fn sim_rhocalc_normal_form_reachability() {
                 if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
                     reached_nf += 1;
                 }
-            }
+            },
             _ => {
                 // Skip inputs that fail to parse, evaluate, or panic.
-            }
+            },
         }
     }
 
@@ -2442,7 +2473,24 @@ fn sim_rhocalc_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "int ( 0 , 1 )",
+        "uint ( 0 , 1 )",
+        "float ( 0 , 1 )",
+        "fixed ( 0 , 1 )",
+        "bigint ( 0 )",
+        "bigrat ( 0 )",
+        "- 1",
+        "fraction ( 0 , 0 )",
+        "0 or 0",
+        "0 and 0",
+        "0 bitor 0",
+        "0 bitand 0",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -2504,7 +2552,24 @@ fn sim_rhocalc_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "int ( 0 , 1 )",
+        "uint ( 0 , 1 )",
+        "float ( 0 , 1 )",
+        "fixed ( 0 , 1 )",
+        "bigint ( 0 )",
+        "bigrat ( 0 )",
+        "- 1",
+        "fraction ( 0 , 0 )",
+        "0 or 0",
+        "0 and 0",
+        "0 bitor 0",
+        "0 bitand 0",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -2539,7 +2604,24 @@ fn sim_rhocalc_eval_determinism() {
     let lang = RhoCalcLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["int ( 0 , 1 )", "uint ( 0 , 1 )", "float ( 0 , 1 )", "fixed ( 0 , 1 )", "bigint ( 0 )", "bigrat ( 0 )", "- 1", "fraction ( 0 , 0 )", "0 or 0", "0 and 0", "0 bitor 0", "0 bitand 0", "1", "1.0", "true", "\"hello\""];
+    let test_inputs: Vec<&str> = vec![
+        "int ( 0 , 1 )",
+        "uint ( 0 , 1 )",
+        "float ( 0 , 1 )",
+        "fixed ( 0 , 1 )",
+        "bigint ( 0 )",
+        "bigrat ( 0 )",
+        "- 1",
+        "fraction ( 0 , 0 )",
+        "0 or 0",
+        "0 and 0",
+        "0 bitor 0",
+        "0 bitand 0",
+        "1",
+        "1.0",
+        "true",
+        "\"hello\"",
+    ];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {
@@ -2648,4 +2730,3 @@ proptest! {
         // are tolerated — they are covered by dedicated non-proptest simulation tests.
     }
 }
-

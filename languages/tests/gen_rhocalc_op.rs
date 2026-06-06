@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::rhocalc::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // WFST-derived test coverage plan
@@ -107,9 +107,14 @@ fn eval_rhocalc_tostr_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -119,9 +124,14 @@ fn eval_rhocalc_tostr_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -131,9 +141,14 @@ fn eval_rhocalc_tobool_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -143,9 +158,14 @@ fn eval_rhocalc_tobool_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -155,9 +175,14 @@ fn eval_rhocalc_len_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -167,9 +192,14 @@ fn eval_rhocalc_len_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -179,9 +209,14 @@ fn eval_rhocalc_not_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -191,9 +226,14 @@ fn eval_rhocalc_not_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -203,9 +243,14 @@ fn eval_rhocalc_valuesmap_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -215,9 +260,14 @@ fn eval_rhocalc_valuesmap_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -227,9 +277,14 @@ fn eval_rhocalc_keysmap_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -239,9 +294,14 @@ fn eval_rhocalc_keysmap_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -251,9 +311,14 @@ fn eval_rhocalc_hasmap_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -263,9 +328,14 @@ fn eval_rhocalc_hasmap_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -275,21 +345,32 @@ fn eval_rhocalc_hasmap_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_hasmap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -299,189 +380,308 @@ fn eval_rhocalc_mergemap_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_mergemap_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::MergeMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_mergemap_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_mergemap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletemap_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletemap_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletemap_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletemap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_err_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::Err),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_err_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_err_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_err_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_pzero_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::Err),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_pzero_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_pzero_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_putmap_pzero_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -491,9 +691,14 @@ fn eval_rhocalc_getmap_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -503,9 +708,14 @@ fn eval_rhocalc_getmap_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -515,21 +725,32 @@ fn eval_rhocalc_getmap_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_getmap_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -539,45 +760,68 @@ fn eval_rhocalc_countbag_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_countbag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Int::CountBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_countbag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_countbag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -587,93 +831,140 @@ fn eval_rhocalc_diffbag_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_diffbag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DiffBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_diffbag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_diffbag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_removebag_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_removebag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_removebag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_removebag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -683,93 +974,140 @@ fn eval_rhocalc_unionbag_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_unionbag_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::UnionBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_unionbag_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_unionbag_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletelist_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletelist_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletelist_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_deletelist_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -779,93 +1117,140 @@ fn eval_rhocalc_elemlist_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_elemlist_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::ElemList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_elemlist_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_elemlist_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_concatlist_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_concatlist_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_concatlist_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_concatlist_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -875,9 +1260,14 @@ fn eval_rhocalc_negproc_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -887,9 +1277,14 @@ fn eval_rhocalc_negproc_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -899,9 +1294,14 @@ fn eval_rhocalc_mod_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -911,9 +1311,14 @@ fn eval_rhocalc_mod_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -923,9 +1328,14 @@ fn eval_rhocalc_mod_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -935,9 +1345,14 @@ fn eval_rhocalc_mod_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -947,9 +1362,14 @@ fn eval_rhocalc_div_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -959,9 +1379,14 @@ fn eval_rhocalc_div_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -971,9 +1396,14 @@ fn eval_rhocalc_div_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -983,9 +1413,14 @@ fn eval_rhocalc_div_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -995,9 +1430,14 @@ fn eval_rhocalc_mul_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1007,9 +1447,14 @@ fn eval_rhocalc_mul_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1019,9 +1464,14 @@ fn eval_rhocalc_mul_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1031,9 +1481,14 @@ fn eval_rhocalc_mul_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1043,9 +1498,14 @@ fn eval_rhocalc_sub_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1055,9 +1515,14 @@ fn eval_rhocalc_sub_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1067,9 +1532,14 @@ fn eval_rhocalc_sub_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1079,9 +1549,14 @@ fn eval_rhocalc_sub_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1091,9 +1566,14 @@ fn eval_rhocalc_add_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1103,9 +1583,14 @@ fn eval_rhocalc_add_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1115,9 +1600,14 @@ fn eval_rhocalc_add_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1127,9 +1617,14 @@ fn eval_rhocalc_add_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1139,9 +1634,14 @@ fn eval_rhocalc_lteq_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1151,9 +1651,14 @@ fn eval_rhocalc_lteq_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1163,9 +1668,14 @@ fn eval_rhocalc_lteq_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1175,9 +1685,14 @@ fn eval_rhocalc_lteq_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1187,9 +1702,14 @@ fn eval_rhocalc_gteq_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1199,9 +1719,14 @@ fn eval_rhocalc_gteq_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1211,9 +1736,14 @@ fn eval_rhocalc_gteq_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1223,9 +1753,14 @@ fn eval_rhocalc_gteq_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1235,9 +1770,14 @@ fn eval_rhocalc_lt_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1247,9 +1787,14 @@ fn eval_rhocalc_lt_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1259,9 +1804,14 @@ fn eval_rhocalc_lt_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1271,9 +1821,14 @@ fn eval_rhocalc_lt_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1283,9 +1838,14 @@ fn eval_rhocalc_gt_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1295,9 +1855,14 @@ fn eval_rhocalc_gt_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1307,9 +1872,14 @@ fn eval_rhocalc_gt_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1319,9 +1889,14 @@ fn eval_rhocalc_gt_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1331,9 +1906,14 @@ fn eval_rhocalc_ne_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1343,9 +1923,14 @@ fn eval_rhocalc_ne_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1355,9 +1940,14 @@ fn eval_rhocalc_ne_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1367,9 +1957,14 @@ fn eval_rhocalc_ne_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1379,9 +1974,14 @@ fn eval_rhocalc_eq_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1391,9 +1991,14 @@ fn eval_rhocalc_eq_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1403,9 +2008,14 @@ fn eval_rhocalc_eq_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1415,9 +2025,14 @@ fn eval_rhocalc_eq_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1427,9 +2042,14 @@ fn eval_rhocalc_bitnot_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1439,9 +2059,14 @@ fn eval_rhocalc_bitnot_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1451,9 +2076,14 @@ fn eval_rhocalc_bitand_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1463,9 +2093,14 @@ fn eval_rhocalc_bitand_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1475,21 +2110,32 @@ fn eval_rhocalc_bitand_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_bitand_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1499,9 +2145,14 @@ fn eval_rhocalc_bitor_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1511,9 +2162,14 @@ fn eval_rhocalc_bitor_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1523,21 +2179,32 @@ fn eval_rhocalc_bitor_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_bitor_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1547,9 +2214,14 @@ fn eval_rhocalc_and_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1559,9 +2231,14 @@ fn eval_rhocalc_and_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1571,9 +2248,14 @@ fn eval_rhocalc_and_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1583,9 +2265,14 @@ fn eval_rhocalc_and_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1595,9 +2282,14 @@ fn eval_rhocalc_or_err_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1607,9 +2299,14 @@ fn eval_rhocalc_or_err_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1619,9 +2316,14 @@ fn eval_rhocalc_or_pzero_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1631,57 +2333,86 @@ fn eval_rhocalc_or_pzero_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fractionproc_err_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::FractionProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fractionproc_err_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::FractionProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fractionproc_pzero_err_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fractionproc_pzero_pzero_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1691,10 +2422,20 @@ fn eval_rhocalc_negint_5() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-5"),
-        "{} should evaluate to -5, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-5"),
+        "{} should evaluate to -5, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
@@ -1704,10 +2445,20 @@ fn eval_rhocalc_negint_3() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-3"),
-        "{} should evaluate to -3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
@@ -1717,10 +2468,20 @@ fn eval_rhocalc_negint_2() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
@@ -1730,10 +2491,20 @@ fn eval_rhocalc_negint_1() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
@@ -1743,10 +2514,20 @@ fn eval_rhocalc_negint_0() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
@@ -1756,9 +2537,14 @@ fn eval_rhocalc_bigratcastproc_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1768,9 +2554,14 @@ fn eval_rhocalc_bigratcastproc_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1780,9 +2571,14 @@ fn eval_rhocalc_bigintcastproc_err_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -1792,489 +2588,754 @@ fn eval_rhocalc_bigintcastproc_pzero_smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::FixedBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(5i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(3i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(2i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_fixedbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(0i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::FloatBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(5i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(3i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(2i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_floatbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(0i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_uintbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_err_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_err_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_err_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_err_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_err_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_pzero_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_pzero_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_pzero_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_pzero_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_rhocalc_intbinproc_pzero_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2288,21 +3349,32 @@ fn nested_rhocalc_tostr_tobool_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_tobool_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ToBool(std::sync::Arc::new(Proc::PZero))));
+    let input_term =
+        Proc::ToStr(std::sync::Arc::new(Proc::ToBool(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2312,9 +3384,14 @@ fn nested_rhocalc_tostr_len_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2324,9 +3401,14 @@ fn nested_rhocalc_tostr_len_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2336,9 +3418,14 @@ fn nested_rhocalc_tostr_not_err_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2348,537 +3435,885 @@ fn nested_rhocalc_tostr_not_pzero_in_slot0__smoke() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_valuesmap_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ValuesMap(std::sync::Arc::new(Proc::Err))));
+    let input_term =
+        Proc::ToStr(std::sync::Arc::new(Proc::ValuesMap(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_valuesmap_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ValuesMap(std::sync::Arc::new(Proc::PZero))));
+    let input_term =
+        Proc::ToStr(std::sync::Arc::new(Proc::ValuesMap(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_keysmap_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::KeysMap(std::sync::Arc::new(Proc::Err))));
+    let input_term =
+        Proc::ToStr(std::sync::Arc::new(Proc::KeysMap(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_keysmap_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::KeysMap(std::sync::Arc::new(Proc::PZero))));
+    let input_term =
+        Proc::ToStr(std::sync::Arc::new(Proc::KeysMap(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_hasmap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_hasmap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_hasmap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::HasMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_mergemap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_mergemap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_mergemap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::MergeMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_deletemap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_deletemap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_deletemap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_putmap_pzero_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_putmap_pzero_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_putmap_pzero_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_getmap_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_getmap_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_getmap_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::GetMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_diffbag_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_diffbag_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_diffbag_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DiffBag(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_removebag_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_removebag_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_removebag_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::RemoveBag(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_unionbag_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_unionbag_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_unionbag_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::UnionBag(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_deletelist_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_deletelist_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_deletelist_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::DeleteList(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_elemlist_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_elemlist_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_elemlist_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ElemList(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_concatlist_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_concatlist_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_concatlist_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::ConcatList(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_negproc_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::NegProc(std::sync::Arc::new(Proc::Err))));
+    let input_term =
+        Proc::ToStr(std::sync::Arc::new(Proc::NegProc(std::sync::Arc::new(Proc::Err))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_negproc_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::NegProc(std::sync::Arc::new(Proc::PZero))));
+    let input_term =
+        Proc::ToStr(std::sync::Arc::new(Proc::NegProc(std::sync::Arc::new(Proc::PZero))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_mod_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_mod_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_mod_pzero_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Mod(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_div_err_pzero_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Div(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Div(
+        std::sync::Arc::new(Proc::Err),
+        std::sync::Arc::new(Proc::PZero),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn nested_rhocalc_tostr_div_pzero_err_in_slot0__smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::Div(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::Err),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2892,9 +4327,14 @@ fn cross_cat_rhocalc_cast_castbigrat_from_bigrat_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2904,21 +4344,33 @@ fn cross_cat_rhocalc_cast_castfixed_from_fixed_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_cast_castfloat_from_float_to_proc() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(2.0f64),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2928,9 +4380,14 @@ fn cross_cat_rhocalc_cast_castbigint_from_bigint_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2940,9 +4397,14 @@ fn cross_cat_rhocalc_cast_castuint32_from_uint32_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2952,9 +4414,14 @@ fn cross_cat_rhocalc_cast_castint_from_int_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2964,9 +4431,14 @@ fn cross_cat_rhocalc_cast_castbool_from_bool_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2976,9 +4448,14 @@ fn cross_cat_rhocalc_cast_caststr_from_str_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -2988,9 +4465,14 @@ fn cross_cat_rhocalc_cast_castlist_from_list_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3000,9 +4482,14 @@ fn cross_cat_rhocalc_cast_castbag_from_bag_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3012,9 +4499,14 @@ fn cross_cat_rhocalc_cast_castmap_from_map_to_proc() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3024,9 +4516,14 @@ fn cross_cat_rhocalc_cast_booltoint_from_bool_to_int() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3036,9 +4533,14 @@ fn cross_cat_rhocalc_cast_booltouint32_from_bool_to_uint32() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3048,9 +4550,14 @@ fn cross_cat_rhocalc_cast_booltobigint_from_bool_to_bigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3060,9 +4567,14 @@ fn cross_cat_rhocalc_cast_booltobigrat_from_bool_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3072,9 +4584,14 @@ fn cross_cat_rhocalc_cast_inttobigint_from_int_to_bigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3084,9 +4601,14 @@ fn cross_cat_rhocalc_cast_inttobigrat_from_int_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3096,9 +4618,14 @@ fn cross_cat_rhocalc_cast_uint32toint_from_uint32_to_int() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3108,9 +4635,14 @@ fn cross_cat_rhocalc_cast_uint32tobigint_from_uint32_to_bigint() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -3120,2169 +4652,3962 @@ fn cross_cat_rhocalc_cast_uint32tobigrat_from_uint32_to_bigrat() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_cast_floattobigrat_from_float_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(2.0f64),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_cast_biginttobigrat_from_bigint_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(Default::default())));
+    let input_term =
+        BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_cast_fixedtobigrat_from_fixed_to_bigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
+    let input_term =
+        BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castbigrat_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castfixed_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castfloat_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castbigint_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(
+        BigInt::NumLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castuint32_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastUInt32(std::sync::Arc::new(UInt32::NumLit(1u32)))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastUInt32(std::sync::Arc::new(
+        UInt32::NumLit(1u32),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castint_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastInt(std::sync::Arc::new(Int::NumLit(1i64)))));
+    let input_term =
+        Name::NQuote(std::sync::Arc::new(Proc::CastInt(std::sync::Arc::new(Int::NumLit(1i64)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castbool_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term =
+        Name::NQuote(std::sync::Arc::new(Proc::CastBool(std::sync::Arc::new(Bool::BoolLit(true)))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_caststr_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastStr(std::sync::Arc::new(Str::StringLit(String::from("a"))))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastStr(std::sync::Arc::new(
+        Str::StringLit(String::from("a")),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castlist_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastList(std::sync::Arc::new(List::ListLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastList(std::sync::Arc::new(
+        List::ListLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castbag_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBag(std::sync::Arc::new(Bag::BagLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastBag(std::sync::Arc::new(
+        Bag::BagLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_castmap_nquote() {
     mettail_runtime::clear_var_cache();
-    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastMap(std::sync::Arc::new(Map::MapLit(Default::default())))));
+    let input_term = Name::NQuote(std::sync::Arc::new(Proc::CastMap(std::sync::Arc::new(
+        Map::MapLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltoint_castint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(
+        Bool::BoolLit(true),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltoint_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(
+        Bool::BoolLit(true),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltoint_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(
+        Bool::BoolLit(true),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_castuint32() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastUInt32(std::sync::Arc::new(UInt32::BoolToUInt32(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_uint32toint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::UInt32ToInt(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = Int::UInt32ToInt(std::sync::Arc::new(UInt32::BoolToUInt32(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_uint32tobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::BoolToUInt32(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltouint32_uint32tobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::BoolToUInt32(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltobigint_castbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::BoolToBigInt(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::BoolToBigInt(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_booltobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::BoolToBigRat(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_inttobigint_castbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i64)))));
+    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::IntToBigInt(
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_inttobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::IntToBigInt(std::sync::Arc::new(Int::NumLit(1i64)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::IntToBigInt(
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_inttobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::IntToBigRat(std::sync::Arc::new(Int::NumLit(1i64)))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::IntToBigRat(
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_uint32toint_castint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastInt(std::sync::Arc::new(Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::CastInt(std::sync::Arc::new(Int::UInt32ToInt(std::sync::Arc::new(
+        UInt32::NumLit(1u32),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_uint32toint_inttobigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
+    let input_term = BigInt::IntToBigInt(std::sync::Arc::new(Int::UInt32ToInt(
+        std::sync::Arc::new(UInt32::NumLit(1u32)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_uint32toint_inttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::UInt32ToInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::IntToBigRat(std::sync::Arc::new(Int::UInt32ToInt(
+        std::sync::Arc::new(UInt32::NumLit(1u32)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_uint32tobigint_castbigint() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::CastBigInt(std::sync::Arc::new(BigInt::UInt32ToBigInt(
+        std::sync::Arc::new(UInt32::NumLit(1u32)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_uint32tobigint_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(1u32)))));
+    let input_term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::UInt32ToBigInt(
+        std::sync::Arc::new(UInt32::NumLit(1u32)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_uint32tobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(1u32)))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::UInt32ToBigRat(
+        std::sync::Arc::new(UInt32::NumLit(1u32)),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_floattobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::FloatToBigRat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_biginttobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::BigIntToBigRat(
+        std::sync::Arc::new(BigInt::NumLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_chain_fixedtobigrat_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::CastBigRat(std::sync::Arc::new(BigRat::FixedToBigRat(
+        std::sync::Arc::new(Fixed::FixedLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastBigRat(
+        std::sync::Arc::new(BigRat::RatLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastBigRat(
+        std::sync::Arc::new(BigRat::RatLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::FractionProc(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_or_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Or(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_and_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::And(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BitOr(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BitAnd(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_eq_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Eq(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_ne_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Ne(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gt_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Gt(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lt_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Lt(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::GtEq(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::LtEq(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_add_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Add(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_sub_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Sub(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mul_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Mul(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_div_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Div(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mod_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Mod(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_negproc_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_concatlist_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ConcatList(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_elemlist_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ElemList(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_deletelist_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::DeleteList(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_unionbag_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::UnionBag(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_removebag_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::RemoveBag(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_diffbag_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::DiffBag(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_getmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::GetMap(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_putmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_deletemap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::DeleteMap(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mergemap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::MergeMap(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_hasmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))), std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::HasMap(
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_keysmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_valuesmap_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_not_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_len_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_tobool_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_tostr_castbigrat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastBigRat(std::sync::Arc::new(
+        BigRat::RatLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastFixed(
+        std::sync::Arc::new(Fixed::FixedLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastFixed(
+        std::sync::Arc::new(Fixed::FixedLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::FractionProc(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_or_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Or(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_and_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::And(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BitOr(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BitAnd(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_eq_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Eq(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_ne_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Ne(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gt_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Gt(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lt_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Lt(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::GtEq(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::LtEq(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_add_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Add(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_sub_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Sub(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mul_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Mul(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_div_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Div(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mod_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Mod(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_negproc_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_concatlist_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ConcatList(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_elemlist_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ElemList(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_deletelist_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::DeleteList(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_unionbag_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::UnionBag(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_removebag_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::RemoveBag(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_diffbag_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::DiffBag(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_getmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::GetMap(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_putmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_deletemap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::DeleteMap(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mergemap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::MergeMap(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_hasmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))), std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::HasMap(
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_keysmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_valuesmap_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_not_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_len_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_tobool_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_tostr_castfixed_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastFixed(std::sync::Arc::new(
+        Fixed::FixedLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::FractionProc(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_or_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Or(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_and_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::And(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BitOr(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BitAnd(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_eq_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Eq(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_ne_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Ne(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gt_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Gt(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lt_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Lt(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::GtEq(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::LtEq(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_add_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Add(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_sub_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Sub(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mul_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Mul(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_div_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Div(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Div(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mod_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mod(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Mod(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_negproc_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_concatlist_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ConcatList(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_elemlist_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ElemList(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_deletelist_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::DeleteList(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_unionbag_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::UnionBag(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_removebag_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::RemoveBag(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_diffbag_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::DiffBag(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_getmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::GetMap(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_putmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_deletemap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::DeleteMap(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mergemap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::MergeMap(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_hasmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))), std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::HasMap(
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+        std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+            mettail_runtime::CanonicalFloat64::from(2.0f64),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_keysmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_valuesmap_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_not_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_len_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::Len(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_tobool_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_tostr_castfloat_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))))));
+    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::CastFloat(std::sync::Arc::new(
+        Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64)),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_intbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::IntBinProc(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_uintbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::UIntBinProc(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_floatbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fixedbinproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Int::NumLit(1i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigintcastproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::CastBigInt(
+        std::sync::Arc::new(BigInt::NumLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bigratcastproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::CastBigInt(
+        std::sync::Arc::new(BigInt::NumLit(Default::default())),
+    )));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_fractionproc_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::FractionProc(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_or_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Or(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Or(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_and_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::And(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::And(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitor_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BitOr(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitand_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BitAnd(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_bitnot_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(
+        BigInt::NumLit(Default::default()),
+    ))));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_eq_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Eq(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Eq(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_ne_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Ne(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Ne(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gt_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Gt(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Gt(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lt_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Lt(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Lt(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_gteq_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::GtEq(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_lteq_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::LtEq(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_add_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Add(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Add(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_sub_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Sub(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Sub(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_rhocalc_castop_mul_castbigint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::Mul(std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))), std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())))));
+    let input_term = Proc::Mul(
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+        std::sync::Arc::new(Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+            Default::default(),
+        )))),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5292,49 +8617,77 @@ fn cross_cat_rhocalc_castop_mul_castbigint_smoke() {
 #[test]
 fn wfst_rhocalc_dispatch_intbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_uintbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_floatbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(0i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_fixedbinproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(0i64)),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5344,9 +8697,14 @@ fn wfst_rhocalc_dispatch_bigintcastproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5356,165 +8714,251 @@ fn wfst_rhocalc_dispatch_bigratcastproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_fractionproc_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_concatlist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_elemlist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_deletelist_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_unionbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_removebag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_diffbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_countbag_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_getmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_putmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term = Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_deletemap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_mergemap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_hasmap_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5524,9 +8968,14 @@ fn wfst_rhocalc_dispatch_keysmap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5536,9 +8985,14 @@ fn wfst_rhocalc_dispatch_valuesmap_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5548,9 +9002,14 @@ fn wfst_rhocalc_dispatch_len_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5560,9 +9019,14 @@ fn wfst_rhocalc_dispatch_tobool_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5572,9 +9036,14 @@ fn wfst_rhocalc_dispatch_tostr_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5584,9 +9053,14 @@ fn wfst_rhocalc_dispatch_negint_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5596,9 +9070,14 @@ fn wfst_rhocalc_dispatch_or_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5608,33 +9087,50 @@ fn wfst_rhocalc_dispatch_and_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_bitor_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_rhocalc_dispatch_bitand_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5644,9 +9140,14 @@ fn wfst_rhocalc_dispatch_bitnot_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5656,9 +9157,14 @@ fn wfst_rhocalc_dispatch_eq_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5668,9 +9174,14 @@ fn wfst_rhocalc_dispatch_ne_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5680,9 +9191,14 @@ fn wfst_rhocalc_dispatch_gt_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5692,9 +9208,14 @@ fn wfst_rhocalc_dispatch_lt_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5704,9 +9225,14 @@ fn wfst_rhocalc_dispatch_gteq_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5716,9 +9242,14 @@ fn wfst_rhocalc_dispatch_lteq_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5728,9 +9259,14 @@ fn wfst_rhocalc_dispatch_add_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5740,9 +9276,14 @@ fn wfst_rhocalc_dispatch_sub_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5752,9 +9293,14 @@ fn wfst_rhocalc_dispatch_mul_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5764,9 +9310,14 @@ fn wfst_rhocalc_dispatch_div_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5776,9 +9327,14 @@ fn wfst_rhocalc_dispatch_mod_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5788,9 +9344,14 @@ fn wfst_rhocalc_dispatch_negproc_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
@@ -5800,9 +9361,14 @@ fn wfst_rhocalc_dispatch_not_eval() {
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5812,169 +9378,253 @@ fn wfst_rhocalc_dispatch_not_eval() {
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_pzero_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_err_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_err_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(1i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_err_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(2i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_err_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(3i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_intbinproc_err_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
+    let input_term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Int::NumLit(5i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_uintbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_countbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_countbag_pzero_err() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
+    let input_term =
+        Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_rhocalc_countbag_err_pzero() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
+    let input_term =
+        Int::CountBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5984,948 +9634,1377 @@ fn wpda_rhocalc_countbag_err_pzero() {
 #[test]
 fn type_pres_rhocalc_intbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::IntBinProc(
+            std::sync::Arc::new(Proc::PZero),
+            std::sync::Arc::new(Int::NumLit(0i64)),
+        );
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_uintbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::UIntBinProc(
+            std::sync::Arc::new(Proc::PZero),
+            std::sync::Arc::new(Int::NumLit(0i64)),
+        );
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_floatbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::FloatBinProc(
+            std::sync::Arc::new(Proc::PZero),
+            std::sync::Arc::new(Int::NumLit(0i64)),
+        );
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_fixedbinproc_pzero_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::FixedBinProc(
+            std::sync::Arc::new(Proc::PZero),
+            std::sync::Arc::new(Int::NumLit(0i64)),
+        );
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_bigintcastproc_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::BigintCastProc(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_bigratcastproc_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::BigratCastProc(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_negint_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Int
-    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Int
+        let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_fractionproc_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_or_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Or(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Or(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_and_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::And(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::And(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_bitor_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::BitOr(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_bitand_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_bitnot_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_eq_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Eq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Eq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_ne_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Ne(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Ne(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_gt_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Gt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Gt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_lt_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Lt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Lt(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_gteq_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::GtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::GtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_lteq_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::LtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::LtEq(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_add_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Add(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Add(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_sub_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Sub(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Sub(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_mul_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Mul(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Mul(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_div_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Div(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_mod_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_negproc_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_concatlist_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::ConcatList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_elemlist_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::ElemList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_deletelist_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::DeleteList(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_unionbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::UnionBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_removebag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::RemoveBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_diffbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::DiffBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_countbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Int
-    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Int
+        let input_term =
+            Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_getmap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::GetMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_putmap_pzero_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::PutMap(
+            std::sync::Arc::new(Proc::PZero),
+            std::sync::Arc::new(Proc::PZero),
+            std::sync::Arc::new(Proc::PZero),
+        );
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_deletemap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::DeleteMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_mergemap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::MergeMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_hasmap_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term =
+            Proc::HasMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_keysmap_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::KeysMap(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_valuesmap_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::ValuesMap(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_not_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Not(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::Not(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_len_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::Len(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::Len(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_tobool_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::ToBool(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::ToBool(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_rhocalc_tostr_pzero() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Proc
-    let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Proc
+        let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PZero));
+        let input_str = format!("{}", input_term);
+        let lang = RhoCalcLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 // Total operational semantics tests: 531 (P1=181, P2a=50, P2b=0, P3a=200, P3b=0, P4a=43, P4b=0, P5a=14, P5b=43)
-

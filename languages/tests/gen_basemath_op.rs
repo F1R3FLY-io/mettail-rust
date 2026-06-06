@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::basemath::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // WFST-derived test coverage plan
@@ -32,521 +32,961 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_basemath_sub_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-3"),
-        "{} should evaluate to -3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-4"),
-        "{} should evaluate to -4, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-4"),
+        "{} should evaluate to -4, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-5"),
-        "{} should evaluate to -5, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-5"),
+        "{} should evaluate to -5, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-3"),
-        "{} should evaluate to -3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-3"),
+        "{} should evaluate to -3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-2"),
+        "{} should evaluate to -2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_sub_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "8"),
-        "{} should evaluate to 8, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "8"),
+        "{} should evaluate to 8, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "6"),
-        "{} should evaluate to 6, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "7"),
-        "{} should evaluate to 7, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "7"),
+        "{} should evaluate to 7, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "6"),
-        "{} should evaluate to 6, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "6"),
+        "{} should evaluate to 6, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "4"),
-        "{} should evaluate to 4, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "4"),
+        "{} should evaluate to 4, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_basemath_add_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -556,157 +996,349 @@ fn eval_basemath_add_0_0() {
 #[test]
 fn nested_basemath_sub_add_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
+    let input_term = Num::Sub(
+        std::sync::Arc::new(Num::NumLit(1i32)),
+        std::sync::Arc::new(Num::Add(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(2i32)),
+        )),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_sub_add_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
+    let input_term = Num::Sub(
+        std::sync::Arc::new(Num::NumLit(1i32)),
+        std::sync::Arc::new(Num::Add(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(1i32)),
+        )),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_sub_add_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
+    let input_term = Num::Sub(
+        std::sync::Arc::new(Num::NumLit(1i32)),
+        std::sync::Arc::new(Num::Add(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(0i32)),
+        )),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_sub_add_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(
+        std::sync::Arc::new(Num::Add(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(2i32)),
+        )),
+        std::sync::Arc::new(Num::NumLit(1i32)),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_sub_add_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(
+        std::sync::Arc::new(Num::Add(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(1i32)),
+        )),
+        std::sync::Arc::new(Num::NumLit(1i32)),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_sub_add_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term = Num::Sub(
+        std::sync::Arc::new(Num::Add(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(0i32)),
+        )),
+        std::sync::Arc::new(Num::NumLit(1i32)),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_add_sub_0_2_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))));
+    let input_term = Num::Add(
+        std::sync::Arc::new(Num::NumLit(1i32)),
+        std::sync::Arc::new(Num::Sub(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(2i32)),
+        )),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_add_sub_0_1_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))));
+    let input_term = Num::Add(
+        std::sync::Arc::new(Num::NumLit(1i32)),
+        std::sync::Arc::new(Num::Sub(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(1i32)),
+        )),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_add_sub_0_0_in_slot1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))));
+    let input_term = Num::Add(
+        std::sync::Arc::new(Num::NumLit(1i32)),
+        std::sync::Arc::new(Num::Sub(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(0i32)),
+        )),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_add_sub_0_2_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(
+        std::sync::Arc::new(Num::Sub(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(2i32)),
+        )),
+        std::sync::Arc::new(Num::NumLit(1i32)),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "-1"),
+        "{} should evaluate to -1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_add_sub_0_1_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(
+        std::sync::Arc::new(Num::Sub(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(1i32)),
+        )),
+        std::sync::Arc::new(Num::NumLit(1i32)),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn nested_basemath_add_sub_0_0_in_slot0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)))), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term = Num::Add(
+        std::sync::Arc::new(Num::Sub(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(0i32)),
+        )),
+        std::sync::Arc::new(Num::NumLit(1i32)),
+    );
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -716,25 +1348,37 @@ fn nested_basemath_add_sub_0_0_in_slot0() {
 #[test]
 fn wfst_basemath_dispatch_add_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wfst_basemath_dispatch_sub_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -744,53 +1388,101 @@ fn wfst_basemath_dispatch_sub_eval() {
 #[test]
 fn prec_basemath_sub_add_tighter_than_1___2___3() {
     mettail_runtime::clear_var_cache();
-    { // Precedence test: Sub binds tighter than Add
-    let input_str = "1 + 2 - 3";
-    let lang = BaseMathLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
+    {
+        // Precedence test: Sub binds tighter than Add
+        let input_str = "1 + 2 - 3";
+        let lang = BaseMathLanguage;
+        let parsed = lang.parse_term(input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs: Vec<String> = results
+            .normal_forms()
+            .iter()
+            .map(|nf| nf.display.clone())
+            .collect();
+        assert!(
+            nfs.iter().any(|d| d == "0"),
+            "{} should evaluate to 0, got {:?}",
+            input_str,
+            nfs
+        );
+    }
 }
 
 #[test]
 fn prec_basemath_paren_override_add_sub__1___2____3() {
     mettail_runtime::clear_var_cache();
-    { // Parenthesization override: (Add) Sub
-    let input_str = "(1 + 2) - 3";
-    let lang = BaseMathLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);}
+    {
+        // Parenthesization override: (Add) Sub
+        let input_str = "(1 + 2) - 3";
+        let lang = BaseMathLanguage;
+        let parsed = lang.parse_term(input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs: Vec<String> = results
+            .normal_forms()
+            .iter()
+            .map(|nf| nf.display.clone())
+            .collect();
+        assert!(
+            nfs.iter().any(|d| d == "0"),
+            "{} should evaluate to 0, got {:?}",
+            input_str,
+            nfs
+        );
+    }
 }
 
 #[test]
 fn assoc_basemath_add_left() {
     mettail_runtime::clear_var_cache();
-    { // Associativity test: Add is left-associative
-    let input_str = "1 + 2 + 3";
-    let lang = BaseMathLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "6"),
-        "{} (left-assoc) should evaluate to 6, got {:?}", input_str, nfs);}
+    {
+        // Associativity test: Add is left-associative
+        let input_str = "1 + 2 + 3";
+        let lang = BaseMathLanguage;
+        let parsed = lang.parse_term(input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs: Vec<String> = results
+            .normal_forms()
+            .iter()
+            .map(|nf| nf.display.clone())
+            .collect();
+        assert!(
+            nfs.iter().any(|d| d == "6"),
+            "{} (left-assoc) should evaluate to 6, got {:?}",
+            input_str,
+            nfs
+        );
+    }
 }
 
 #[test]
 fn assoc_basemath_sub_left() {
     mettail_runtime::clear_var_cache();
-    { // Associativity test: Sub is left-associative
-    let input_str = "1 - 2 - 3";
-    let lang = BaseMathLanguage;
-    let parsed = lang.parse_term(input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-4"),
-        "{} (left-assoc) should evaluate to -4, got {:?}", input_str, nfs);}
+    {
+        // Associativity test: Sub is left-associative
+        let input_str = "1 - 2 - 3";
+        let lang = BaseMathLanguage;
+        let parsed = lang.parse_term(input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs: Vec<String> = results
+            .normal_forms()
+            .iter()
+            .map(|nf| nf.display.clone())
+            .collect();
+        assert!(
+            nfs.iter().any(|d| d == "-4"),
+            "{} (left-assoc) should evaluate to -4, got {:?}",
+            input_str,
+            nfs
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -800,481 +1492,721 @@ fn assoc_basemath_sub_left() {
 #[test]
 fn wpda_basemath_add_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_add_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Add(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_0_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_0_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_0_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_0_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_1_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_1_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_1_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_1_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_2_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_2_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_2_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_2_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_2_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_3_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_3_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(1i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_3_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(2i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_3_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(3i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_basemath_sub_3_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_term =
+        Num::Sub(std::sync::Arc::new(Num::NumLit(3i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = BaseMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1284,46 +2216,69 @@ fn wpda_basemath_sub_3_5() {
 #[test]
 fn type_pres_basemath_add_0_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Num
-    let input_term = Num::Add(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = BaseMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Num
+        let input_term = Num::Add(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(0i32)),
+        );
+        let input_str = format!("{}", input_term);
+        let lang = BaseMathLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 #[test]
 fn type_pres_basemath_sub_0_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Num
-    let input_term = Num::Sub(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = BaseMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Num
+        let input_term = Num::Sub(
+            std::sync::Arc::new(Num::NumLit(0i32)),
+            std::sync::Arc::new(Num::NumLit(0i32)),
+        );
+        let input_str = format!("{}", input_term);
+        let lang = BaseMathLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 // Total operational semantics tests: 100 (P1=40, P2a=12, P2b=0, P3a=0, P3b=0, P4a=2, P4b=4, P5a=40, P5b=2)
-

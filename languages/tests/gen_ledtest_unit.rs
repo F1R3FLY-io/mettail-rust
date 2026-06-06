@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::ledtest::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -29,52 +29,68 @@ fn ledtest_metadata_populated() {
 #[test]
 fn unit_ledtest_pred_eqnum() {
     mettail_runtime::clear_var_cache();
-    let term = Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let term =
+        Pred::EqNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqNum");
     if let Ok(parsed) = Pred::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EqNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for EqNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_ledtest_pred_nenum() {
     mettail_runtime::clear_var_cache();
-    let term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let term =
+        Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeNum");
     if let Ok(parsed) = Pred::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NeNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NeNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_ledtest_num_addnum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let term =
+        Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddNum");
     if let Ok(parsed) = Num::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_ledtest_num_mulnum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let term =
+        Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulNum");
     if let Ok(parsed) = Num::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MulNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MulNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -86,8 +102,11 @@ fn unit_ledtest_num_negnum() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegNum");
     if let Ok(parsed) = Num::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NegNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NegNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -99,21 +118,30 @@ fn unit_ledtest_num_factnum() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FactNum");
     if let Ok(parsed) = Num::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FactNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FactNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_ledtest_pred_andpred() {
     mettail_runtime::clear_var_cache();
-    let term = Pred::AndPred(std::sync::Arc::new(Pred::BoolLit(false)), std::sync::Arc::new(Pred::BoolLit(false)));
+    let term = Pred::AndPred(
+        std::sync::Arc::new(Pred::BoolLit(false)),
+        std::sync::Arc::new(Pred::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AndPred");
     if let Ok(parsed) = Pred::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AndPred: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AndPred: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -125,8 +153,11 @@ fn unit_ledtest_expr_castnum() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastNum");
     if let Ok(parsed) = Expr::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -138,34 +169,52 @@ fn unit_ledtest_expr_castpred() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastPred");
     if let Ok(parsed) = Expr::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastPred: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastPred: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_ledtest_num_exprtonum() {
     mettail_runtime::clear_var_cache();
-    let term = Num::ExprToNum(std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Num::ExprToNum(std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ExprToNum");
     if let Ok(parsed) = Num::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ExprToNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ExprToNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_ledtest_expr_epar() {
     mettail_runtime::clear_var_cache();
-    let term = Expr::EPar(std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Expr::EPar(
+        std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EPar");
     if let Ok(parsed) = Expr::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EPar: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for EPar: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -177,8 +226,11 @@ fn unit_ledtest_num_predtonum() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PredToNum");
     if let Ok(parsed) = Num::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PredToNum: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PredToNum: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -189,8 +241,11 @@ fn unit_ledtest_auto_num_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = Num::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -201,22 +256,20 @@ fn unit_ledtest_auto_pred_boollit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolLit");
     if let Ok(parsed) = Pred::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_ledtest_auto_expr_evar() {
     mettail_runtime::clear_var_cache();
-    let term = Expr::EVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Expr::EVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EVar");
 }
-

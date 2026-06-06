@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::refinementsmoke::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -34,8 +34,11 @@ fn unit_refinementsmoke_posint_inttoposint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToPosInt");
     if let Ok(parsed) = PosInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToPosInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToPosInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -46,22 +49,20 @@ fn unit_refinementsmoke_auto_int_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_refinementsmoke_auto_posint_pvar() {
     mettail_runtime::clear_var_cache();
-    let term = PosInt::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = PosInt::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PVar");
 }
-

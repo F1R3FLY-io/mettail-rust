@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::importedmath::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -94,14 +94,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -130,14 +138,16 @@ impl<'a> TapeReader<'a> {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_num_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Num {
     if depth == 0 {
-        let result = AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
+        let result =
+            AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
         return result.unwrap_num();
     }
 
     let choice = (reader.next_byte() as usize) % 4;
     let child_depth = depth - 1;
     match choice {
-        0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_num(),
+        0 => AnyTerm::WrapNum(Num::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX))
+            .unwrap_num(),
         1 => {
             let f0 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_num_from_tape(reader, child_depth));
@@ -310,10 +320,10 @@ fn sim_importedmath_normal_form_reachability() {
                 if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
                     reached_nf += 1;
                 }
-            }
+            },
             _ => {
                 // Skip inputs that fail to parse, evaluate, or panic.
-            }
+            },
         }
     }
 
@@ -551,4 +561,3 @@ proptest! {
         // are tolerated — they are covered by dedicated non-proptest simulation tests.
     }
 }
-

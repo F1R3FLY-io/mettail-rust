@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::lambda::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -94,14 +94,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -131,15 +139,11 @@ impl<'a> TapeReader<'a> {
 fn build_term_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Term {
     if depth == 0 {
         let result = {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapTerm(Term::TVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-};
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapTerm(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        };
         return result.unwrap_term();
     }
 
@@ -147,20 +151,17 @@ fn build_term_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Term {
     let child_depth = depth - 1;
     match choice {
         0 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapTerm(Term::TVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_term(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapTerm(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_term(),
         1 => {
             let binder_name = format!("a{}", reader.next_byte() % 8);
-let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
-let body = build_term_from_tape(reader, child_depth);
-let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
+            let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(&binder_name));
+            let body = build_term_from_tape(reader, child_depth);
+            let scope = mettail_runtime::Scope::new(binder, std::sync::Arc::new(body));
             Term::Lam(scope)
         },
         _ => {
@@ -319,10 +320,10 @@ fn sim_lambda_normal_form_reachability() {
                 if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
                     reached_nf += 1;
                 }
-            }
+            },
             _ => {
                 // Skip inputs that fail to parse, evaluate, or panic.
-            }
+            },
         }
     }
 
@@ -560,4 +561,3 @@ proptest! {
         // are tolerated — they are covered by dedicated non-proptest simulation tests.
     }
 }
-

@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::lambda::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Rewrite tests (one per rewrite rule)
@@ -81,4 +81,3 @@ fn rewrite_lambda_lamcong() {
     // Congruence rules require a rewrite-triggering context to test.
     // They fire when their premise (S ~> T) is satisfied by another rewrite.
 }
-

@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::optsmoke::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -29,13 +29,20 @@ fn optsmoke_metadata_populated() {
 #[test]
 fn unit_optsmoke_int_ifelse() {
     mettail_runtime::clear_var_cache();
-    let term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(0i32)), None);
+    let term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        None,
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IfElse");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IfElse: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IfElse: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -47,8 +54,11 @@ fn unit_optsmoke_int_booltoint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -59,8 +69,11 @@ fn unit_optsmoke_auto_int_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -71,8 +84,10 @@ fn unit_optsmoke_auto_bool_boollit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolLit");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
-

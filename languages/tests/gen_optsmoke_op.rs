@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::optsmoke::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // WFST-derived test coverage plan
@@ -37,126 +37,241 @@ use mettail_runtime::BehavioralPred;
 #[test]
 fn eval_optsmoke_ifelse_false_5_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(5i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_false_3_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(3i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_false_2_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(2i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_false_1_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(1i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_false_0_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_true_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(5i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "5"),
-        "{} should evaluate to 5, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "5"),
+        "{} should evaluate to 5, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_true_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(3i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "3"),
+        "{} should evaluate to 3, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_true_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(2i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "2"),
+        "{} should evaluate to 2, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_true_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(1i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn eval_optsmoke_ifelse_true_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "0"),
+        "{} should evaluate to 0, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -170,34 +285,62 @@ fn cross_cat_optsmoke_cast_booltoint_from_bool_to_int() {
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn cross_cat_optsmoke_eval_ifelse() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(1i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    let nfs: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        nfs.iter().any(|d| d == "1"),
+        "{} should evaluate to 1, got {:?}",
+        input_str,
+        nfs
+    );
 }
 
 #[test]
 fn cross_cat_optsmoke_castop_ifelse_booltoint_smoke() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::BoolToInt(std::sync::Arc::new(Bool::BoolLit(true)))),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -207,13 +350,22 @@ fn cross_cat_optsmoke_castop_ifelse_booltoint_smoke() {
 #[test]
 fn wfst_optsmoke_dispatch_ifelse_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -223,121 +375,211 @@ fn wfst_optsmoke_dispatch_ifelse_eval() {
 #[test]
 fn wpda_optsmoke_ifelse_true_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_true_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(1i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_true_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(2i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_true_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(3i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_true_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(true)),
+        std::sync::Arc::new(Int::NumLit(5i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_false_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(0i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_false_1() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(1i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(1i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_false_2() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(2i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(2i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_false_3() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(3i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(3i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 #[test]
 fn wpda_optsmoke_ifelse_false_5() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Int::NumLit(5i32)), None);
+    let input_term = Int::IfElse(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Int::NumLit(5i32)),
+        None,
+    );
     let input_str = format!("{}", input_term);
     let lang = OptSmokeLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
+    let results = lang
+        .run_ascent(parsed.as_ref())
+        .expect("eval should succeed");
+    assert!(
+        !results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form",
+        input_str
+    );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -347,24 +589,36 @@ fn wpda_optsmoke_ifelse_false_5() {
 #[test]
 fn type_pres_optsmoke_ifelse_true_0() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Int
-    let input_term = Int::IfElse(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Int::NumLit(0i32)), None);
-    let input_str = format!("{}", input_term);
-    let lang = OptSmokeLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    {
+        // Type preservation test for category Int
+        let input_term = Int::IfElse(
+            std::sync::Arc::new(Bool::BoolLit(true)),
+            std::sync::Arc::new(Int::NumLit(0i32)),
+            None,
+        );
+        let input_str = format!("{}", input_term);
+        let lang = OptSmokeLanguage;
+        let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+        let results = lang
+            .run_ascent(parsed.as_ref())
+            .expect("eval should succeed");
+        let nfs = results.normal_forms();
+        assert!(
+            !nfs.is_empty(),
+            "type preservation: {} should produce at least one normal form",
+            input_str
+        );
+        // Verify each normal form can be displayed and re-parsed (type preservation)
+        for nf in &nfs {
+            let nf_display = &nf.display;
+            let re_parsed = lang.parse_term(nf_display);
+            assert!(
+                re_parsed.is_ok(),
+                "type preservation: normal form '{}' should be parseable in same category",
+                nf_display
+            );
+        }
     }
-}
 }
 
 // Total operational semantics tests: 25 (P1=10, P2a=0, P2b=0, P3a=3, P3b=0, P4a=1, P4b=0, P5a=10, P5b=1)
-

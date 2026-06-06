@@ -26,7 +26,9 @@ fn rhocalc_name_keyword_text_uses_identifier_alternative_in_all_parse() {
     let parsed = rhocalc::Name::parse_via_wpda_all("merge")
         .expect("all-results Name parser should share the WPDA lattice backend");
     assert!(
-        parsed.iter().any(|term| matches!(term, rhocalc::Name::NVar(_))),
+        parsed
+            .iter()
+            .any(|term| matches!(term, rhocalc::Name::NVar(_))),
         "got {:?}",
         parsed
     );

@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::class3opt::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -33,8 +33,11 @@ fn unit_class3opt_proc_pzero() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PZero");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PZero: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PZero: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -46,8 +49,11 @@ fn unit_class3opt_name_nquote() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuote");
     if let Ok(parsed) = Name::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NQuote: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NQuote: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -56,13 +62,9 @@ fn unit_class3opt_name_nquote() {
 #[test]
 fn unit_class3opt_auto_proc_pvar() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PVar");
 }
@@ -70,14 +72,9 @@ fn unit_class3opt_auto_proc_pvar() {
 #[test]
 fn unit_class3opt_auto_name_nvar() {
     mettail_runtime::clear_var_cache();
-    let term = Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NVar");
 }
-

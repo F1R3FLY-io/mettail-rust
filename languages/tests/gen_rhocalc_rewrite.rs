@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::rhocalc::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Equation tests (one per equation)
@@ -1049,9 +1049,8 @@ fn rewrite_rhocalc_normcastinttobigintinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("1")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("1")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1103,9 +1102,8 @@ fn rewrite_rhocalc_normcastinttobigratinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("1")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("1")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1157,9 +1155,8 @@ fn rewrite_rhocalc_normcastuint32tointinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("1")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("1")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1192,8 +1189,14 @@ fn rewrite_rhocalc_normcastuint32tobigintinproc() {
     let rw = &rewrites[101];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastUInt32ToBigIntInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigIntInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigIntInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigIntInProc RHS should be non-empty"
+    );
 }
 
 // Concrete execution test: run "1" through SimulationRunner,
@@ -1211,9 +1214,8 @@ fn rewrite_rhocalc_normcastuint32tobigintinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("1")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("1")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1246,8 +1248,14 @@ fn rewrite_rhocalc_normcastuint32tobigratinproc() {
     let rw = &rewrites[103];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastUInt32ToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastUInt32ToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastUInt32ToBigRatInProc RHS should be non-empty"
+    );
 }
 
 // Concrete execution test: run "1" through SimulationRunner,
@@ -1265,9 +1273,8 @@ fn rewrite_rhocalc_normcastuint32tobigratinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("1")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("1")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1300,8 +1307,14 @@ fn rewrite_rhocalc_normcastfloattobigratinproc() {
     let rw = &rewrites[105];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastFloatToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFloatToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastFloatToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastFloatToBigRatInProc RHS should be non-empty"
+    );
 }
 
 // Concrete execution test: run "1.0" through SimulationRunner,
@@ -1319,9 +1332,8 @@ fn rewrite_rhocalc_normcastfloattobigratinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("1.0")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("1.0")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1354,8 +1366,14 @@ fn rewrite_rhocalc_normcastbiginttobigratinproc() {
     let rw = &rewrites[107];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastBigIntToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastBigIntToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastBigIntToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastBigIntToBigRatInProc RHS should be non-empty"
+    );
 }
 
 // Concrete execution test: run "0" through SimulationRunner,
@@ -1373,9 +1391,8 @@ fn rewrite_rhocalc_normcastbiginttobigratinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("0")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("0")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1408,8 +1425,14 @@ fn rewrite_rhocalc_normcastfixedtobigratinproc() {
     let rw = &rewrites[109];
     // Verify rewrite rule name
     assert_eq!(rw.name, Some("NormCastFixedToBigRatInProc"), "Rewrite rule name mismatch");
-    assert!(!rw.lhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc LHS should be non-empty");
-    assert!(!rw.rhs.is_empty(), "Rewrite NormCastFixedToBigRatInProc RHS should be non-empty");
+    assert!(
+        !rw.lhs.is_empty(),
+        "Rewrite NormCastFixedToBigRatInProc LHS should be non-empty"
+    );
+    assert!(
+        !rw.rhs.is_empty(),
+        "Rewrite NormCastFixedToBigRatInProc RHS should be non-empty"
+    );
 }
 
 // Concrete execution test: run "0" through SimulationRunner,
@@ -1427,9 +1450,8 @@ fn rewrite_rhocalc_normcastfixedtobigratinproc_exec() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        runner.run_to_normal_form("0")
-    }));
+    let result =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runner.run_to_normal_form("0")));
     if let Ok(Ok(trace)) = result {
         assert!(
             matches!(trace.outcome, TraceOutcome::NormalForm { .. }),
@@ -1439,4 +1461,3 @@ fn rewrite_rhocalc_normcastfixedtobigratinproc_exec() {
     }
     // Panics (e.g., division by zero in native eval) are tolerated.
 }
-

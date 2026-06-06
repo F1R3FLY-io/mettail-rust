@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::class2hashmapsmoke::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -94,14 +94,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -134,15 +142,11 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
         let result = match choice {
             0 => AnyTerm::WrapProc(Proc::PZero),
             _ => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-},
+                let _ = reader.next_byte(); // consume tape byte for replay determinism
+                AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                    mettail_runtime::get_or_create_var("a"),
+                ))))
+            },
         };
         return result.unwrap_proc();
     }
@@ -152,24 +156,21 @@ fn build_proc_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Proc {
     match choice {
         0 => AnyTerm::WrapProc(Proc::PZero).unwrap_proc(),
         1 => {
-    let _ = reader.next_byte(); // consume tape byte for replay determinism
-    AnyTerm::WrapProc(Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    ))
-}.unwrap_proc(),
+            let _ = reader.next_byte(); // consume tape byte for replay determinism
+            AnyTerm::WrapProc(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+                mettail_runtime::get_or_create_var("a"),
+            ))))
+        }
+        .unwrap_proc(),
         _ => {
             let f0 = std::sync::Arc::new(build_proc_from_tape(reader, child_depth));
             let num_elems_1 = (reader.next_byte() % 4) as usize;
-let mut coll_1 = mettail_runtime::HashMapLit::default();
-for _ in 0..num_elems_1 {
-let k = build_proc_from_tape(reader, child_depth);
-let v = build_proc_from_tape(reader, child_depth);
-coll_1.insert(k, v);
-}
+            let mut coll_1 = mettail_runtime::HashMapLit::default();
+            for _ in 0..num_elems_1 {
+                let k = build_proc_from_tape(reader, child_depth);
+                let v = build_proc_from_tape(reader, child_depth);
+                coll_1.insert(k, v);
+            }
             Proc::ChooseMap(f0, coll_1)
         },
     }
@@ -293,4 +294,3 @@ proptest! {
     }
 
 }
-

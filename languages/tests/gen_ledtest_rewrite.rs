@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::ledtest::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Rewrite tests (one per rewrite rule)
@@ -201,4 +201,3 @@ fn rewrite_ledtest_normcastpredtonuminexpr_exec() {
     }
     // Panics (e.g., division by zero in native eval) are tolerated.
 }
-

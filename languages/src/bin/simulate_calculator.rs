@@ -3,15 +3,13 @@
 // Run with: cargo run --bin simulate_calculator -- [OPTIONS]
 
 use clap::Parser;
-use mettail_simulation::runner::{
-    SimulationConfig, SimulationRunner, TraceOutputFormat,
-};
+use mettail_languages::calculator::strategies::arb_proc;
+use mettail_languages::calculator::CalculatorLanguage;
+use mettail_runtime::Language;
 use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
-use mettail_languages::calculator::CalculatorLanguage;
-use mettail_languages::calculator::strategies::arb_proc;
-use mettail_runtime::Language;
+use mettail_simulation::runner::{SimulationConfig, SimulationRunner, TraceOutputFormat};
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
 
@@ -73,13 +71,19 @@ fn main() {
                 b'0'..=b'9' => chunk[0] - b'0',
                 b'a'..=b'f' => chunk[0] - b'a' + 10,
                 b'A'..=b'F' => chunk[0] - b'A' + 10,
-                _ => { eprintln!("Error: invalid hex character in seed"); std::process::exit(1); }
+                _ => {
+                    eprintln!("Error: invalid hex character in seed");
+                    std::process::exit(1);
+                },
             };
             let low = match chunk[1] {
                 b'0'..=b'9' => chunk[1] - b'0',
                 b'a'..=b'f' => chunk[1] - b'a' + 10,
                 b'A'..=b'F' => chunk[1] - b'A' + 10,
-                _ => { eprintln!("Error: invalid hex character in seed"); std::process::exit(1); }
+                _ => {
+                    eprintln!("Error: invalid hex character in seed");
+                    std::process::exit(1);
+                },
             };
             seed[i] = (high << 4) | low;
         }
@@ -93,10 +97,12 @@ fn main() {
             "BoundedSize" => invariants.push(Box::new(BoundedSize { max_nodes: 10000 })),
             "BoundedDepth" => invariants.push(Box::new(BoundedDepth { max_depth: 100 })),
             "AlwaysParseable" => invariants.push(Box::new(AlwaysParseable)),
-            "NormalFormReachable" => invariants.push(Box::new(NormalFormReachable { max_steps: args.steps })),
+            "NormalFormReachable" => {
+                invariants.push(Box::new(NormalFormReachable { max_steps: args.steps }))
+            },
             other => {
                 eprintln!("Warning: unknown invariant '{}', skipping", other);
-            }
+            },
         }
     }
 
@@ -151,8 +157,14 @@ fn main() {
             println!();
             println!("Morphology Summary:");
             println!("  Steps: {}", morph.total_steps);
-            println!("  Nodes: min={}, max={}, mean={:.1}", morph.min_nodes, morph.max_nodes, morph.mean_nodes);
-            println!("  Depth: min={}, max={}, mean={:.1}", morph.min_depth, morph.max_depth, morph.mean_depth);
+            println!(
+                "  Nodes: min={}, max={}, mean={:.1}",
+                morph.min_nodes, morph.max_nodes, morph.mean_nodes
+            );
+            println!(
+                "  Depth: min={}, max={}, mean={:.1}",
+                morph.min_depth, morph.max_depth, morph.mean_depth
+            );
             println!("  Distinct shapes: {}", morph.distinct_shapes);
             if !morph.alerts.is_empty() {
                 println!("  Alerts:");

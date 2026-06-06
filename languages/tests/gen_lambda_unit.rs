@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::lambda::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Unit tests (one per constructor)
@@ -29,7 +29,12 @@ fn lambda_metadata_populated() {
 #[test]
 fn unit_lambda_term_lam() {
     mettail_runtime::clear_var_cache();
-    let term = Term::Lam(mettail_runtime::Scope::new(mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")), std::sync::Arc::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")))))));
+    let term = Term::Lam(mettail_runtime::Scope::new(
+        mettail_runtime::Binder(mettail_runtime::get_or_create_var("a")),
+        std::sync::Arc::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    ));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Lam");
 }
@@ -37,27 +42,32 @@ fn unit_lambda_term_lam() {
 #[test]
 fn unit_lambda_term_app() {
     mettail_runtime::clear_var_cache();
-    let term = Term::App(std::sync::Arc::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Term::App(
+        std::sync::Arc::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for App");
     if let Ok(parsed) = Term::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for App: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for App: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_lambda_auto_term_tvar() {
     mettail_runtime::clear_var_cache();
-    let term = Term::TVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for TVar");
 }
-

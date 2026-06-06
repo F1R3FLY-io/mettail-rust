@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::mixedmath::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // ═══════════════════════════════════════════════════════════
 // Proptest strategies + property tests (tape-based)
@@ -107,14 +107,22 @@ impl<'a> TapeReader<'a> {
         let bits = self.next_i64() as u64;
         let val = f64::from_bits(bits);
         // Avoid NaN/Inf which cause issues with Eq/Ord
-        if val.is_nan() || val.is_infinite() { 0.0 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            val
+        }
     }
 
     /// Read an f32 from tape bytes.
     fn next_f32(&mut self) -> f32 {
         let bits = self.next_u32();
         let val = f32::from_bits(bits);
-        if val.is_nan() || val.is_infinite() { 0.0f32 } else { val }
+        if val.is_nan() || val.is_infinite() {
+            0.0f32
+        } else {
+            val
+        }
     }
 
     /// Read a bool from tape.
@@ -143,14 +151,16 @@ impl<'a> TapeReader<'a> {
 #[allow(dead_code, unused_variables, clippy::let_and_return)]
 fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     if depth == 0 {
-        let result = AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
+        let result =
+            AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX));
         return result.unwrap_int();
     }
 
     let choice = (reader.next_byte() as usize) % 6;
     let child_depth = depth - 1;
     match choice {
-        0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX)).unwrap_int(),
+        0 => AnyTerm::WrapInt(Int::NumLit((reader.next_i32().unsigned_abs() as i32) & i32::MAX))
+            .unwrap_int(),
         1 => {
             let f0 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
             let f1 = std::sync::Arc::new(build_int_from_tape(reader, child_depth));
@@ -461,7 +471,17 @@ fn sim_mixedmath_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
+    let test_inputs: Vec<&str> = vec![
+        "1 + 1",
+        "1 - 1",
+        "1 * 1",
+        "true and true",
+        "true or true",
+        "not true",
+        "- 1",
+        "1",
+        "true",
+    ];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -478,10 +498,10 @@ fn sim_mixedmath_normal_form_reachability() {
                 if matches!(trace.outcome, TraceOutcome::NormalForm { .. }) {
                     reached_nf += 1;
                 }
-            }
+            },
             _ => {
                 // Skip inputs that fail to parse, evaluate, or panic.
-            }
+            },
         }
     }
 
@@ -513,7 +533,17 @@ fn sim_mixedmath_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
+    let test_inputs: Vec<&str> = vec![
+        "1 + 1",
+        "1 - 1",
+        "1 * 1",
+        "true and true",
+        "true or true",
+        "not true",
+        "- 1",
+        "1",
+        "true",
+    ];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -575,7 +605,17 @@ fn sim_mixedmath_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
+    let test_inputs: Vec<&str> = vec![
+        "1 + 1",
+        "1 - 1",
+        "1 * 1",
+        "true and true",
+        "true or true",
+        "not true",
+        "- 1",
+        "1",
+        "true",
+    ];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -610,7 +650,17 @@ fn sim_mixedmath_eval_determinism() {
     let lang = MixedMathLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
+    let test_inputs: Vec<&str> = vec![
+        "1 + 1",
+        "1 - 1",
+        "1 * 1",
+        "true and true",
+        "true or true",
+        "not true",
+        "- 1",
+        "1",
+        "true",
+    ];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {
@@ -719,4 +769,3 @@ proptest! {
         // are tolerated — they are covered by dedicated non-proptest simulation tests.
     }
 }
-

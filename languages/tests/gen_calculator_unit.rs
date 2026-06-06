@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::calculator::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // Dead rules detected by WFST analysis: ["Bag::BagLit", "Bag::DiffBag", "Bag::RemoveBag", "Bag::UnionBag", "BigInt::AddBigInt", "BigInt::BigintCast", "BigInt::BitAndBigInt", "BigInt::BitNotBigInt", "BigInt::BitOrBigInt", "BigInt::BoolToBigInt", "BigInt::CastErrBigInt", "BigInt::IntToBigInt", "BigInt::NegBigInt", "BigInt::SubBigInt", "BigInt::UInt32ToBigInt", "BigRat::AddBigRat", "BigRat::BigIntToBigRat", "BigRat::BigratCast", "BigRat::BitAndBigRat", "BigRat::BitNotBigRat", "BigRat::BitOrBigRat", "BigRat::BoolToBigRat", "BigRat::DivBigRat", "BigRat::Err", "BigRat::FixedToBigRat", "BigRat::FloatToBigRat", "BigRat::Fraction", "BigRat::IntToBigRat", "BigRat::MulBigRat", "BigRat::NegBigRat", "BigRat::UInt32ToBigRat", "Bool::And", "Bool::BoolId", "Bool::EqBool", "Bool::EqFixed", "Bool::EqFloat", "Bool::EqInt", "Bool::EqStr", "Bool::FloatToBool", "Bool::GtBool", "Bool::GtEqBool", "Bool::GtEqFixed", "Bool::GtEqFloat", "Bool::GtEqInt", "Bool::GtEqStr", "Bool::GtFixed", "Bool::GtFloat", "Bool::GtInt", "Bool::GtStr", "Bool::HasMap", "Bool::IntToBool", "Bool::LtBool", "Bool::LtEqBool", "Bool::LtEqFixed", "Bool::LtEqFloat", "Bool::LtEqInt", "Bool::LtEqStr", "Bool::LtFixed", "Bool::LtFloat", "Bool::LtInt", "Bool::LtStr", "Bool::NeBool", "Bool::NeFixed", "Bool::NeFloat", "Bool::NeInt", "Bool::NeStr", "Bool::Not", "Bool::Or", "Bool::ProcToBool", "Bool::StrToBool", "Bool::Xor", "Fixed::AddFixed", "Fixed::BitAndFixed", "Fixed::BitNotFixed", "Fixed::BitOrFixed", "Fixed::DivFixed", "Fixed::FixedBin", "Fixed::ModFixed", "Fixed::MulFixed", "Fixed::NegFixed", "Fixed::SubFixed", "Float::AddFloat", "Float::BoolToFloat", "Float::CosFloat", "Float::DivFloat", "Float::ExpFloat", "Float::FloatBin", "Float::FloatId", "Float::IntToFloat", "Float::LnFloat", "Float::MulFloat", "Float::NegFloat", "Float::PowFloat", "Float::SinFloat", "Float::StrToFloat", "Float::SubFloat", "Int::AddInt", "Int::BitAndInt", "Int::BitNotInt", "Int::BitOrInt", "Int::BoolToInt", "Int::CountBag", "Int::CustomOp", "Int::DivInt", "Int::Fact", "Int::FloatToInt", "Int::IntBin", "Int::IntId", "Int::Len", "Int::LenList", "Int::LenMap", "Int::ModInt", "Int::MulInt", "Int::Neg", "Int::PowInt", "Int::StrToInt", "Int::SubInt", "Int::Tern", "List::ConcatList", "List::DeleteList", "List::KeysMap", "List::ListLit", "List::ValuesMap", "Map::DeleteMap", "Map::MapLit", "Map::MergeMap", "Map::PutMap", "Proc::ElemList", "Proc::GetMap", "Proc::ProcBag", "Proc::ProcBigInt", "Proc::ProcBigRat", "Proc::ProcBool", "Proc::ProcFixed", "Proc::ProcFloat", "Proc::ProcInt", "Proc::ProcList", "Proc::ProcMap", "Proc::ProcStr", "Proc::ProcUInt32", "Str::AddStr", "Str::BoolToStr", "Str::Concat", "Str::FloatToStr", "Str::IntToStr", "Str::ProcToStr", "Str::StrId", "UInt32::AddUInt32", "UInt32::BitAndUInt32", "UInt32::BitNotUInt32", "UInt32::BitOrUInt32", "UInt32::BoolToUInt32", "UInt32::CastErrUInt32", "UInt32::UIntBin"]
 
@@ -36,21 +36,29 @@ fn unit_calculator_proc_procint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_proc_procfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Proc::ProcFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcFloat");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -62,8 +70,11 @@ fn unit_calculator_proc_procbool() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBool");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -75,8 +86,11 @@ fn unit_calculator_proc_procstr() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcStr");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -88,8 +102,11 @@ fn unit_calculator_proc_proclist() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcList");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -101,8 +118,11 @@ fn unit_calculator_proc_procbag() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -114,8 +134,11 @@ fn unit_calculator_proc_procmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -127,47 +150,65 @@ fn unit_calculator_proc_procuint32() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcUInt32");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_proc_procbigint() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = Proc::ProcBigInt(std::sync::Arc::new(BigInt::NumLit(
+        mettail_runtime::CanonicalBigInt::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBigInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_proc_procbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = Proc::ProcBigRat(std::sync::Arc::new(BigRat::RatLit(
+        mettail_runtime::CanonicalBigRat::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcBigRat");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_proc_procfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ProcFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Proc::ProcFixed(std::sync::Arc::new(Fixed::FixedLit(
+        mettail_runtime::CanonicalFixedPoint::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcFixed");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -178,8 +219,11 @@ fn unit_calculator_bigrat_err() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Err");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Err: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Err: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -190,8 +234,11 @@ fn unit_calculator_int_err() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Err");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Err: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Err: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -202,8 +249,11 @@ fn unit_calculator_int_casterrint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastErrInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastErrInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastErrInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -211,11 +261,17 @@ fn unit_calculator_int_casterrint() {
 fn unit_calculator_uint32_casterruint32() {
     let term = UInt32::CastErrUInt32;
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastErrUInt32");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for CastErrUInt32"
+    );
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastErrUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastErrUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -223,11 +279,17 @@ fn unit_calculator_uint32_casterruint32() {
 fn unit_calculator_fixed_casterrfixed() {
     let term = Fixed::CastErrFixed;
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastErrFixed");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for CastErrFixed"
+    );
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastErrFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastErrFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -235,11 +297,17 @@ fn unit_calculator_fixed_casterrfixed() {
 fn unit_calculator_float_casterrfloat() {
     let term = Float::CastErrFloat;
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastErrFloat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for CastErrFloat"
+    );
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastErrFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastErrFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -247,11 +315,17 @@ fn unit_calculator_float_casterrfloat() {
 fn unit_calculator_bigint_casterrbigint() {
     let term = BigInt::CastErrBigInt;
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for CastErrBigInt");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for CastErrBigInt"
+    );
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastErrBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastErrBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -263,8 +337,11 @@ fn unit_calculator_bigint_inttobigint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -276,67 +353,96 @@ fn unit_calculator_bigrat_inttobigrat() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_fraction() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigRat::Fraction(
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Fraction");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Fraction: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Fraction: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_addbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::AddBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::AddBigRat(
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_mulbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::MulBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::MulBigRat(
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MulBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MulBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_divbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::DivBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::DivBigRat(
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DivBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DivBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_negbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(
+        mettail_runtime::CanonicalBigRat::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegBigRat");
     if let Ok(alts) = BigRat::parse_via_wpda_all(&displayed) {
@@ -352,442 +458,644 @@ fn unit_calculator_bigrat_negbigrat() {
 #[test]
 fn unit_calculator_bigrat_bitandbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::BitAndBigRat(
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+    );
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BitAndBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitAndBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitAndBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_bitorbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())), std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::BitOrBigRat(
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+        std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitOrBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitOrBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_bitnotbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(
+        mettail_runtime::CanonicalBigRat::default(),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BitNotBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitNotBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitNotBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_tern() {
     mettail_runtime::clear_var_cache();
-    let term = Int::Tern(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Int::Tern(
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Tern");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Tern: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Tern: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_eqint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EqInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for EqInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_eqfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::EqFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EqFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for EqFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_eqbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::EqBool(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EqBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for EqBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_eqstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Bool::EqStr(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EqStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for EqStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gtint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Bool::GtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gtfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::GtFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gtbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::GtBool(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gtstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Bool::GtStr(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_ltint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Bool::LtInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_ltfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::LtFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_ltbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::LtBool(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_ltstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Bool::LtStr(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_lteqint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Bool::LtEqInt(
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtEqInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtEqInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_lteqfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::LtEqFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtEqFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtEqFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_lteqbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::LtEqBool(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtEqBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtEqBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_lteqstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Bool::LtEqStr(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtEqStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtEqStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gteqint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Bool::GtEqInt(
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtEqInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtEqInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gteqfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::GtEqFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtEqFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtEqFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gteqbool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::GtEqBool(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtEqBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtEqBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gteqstr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Bool::GtEqStr(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtEqStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtEqStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_neint() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Bool::NeInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeInt");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NeInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NeInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_nefloat() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::NeFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeFloat");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NeFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NeFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_nebool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeBool(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::NeBool(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NeBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NeBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_nestr() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Bool::NeStr(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeStr");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NeStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NeStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_eqfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::EqFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::EqFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for EqFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for EqFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for EqFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gtfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::GtFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_ltfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::LtFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_lteqfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::LtEqFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEqFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtEqFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtEqFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_gteqfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::GtEqFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEqFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtEqFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtEqFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_nefixed() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::NeFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Bool::NeFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NeFixed");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NeFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NeFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -799,47 +1107,68 @@ fn unit_calculator_bool_not() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Not");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Not: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Not: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_and() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::And(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for And");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for And: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for And: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_or() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::Or(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Or");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Or: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Or: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_xor() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let term = Bool::Xor(
+        std::sync::Arc::new(Bool::BoolLit(false)),
+        std::sync::Arc::new(Bool::BoolLit(false)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Xor");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Xor: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Xor: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -851,73 +1180,109 @@ fn unit_calculator_int_len() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Len");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Len: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Len: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_str_concat() {
     mettail_runtime::clear_var_cache();
-    let term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Str::Concat(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Concat");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Concat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Concat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_str_addstr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let term = Str::AddStr(
+        std::sync::Arc::new(Str::StringLit(String::new())),
+        std::sync::Arc::new(Str::StringLit(String::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddStr");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_uint32_adduint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
+    let term = UInt32::AddUInt32(
+        std::sync::Arc::new(UInt32::NumLit(0u32)),
+        std::sync::Arc::new(UInt32::NumLit(0u32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_uint32_bitanduint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::BitAndUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
+    let term = UInt32::BitAndUInt32(
+        std::sync::Arc::new(UInt32::NumLit(0u32)),
+        std::sync::Arc::new(UInt32::NumLit(0u32)),
+    );
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndUInt32");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BitAndUInt32"
+    );
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitAndUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitAndUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_uint32_bitoruint32() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::BitOrUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
+    let term = UInt32::BitOrUInt32(
+        std::sync::Arc::new(UInt32::NumLit(0u32)),
+        std::sync::Arc::new(UInt32::NumLit(0u32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrUInt32");
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitOrUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitOrUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -926,44 +1291,64 @@ fn unit_calculator_uint32_bitnotuint32() {
     mettail_runtime::clear_var_cache();
     let term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotUInt32");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BitNotUInt32"
+    );
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitNotUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitNotUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigint_addbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::AddBigInt(
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigint_subbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::SubBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::SubBigInt(
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for SubBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SubBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigint_negbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(
+        mettail_runtime::CanonicalBigInt::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegBigInt");
     if let Ok(alts) = BigInt::parse_via_wpda_all(&displayed) {
@@ -979,143 +1364,202 @@ fn unit_calculator_bigint_negbigint() {
 #[test]
 fn unit_calculator_bigint_bitandbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BitAndBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::BitAndBigInt(
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+    );
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndBigInt");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BitAndBigInt"
+    );
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitAndBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitAndBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigint_bitorbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BitOrBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())), std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::BitOrBigInt(
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+        std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitOrBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitOrBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigint_bitnotbigint() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::NumLit(
+        mettail_runtime::CanonicalBigInt::default(),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotBigInt");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BitNotBigInt"
+    );
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitNotBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitNotBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_addint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_subint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for SubInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SubInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_mulint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MulInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MulInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_divint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::DivInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DivInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DivInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_modint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::ModInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ModInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ModInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ModInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_powint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term =
+        Int::PowInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PowInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PowInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PowInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_bitandint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Int::BitAndInt(
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitAndInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitAndInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_bitorint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Int::BitOrInt(
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitOrInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitOrInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1127,8 +1571,11 @@ fn unit_calculator_int_bitnotint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitNotInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitNotInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1156,80 +1603,115 @@ fn unit_calculator_int_fact() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Fact");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Fact: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Fact: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_addfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::AddFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::AddFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_subfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::SubFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::SubFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for SubFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SubFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_mulfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::MulFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::MulFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MulFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MulFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_divfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::DivFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::DivFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DivFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DivFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_powfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::PowFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::PowFloat(
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+        std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PowFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PowFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PowFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_negfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegFloat");
     if let Ok(alts) = Float::parse_via_wpda_all(&displayed) {
@@ -1245,52 +1727,72 @@ fn unit_calculator_float_negfloat() {
 #[test]
 fn unit_calculator_float_sinfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SinFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for SinFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SinFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_cosfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::CosFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CosFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CosFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CosFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_expfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::ExpFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ExpFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ExpFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ExpFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_lnfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LnFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LnFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LnFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1302,8 +1804,11 @@ fn unit_calculator_float_inttofloat() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1315,8 +1820,11 @@ fn unit_calculator_float_booltofloat() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1328,21 +1836,29 @@ fn unit_calculator_float_strtofloat() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrToFloat");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for StrToFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for StrToFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_floattoint() {
     mettail_runtime::clear_var_cache();
-    let term = Int::FloatToInt(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Int::FloatToInt(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatToInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatToInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1354,8 +1870,11 @@ fn unit_calculator_int_booltoint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1367,8 +1886,11 @@ fn unit_calculator_int_strtoint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for StrToInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for StrToInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1380,8 +1902,11 @@ fn unit_calculator_str_booltostr() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1393,21 +1918,29 @@ fn unit_calculator_str_inttostr() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_str_floattostr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::FloatToStr(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Str::FloatToStr(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatToStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatToStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1419,21 +1952,29 @@ fn unit_calculator_bool_inttobool() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_floattobool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::FloatToBool(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Bool::FloatToBool(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatToBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatToBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1445,8 +1986,11 @@ fn unit_calculator_bool_strtobool() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for StrToBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for StrToBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1458,21 +2002,29 @@ fn unit_calculator_int_intid() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntId");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntId: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntId: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_floatid() {
     mettail_runtime::clear_var_cache();
-    let term = Float::FloatId(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Float::FloatId(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatId");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatId: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatId: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1484,8 +2036,11 @@ fn unit_calculator_bool_boolid() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolId");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolId: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolId: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1497,93 +2052,134 @@ fn unit_calculator_str_strid() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StrId");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for StrId: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for StrId: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_customop() {
     mettail_runtime::clear_var_cache();
-    let term = Int::CustomOp(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Int::CustomOp(
+        std::sync::Arc::new(Int::NumLit(0i32)),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CustomOp");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CustomOp: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CustomOp: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_addfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::AddFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::AddFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for AddFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for AddFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for AddFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_subfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::SubFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::SubFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for SubFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for SubFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for SubFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_mulfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::MulFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::MulFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MulFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MulFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MulFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_divfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::DivFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::DivFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DivFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DivFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DivFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_modfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::ModFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::ModFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ModFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ModFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ModFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_negfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(
+        mettail_runtime::CanonicalFixedPoint::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegFixed");
     if let Ok(alts) = Fixed::parse_via_wpda_all(&displayed) {
@@ -1599,156 +2195,231 @@ fn unit_calculator_fixed_negfixed() {
 #[test]
 fn unit_calculator_fixed_bitandfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::BitAndFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::BitAndFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAndFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitAndFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitAndFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_bitorfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::BitOrFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())), std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::BitOrFixed(
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+        std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOrFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitOrFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitOrFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_bitnotfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(
+        mettail_runtime::CanonicalFixedPoint::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNotFixed");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitNotFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitNotFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_proctobool() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::ProcToBool(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Bool::ProcToBool(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcToBool");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcToBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcToBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_str_proctostr() {
     mettail_runtime::clear_var_cache();
-    let term = Str::ProcToStr(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Str::ProcToStr(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ProcToStr");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ProcToStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ProcToStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_intbin() {
     mettail_runtime::clear_var_cache();
-    let term = Int::IntBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Int::IntBin(
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntBin");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntBin: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntBin: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_uint32_uintbin() {
     mettail_runtime::clear_var_cache();
-    let term = UInt32::UIntBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = UInt32::UIntBin(
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UIntBin");
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UIntBin: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UIntBin: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_float_floatbin() {
     mettail_runtime::clear_var_cache();
-    let term = Float::FloatBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Float::FloatBin(
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatBin");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatBin: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatBin: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_fixed_fixedbin() {
     mettail_runtime::clear_var_cache();
-    let term = Fixed::FixedBin(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Fixed::FixedBin(
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedBin");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FixedBin: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FixedBin: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigint_bigintcast() {
     mettail_runtime::clear_var_cache();
-    let term = BigInt::BigintCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = BigInt::BigintCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigintCast");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BigintCast: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BigintCast: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_bigratcast() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = BigRat::BigratCast(std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BigratCast");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BigratCast: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BigratCast: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_list_concatlist() {
     mettail_runtime::clear_var_cache();
-    let term = List::ConcatList(std::sync::Arc::new(List::ListLit(Vec::new())), std::sync::Arc::new(List::ListLit(Vec::new())));
+    let term = List::ConcatList(
+        std::sync::Arc::new(List::ListLit(Vec::new())),
+        std::sync::Arc::new(List::ListLit(Vec::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ConcatList");
     if let Ok(parsed) = List::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ConcatList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ConcatList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1760,86 +2431,129 @@ fn unit_calculator_int_lenlist() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LenList");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LenList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LenList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_proc_elemlist() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::ElemList(std::sync::Arc::new(List::ListLit(Vec::new())), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = Proc::ElemList(
+        std::sync::Arc::new(List::ListLit(Vec::new())),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ElemList");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ElemList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ElemList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_list_deletelist() {
     mettail_runtime::clear_var_cache();
-    let term = List::DeleteList(std::sync::Arc::new(List::ListLit(Vec::new())), std::sync::Arc::new(Int::NumLit(0i32)));
+    let term = List::DeleteList(
+        std::sync::Arc::new(List::ListLit(Vec::new())),
+        std::sync::Arc::new(Int::NumLit(0i32)),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteList");
     if let Ok(parsed) = List::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DeleteList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DeleteList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bag_unionbag() {
     mettail_runtime::clear_var_cache();
-    let term = Bag::UnionBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())));
+    let term = Bag::UnionBag(
+        std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())),
+        std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UnionBag");
     if let Ok(parsed) = Bag::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UnionBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UnionBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bag_removebag() {
     mettail_runtime::clear_var_cache();
-    let term = Bag::RemoveBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Bag::RemoveBag(
+        std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())),
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for RemoveBag");
     if let Ok(parsed) = Bag::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for RemoveBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RemoveBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bag_diffbag() {
     mettail_runtime::clear_var_cache();
-    let term = Bag::DiffBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())));
+    let term = Bag::DiffBag(
+        std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())),
+        std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DiffBag");
     if let Ok(parsed) = Bag::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DiffBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DiffBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_int_countbag() {
     mettail_runtime::clear_var_cache();
-    let term = Int::CountBag(std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Int::CountBag(
+        std::sync::Arc::new(Bag::BagLit(mettail_runtime::HashBag::new())),
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CountBag");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CountBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CountBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1851,73 +2565,117 @@ fn unit_calculator_int_lenmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LenMap");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LenMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LenMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_proc_getmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::GetMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Proc::GetMap(
+        std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())),
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GetMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GetMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GetMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_map_putmap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::PutMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Map::PutMap(
+        std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())),
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PutMap");
     if let Ok(parsed) = Map::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PutMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PutMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_map_deletemap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::DeleteMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Map::DeleteMap(
+        std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())),
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteMap");
     if let Ok(parsed) = Map::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DeleteMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DeleteMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_map_mergemap() {
     mettail_runtime::clear_var_cache();
-    let term = Map::MergeMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term = Map::MergeMap(
+        std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())),
+        std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MergeMap");
     if let Ok(parsed) = Map::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MergeMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MergeMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bool_hasmap() {
     mettail_runtime::clear_var_cache();
-    let term = Bool::HasMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())), std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Bool::HasMap(
+        std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())),
+        std::sync::Arc::new(Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for HasMap");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for HasMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for HasMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1929,21 +2687,28 @@ fn unit_calculator_list_keysmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for KeysMap");
     if let Ok(parsed) = List::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for KeysMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for KeysMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_list_valuesmap() {
     mettail_runtime::clear_var_cache();
-    let term = List::ValuesMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
+    let term =
+        List::ValuesMap(std::sync::Arc::new(Map::MapLit(mettail_runtime::HashMapLit::new())));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ValuesMap");
     if let Ok(parsed) = List::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ValuesMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ValuesMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1952,11 +2717,17 @@ fn unit_calculator_uint32_booltouint32() {
     mettail_runtime::clear_var_cache();
     let term = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToUInt32");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BoolToUInt32"
+    );
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1965,11 +2736,17 @@ fn unit_calculator_bigint_booltobigint() {
     mettail_runtime::clear_var_cache();
     let term = BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigInt");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BoolToBigInt"
+    );
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1978,11 +2755,17 @@ fn unit_calculator_bigrat_booltobigrat() {
     mettail_runtime::clear_var_cache();
     let term = BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BoolToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1991,11 +2774,17 @@ fn unit_calculator_bigint_uint32tobigint() {
     mettail_runtime::clear_var_cache();
     let term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigInt");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for UInt32ToBigInt"
+    );
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UInt32ToBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2004,63 +2793,89 @@ fn unit_calculator_bigrat_uint32tobigrat() {
     mettail_runtime::clear_var_cache();
     let term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for UInt32ToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UInt32ToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_floattobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for FloatToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(
+        mettail_runtime::CanonicalBigInt::default(),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BigIntToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BigIntToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BigIntToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BigIntToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_bigrat_fixedtobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(
+        mettail_runtime::CanonicalFixedPoint::default(),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for FixedToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FixedToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FixedToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_calculator_auto_proc_pvar() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PVar");
 }
@@ -2072,8 +2887,11 @@ fn unit_calculator_auto_int_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2084,8 +2902,11 @@ fn unit_calculator_auto_uint32_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2096,8 +2917,11 @@ fn unit_calculator_auto_bigint_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2108,8 +2932,11 @@ fn unit_calculator_auto_bigrat_ratlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for RatLit");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for RatLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RatLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2120,8 +2947,11 @@ fn unit_calculator_auto_fixed_fixedlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedLit");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FixedLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FixedLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2132,8 +2962,11 @@ fn unit_calculator_auto_float_floatlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatLit");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2144,8 +2977,11 @@ fn unit_calculator_auto_bool_boollit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolLit");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2156,8 +2992,11 @@ fn unit_calculator_auto_str_stringlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StringLit");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for StringLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for StringLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2168,8 +3007,11 @@ fn unit_calculator_auto_list_listlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ListLit");
     if let Ok(parsed) = List::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ListLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ListLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2180,8 +3022,11 @@ fn unit_calculator_auto_bag_baglit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BagLit");
     if let Ok(parsed) = Bag::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BagLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BagLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -2192,8 +3037,10 @@ fn unit_calculator_auto_map_maplit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MapLit");
     if let Ok(parsed) = Map::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MapLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MapLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
-

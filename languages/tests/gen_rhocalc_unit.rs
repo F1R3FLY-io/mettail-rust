@@ -5,8 +5,8 @@
 #![allow(unused_imports, dead_code)]
 
 use mettail_languages::rhocalc::*;
-use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
+use mettail_runtime::Language;
 
 // Dead rules detected by WFST analysis: ["Int::CountBag", "Proc::BigintCastProc", "Proc::BigratCastProc", "Proc::ConcatList", "Proc::DeleteList", "Proc::DeleteMap", "Proc::DiffBag", "Proc::ElemList", "Proc::FixedBinProc", "Proc::FloatBinProc", "Proc::FractionProc", "Proc::GetMap", "Proc::HasMap", "Proc::IntBinProc", "Proc::KeysMap", "Proc::Len", "Proc::MergeMap", "Proc::PDrop", "Proc::PInputs", "Proc::PNew", "Proc::POutput", "Proc::PutMap", "Proc::RemoveBag", "Proc::ToBool", "Proc::ToStr", "Proc::UIntBinProc", "Proc::UnionBag", "Proc::ValuesMap"]
 
@@ -35,21 +35,29 @@ fn unit_rhocalc_proc_pzero() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PZero");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PZero: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PZero: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_pdrop() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PDrop(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))));
+    let term = Proc::PDrop(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(
+        mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a")),
+    ))));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PDrop");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PDrop: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PDrop: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -58,13 +66,21 @@ fn unit_rhocalc_proc_pdrop() {
 #[test]
 fn unit_rhocalc_proc_poutput() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::POutput(std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("a"))))), std::sync::Arc::new(Proc::PZero));
+    let term = Proc::POutput(
+        std::sync::Arc::new(Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a"),
+        )))),
+        std::sync::Arc::new(Proc::PZero),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for POutput");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for POutput: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for POutput: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -78,8 +94,11 @@ fn unit_rhocalc_name_nquote() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NQuote");
     if let Ok(parsed) = Name::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NQuote: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NQuote: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -92,60 +111,83 @@ fn unit_rhocalc_proc_err() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Err");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Err: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Err: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_castbigrat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(mettail_runtime::CanonicalBigRat::default())));
+    let term = Proc::CastBigRat(std::sync::Arc::new(BigRat::RatLit(
+        mettail_runtime::CanonicalBigRat::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBigRat");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_castfixed() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = Proc::CastFixed(std::sync::Arc::new(Fixed::FixedLit(
+        mettail_runtime::CanonicalFixedPoint::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastFixed");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastFixed: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastFixed: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_castfloat() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = Proc::CastFloat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastFloat");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastFloat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastFloat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_castbigint() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = Proc::CastBigInt(std::sync::Arc::new(BigInt::NumLit(
+        mettail_runtime::CanonicalBigInt::default(),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBigInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -157,8 +199,11 @@ fn unit_rhocalc_proc_castuint32() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastUInt32");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -170,8 +215,11 @@ fn unit_rhocalc_proc_castint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastInt");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -183,8 +231,11 @@ fn unit_rhocalc_proc_castbool() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBool");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -196,8 +247,11 @@ fn unit_rhocalc_proc_caststr() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastStr");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -209,8 +263,11 @@ fn unit_rhocalc_proc_castlist() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastList");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -222,8 +279,11 @@ fn unit_rhocalc_proc_castbag() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -235,60 +295,89 @@ fn unit_rhocalc_proc_castmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CastMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CastMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CastMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_intbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let term =
+        Proc::IntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntBinProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntBinProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntBinProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_uintbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let term =
+        Proc::UIntBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UIntBinProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UIntBinProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UIntBinProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_floatbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::FloatBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let term = Proc::FloatBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(0i64)),
+    );
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatBinProc");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for FloatBinProc"
+    );
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatBinProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatBinProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_fixedbinproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::FixedBinProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Int::NumLit(0i64)));
+    let term = Proc::FixedBinProc(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Int::NumLit(0i64)),
+    );
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedBinProc");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for FixedBinProc"
+    );
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FixedBinProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FixedBinProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -297,11 +386,17 @@ fn unit_rhocalc_proc_bigintcastproc() {
     mettail_runtime::clear_var_cache();
     let term = Proc::BigintCastProc(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BigintCastProc");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BigintCastProc"
+    );
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BigintCastProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BigintCastProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -310,11 +405,17 @@ fn unit_rhocalc_proc_bigratcastproc() {
     mettail_runtime::clear_var_cache();
     let term = Proc::BigratCastProc(std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BigratCastProc");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BigratCastProc"
+    );
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BigratCastProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BigratCastProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -337,13 +438,20 @@ fn unit_rhocalc_int_negint() {
 #[test]
 fn unit_rhocalc_proc_fractionproc() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let term =
+        Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FractionProc");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for FractionProc"
+    );
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FractionProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FractionProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -355,8 +463,11 @@ fn unit_rhocalc_proc_or() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Or");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Or: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Or: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -368,8 +479,11 @@ fn unit_rhocalc_proc_and() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for And");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for And: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for And: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -381,8 +495,11 @@ fn unit_rhocalc_proc_bitor() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitOr");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitOr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitOr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -394,8 +511,11 @@ fn unit_rhocalc_proc_bitand() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitAnd");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitAnd: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitAnd: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -407,8 +527,11 @@ fn unit_rhocalc_proc_bitnot() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BitNot");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BitNot: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BitNot: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -420,8 +543,11 @@ fn unit_rhocalc_proc_eq() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Eq");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Eq: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Eq: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -433,8 +559,11 @@ fn unit_rhocalc_proc_ne() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Ne");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Ne: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Ne: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -446,8 +575,11 @@ fn unit_rhocalc_proc_gt() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Gt");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Gt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Gt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -459,8 +591,11 @@ fn unit_rhocalc_proc_lt() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Lt");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Lt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Lt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -472,8 +607,11 @@ fn unit_rhocalc_proc_gteq() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GtEq");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GtEq: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GtEq: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -485,8 +623,11 @@ fn unit_rhocalc_proc_lteq() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for LtEq");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for LtEq: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for LtEq: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -498,8 +639,11 @@ fn unit_rhocalc_proc_add() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Add");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Add: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Add: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -511,8 +655,11 @@ fn unit_rhocalc_proc_sub() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Sub");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Sub: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Sub: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -524,8 +671,11 @@ fn unit_rhocalc_proc_mul() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Mul");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Mul: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Mul: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -537,8 +687,11 @@ fn unit_rhocalc_proc_div() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Div");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Div: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Div: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -550,8 +703,11 @@ fn unit_rhocalc_proc_mod() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Mod");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Mod: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Mod: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -563,8 +719,11 @@ fn unit_rhocalc_proc_negproc() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NegProc");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NegProc: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NegProc: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -576,8 +735,11 @@ fn unit_rhocalc_proc_concatlist() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ConcatList");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ConcatList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ConcatList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -589,8 +751,11 @@ fn unit_rhocalc_proc_elemlist() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ElemList");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ElemList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ElemList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -602,8 +767,11 @@ fn unit_rhocalc_proc_deletelist() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteList");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DeleteList: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DeleteList: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -615,8 +783,11 @@ fn unit_rhocalc_proc_unionbag() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UnionBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UnionBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UnionBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -628,8 +799,11 @@ fn unit_rhocalc_proc_removebag() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for RemoveBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for RemoveBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RemoveBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -641,8 +815,11 @@ fn unit_rhocalc_proc_diffbag() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DiffBag");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DiffBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DiffBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -654,8 +831,11 @@ fn unit_rhocalc_int_countbag() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for CountBag");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for CountBag: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for CountBag: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -667,21 +847,31 @@ fn unit_rhocalc_proc_getmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for GetMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for GetMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for GetMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_proc_putmap() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PutMap(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let term = Proc::PutMap(
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+        std::sync::Arc::new(Proc::PZero),
+    );
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PutMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for PutMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for PutMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -693,8 +883,11 @@ fn unit_rhocalc_proc_deletemap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for DeleteMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for DeleteMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for DeleteMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -706,8 +899,11 @@ fn unit_rhocalc_proc_mergemap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MergeMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MergeMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MergeMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -719,8 +915,11 @@ fn unit_rhocalc_proc_hasmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for HasMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for HasMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for HasMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -732,8 +931,11 @@ fn unit_rhocalc_proc_keysmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for KeysMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for KeysMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for KeysMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -745,8 +947,11 @@ fn unit_rhocalc_proc_valuesmap() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ValuesMap");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ValuesMap: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ValuesMap: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -758,8 +963,11 @@ fn unit_rhocalc_proc_not() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Not");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Not: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Not: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -771,8 +979,11 @@ fn unit_rhocalc_proc_len() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for Len");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for Len: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for Len: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -784,8 +995,11 @@ fn unit_rhocalc_proc_tobool() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ToBool");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ToBool: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ToBool: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -797,8 +1011,11 @@ fn unit_rhocalc_proc_tostr() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ToStr");
     if let Ok(parsed) = Proc::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ToStr: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ToStr: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -810,8 +1027,11 @@ fn unit_rhocalc_int_booltoint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -820,11 +1040,17 @@ fn unit_rhocalc_uint32_booltouint32() {
     mettail_runtime::clear_var_cache();
     let term = UInt32::BoolToUInt32(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToUInt32");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BoolToUInt32"
+    );
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToUInt32: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToUInt32: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -833,11 +1059,17 @@ fn unit_rhocalc_bigint_booltobigint() {
     mettail_runtime::clear_var_cache();
     let term = BigInt::BoolToBigInt(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigInt");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BoolToBigInt"
+    );
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -846,11 +1078,17 @@ fn unit_rhocalc_bigrat_booltobigrat() {
     mettail_runtime::clear_var_cache();
     let term = BigRat::BoolToBigRat(std::sync::Arc::new(Bool::BoolLit(false)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BoolToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -862,8 +1100,11 @@ fn unit_rhocalc_bigint_inttobigint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigInt");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -875,8 +1116,11 @@ fn unit_rhocalc_bigrat_inttobigrat() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for IntToBigRat");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for IntToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for IntToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -888,8 +1132,11 @@ fn unit_rhocalc_int_uint32toint() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToInt");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UInt32ToInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UInt32ToInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -898,11 +1145,17 @@ fn unit_rhocalc_bigint_uint32tobigint() {
     mettail_runtime::clear_var_cache();
     let term = BigInt::UInt32ToBigInt(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigInt");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for UInt32ToBigInt"
+    );
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UInt32ToBigInt: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigInt: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -911,63 +1164,89 @@ fn unit_rhocalc_bigrat_uint32tobigrat() {
     mettail_runtime::clear_var_cache();
     let term = BigRat::UInt32ToBigRat(std::sync::Arc::new(UInt32::NumLit(0u32)));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for UInt32ToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for UInt32ToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for UInt32ToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for UInt32ToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_bigrat_floattobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
+    let term = BigRat::FloatToBigRat(std::sync::Arc::new(Float::FloatLit(
+        mettail_runtime::CanonicalFloat64::from(0.0f64),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for FloatToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_bigrat_biginttobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(mettail_runtime::CanonicalBigInt::default())));
+    let term = BigRat::BigIntToBigRat(std::sync::Arc::new(BigInt::NumLit(
+        mettail_runtime::CanonicalBigInt::default(),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for BigIntToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for BigIntToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BigIntToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BigIntToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_bigrat_fixedtobigrat() {
     mettail_runtime::clear_var_cache();
-    let term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(mettail_runtime::CanonicalFixedPoint::default())));
+    let term = BigRat::FixedToBigRat(std::sync::Arc::new(Fixed::FixedLit(
+        mettail_runtime::CanonicalFixedPoint::default(),
+    )));
     let displayed = format!("{}", term);
-    assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedToBigRat");
+    assert!(
+        !displayed.is_empty(),
+        "Display should produce non-empty output for FixedToBigRat"
+    );
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FixedToBigRat: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FixedToBigRat: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
 #[test]
 fn unit_rhocalc_auto_proc_pvar() {
     mettail_runtime::clear_var_cache();
-    let term = Proc::PVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for PVar");
 }
@@ -975,13 +1254,9 @@ fn unit_rhocalc_auto_proc_pvar() {
 #[test]
 fn unit_rhocalc_auto_name_nvar() {
     mettail_runtime::clear_var_cache();
-    let term = Name::NVar(
-        mettail_runtime::OrdVar(
-            mettail_runtime::Var::Free(
-                mettail_runtime::get_or_create_var("a")
-            )
-        )
-    );
+    let term = Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("a"),
+    )));
     let displayed = format!("{}", term);
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NVar");
 }
@@ -993,8 +1268,11 @@ fn unit_rhocalc_auto_int_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = Int::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1005,8 +1283,11 @@ fn unit_rhocalc_auto_uint32_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = UInt32::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1017,8 +1298,11 @@ fn unit_rhocalc_auto_bigint_numlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for NumLit");
     if let Ok(parsed) = BigInt::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for NumLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for NumLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1029,8 +1313,11 @@ fn unit_rhocalc_auto_bigrat_ratlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for RatLit");
     if let Ok(parsed) = BigRat::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for RatLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for RatLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1041,8 +1328,11 @@ fn unit_rhocalc_auto_fixed_fixedlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FixedLit");
     if let Ok(parsed) = Fixed::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FixedLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FixedLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1053,8 +1343,11 @@ fn unit_rhocalc_auto_float_floatlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for FloatLit");
     if let Ok(parsed) = Float::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for FloatLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for FloatLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1065,8 +1358,11 @@ fn unit_rhocalc_auto_bool_boollit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BoolLit");
     if let Ok(parsed) = Bool::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BoolLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BoolLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1077,8 +1373,11 @@ fn unit_rhocalc_auto_str_stringlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for StringLit");
     if let Ok(parsed) = Str::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for StringLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for StringLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1089,8 +1388,11 @@ fn unit_rhocalc_auto_list_listlit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for ListLit");
     if let Ok(parsed) = List::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for ListLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for ListLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1101,8 +1403,11 @@ fn unit_rhocalc_auto_bag_baglit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for BagLit");
     if let Ok(parsed) = Bag::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for BagLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for BagLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
 
@@ -1113,8 +1418,10 @@ fn unit_rhocalc_auto_map_maplit() {
     assert!(!displayed.is_empty(), "Display should produce non-empty output for MapLit");
     if let Ok(parsed) = Map::parse(&displayed) {
         let re_displayed = format!("{}", parsed);
-        assert_eq!(displayed, re_displayed,
-            "Roundtrip failed for MapLit: {} != {}", displayed, re_displayed);
+        assert_eq!(
+            displayed, re_displayed,
+            "Roundtrip failed for MapLit: {} != {}",
+            displayed, re_displayed
+        );
     }
 }
-
