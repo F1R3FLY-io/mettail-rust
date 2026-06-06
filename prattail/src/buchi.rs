@@ -87,20 +87,12 @@ pub struct BuchiState {
 impl BuchiState {
     /// Create a new non-accepting state.
     pub fn new(id: usize) -> Self {
-        BuchiState {
-            id,
-            is_accepting: false,
-            label: None,
-        }
+        BuchiState { id, is_accepting: false, label: None }
     }
 
     /// Create a new accepting state.
     pub fn accepting(id: usize) -> Self {
-        BuchiState {
-            id,
-            is_accepting: true,
-            label: None,
-        }
+        BuchiState { id, is_accepting: true, label: None }
     }
 
     /// Create a labeled state.
@@ -138,10 +130,7 @@ pub struct BuchiTransition {
 
 impl fmt::Display for BuchiTransition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let label = self
-            .label
-            .as_deref()
-            .unwrap_or("epsilon");
+        let label = self.label.as_deref().unwrap_or("epsilon");
         write!(f, "q{} --{}-> q{}", self.from, label, self.to)
     }
 }
@@ -373,9 +362,7 @@ pub fn buchi_intersect<W: Semiring>(
     let n_b = b.num_states();
 
     // Map (q1, q2, phase) -> product state ID.
-    let product_id = |q1: usize, q2: usize, phase: usize| -> usize {
-        (q1 * n_b + q2) * 3 + phase
-    };
+    let product_id = |q1: usize, q2: usize, phase: usize| -> usize { (q1 * n_b + q2) * 3 + phase };
 
     let total_states = n_a * n_b * 3;
     let mut result = WeightedBuchiAutomaton::new();
@@ -436,14 +423,14 @@ pub fn buchi_intersect<W: Semiring>(
                                 } else {
                                     0
                                 }
-                            }
+                            },
                             1 => {
                                 if b.accepting_states.contains(&q2_from) {
                                     2
                                 } else {
                                     1
                                 }
-                            }
+                            },
                             2 => 0,
                             _ => unreachable!(),
                         };
@@ -582,11 +569,7 @@ pub fn check_emptiness<W: Semiring>(buchi: &WeightedBuchiAutomaton<W>) -> bool {
         sccs: Vec::new(),
     };
 
-    fn strongconnect(
-        v: usize,
-        adj: &[Vec<usize>],
-        state: &mut TarjanState,
-    ) {
+    fn strongconnect(v: usize, adj: &[Vec<usize>], state: &mut TarjanState) {
         // Use an explicit stack to avoid recursion depth issues.
         // Each frame: (node, neighbor_index)
         let mut call_stack: Vec<(usize, usize)> = Vec::new();
@@ -769,9 +752,7 @@ pub fn total_accepting_weight<W: StarSemiring>(buchi: &WeightedBuchiAutomaton<W>
                 has_self_loop[from] = true;
             }
             adj[from].push(to);
-            let entry = weight_map
-                .entry((from, to))
-                .or_insert_with(W::zero);
+            let entry = weight_map.entry((from, to)).or_insert_with(W::zero);
             *entry = entry.plus(w);
         }
     }
@@ -795,11 +776,7 @@ pub fn total_accepting_weight<W: StarSemiring>(buchi: &WeightedBuchiAutomaton<W>
         sccs: Vec::new(),
     };
 
-    fn strongconnect_taw(
-        v: usize,
-        adj: &[Vec<usize>],
-        state: &mut TarjanState,
-    ) {
+    fn strongconnect_taw(v: usize, adj: &[Vec<usize>], state: &mut TarjanState) {
         let mut call_stack: Vec<(usize, usize)> = Vec::new();
         state.index[v] = Some(state.index_counter);
         state.lowlink[v] = state.index_counter;
@@ -964,10 +941,9 @@ pub fn from_wpds(wpds_analysis: &crate::wpds::WpdsAnalysis) -> BuchiAutomaton {
 
     // Create transitions from call-graph edges.
     for edge in &call_graph.edges {
-        if let (Some(&from_id), Some(&to_id)) = (
-            cat_to_id.get(edge.caller_cat.as_str()),
-            cat_to_id.get(edge.callee_cat.as_str()),
-        ) {
+        if let (Some(&from_id), Some(&to_id)) =
+            (cat_to_id.get(edge.caller_cat.as_str()), cat_to_id.get(edge.callee_cat.as_str()))
+        {
             let label = Some(format!("{}→{}", edge.caller_cat, edge.callee_cat));
             buchi.add_transition(from_id, label, to_id);
         }
@@ -1000,7 +976,9 @@ impl std::fmt::Display for BuchiAnalysis {
         write!(
             f,
             "BuchiAnalysis(states={}, accepting={}, has_cycle={}, sccs={})",
-            self.num_states, self.num_accepting, self.has_accepting_cycle,
+            self.num_states,
+            self.num_accepting,
+            self.has_accepting_cycle,
             self.accepting_sccs.len()
         )
     }
@@ -1069,9 +1047,7 @@ pub fn analyze_from_bundle(
     // OR SCCs with size > 1 (mutually recursive categories form cycles).
     let accepting_sccs: Vec<Vec<String>> = sccs
         .iter()
-        .filter(|scc| {
-            scc.len() > 1 || scc.iter().any(|&idx| self_recursive.contains(&idx))
-        })
+        .filter(|scc| scc.len() > 1 || scc.iter().any(|&idx| self_recursive.contains(&idx)))
         .map(|scc| {
             let mut names: Vec<String> = scc
                 .iter()
@@ -1108,7 +1084,7 @@ fn collect_nonterminal_refs(
                     self_recursive.insert(src);
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Binder { category, .. } => {
             if let Some(&dst) = cat_to_idx.get(category) {
                 adj[src].insert(dst);
@@ -1116,7 +1092,7 @@ fn collect_nonterminal_refs(
                     self_recursive.insert(src);
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Collection { element_category, .. } => {
             if let Some(&dst) = cat_to_idx.get(element_category) {
                 adj[src].insert(dst);
@@ -1124,15 +1100,15 @@ fn collect_nonterminal_refs(
                     self_recursive.insert(src);
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Sep { body, .. } => {
             collect_nonterminal_refs(body, cat_to_idx, src, adj, self_recursive);
-        }
+        },
         crate::SyntaxItemSpec::Map { body_items } => {
             for sub in body_items {
                 collect_nonterminal_refs(sub, cat_to_idx, src, adj, self_recursive);
             }
-        }
+        },
         crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             for ref_cat in [left_category, right_category] {
                 if let Some(&dst) = cat_to_idx.get(ref_cat) {
@@ -1143,14 +1119,14 @@ fn collect_nonterminal_refs(
                 }
             }
             collect_nonterminal_refs(body, cat_to_idx, src, adj, self_recursive);
-        }
+        },
         crate::SyntaxItemSpec::Optional { inner } => {
             for sub in inner {
                 collect_nonterminal_refs(sub, cat_to_idx, src, adj, self_recursive);
             }
-        }
+        },
         // Terminal, IdentCapture, BinderCollection -- no category refs.
-        _ => {}
+        _ => {},
     }
 }
 
@@ -1208,8 +1184,14 @@ fn tarjan_scc(adj: &[HashSet<usize>]) -> Vec<Vec<usize>> {
     for v in 0..n {
         if indices[v] == usize::MAX {
             strongconnect(
-                v, adj, &mut index_counter, &mut stack, &mut on_stack,
-                &mut indices, &mut lowlinks, &mut result,
+                v,
+                adj,
+                &mut index_counter,
+                &mut stack,
+                &mut on_stack,
+                &mut indices,
+                &mut lowlinks,
+                &mut result,
             );
         }
     }
@@ -1347,10 +1329,7 @@ mod tests {
             2,
             HashSet::new(), // no accepting states
             [0].into_iter().collect(),
-            vec![
-                (0, Some("a".to_string()), 1),
-                (1, Some("b".to_string()), 0),
-            ],
+            vec![(0, Some("a".to_string()), 1), (1, Some("b".to_string()), 0)],
         );
         assert!(check_emptiness(&buchi));
     }
@@ -1363,10 +1342,7 @@ mod tests {
             2,
             [1].into_iter().collect(),
             [0].into_iter().collect(),
-            vec![
-                (0, Some("a".to_string()), 1),
-                (1, Some("b".to_string()), 0),
-            ],
+            vec![(0, Some("a".to_string()), 1), (1, Some("b".to_string()), 0)],
         );
         assert!(!check_emptiness(&buchi));
     }
@@ -1380,10 +1356,7 @@ mod tests {
             3,
             [2].into_iter().collect(),
             [0].into_iter().collect(),
-            vec![
-                (0, Some("a".to_string()), 1),
-                (2, Some("b".to_string()), 2),
-            ],
+            vec![(0, Some("a".to_string()), 1), (2, Some("b".to_string()), 2)],
         );
         assert!(check_emptiness(&buchi));
     }
@@ -1454,10 +1427,7 @@ mod tests {
             2,
             [1].into_iter().collect(),
             [0].into_iter().collect(),
-            vec![
-                (0, Some("a".to_string()), 1),
-                (1, Some("a".to_string()), 0),
-            ],
+            vec![(0, Some("a".to_string()), 1), (1, Some("a".to_string()), 0)],
         );
         let a2 = construct_buchi(
             3,
@@ -1483,10 +1453,7 @@ mod tests {
             2,
             [1].into_iter().collect(),
             [0].into_iter().collect(),
-            vec![
-                (0, Some("a".to_string()), 1),
-                (1, Some("b".to_string()), 0),
-            ],
+            vec![(0, Some("a".to_string()), 1), (1, Some("b".to_string()), 0)],
         );
         let product = buchi_intersect(&a, &a);
         assert!(!check_emptiness(&product));
@@ -1509,10 +1476,7 @@ mod tests {
             2,
             [1].into_iter().collect(),
             [0].into_iter().collect(),
-            vec![
-                (0, Some("a".to_string()), 1),
-                (1, Some("a".to_string()), 0),
-            ],
+            vec![(0, Some("a".to_string()), 1), (1, Some("a".to_string()), 0)],
         );
         let product = buchi_intersect(&a1, &a2);
         assert!(!check_emptiness(&product));
@@ -1566,10 +1530,7 @@ mod tests {
             3,
             [1].into_iter().collect(),
             [0].into_iter().collect(),
-            vec![
-                (0, Some("a".to_string()), 1),
-                (1, Some("b".to_string()), 2),
-            ],
+            vec![(0, Some("a".to_string()), 1), (1, Some("b".to_string()), 2)],
         );
         assert!(check_emptiness(&buchi));
     }
@@ -1612,9 +1573,17 @@ mod tests {
     #[test]
     fn test_from_wpds_with_categories() {
         let mut wpds_analysis = make_empty_wpds_analysis();
-        wpds_analysis.call_graph.categories.insert("Expr".to_string());
-        wpds_analysis.call_graph.categories.insert("Type".to_string());
-        wpds_analysis.reachable_categories.insert("Expr".to_string());
+        wpds_analysis
+            .call_graph
+            .categories
+            .insert("Expr".to_string());
+        wpds_analysis
+            .call_graph
+            .categories
+            .insert("Type".to_string());
+        wpds_analysis
+            .reachable_categories
+            .insert("Expr".to_string());
         let buchi = from_wpds(&wpds_analysis);
         assert!(buchi.num_states() > 0, "should produce states from categories");
     }
@@ -1676,10 +1645,7 @@ mod tests {
             vec![(0, Some("a".to_string()), 0)],
         );
         let w = total_accepting_weight(&buchi);
-        assert!(
-            w.is_one(),
-            "accepting self-loop should yield BooleanWeight::one()"
-        );
+        assert!(w.is_one(), "accepting self-loop should yield BooleanWeight::one()");
     }
 
     #[test]
@@ -1693,10 +1659,7 @@ mod tests {
             vec![(0, Some("a".to_string()), 1)],
         );
         let w = total_accepting_weight(&buchi);
-        assert!(
-            w.is_zero(),
-            "no accepting cycle should yield BooleanWeight::zero()"
-        );
+        assert!(w.is_zero(), "no accepting cycle should yield BooleanWeight::zero()");
     }
 
     #[test]
@@ -1773,11 +1736,7 @@ mod tests {
 
         let buchi = WeightedBuchiAutomaton::<TropicalWeight>::new();
         let w = total_accepting_weight(&buchi);
-        assert!(
-            w.is_zero(),
-            "empty automaton should yield zero weight; got {:?}",
-            w
-        );
+        assert!(w.is_zero(), "empty automaton should yield zero weight; got {:?}", w);
     }
 
     #[test]
@@ -1851,10 +1810,7 @@ mod tests {
             vec![(0, Some("b".to_string()), 0, TropicalWeight::new(1.0))],
         );
         let product = weighted_intersect(&a1, &a2);
-        assert!(
-            check_emptiness(&product),
-            "disjoint alphabets should produce empty product"
-        );
+        assert!(check_emptiness(&product), "disjoint alphabets should produce empty product");
     }
 
     #[test]
@@ -1871,10 +1827,7 @@ mod tests {
             .expect("transition should exist");
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].0, q1);
-        assert!(
-            targets[0].1.is_one(),
-            "add_transition should use BooleanWeight::one()"
-        );
+        assert!(targets[0].1.is_one(), "add_transition should use BooleanWeight::one()");
     }
 
     #[test]
@@ -1892,11 +1845,7 @@ mod tests {
             ],
         );
         let w = total_accepting_weight(&buchi);
-        assert!(
-            w.is_zero(),
-            "no accepting states means zero total weight; got {:?}",
-            w
-        );
+        assert!(w.is_zero(), "no accepting states means zero total weight; got {:?}", w);
     }
 
     // ── analyze_from_bundle SCC tests ───────────────────────────────────────
@@ -1905,12 +1854,17 @@ mod tests {
     fn analyze_bundle_self_recursive() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Expr".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
         // Expr -> Expr "+" Expr (self-recursive)
-        let all_syntax = vec![
-            ("Add".to_string(), "Expr".to_string(), vec![
+        let all_syntax = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![
                 crate::SyntaxItemSpec::NonTerminal {
                     category: "Expr".to_string(),
                     param_name: "lhs".to_string(),
@@ -1920,11 +1874,14 @@ mod tests {
                     category: "Expr".to_string(),
                     param_name: "rhs".to_string(),
                 },
-            ]),
-        ];
+            ],
+        )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(result.has_accepting_cycle, "self-recursive category should have accepting cycle");
+        assert!(
+            result.has_accepting_cycle,
+            "self-recursive category should have accepting cycle"
+        );
         assert_eq!(result.num_states, 1);
         assert_eq!(result.num_accepting, 1);
         assert_eq!(result.accepting_sccs.len(), 1);
@@ -1935,15 +1892,18 @@ mod tests {
     fn analyze_bundle_non_recursive() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Stmt".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Stmt".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
         // Stmt -> "return" (no self-reference, no cycle)
-        let all_syntax = vec![
-            ("Return".to_string(), "Stmt".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("return".to_string()),
-            ]),
-        ];
+        let all_syntax = vec![(
+            "Return".to_string(),
+            "Stmt".to_string(),
+            vec![crate::SyntaxItemSpec::Terminal("return".to_string())],
+        )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
         assert!(!result.has_accepting_cycle, "non-recursive should have no accepting cycle");
@@ -1956,23 +1916,37 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-            CategoryInfo { name: "Stmt".to_string(), is_primary: false, has_var: true, native_type: None },
+            CategoryInfo {
+                name: "Expr".to_string(),
+                is_primary: true,
+                has_var: true,
+                native_type: None,
+            },
+            CategoryInfo {
+                name: "Stmt".to_string(),
+                is_primary: false,
+                has_var: true,
+                native_type: None,
+            },
         ];
         // Expr references Stmt, Stmt references Expr -> mutual recursion
         let all_syntax = vec![
-            ("Block".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::NonTerminal {
+            (
+                "Block".to_string(),
+                "Expr".to_string(),
+                vec![crate::SyntaxItemSpec::NonTerminal {
                     category: "Stmt".to_string(),
                     param_name: "body".to_string(),
-                },
-            ]),
-            ("ExprStmt".to_string(), "Stmt".to_string(), vec![
-                crate::SyntaxItemSpec::NonTerminal {
+                }],
+            ),
+            (
+                "ExprStmt".to_string(),
+                "Stmt".to_string(),
+                vec![crate::SyntaxItemSpec::NonTerminal {
                     category: "Expr".to_string(),
                     param_name: "e".to_string(),
-                },
-            ]),
+                }],
+            ),
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
@@ -2000,15 +1974,20 @@ mod tests {
 
     #[test]
     fn analyze_bundle_collection_self_ref() {
-        use crate::pipeline::CategoryInfo;
         use crate::grammar::ir::CollectionKind;
+        use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Stmt".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Stmt".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
         // Stmt -> Collection of Stmt (self-recursive via element_category)
-        let all_syntax = vec![
-            ("Block".to_string(), "Stmt".to_string(), vec![
+        let all_syntax = vec![(
+            "Block".to_string(),
+            "Stmt".to_string(),
+            vec![
                 crate::SyntaxItemSpec::Terminal("{".to_string()),
                 crate::SyntaxItemSpec::Collection {
                     param_name: "stmts".to_string(),
@@ -2018,8 +1997,8 @@ mod tests {
                     kind: CollectionKind::Vec,
                 },
                 crate::SyntaxItemSpec::Terminal("}".to_string()),
-            ]),
-        ];
+            ],
+        )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
         assert!(result.has_accepting_cycle, "Collection self-ref should be accepting");
@@ -2032,30 +2011,51 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "A".to_string(), is_primary: true, has_var: true, native_type: None },
-            CategoryInfo { name: "B".to_string(), is_primary: false, has_var: true, native_type: None },
-            CategoryInfo { name: "C".to_string(), is_primary: false, has_var: true, native_type: None },
+            CategoryInfo {
+                name: "A".to_string(),
+                is_primary: true,
+                has_var: true,
+                native_type: None,
+            },
+            CategoryInfo {
+                name: "B".to_string(),
+                is_primary: false,
+                has_var: true,
+                native_type: None,
+            },
+            CategoryInfo {
+                name: "C".to_string(),
+                is_primary: false,
+                has_var: true,
+                native_type: None,
+            },
         ];
         // A is self-recursive, B->C->B is mutually recursive, no cross-links
         let all_syntax = vec![
-            ("RA".to_string(), "A".to_string(), vec![
-                crate::SyntaxItemSpec::NonTerminal {
+            (
+                "RA".to_string(),
+                "A".to_string(),
+                vec![crate::SyntaxItemSpec::NonTerminal {
                     category: "A".to_string(),
                     param_name: "a".to_string(),
-                },
-            ]),
-            ("RB".to_string(), "B".to_string(), vec![
-                crate::SyntaxItemSpec::NonTerminal {
+                }],
+            ),
+            (
+                "RB".to_string(),
+                "B".to_string(),
+                vec![crate::SyntaxItemSpec::NonTerminal {
                     category: "C".to_string(),
                     param_name: "c".to_string(),
-                },
-            ]),
-            ("RC".to_string(), "C".to_string(), vec![
-                crate::SyntaxItemSpec::NonTerminal {
+                }],
+            ),
+            (
+                "RC".to_string(),
+                "C".to_string(),
+                vec![crate::SyntaxItemSpec::NonTerminal {
                     category: "B".to_string(),
                     param_name: "b".to_string(),
-                },
-            ]),
+                }],
+            ),
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
@@ -2074,17 +2074,20 @@ mod tests {
     fn analyze_bundle_display_includes_sccs() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
-        let all_syntax = vec![
-            ("Rec".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::NonTerminal {
-                    category: "Expr".to_string(),
-                    param_name: "e".to_string(),
-                },
-            ]),
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Expr".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
+        let all_syntax = vec![(
+            "Rec".to_string(),
+            "Expr".to_string(),
+            vec![crate::SyntaxItemSpec::NonTerminal {
+                category: "Expr".to_string(),
+                param_name: "e".to_string(),
+            }],
+        )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
         let display = format!("{}", result);
@@ -2095,8 +2098,8 @@ mod tests {
 #[cfg(test)]
 mod proptest_tests {
     use super::*;
-    use proptest::prelude::*;
     use crate::test_generators::*;
+    use proptest::prelude::*;
 
     /// Check whether category `cat` has a direct self-reference in any of its
     /// rules.  A self-reference occurs when a rule belonging to `cat` contains
@@ -2112,24 +2115,17 @@ mod proptest_tests {
                 crate::SyntaxItemSpec::Binder { category, .. } => category == cat,
                 crate::SyntaxItemSpec::Collection { element_category, .. } => {
                     element_category == cat
-                }
+                },
                 crate::SyntaxItemSpec::Sep { body, .. } => item_refs_cat(body, cat),
                 crate::SyntaxItemSpec::Map { body_items } => {
                     body_items.iter().any(|sub| item_refs_cat(sub, cat))
-                }
-                crate::SyntaxItemSpec::Zip {
-                    left_category,
-                    right_category,
-                    body,
-                    ..
-                } => {
-                    left_category == cat
-                        || right_category == cat
-                        || item_refs_cat(body, cat)
-                }
+                },
+                crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
+                    left_category == cat || right_category == cat || item_refs_cat(body, cat)
+                },
                 crate::SyntaxItemSpec::Optional { inner } => {
                     inner.iter().any(|sub| item_refs_cat(sub, cat))
-                }
+                },
                 _ => false,
             }
         }

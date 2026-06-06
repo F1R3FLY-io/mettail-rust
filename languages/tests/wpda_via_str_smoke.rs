@@ -18,7 +18,7 @@ fn calculator_proc_int_cross_cat_via_wpds() {
     let result = Proc::parse_via_wpda("42").expect("Proc::ProcInt parses");
     match &result {
         Proc::ProcInt(boxed) => match boxed.as_ref() {
-            Int::NumLit(42) => {}
+            Int::NumLit(42) => {},
             other => panic!("expected NumLit(42), got {:?}", other),
         },
         other => panic!("expected Proc::ProcInt(...), got {:?}", other),
@@ -33,7 +33,7 @@ fn calculator_bool_eq_int_cross_cat_infix_via_wpds() {
         Bool::EqInt(a, b) => {
             assert!(matches!(a.as_ref(), Int::NumLit(1)));
             assert!(matches!(b.as_ref(), Int::NumLit(2)));
-        }
+        },
         other => panic!("expected Bool::EqInt(1, 2), got {:?}", other),
     }
 }
@@ -43,7 +43,7 @@ fn lambda_lam_identity_via_wpds() {
     // `lam x . x` → Term::Lam(Scope::new(Binder("x"), std::sync::Arc::new(Term::TVar(...))))
     let result = Term::parse_via_wpda("lam x . x").expect("Term::Lam parses");
     match &result {
-        Term::Lam(_) => {}
+        Term::Lam(_) => {},
         other => panic!("expected Term::Lam(...), got {:?}", other),
     }
 }
@@ -51,12 +51,11 @@ fn lambda_lam_identity_via_wpds() {
 #[test]
 fn rhocalc_proc_par_via_wpds() {
     // `{ error | error }` → Proc::PPar(HashBag::from([Err, Err])).
-    let result = rhocalc::Proc::parse_via_wpda("{ error | error }")
-        .expect("Proc::PPar parses");
+    let result = rhocalc::Proc::parse_via_wpda("{ error | error }").expect("Proc::PPar parses");
     match &result {
         rhocalc::Proc::PPar(bag) => {
             assert_eq!(bag.len(), 2);
-        }
+        },
         other => panic!("expected Proc::PPar(...), got {:?}", other),
     }
 }
@@ -70,12 +69,11 @@ fn rhocalc_pinputs_empty_via_wpds() {
     // PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
     // |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc;
     // Empty list: ns = [], xs = [], body = 0 (PZero / CastBigInt(0)).
-    let result = rhocalc::Proc::parse_via_wpda("().{0}")
-        .expect("empty PInputs parses");
+    let result = rhocalc::Proc::parse_via_wpda("().{0}").expect("empty PInputs parses");
     match &result {
         rhocalc::Proc::PInputs(ns, _scope) => {
             assert_eq!(ns.len(), 0, "empty list expected");
-        }
+        },
         other => panic!("expected Proc::PInputs(_, _), got {:?}", other),
     }
 }
@@ -84,12 +82,12 @@ fn rhocalc_pinputs_empty_via_wpds() {
 fn rhocalc_pinputs_single_binder_via_wpds() {
     // Single binder: `(c1?x).{*(x)}` — ns = [NVar("c1")], xs = [Binder("x")],
     // body = PDrop(NVar("x") bound).
-    let result = rhocalc::Proc::parse_via_wpda("(c1?x).{*(x)}")
-        .expect("single-binder PInputs parses");
+    let result =
+        rhocalc::Proc::parse_via_wpda("(c1?x).{*(x)}").expect("single-binder PInputs parses");
     match &result {
         rhocalc::Proc::PInputs(ns, _scope) => {
             assert_eq!(ns.len(), 1, "one channel name expected");
-        }
+        },
         other => panic!("expected Proc::PInputs(_, _), got {:?}", other),
     }
 }
@@ -97,12 +95,12 @@ fn rhocalc_pinputs_single_binder_via_wpds() {
 #[test]
 fn rhocalc_pinputs_multi_binder_via_wpds() {
     // Multi-binder: `(c1?x, c2?y).{*(x)}` — ns = [c1, c2], xs = [x, y].
-    let result = rhocalc::Proc::parse_via_wpda("(c1?x, c2?y).{*(x)}")
-        .expect("multi-binder PInputs parses");
+    let result =
+        rhocalc::Proc::parse_via_wpda("(c1?x, c2?y).{*(x)}").expect("multi-binder PInputs parses");
     match &result {
         rhocalc::Proc::PInputs(ns, _scope) => {
             assert_eq!(ns.len(), 2, "two channel names expected");
-        }
+        },
         other => panic!("expected Proc::PInputs(_, _), got {:?}", other),
     }
 }
@@ -111,10 +109,10 @@ fn rhocalc_pinputs_multi_binder_via_wpds() {
 fn rhocalc_pnew_single_binder_via_wpds() {
     // PNew . ^[xs].p:[Name* -> Proc] |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
     // Single: `new(x) in {*(x)}`.
-    let result = rhocalc::Proc::parse_via_wpda("new(x) in {*(x)}")
-        .expect("single-binder PNew parses");
+    let result =
+        rhocalc::Proc::parse_via_wpda("new(x) in {*(x)}").expect("single-binder PNew parses");
     match &result {
-        rhocalc::Proc::PNew(_scope) => {}
+        rhocalc::Proc::PNew(_scope) => {},
         other => panic!("expected Proc::PNew(_), got {:?}", other),
     }
 }
@@ -122,10 +120,10 @@ fn rhocalc_pnew_single_binder_via_wpds() {
 #[test]
 fn rhocalc_pnew_multi_binder_via_wpds() {
     // Multi-binder: `new(x, y) in {*(x)}`.
-    let result = rhocalc::Proc::parse_via_wpda("new(x, y) in {*(x)}")
-        .expect("multi-binder PNew parses");
+    let result =
+        rhocalc::Proc::parse_via_wpda("new(x, y) in {*(x)}").expect("multi-binder PNew parses");
     match &result {
-        rhocalc::Proc::PNew(_scope) => {}
+        rhocalc::Proc::PNew(_scope) => {},
         other => panic!("expected Proc::PNew(_), got {:?}", other),
     }
 }

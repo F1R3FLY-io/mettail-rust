@@ -40,9 +40,8 @@
 //! - `impl PartialOrd for Cat`: delegates to `Ord::cmp`
 //! - `impl Ord for Cat`: delegates to `cmp_iterative`
 
-use mettail_ast::language::LanguageDef;
-use mettail_ast::types::CollectionType;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -170,17 +169,17 @@ fn variant_wildcard_pattern(category: &Ident, variant: &VariantKind) -> TokenStr
     match variant {
         VariantKind::Nullary { label } => {
             quote! { #category::#label }
-        }
+        },
         VariantKind::Literal { label }
         | VariantKind::Var { label }
         | VariantKind::Collection { label, .. } => {
             quote! { #category::#label(..) }
-        }
+        },
         VariantKind::Regular { label, .. }
         | VariantKind::Binder { label, .. }
         | VariantKind::MultiBinder { label, .. } => {
             quote! { #category::#label(..) }
-        }
+        },
     }
 }
 
@@ -291,7 +290,7 @@ fn generate_eq_variant_arm(
             quote! {
                 (#category::#label, #category::#label) => {}
             }
-        }
+        },
 
         VariantKind::Literal { label } => {
             // Literal: compare payloads directly
@@ -300,7 +299,7 @@ fn generate_eq_variant_arm(
                     if a != b { return false; }
                 }
             }
-        }
+        },
 
         VariantKind::Var { label } => {
             // Var: compare OrdVar payloads directly
@@ -309,13 +308,13 @@ fn generate_eq_variant_arm(
                     if a != b { return false; }
                 }
             }
-        }
+        },
 
         VariantKind::Regular { label, fields } => {
             generate_eq_regular_arm(category, label, fields, language)
-        }
+        },
 
-        VariantKind::Collection { label, coll_type, .. } => {
+        VariantKind::Collection { label, coll_type: _, .. } => {
             // Collection: delegate to the collection's own PartialEq
             // (re-entrant via TLS pool — safe per Cell<Vec> pattern)
             quote! {
@@ -323,15 +322,15 @@ fn generate_eq_variant_arm(
                     if a != b { return false; }
                 }
             }
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_eq_binder_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             generate_eq_multi_binder_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
     }
 }
 
@@ -632,7 +631,7 @@ fn generate_cmp_variant_arm(
             quote! {
                 (#category::#label, #category::#label) => {}
             }
-        }
+        },
 
         VariantKind::Literal { label } => {
             // Literal: compare payloads with Ord
@@ -645,7 +644,7 @@ fn generate_cmp_variant_arm(
                     }
                 }
             }
-        }
+        },
 
         VariantKind::Var { label } => {
             // Var: compare OrdVar with Ord
@@ -658,13 +657,13 @@ fn generate_cmp_variant_arm(
                     }
                 }
             }
-        }
+        },
 
         VariantKind::Regular { label, fields } => {
             generate_cmp_regular_arm(category, label, fields, language)
-        }
+        },
 
-        VariantKind::Collection { label, coll_type, .. } => {
+        VariantKind::Collection { label, coll_type: _, .. } => {
             // Collection: delegate to collection's own Ord (re-entrant)
             quote! {
                 (#category::#label(a), #category::#label(b)) => {
@@ -675,15 +674,15 @@ fn generate_cmp_variant_arm(
                     }
                 }
             }
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_cmp_binder_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             generate_cmp_multi_binder_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
     }
 }
 
@@ -990,7 +989,6 @@ fn generate_cmp_regular_arm(
             // For eager Box<T> comparison: use `cmp()` on the derefed values. This
             // re-enters our Ord::cmp, which uses the trampoline. So it IS stack-safe!
             // The re-entrant call gets a fresh stack from the pool.
-            let task_variant = format_ident!("Cmp{}", field.category);
             stmts.push(quote! {
                 {
                     let ord = (**#lname).cmp(&**#rname);
@@ -1004,11 +1002,8 @@ fn generate_cmp_regular_arm(
     }
 
     // Remaining Box<T> fields after the last collection field — push in reverse
-    let deferred_fields: Vec<(usize, &FieldInfo)> = fields
-        .iter()
-        .enumerate()
-        .skip(eager_end)
-        .collect();
+    let deferred_fields: Vec<(usize, &FieldInfo)> =
+        fields.iter().enumerate().skip(eager_end).collect();
 
     for &(i, field) in deferred_fields.iter().rev() {
         let lname = &left_names[i];
@@ -1168,6 +1163,7 @@ fn generate_cmp_binder_arm(
             // Pattern comparison: use hash-based ordering (same as Scope::cmp)
             let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
                 let mut h = std::collections::hash_map::DefaultHasher::new();
+                std::hash::Hash::hash(p, &mut h);
                 std::hash::Hasher::finish(&h)
             };
             let pat_ord = hash_pat(&l_scope.unsafe_pattern).cmp(&hash_pat(&r_scope.unsafe_pattern));
@@ -1262,6 +1258,7 @@ fn generate_cmp_multi_binder_arm(
             for (lp, rp) in l_pats.iter().zip(r_pats.iter()) {
                 let hash_pat = |p: &mettail_runtime::Binder<String>| -> u64 {
                     let mut h = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(p, &mut h);
                     std::hash::Hasher::finish(&h)
                 };
                 let pat_ord = hash_pat(lp).cmp(&hash_pat(rp));

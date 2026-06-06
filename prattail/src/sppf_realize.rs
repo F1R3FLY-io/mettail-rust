@@ -70,7 +70,7 @@ pub trait ActionResolver {
     /// `Packing.children` Vec.
     fn resolve_packing(&self, rule_idx: u32, children: &[Self::Out]) -> Self::Out;
 
-    /// Resolve a `CollectionId` placeholder by materializing the collection
+    /// Resolve a `CollectionId` marker by materializing the collection
     /// contents. The walker-side `sppf_collection_arena` lookup happens
     /// inside the resolver impl (which has access to the walker context).
     /// Default impl panics; concrete walker-aware resolvers override.
@@ -147,8 +147,7 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
     // To honor the "no host-stack recursion" mandate, we drive the unfold
     // via an explicit visit-stack.
 
-    let mut memo: std::collections::HashMap<SppfId, Vec<R::Out>> =
-        std::collections::HashMap::new();
+    let mut memo: std::collections::HashMap<SppfId, Vec<R::Out>> = std::collections::HashMap::new();
 
     // Visit-stack of (id, phase). Phase 0 = needs children visited;
     // phase 1 = children done, ready to combine.
@@ -176,27 +175,27 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     | Some(SppfNode::Predicate { .. })
                     | Some(SppfNode::BinderScope { .. }) => {
                         // No children.
-                    }
+                    },
                     Some(SppfNode::Symbol { .. }) => {
                         for &packing_id in sppf.packings_of(id) {
                             if !memo.contains_key(&packing_id) {
                                 stack.push((packing_id, Phase::Enter));
                             }
                         }
-                    }
+                    },
                     Some(SppfNode::Packing { children, .. }) => {
                         for &child_id in children {
                             if !memo.contains_key(&child_id) {
                                 stack.push((child_id, Phase::Enter));
                             }
                         }
-                    }
+                    },
                     None => {
                         // Out-of-range id — produce empty result.
                         memo.insert(id, Vec::new());
-                    }
+                    },
                 }
-            }
+            },
             Phase::Leave => {
                 let results = match sppf.node(id) {
                     Some(SppfNode::Terminal {
@@ -207,7 +206,7 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     }) => {
                         let text = sppf.text(*text_handle);
                         vec![resolver.resolve_terminal(token_kind, text, *pos)]
-                    }
+                    },
                     // Phase F.8 (2026-05-18): TriggerTerminal contributes no
                     // R::Out value; Packing-arm filters TriggerTerminal
                     // children out of the cartesian product. Empty Vec keeps
@@ -215,7 +214,7 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     Some(SppfNode::TriggerTerminal { .. }) => Vec::new(),
                     Some(SppfNode::Epsilon { pos }) => {
                         vec![resolver.resolve_epsilon(*pos)]
-                    }
+                    },
                     // Collection-accumulation fix (2026-05-29): `items` now
                     // live on the node, but this pluggable-resolver path
                     // (test scaffolding; `resolve_collection_id` panics by
@@ -225,20 +224,20 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                     // existing id-only contract. Ignore `items` here.
                     Some(SppfNode::CollectionId { id: cid, .. }) => {
                         vec![resolver.resolve_collection_id(*cid)]
-                    }
+                    },
                     Some(SppfNode::OptAbsent { pos }) => {
                         vec![resolver.resolve_opt_absent(*pos)]
-                    }
+                    },
                     Some(SppfNode::Predicate { handle }) => {
                         vec![resolver.resolve_predicate(*handle)]
-                    }
+                    },
                     Some(SppfNode::BinderScope { names_text, depth }) => {
                         let names: Vec<String> = names_text
                             .iter()
                             .map(|&h| sppf.text(h).to_string())
                             .collect();
                         vec![resolver.resolve_binder_scope(names, *depth)]
-                    }
+                    },
                     Some(SppfNode::Symbol { .. }) => {
                         // Concatenate all packings' realizations.
                         let mut acc: Vec<R::Out> = Vec::new();
@@ -261,7 +260,7 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                             }
                         }
                         acc
-                    }
+                    },
                     Some(SppfNode::Packing { rule_idx, children, .. }) => {
                         // Phase F.8 (2026-05-18): TriggerTerminal children
                         // contribute no `R::Out` value — filter them out of
@@ -271,14 +270,14 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                         let action_children: Vec<SppfId> = children
                             .iter()
                             .copied()
-                            .filter(|&c| !matches!(
-                                sppf.node(c),
-                                Some(SppfNode::TriggerTerminal { .. })
-                            ))
+                            .filter(|&c| {
+                                !matches!(sppf.node(c), Some(SppfNode::TriggerTerminal { .. }))
+                            })
                             .collect();
                         // Cartesian product of children's realizations, then
                         // resolve_packing for each.
-                        let mut combos: Vec<Vec<R::Out>> = vec![Vec::with_capacity(action_children.len())];
+                        let mut combos: Vec<Vec<R::Out>> =
+                            vec![Vec::with_capacity(action_children.len())];
                         for &child_id in &action_children {
                             let child_results = memo
                                 .get(&child_id)
@@ -316,11 +315,11 @@ pub fn realize_into<W: SemiringRef, R: ActionResolver>(
                             .into_iter()
                             .map(|child_values| resolver.resolve_packing(*rule_idx, &child_values))
                             .collect()
-                    }
+                    },
                     None => Vec::new(),
                 };
                 memo.insert(id, results);
-            }
+            },
         }
     }
 
@@ -357,12 +356,7 @@ mod tests {
     impl ActionResolver for StringResolver {
         type Out = String;
 
-        fn resolve_terminal(
-            &self,
-            token_kind: &TokenKind,
-            text: &str,
-            _pos: PosOrSynth,
-        ) -> String {
+        fn resolve_terminal(&self, token_kind: &TokenKind, text: &str, _pos: PosOrSynth) -> String {
             match (token_kind, text.is_empty()) {
                 (TokenKind::Fixed(s), _) => s.clone(),
                 (_, false) => text.to_string(),

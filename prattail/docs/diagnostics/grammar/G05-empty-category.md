@@ -9,12 +9,19 @@ Detects categories that are declared in the `types` block but have zero rules pr
 
 ## Trigger Conditions
 
-A warning is emitted when a category satisfies **both** of the following:
+A warning is emitted when a category satisfies **all** of the following:
 
 1. The category name appears in `ctx.categories` (i.e., it was declared in the `types` block).
-2. No entry in `ctx.all_syntax` has this category as its target (i.e., no `(label, category, syntax)` triple exists where `category` matches the empty category name).
+2. The category is not a native-type category with generated literal parsing.
+3. The category is not a non-native binding sort used by `Binder` or class-3 `Zip` binder syntax.
+4. No entry in `ctx.all_syntax` has this category as its target (i.e., no `(label, category, syntax)` triple exists where `category` matches the empty category name).
 
 This lint fires based solely on whether rules **produce into** the category. A category could be referenced as a NonTerminal in other rules' syntax items (and thus not trigger G02) while still being empty (no rules of its own).
+
+Binding-sort categories are excluded because their values are introduced by the
+binder/identifier parser rather than by ordinary grammar rules. For example,
+ambient-style `Name` categories used by `^x.p:[Name -> Proc]` do not need a
+separate `Name` production merely to bind an identifier.
 
 ## Example
 

@@ -3,7 +3,7 @@
 //! Measures throughput of store operations, two-stage lookup overhead,
 //! persistent store fork cost, GC overhead, and abstract allocation strategies.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::HashMap;
 
 use mettail_prattail::cesk_store::*;

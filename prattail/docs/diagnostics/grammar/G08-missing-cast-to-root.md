@@ -5,22 +5,23 @@
 
 ## Description
 
-Detects non-primary categories that have no path to the primary (root) category via
-cast rules or cross-category rules. In PraTTaIL, the primary category is the
-entry point for parsing: its `parse()` method is what top-level callers invoke. If a
-secondary category has no cast path to the primary, then values produced by that
-category can never appear in a top-level parse result unless they are explicitly
-referenced by a rule in the primary category.
+Detects non-primary categories that have no path to the primary (root) category
+through value-flow edges. In PraTTaIL, the primary category is the entry point
+for parsing: its `parse()` method is what top-level callers invoke. If a
+secondary category has no path to the primary, then values produced by that
+category can never appear in a top-level parse result.
 
-The lint performs a depth-first search (DFS) from each non-primary category through
-the directed graph formed by cast and cross-category rule edges
-(`source_category -> target_category`). If the DFS cannot reach the primary
-category, the lint fires.
+The lint performs a depth-first search (DFS) from each non-primary category
+through the directed graph formed by cast rules, cross-category rules, and
+syntax references whose values are embedded into the target category. If the
+DFS cannot reach the primary category, the lint fires.
 
-A missing cast path often indicates either:
+A missing value-flow path often indicates either:
 
 - A category that was declared but never integrated into the grammar's type hierarchy.
 - A missing intermediate cast rule that should bridge two categories.
+- A missing syntax embedding where another category should directly contain this
+  category's parsed values.
 - An intentional auxiliary category that is only used internally (in which case the
   warning can be noted and ignored).
 
@@ -30,12 +31,23 @@ The lint fires when **all** of the following conditions hold:
 
 1. The grammar has a primary category (the first category declared in `types { ... }`).
 2. A non-primary category `C` exists in the grammar.
-3. A DFS from `C` through the directed edge set `{ (source, target) | cast_rule(source, target) } UNION { (source, result) | cross_category_rule(source, result) }` does **not** reach the primary category.
+3. `C` is not a declared refinement category.
+4. `C` is not a non-native binding sort used by `Binder` or class-3 `Zip` binder syntax.
+5. A DFS from `C` through the directed edge set does **not** reach the primary category.
 
 The directed graph includes both cast rules (where `target_category` wraps
 `source_category`) and cross-category rules (where `result_category` receives values
 from `source_category`). The DFS follows edges in the forward direction
 (`source -> target`) because cast rules transport values *from* source *into* target.
+The graph also includes syntax value-flow edges: a rule `Target ::= ... Source ...`
+adds `Source -> Target` because parsed `Source` values become part of a `Target`
+result.
+
+Binding-sort categories are intentionally excluded from this cast-root check.
+For example, a `Name` category used by `^x.p:[Name -> Proc]` or by class-3
+`*zip(ns,xs)` binder syntax is an auxiliary name/channel sort. It is consumed
+by binder syntax and by rules that mention names, but it does not need a bare
+cast into the primary parse result.
 
 ## Example
 
@@ -73,21 +85,21 @@ language! {
 ```
 
 Here, `Int` casts to `Proc` (primary) and `Bool` casts to `Proc`, but `Float` has
-no cast path to any other category. Float values can never appear in a top-level
-parse result.
+no value-flow path to any other category. Float values can never appear in a
+top-level parse result.
 
 ### Output
 
 ```
-warning[G08]: no cast path from category `Float` to primary category `Proc`
+warning[G08]: no value-flow path from category `Float` to primary category `Proc`
   = in category `Float`
-  = hint: add a cast rule from `Float` to `Proc` or an intermediate category
+  = hint: add a cast/cross-category rule or syntax embedding from `Float` to `Proc` or an intermediate category
 ```
 
 ## Resolution
 
-To resolve this warning, add one or more cast rules that connect the isolated
-category to the primary category (directly or transitively):
+To resolve this warning, add one or more value-flow edges that connect the
+isolated category to the primary category (directly or transitively):
 
 1. **Direct cast to primary.** Add a rule that wraps the isolated category's values
    into the primary category:
@@ -106,23 +118,28 @@ category to the primary category (directly or transitively):
    // Int -> Proc already exists
    ```
 
-3. **Confirm the category is intentionally isolated.** If the category is used only
+3. **Embed through syntax.** If direct conversion is not needed but another
+   category legitimately contains this category, add a primary-reachable rule
+   whose syntax references the category. For example, `Proc ::= box(Float)`
+   adds a directed `Float -> Proc` value-flow edge.
+
+4. **Confirm the category is intentionally isolated.** If the category is used only
    as an internal building block (e.g., a helper category parsed only within specific
    rules of other categories), the warning can be acknowledged and ignored. Consider
    adding a comment in the grammar to document this intent.
 
-4. **Remove the category.** If the category is unused and was declared by mistake,
+5. **Remove the category.** If the category is unused and was declared by mistake,
    remove it from the `types { ... }` block and delete its associated rules. Note
    that G02 (unused-category) and G05 (empty-category) may also fire in this case.
 
 ## Hint Explanation
 
-> add a cast rule from `{name}` to `{primary}` or an intermediate category
+> add a cast/cross-category rule or syntax embedding from `{name}` to `{primary}` or an intermediate category
 
-The hint directs the grammar author to create a bridge between the isolated category
-and the primary category. A "cast rule" in PraTTaIL is a rule where the syntax
-consists of a single non-terminal from a different category, effectively wrapping
-that category's values into the result category. For example:
+The hint directs the grammar author to create a bridge between the isolated
+category and the primary category. A "cast rule" in PraTTaIL is a rule where the
+syntax consists of a single non-terminal from a different category, effectively
+wrapping that category's values into the result category. For example:
 
 ```
 FloatToProc . a:Float |- a : Proc ![a.round() as i32] step;
@@ -131,15 +148,15 @@ FloatToProc . a:Float |- a : Proc ![a.round() as i32] step;
 This rule allows any `Float` expression to appear wherever a `Proc` expression is
 expected, with the Rust code block `![...]` performing the type conversion.
 
-The phrase "or an intermediate category" acknowledges that the cast graph is
-transitive: if `Float -> Int` and `Int -> Proc` both exist, then `Float` has a path
-to `Proc` and the lint will not fire. This can be preferable when a direct conversion
-does not make semantic sense but a two-step conversion does.
+The phrase "or an intermediate category" acknowledges that the value-flow graph
+is transitive: if `Float -> Int` and `Int -> Proc` both exist, then `Float` has
+a path to `Proc` and the lint will not fire. This can be preferable when a
+direct conversion does not make semantic sense but a two-step conversion does.
 
 ## Related Lints
 
-- [W01 / A4](../wfst/W01-dead-rule.md) -- A4 (`InterCategoryDeadPath`) also detects categories isolated from the root, but uses a richer **undirected** graph that includes syntax-level NonTerminal, Binder, and Collection references in addition to cast/cross-cat edges. G08 uses a **directed** cast-only graph. G08 can fire on categories that A4 does NOT flag (when the category is syntax-connected but not cast-connected), and vice versa. The two analyses are **complementary, not redundant**.
+- [W01 / A4](../wfst/W01-dead-rule.md) -- A4 (`InterCategoryDeadPath`) also detects categories isolated from the root, but uses a richer **undirected** graph. G08 uses a **directed** value-flow graph, so it still distinguishes whether values can flow from a secondary category into the primary category. The two analyses are **complementary, not redundant**.
 - [G02](./G02-unused-category.md) -- detects categories that are declared but never referenced by any rule; G08 is more specific, detecting categories that are referenced by their own rules but lack a path to primary
-- [G05](./G05-empty-category.md) -- detects categories with zero rules, which trivially have no cast path (but G05 fires first)
+- [G05](./G05-empty-category.md) -- detects categories with zero rules, which trivially have no value-flow path (but G05 fires first)
 - [C01](../cross-category/C01-cast-cycle.md) -- detects cycles in the cast graph; a cycle means infinite cast chains, while G08 detects disconnected subgraphs
 - [C02](../cross-category/C02-transitive-cast-redundancy.md) -- detects redundant direct casts where a transitive path already exists; resolving G08 may introduce such redundancy

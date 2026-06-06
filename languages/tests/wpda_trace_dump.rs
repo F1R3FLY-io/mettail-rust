@@ -36,8 +36,7 @@ fn diagnose_display_int_abuts_else_keyword_separated() {
     std::env::set_var("PRATTAIL_MAX_STEPS", "500");
 
     // Use a RichTracingConsumer to record every step's cursor census.
-    let mut consumer: RichTracingConsumer<LexicographicWeight> =
-        RichTracingConsumer::new();
+    let mut consumer: RichTracingConsumer<LexicographicWeight> = RichTracingConsumer::new();
 
     // For now we route through the existing public `Int::parse` path.
     // The codegen-emitted `Int::parse_traced` (next substage) will
@@ -51,10 +50,7 @@ fn diagnose_display_int_abuts_else_keyword_separated() {
     // post-mortem analysis.
     eprintln!("[trace-dump] parse result is_ok={}", result.is_ok());
     eprintln!("[trace-dump] consumer.steps.len() = {}", consumer.steps.len());
-    eprintln!(
-        "[trace-dump] consumer.max_cursor_count = {}",
-        consumer.max_cursor_count
-    );
+    eprintln!("[trace-dump] consumer.max_cursor_count = {}", consumer.max_cursor_count);
     eprintln!(
         "[trace-dump] consumer.merges.len() = {}, drops.len() = {}, forks.len() = {}",
         consumer.merges.len(),

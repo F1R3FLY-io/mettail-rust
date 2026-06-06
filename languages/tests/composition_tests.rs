@@ -256,10 +256,7 @@ mod calc_lambda {
         let lang = CalcLambdaLanguage;
         let term = lang.parse_term("1 + 2").expect("parse");
         let formatted = lang.format_term(term.as_ref());
-        assert!(
-            !formatted.is_empty(),
-            "formatted term should be non-empty"
-        );
+        assert!(!formatted.is_empty(), "formatted term should be non-empty");
     }
 
     #[test]

@@ -112,9 +112,7 @@ impl<T: Send + 'static> LogicStream<T> {
     ///
     /// The identity element for `mplus` and `interleave`.
     pub fn empty() -> Self {
-        LogicStream {
-            branches: VecDeque::new(),
-        }
+        LogicStream { branches: VecDeque::new() }
     }
 
     /// Create a stream with a single result.
@@ -161,23 +159,23 @@ impl<T: Send + 'static> LogicStream<T> {
             match branch {
                 Branch::Ready(value) => {
                     return Some((value, self));
-                }
+                },
                 Branch::Suspended(f) => match f() {
                     BranchResult::Yield(value, more) => {
                         for b in more {
                             self.branches.push_back(b);
                         }
                         return Some((value, self));
-                    }
+                    },
                     BranchResult::Fail => {
                         continue;
-                    }
+                    },
                     BranchResult::Fork(more) => {
                         for b in more {
                             self.branches.push_back(b);
                         }
                         continue;
-                    }
+                    },
                 },
             }
         }
@@ -214,17 +212,17 @@ impl<T: Send + 'static> LogicStream<T> {
                 (Some(a), Some(b)) => {
                     result.push_back(a);
                     result.push_back(b);
-                }
+                },
                 (Some(a), None) => {
                     result.push_back(a);
                     result.extend(iter_a);
                     break;
-                }
+                },
                 (None, Some(b)) => {
                     result.push_back(b);
                     result.extend(iter_b);
                     break;
-                }
+                },
                 (None, None) => break,
             }
         }
@@ -260,7 +258,7 @@ impl<T: Send + 'static> LogicStream<T> {
                                 }
                             }
                             result
-                        }
+                        },
                         BranchResult::Fail => LogicStream::empty(),
                         BranchResult::Fork(branches) => {
                             let mut result = LogicStream::<U>::empty();
@@ -270,9 +268,9 @@ impl<T: Send + 'static> LogicStream<T> {
                                 }
                             }
                             result
-                        }
+                        },
                     }
-                }
+                },
             };
             accumulated = accumulated.interleave(stream);
         }
@@ -298,7 +296,7 @@ impl<T: Send + 'static> LogicStream<T> {
                 let first_results = then_fn(first);
                 let rest_results = rest.fair_conjoin(then_fn);
                 first_results.interleave(rest_results)
-            }
+            },
         }
     }
 
@@ -333,10 +331,7 @@ impl<T: Send + 'static> LogicStream<T> {
     ///
     /// Eagerly evaluates suspended branches during mapping. This is
     /// simpler than trying to compose closures and preserves all results.
-    pub fn map<U: Send + 'static>(
-        self,
-        f: impl Fn(T) -> U + Send + 'static,
-    ) -> LogicStream<U> {
+    pub fn map<U: Send + 'static>(self, f: impl Fn(T) -> U + Send + 'static) -> LogicStream<U> {
         // Eagerly evaluate all branches to Ready values, then map.
         let all_values = self.collect_all();
         LogicStream::from_iter(all_values.into_iter().map(f))
@@ -365,7 +360,7 @@ impl<T: Send + 'static> LogicStream<T> {
                 Some((value, rest)) => {
                     results.push(value);
                     stream = rest;
-                }
+                },
                 None => break,
             }
         }
@@ -386,7 +381,7 @@ impl<T: Send + 'static> LogicStream<T> {
                 Some((value, rest)) => {
                     results.push(value);
                     stream = rest;
-                }
+                },
                 None => break,
             }
         }
@@ -431,7 +426,7 @@ impl<T: Send + 'static> Iterator for LogicStreamIter<T> {
             Some((value, rest)) => {
                 self.stream = rest;
                 Some(value)
-            }
+            },
             None => None,
         }
     }
@@ -580,10 +575,7 @@ pub enum QuantifiedArg {
 impl QuantifiedFormula {
     /// Convenience: create an atom with the given relation and args.
     pub fn atom(relation: impl Into<String>, args: Vec<QuantifiedArg>) -> Self {
-        QuantifiedFormula::Atom {
-            relation: relation.into(),
-            args,
-        }
+        QuantifiedFormula::Atom { relation: relation.into(), args }
     }
 
     /// Convenience: `a ∧ b`
@@ -653,22 +645,22 @@ impl QuantifiedFormula {
                         }
                     }
                 }
-            }
+            },
             QuantifiedFormula::And(a, b)
             | QuantifiedFormula::Or(a, b)
             | QuantifiedFormula::Implies(a, b) => {
                 a.collect_free_vars(free, bound);
                 b.collect_free_vars(free, bound);
-            }
+            },
             QuantifiedFormula::Not(inner) => {
                 inner.collect_free_vars(free, bound);
-            }
+            },
             QuantifiedFormula::ForAll { var, body, .. }
             | QuantifiedFormula::Exists { var, body, .. } => {
                 let mut inner_bound = bound.clone();
                 inner_bound.insert(var.clone());
                 body.collect_free_vars(free, &inner_bound);
-            }
+            },
         }
     }
 }
@@ -697,17 +689,17 @@ impl fmt::Display for QuantifiedFormula {
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ")")
-            }
+            },
             QuantifiedFormula::And(a, b) => write!(f, "({} ∧ {})", a, b),
             QuantifiedFormula::Or(a, b) => write!(f, "({} ∨ {})", a, b),
             QuantifiedFormula::Not(inner) => write!(f, "¬{}", inner),
             QuantifiedFormula::Implies(a, b) => write!(f, "({} ⇒ {})", a, b),
             QuantifiedFormula::ForAll { var, domain, body } => {
                 write!(f, "∀{} ∈ {}. {}", var, domain, body)
-            }
+            },
             QuantifiedFormula::Exists { var, domain, body } => {
                 write!(f, "∃{} ∈ {}. {}", var, domain, body)
-            }
+            },
         }
     }
 }
@@ -718,7 +710,7 @@ impl fmt::Display for QuantifiedDomain {
             QuantifiedDomain::Relation(name) => write!(f, "{}", name),
             QuantifiedDomain::Bounded { relation, limit } => {
                 write!(f, "{}[≤{}]", relation, limit)
-            }
+            },
         }
     }
 }
@@ -809,26 +801,26 @@ where
                 })
                 .collect();
             relation_query(relation, &resolved)
-        }
+        },
 
         QuantifiedFormula::And(a, b) => {
             evaluate_quantified(a, env, relation_query, domain_enumerate, bound)
                 && evaluate_quantified(b, env, relation_query, domain_enumerate, bound)
-        }
+        },
 
         QuantifiedFormula::Or(a, b) => {
             evaluate_quantified(a, env, relation_query, domain_enumerate, bound)
                 || evaluate_quantified(b, env, relation_query, domain_enumerate, bound)
-        }
+        },
 
         QuantifiedFormula::Not(inner) => {
             !evaluate_quantified(inner, env, relation_query, domain_enumerate, bound)
-        }
+        },
 
         QuantifiedFormula::Implies(a, b) => {
             !evaluate_quantified(a, env, relation_query, domain_enumerate, bound)
                 || evaluate_quantified(b, env, relation_query, domain_enumerate, bound)
-        }
+        },
 
         QuantifiedFormula::ForAll { var, domain, body } => {
             let tuples = enumerate_domain(domain, domain_enumerate, bound);
@@ -842,7 +834,7 @@ where
                 }
                 evaluate_quantified(body, &inner_env, relation_query, domain_enumerate, bound)
             })
-        }
+        },
 
         QuantifiedFormula::Exists { var, domain, body } => {
             let tuples = enumerate_domain(domain, domain_enumerate, bound);
@@ -853,7 +845,7 @@ where
                 }
                 evaluate_quantified(body, &inner_env, relation_query, domain_enumerate, bound)
             })
-        }
+        },
     }
 }
 
@@ -872,7 +864,7 @@ where
             let all = domain_enumerate(relation);
             let effective_limit = (*limit).min(default_bound);
             all.into_iter().take(effective_limit).collect()
-        }
+        },
     }
 }
 
@@ -1009,33 +1001,53 @@ where
                 })
                 .collect();
             relation_query(relation, &resolved).into()
-        }
+        },
 
         And(a, b) => {
             let ra = evaluate_quantified_with_theory(
-                a, theory, relation_query, domain_enumerate, env, bound,
+                a,
+                theory,
+                relation_query,
+                domain_enumerate,
+                env,
+                bound,
             );
             if ra == TriState::False {
                 return TriState::False;
             }
             let rb = evaluate_quantified_with_theory(
-                b, theory, relation_query, domain_enumerate, env, bound,
+                b,
+                theory,
+                relation_query,
+                domain_enumerate,
+                env,
+                bound,
             );
             ra.and(rb)
-        }
+        },
 
         Or(a, b) => {
             let ra = evaluate_quantified_with_theory(
-                a, theory, relation_query, domain_enumerate, env, bound,
+                a,
+                theory,
+                relation_query,
+                domain_enumerate,
+                env,
+                bound,
             );
             if ra == TriState::True {
                 return TriState::True;
             }
             let rb = evaluate_quantified_with_theory(
-                b, theory, relation_query, domain_enumerate, env, bound,
+                b,
+                theory,
+                relation_query,
+                domain_enumerate,
+                env,
+                bound,
             );
             ra.or(rb)
-        }
+        },
 
         Not(inner) => evaluate_quantified_with_theory(
             inner,
@@ -1049,13 +1061,23 @@ where
 
         Implies(a, b) => {
             let ra = evaluate_quantified_with_theory(
-                a, theory, relation_query, domain_enumerate, env, bound,
+                a,
+                theory,
+                relation_query,
+                domain_enumerate,
+                env,
+                bound,
             );
             let rb = evaluate_quantified_with_theory(
-                b, theory, relation_query, domain_enumerate, env, bound,
+                b,
+                theory,
+                relation_query,
+                domain_enumerate,
+                env,
+                bound,
             );
             ra.implies(rb)
-        }
+        },
 
         ForAll { var, domain, body } => {
             let tuples = enumerate_domain(domain, domain_enumerate, bound);
@@ -1078,7 +1100,7 @@ where
                 ) {
                     TriState::False => return TriState::False,
                     TriState::Unknown => had_unknown = true,
-                    TriState::True => {}
+                    TriState::True => {},
                 }
             }
             if had_unknown {
@@ -1086,7 +1108,7 @@ where
             } else {
                 TriState::True
             }
-        }
+        },
 
         Exists { var, domain, body } => {
             let tuples = enumerate_domain(domain, domain_enumerate, bound);
@@ -1109,7 +1131,7 @@ where
                 ) {
                     TriState::True => return TriState::True,
                     TriState::Unknown => had_unknown = true,
-                    TriState::False => {}
+                    TriState::False => {},
                 }
             }
             if had_unknown {
@@ -1117,7 +1139,7 @@ where
             } else {
                 TriState::False
             }
-        }
+        },
     }
 }
 
@@ -1172,12 +1194,12 @@ where
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            TheoryPred::True | TheoryPred::False => {}
+            TheoryPred::True | TheoryPred::False => {},
             TheoryPred::Atom(c) => c.hash(state),
             TheoryPred::And(a, b) | TheoryPred::Or(a, b) => {
                 a.hash(state);
                 b.hash(state);
-            }
+            },
             TheoryPred::Not(a) => a.hash(state),
         }
     }
@@ -1208,21 +1230,14 @@ pub struct TheoryAlgebra<T: ConstraintTheory> {
 impl<T: ConstraintTheory> TheoryAlgebra<T> {
     /// Create a new TheoryAlgebra with the given theory and search bound.
     pub fn new(theory: T, search_bound: usize) -> Self {
-        TheoryAlgebra {
-            theory,
-            search_bound,
-        }
+        TheoryAlgebra { theory, search_bound }
     }
 
     /// Collect constraints from a `TheoryPred` into a constraint store.
     ///
     /// Returns `None` if the predicate is unsatisfiable (propagation fails).
     /// For disjunctions, uses LogicT fair search to try alternatives.
-    fn collect_constraints(
-        &self,
-        pred: &TheoryPred<T>,
-        store: &T::Store,
-    ) -> LogicStream<T::Store>
+    fn collect_constraints(&self, pred: &TheoryPred<T>, store: &T::Store) -> LogicStream<T::Store>
     where
         T::Store: Send + 'static,
         T::Constraint: Send + 'static,
@@ -1239,12 +1254,12 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
                 let b_pred = (**b).clone();
                 let algebra_clone = self.clone();
                 a_stores.fair_conjoin(move |s| algebra_clone.collect_constraints(&b_pred, &s))
-            }
+            },
             TheoryPred::Or(a, b) => {
                 let a_stores = self.collect_constraints(a, store);
                 let b_stores = self.collect_constraints(b, store);
                 a_stores.interleave(b_stores)
-            }
+            },
             TheoryPred::Not(inner) => {
                 // Negation in the constraint theory context is subtle.
                 // NOT(P) is satisfiable iff P is not a tautology.
@@ -1264,9 +1279,7 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
                 match inner.as_ref() {
                     TheoryPred::True => LogicStream::empty(),
                     TheoryPred::False => LogicStream::unit(store.clone()),
-                    TheoryPred::Not(inner2) => {
-                        self.collect_constraints(inner2, store)
-                    }
+                    TheoryPred::Not(inner2) => self.collect_constraints(inner2, store),
                     TheoryPred::And(a, b) => {
                         // NOT(A AND B) = NOT(A) OR NOT(B)
                         let not_a = TheoryPred::Not(a.clone());
@@ -1274,7 +1287,7 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
                         let a_stores = self.collect_constraints(&not_a, store);
                         let b_stores = self.collect_constraints(&not_b, store);
                         a_stores.interleave(b_stores)
-                    }
+                    },
                     TheoryPred::Or(a, b) => {
                         // NOT(A OR B) = NOT(A) AND NOT(B)
                         let not_a = TheoryPred::Not(a.clone());
@@ -1285,7 +1298,7 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
                         not_a_stores.fair_conjoin(move |s| {
                             algebra_clone.collect_constraints(&not_b_pred, &s)
                         })
-                    }
+                    },
                     TheoryPred::Atom(_) => {
                         // For atomic negation NOT(c), we can't propagate the
                         // negation through the theory. Instead, return the
@@ -1294,9 +1307,9 @@ impl<T: ConstraintTheory> TheoryAlgebra<T> {
                         // the store's domain that doesn't satisfy c.
                         // The store is unconstrained w.r.t. the negation.
                         LogicStream::unit(store.clone())
-                    }
+                    },
                 }
-            }
+            },
         }
     }
 }
@@ -1443,10 +1456,7 @@ pub struct MultisetPartition<T: Clone + Eq + Hash> {
 /// assert_eq!(partitions.len(), 3);
 /// // {A:2} rem {A:1, B:2}, {A:1, B:1} rem {A:2, B:1}, {B:2} rem {A:3}
 /// ```
-pub fn multiset_partitions<T>(
-    items: &[(T, usize)],
-    k: usize,
-) -> LogicStream<MultisetPartition<T>>
+pub fn multiset_partitions<T>(items: &[(T, usize)], k: usize) -> LogicStream<MultisetPartition<T>>
 where
     T: Clone + Eq + Hash + Send + 'static,
 {
@@ -1512,7 +1522,8 @@ where
             let count_for_closure = count;
             sub.map(move |mut p| {
                 if count_for_closure > 0 {
-                    p.remainder.push((elem_for_closure.clone(), count_for_closure));
+                    p.remainder
+                        .push((elem_for_closure.clone(), count_for_closure));
                     // Sort remainder for stable ordering
                     p.remainder.sort_by(|a, b| a.1.cmp(&b.1));
                 }
@@ -1549,11 +1560,7 @@ where
 /// * `items` — distinct elements with their multiplicities
 /// * `k` — number of elements to select
 /// * `bound` — maximum number of partitions to return (T3 safety)
-pub fn multiset_select<T>(
-    items: &[(T, usize)],
-    k: usize,
-    bound: usize,
-) -> Vec<MultisetPartition<T>>
+pub fn multiset_select<T>(items: &[(T, usize)], k: usize, bound: usize) -> Vec<MultisetPartition<T>>
 where
     T: Clone + Eq + Hash + Send + 'static,
 {
@@ -1640,10 +1647,7 @@ mod tests {
     #[test]
     fn ifte_success_uses_then_branch() {
         let test = LogicStream::from_iter(vec![1, 2]);
-        let result = test.ifte(
-            |x| LogicStream::unit(x * 10),
-            LogicStream::unit(0),
-        );
+        let result = test.ifte(|x| LogicStream::unit(x * 10), LogicStream::unit(0));
         let results = result.collect_all();
         assert!(results.contains(&10));
         assert!(results.contains(&20));
@@ -1652,10 +1656,7 @@ mod tests {
     #[test]
     fn ifte_failure_uses_else_branch() {
         let test: LogicStream<i32> = LogicStream::empty();
-        let result = test.ifte(
-            |x| LogicStream::unit(x * 10),
-            LogicStream::unit(0),
-        );
+        let result = test.ifte(|x| LogicStream::unit(x * 10), LogicStream::unit(0));
         let results = result.collect_all();
         assert_eq!(results, vec![0]);
     }
@@ -1762,13 +1763,13 @@ mod tests {
                         return None; // Contradiction
                     }
                     new_store.asserted.insert(name.clone());
-                }
+                },
                 PropConstraint::Negate(name) => {
                     if new_store.asserted.contains(name) {
                         return None; // Contradiction
                     }
                     new_store.negated.insert(name.clone());
-                }
+                },
             }
             Some(new_store)
         }
@@ -1798,12 +1799,8 @@ mod tests {
 
         fn evaluate(&self, c: &PropConstraint, assignment: &PropAssignment) -> bool {
             match c {
-                PropConstraint::Assert(name) => {
-                    *assignment.0.get(name).unwrap_or(&false)
-                }
-                PropConstraint::Negate(name) => {
-                    !*assignment.0.get(name).unwrap_or(&false)
-                }
+                PropConstraint::Assert(name) => *assignment.0.get(name).unwrap_or(&false),
+                PropConstraint::Negate(name) => !*assignment.0.get(name).unwrap_or(&false),
             }
         }
     }
@@ -1832,7 +1829,9 @@ mod tests {
             .propagate(&store, &PropConstraint::Assert("a".into()))
             .expect("should succeed");
         // Negating "a" should fail (contradiction)
-        assert!(theory.propagate(&store, &PropConstraint::Negate("a".into())).is_none());
+        assert!(theory
+            .propagate(&store, &PropConstraint::Negate("a".into()))
+            .is_none());
     }
 
     #[test]
@@ -1933,33 +1932,19 @@ mod tests {
     /// reachable(2,3), safe(1), safe(2), safe(3)
     fn test_relation_query(rel: &str, args: &[String]) -> bool {
         match rel {
-            "positive" => {
-                args.len() == 1
-                    && matches!(args[0].as_str(), "1" | "2" | "3")
-            }
+            "positive" => args.len() == 1 && matches!(args[0].as_str(), "1" | "2" | "3"),
             "reachable" => {
                 args.len() == 2
-                    && matches!(
-                        (args[0].as_str(), args[1].as_str()),
-                        ("1", "2") | ("2", "3")
-                    )
-            }
-            "safe" => {
-                args.len() == 1
-                    && matches!(args[0].as_str(), "1" | "2" | "3")
-            }
-            "items" => {
-                args.len() == 1
-                    && matches!(args[0].as_str(), "1" | "2" | "3")
-            }
+                    && matches!((args[0].as_str(), args[1].as_str()), ("1", "2") | ("2", "3"))
+            },
+            "safe" => args.len() == 1 && matches!(args[0].as_str(), "1" | "2" | "3"),
+            "items" => args.len() == 1 && matches!(args[0].as_str(), "1" | "2" | "3"),
             "greater_than_one" => {
-                args.len() == 1
-                    && args[0].parse::<i32>().map_or(false, |n| n > 1)
-            }
+                args.len() == 1 && args[0].parse::<i32>().map_or(false, |n| n > 1)
+            },
             "greater_than_two" => {
-                args.len() == 1
-                    && args[0].parse::<i32>().map_or(false, |n| n > 2)
-            }
+                args.len() == 1 && args[0].parse::<i32>().map_or(false, |n| n > 2)
+            },
             _ => false,
         }
     }
@@ -1969,14 +1954,11 @@ mod tests {
         match rel {
             "positive" | "items" | "safe" => {
                 vec![vec!["1".into()], vec!["2".into()], vec!["3".into()]]
-            }
-            "reachable" => vec![
-                vec!["1".into(), "2".into()],
-                vec!["2".into(), "3".into()],
-            ],
+            },
+            "reachable" => vec![vec!["1".into(), "2".into()], vec!["2".into(), "3".into()]],
             "nodes" => {
                 vec![vec!["1".into()], vec!["2".into()], vec!["3".into()]]
-            }
+            },
             _ => vec![],
         }
     }
@@ -1995,10 +1977,7 @@ mod tests {
     fn quantified_formula_display_bounded() {
         let f = QuantifiedFormula::exists(
             "y",
-            QuantifiedDomain::Bounded {
-                relation: "nodes".into(),
-                limit: 100,
-            },
+            QuantifiedDomain::Bounded { relation: "nodes".into(), limit: 100 },
             QuantifiedFormula::atom("safe", vec![QuantifiedArg::var("y")]),
         );
         assert_eq!(format!("{}", f), "∃y ∈ nodes[≤100]. safe(y)");
@@ -2007,10 +1986,10 @@ mod tests {
     #[test]
     fn quantified_formula_display_implies() {
         let f = QuantifiedFormula::implies(
-            QuantifiedFormula::atom("reachable", vec![
-                QuantifiedArg::var("x"),
-                QuantifiedArg::var("y"),
-            ]),
+            QuantifiedFormula::atom(
+                "reachable",
+                vec![QuantifiedArg::var("x"), QuantifiedArg::var("y")],
+            ),
             QuantifiedFormula::atom("safe", vec![QuantifiedArg::var("y")]),
         );
         assert_eq!(format!("{}", f), "(reachable(x, y) ⇒ safe(y))");
@@ -2024,10 +2003,10 @@ mod tests {
             "y",
             QuantifiedDomain::Relation("nodes".into()),
             QuantifiedFormula::implies(
-                QuantifiedFormula::atom("reachable", vec![
-                    QuantifiedArg::var("x"),
-                    QuantifiedArg::var("y"),
-                ]),
+                QuantifiedFormula::atom(
+                    "reachable",
+                    vec![QuantifiedArg::var("x"), QuantifiedArg::var("y")],
+                ),
                 QuantifiedFormula::atom("safe", vec![QuantifiedArg::var("y")]),
             ),
         );
@@ -2046,10 +2025,10 @@ mod tests {
             QuantifiedFormula::exists(
                 "y",
                 QuantifiedDomain::Relation("nodes".into()),
-                QuantifiedFormula::atom("reachable", vec![
-                    QuantifiedArg::var("x"),
-                    QuantifiedArg::var("y"),
-                ]),
+                QuantifiedFormula::atom(
+                    "reachable",
+                    vec![QuantifiedArg::var("x"), QuantifiedArg::var("y")],
+                ),
             ),
         );
         assert!(f.free_vars().is_empty());
@@ -2059,14 +2038,26 @@ mod tests {
     fn evaluate_atom_true() {
         let f = QuantifiedFormula::atom("positive", vec![QuantifiedArg::Constant("1".into())]);
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
     fn evaluate_atom_false() {
         let f = QuantifiedFormula::atom("positive", vec![QuantifiedArg::Constant("99".into())]);
         let env = std::collections::HashMap::new();
-        assert!(!evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(!evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2074,7 +2065,13 @@ mod tests {
         let f = QuantifiedFormula::atom("positive", vec![QuantifiedArg::var("x")]);
         let mut env = std::collections::HashMap::new();
         env.insert("x".into(), "2".into());
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2084,7 +2081,13 @@ mod tests {
             QuantifiedFormula::atom("positive", vec![QuantifiedArg::Constant("2".into())]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2094,7 +2097,13 @@ mod tests {
             QuantifiedFormula::atom("positive", vec![QuantifiedArg::Constant("1".into())]),
         );
         let env = std::collections::HashMap::new();
-        assert!(!evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(!evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2104,16 +2113,29 @@ mod tests {
             QuantifiedFormula::atom("positive", vec![QuantifiedArg::Constant("1".into())]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
     fn evaluate_not() {
-        let f = QuantifiedFormula::not(
-            QuantifiedFormula::atom("positive", vec![QuantifiedArg::Constant("99".into())]),
-        );
+        let f = QuantifiedFormula::not(QuantifiedFormula::atom(
+            "positive",
+            vec![QuantifiedArg::Constant("99".into())],
+        ));
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2124,7 +2146,13 @@ mod tests {
             QuantifiedFormula::atom("safe", vec![QuantifiedArg::Constant("1".into())]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2135,7 +2163,13 @@ mod tests {
             QuantifiedFormula::atom("safe", vec![QuantifiedArg::Constant("99".into())]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2147,7 +2181,13 @@ mod tests {
             QuantifiedFormula::atom("positive", vec![QuantifiedArg::var("x")]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2159,7 +2199,13 @@ mod tests {
             QuantifiedFormula::atom("greater_than_one", vec![QuantifiedArg::var("x")]),
         );
         let env = std::collections::HashMap::new();
-        assert!(!evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(!evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2171,7 +2217,13 @@ mod tests {
             QuantifiedFormula::atom("greater_than_two", vec![QuantifiedArg::var("x")]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2183,7 +2235,13 @@ mod tests {
             QuantifiedFormula::atom("positive", vec![QuantifiedArg::Constant("99".into())]),
         );
         let env = std::collections::HashMap::new();
-        assert!(!evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(!evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2195,16 +2253,22 @@ mod tests {
             "y",
             QuantifiedDomain::Relation("nodes".into()),
             QuantifiedFormula::implies(
-                QuantifiedFormula::atom("reachable", vec![
-                    QuantifiedArg::var("x"),
-                    QuantifiedArg::var("y"),
-                ]),
+                QuantifiedFormula::atom(
+                    "reachable",
+                    vec![QuantifiedArg::var("x"), QuantifiedArg::var("y")],
+                ),
                 QuantifiedFormula::atom("safe", vec![QuantifiedArg::var("y")]),
             ),
         );
         let mut env = std::collections::HashMap::new();
         env.insert("x".into(), "1".into());
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2219,14 +2283,20 @@ mod tests {
             QuantifiedFormula::exists(
                 "y",
                 QuantifiedDomain::Relation("nodes".into()),
-                QuantifiedFormula::atom("reachable", vec![
-                    QuantifiedArg::var("x"),
-                    QuantifiedArg::var("y"),
-                ]),
+                QuantifiedFormula::atom(
+                    "reachable",
+                    vec![QuantifiedArg::var("x"), QuantifiedArg::var("y")],
+                ),
             ),
         );
         let env = std::collections::HashMap::new();
-        assert!(!evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(!evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2241,16 +2311,22 @@ mod tests {
                 "y",
                 QuantifiedDomain::Relation("nodes".into()),
                 QuantifiedFormula::implies(
-                    QuantifiedFormula::atom("reachable", vec![
-                        QuantifiedArg::var("x"),
-                        QuantifiedArg::var("y"),
-                    ]),
+                    QuantifiedFormula::atom(
+                        "reachable",
+                        vec![QuantifiedArg::var("x"), QuantifiedArg::var("y")],
+                    ),
                     QuantifiedFormula::atom("safe", vec![QuantifiedArg::var("y")]),
                 ),
             ),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2260,14 +2336,17 @@ mod tests {
         // (If unbounded, item "3" would succeed)
         let f = QuantifiedFormula::exists(
             "x",
-            QuantifiedDomain::Bounded {
-                relation: "items".into(),
-                limit: 2,
-            },
+            QuantifiedDomain::Bounded { relation: "items".into(), limit: 2 },
             QuantifiedFormula::atom("greater_than_two", vec![QuantifiedArg::var("x")]),
         );
         let env = std::collections::HashMap::new();
-        assert!(!evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(!evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2275,14 +2354,17 @@ mod tests {
         // ∃x ∈ items[≤3]. greater_than_two(x) — bound allows item "3" → true
         let f = QuantifiedFormula::exists(
             "x",
-            QuantifiedDomain::Bounded {
-                relation: "items".into(),
-                limit: 3,
-            },
+            QuantifiedDomain::Bounded { relation: "items".into(), limit: 3 },
             QuantifiedFormula::atom("greater_than_two", vec![QuantifiedArg::var("x")]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2294,7 +2376,13 @@ mod tests {
             QuantifiedFormula::atom("positive", vec![QuantifiedArg::var("x")]),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2306,7 +2394,13 @@ mod tests {
             QuantifiedFormula::atom("positive", vec![QuantifiedArg::var("x")]),
         );
         let env = std::collections::HashMap::new();
-        assert!(!evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(!evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2327,8 +2421,20 @@ mod tests {
             )),
         ));
         let env = std::collections::HashMap::new();
-        let r1 = evaluate_quantified(&forall_p, &env, &test_relation_query, &test_domain_enumerate, 1000);
-        let r2 = evaluate_quantified(&not_exists_not_p, &env, &test_relation_query, &test_domain_enumerate, 1000);
+        let r1 = evaluate_quantified(
+            &forall_p,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000,
+        );
+        let r2 = evaluate_quantified(
+            &not_exists_not_p,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000,
+        );
         assert_eq!(r1, r2, "∀x.P(x) must equal ¬∃x.¬P(x)");
     }
 
@@ -2350,8 +2456,20 @@ mod tests {
             )),
         ));
         let env = std::collections::HashMap::new();
-        let r1 = evaluate_quantified(&exists_p, &env, &test_relation_query, &test_domain_enumerate, 1000);
-        let r2 = evaluate_quantified(&not_forall_not_p, &env, &test_relation_query, &test_domain_enumerate, 1000);
+        let r1 = evaluate_quantified(
+            &exists_p,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000,
+        );
+        let r2 = evaluate_quantified(
+            &not_forall_not_p,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000,
+        );
         assert_eq!(r1, r2, "∃x.P(x) must equal ¬∀x.¬P(x)");
     }
 
@@ -2369,7 +2487,13 @@ mod tests {
             )),
         );
         let env = std::collections::HashMap::new();
-        assert!(evaluate_quantified(&f, &env, &test_relation_query, &test_domain_enumerate, 1000));
+        assert!(evaluate_quantified(
+            &f,
+            &env,
+            &test_relation_query,
+            &test_domain_enumerate,
+            1000
+        ));
     }
 
     #[test]
@@ -2380,10 +2504,7 @@ mod tests {
 
     #[test]
     fn quantified_domain_display() {
-        assert_eq!(
-            format!("{}", QuantifiedDomain::Relation("items".into())),
-            "items"
-        );
+        assert_eq!(format!("{}", QuantifiedDomain::Relation("items".into())), "items");
         assert_eq!(
             format!("{}", QuantifiedDomain::Bounded { relation: "items".into(), limit: 50 }),
             "items[≤50]"
@@ -2570,7 +2691,8 @@ mod tests {
             let count_k = multiset_partitions(&items, k).collect_all().len();
             let count_complement = multiset_partitions(&items, n - k).collect_all().len();
             assert_eq!(
-                count_k, count_complement,
+                count_k,
+                count_complement,
                 "|partitions(M, {k})| = {count_k} != |partitions(M, {})| = {count_complement}",
                 n - k
             );

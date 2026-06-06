@@ -45,10 +45,7 @@ pub fn assert_ground_eval_completeness(
     mettail_runtime::clear_var_cache();
     match lang.try_direct_eval(term) {
         Some(_) => Ok(()),
-        None => Err(format!(
-            "Ground term did not evaluate: {:?}",
-            term
-        )),
+        None => Err(format!("Ground term did not evaluate: {:?}", term)),
     }
 }
 
@@ -79,10 +76,7 @@ pub fn assert_evals_to(lang: &dyn Language, input: &str, expected: &str) -> Resu
 
     let normal_forms = results.normal_forms();
     if normal_forms.is_empty() {
-        return Err(format!(
-            "No normal form reached for '{}', expected '{}'",
-            input, expected
-        ));
+        return Err(format!("No normal form reached for '{}', expected '{}'", input, expected));
     }
 
     // Check if any normal form matches expected

@@ -36,7 +36,7 @@ fn wpds_parse_ppar_single_element() {
                 assert!(matches!(item, Proc::Err), "expected Proc::Err, got {:?}", item);
             }
             let _ = par;
-        }
+        },
         other => panic!("expected Proc::PPar(...), got {:?}", other),
     }
     assert_eq!(pos, 3, "consumed all 3 tokens");
@@ -61,7 +61,7 @@ fn wpds_parse_ppar_two_elements() {
             for (item, _count) in bag.iter() {
                 assert!(matches!(item, Proc::Err), "expected Proc::Err, got {:?}", item);
             }
-        }
+        },
         other => panic!("expected Proc::PPar(...), got {:?}", other),
     }
     assert_eq!(pos, 5, "consumed all 5 tokens");
@@ -85,7 +85,7 @@ fn wpds_parse_ppar_three_elements() {
     match result {
         Ok(Proc::PPar(ref bag)) => {
             assert_eq!(bag.len(), 3, "expected 3-element bag, got {}", bag.len());
-        }
+        },
         other => panic!("expected Proc::PPar(...), got {:?}", other),
     }
     assert_eq!(pos, 7);
@@ -95,17 +95,14 @@ fn wpds_parse_ppar_three_elements() {
 /// Tests the empty-collection bootstrap in PrefixDispatch.
 #[test]
 fn wpds_parse_ppar_empty() {
-    let kinds = vec![
-        TokenKind::Fixed("{".to_string()),
-        TokenKind::Fixed("}".to_string()),
-    ];
+    let kinds = vec![TokenKind::Fixed("{".to_string()), TokenKind::Fixed("}".to_string())];
     let texts = vec!["{", "}"];
     let mut pos = 0usize;
     let result = parse_Proc_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
         Ok(Proc::PPar(ref bag)) => {
             assert_eq!(bag.len(), 0, "expected empty bag, got {}", bag.len());
-        }
+        },
         other => panic!("expected Proc::PPar(empty), got {:?}", other),
     }
     assert_eq!(pos, 2);

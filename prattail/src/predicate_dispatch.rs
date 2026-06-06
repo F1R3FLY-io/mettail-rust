@@ -19,9 +19,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use crate::pipeline::CategoryInfo;
 use crate::symbolic::{BooleanAlgebra, DecidabilityTier, PredicateExpr, SymbolicAutomaton};
 use crate::weighted_mso::WeightedMsoFormula;
-use crate::pipeline::CategoryInfo;
 use crate::SyntaxItemSpec;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -151,9 +151,21 @@ impl fmt::Display for PredicateSignature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "0x{:04X} [", self.0)?;
         let names = [
-            "M1:Sym", "M2:Büchi", "M3:AWA", "M4:VPA", "M5:PTree",
-            "M6:Reg", "M7:Prob", "M8:MTape", "M9:MSet", "M10:MSO", "M11:2Way",
-            "M12:Presb", "M13:Unif", "M14:Lat", "M15:Sft",
+            "M1:Sym",
+            "M2:Büchi",
+            "M3:AWA",
+            "M4:VPA",
+            "M5:PTree",
+            "M6:Reg",
+            "M7:Prob",
+            "M8:MTape",
+            "M9:MSet",
+            "M10:MSO",
+            "M11:2Way",
+            "M12:Presb",
+            "M13:Unif",
+            "M14:Lat",
+            "M15:Sft",
         ];
         let mut first = true;
         for (i, name) in names.iter().enumerate() {
@@ -211,10 +223,21 @@ pub enum ModuleId {
 impl ModuleId {
     /// All 15 module IDs in order.
     pub const ALL: [ModuleId; 15] = [
-        Self::Symbolic, Self::Buchi, Self::Awa, Self::Vpa, Self::ParityTree,
-        Self::Register, Self::Probabilistic, Self::MultiTape, Self::Multiset,
-        Self::Mso, Self::TwoWay, Self::LinearArithmetic, Self::Unification,
-        Self::SubtypeLattice, Self::Sft,
+        Self::Symbolic,
+        Self::Buchi,
+        Self::Awa,
+        Self::Vpa,
+        Self::ParityTree,
+        Self::Register,
+        Self::Probabilistic,
+        Self::MultiTape,
+        Self::Multiset,
+        Self::Mso,
+        Self::TwoWay,
+        Self::LinearArithmetic,
+        Self::Unification,
+        Self::SubtypeLattice,
+        Self::Sft,
     ];
 
     /// The signature bit for this module.
@@ -267,15 +290,15 @@ impl ModuleId {
     /// Estimated relative cost (lower = cheaper). Used for scheduling.
     pub fn estimated_cost(self) -> u32 {
         match self {
-            Self::Symbolic | Self::Mso => 1,                // always-on foundations
-            Self::Multiset | Self::Register => 2,           // lightweight analysis
-            Self::SubtypeLattice => 2,                      // decidable, finite universe
-            Self::Buchi | Self::Awa => 3,                   // omega-regular
+            Self::Symbolic | Self::Mso => 1,      // always-on foundations
+            Self::Multiset | Self::Register => 2, // lightweight analysis
+            Self::SubtypeLattice => 2,            // decidable, finite universe
+            Self::Buchi | Self::Awa => 3,         // omega-regular
             Self::LinearArithmetic | Self::Unification => 3, // constraint theories
-            Self::Vpa | Self::ParityTree => 4,              // pushdown / tree
-            Self::Probabilistic | Self::MultiTape => 5,     // WFST-dependent
-            Self::TwoWay => 6,                              // most complex
-            Self::Sft => 5,                                  // depends on symbolic-automata + weighted-mso
+            Self::Vpa | Self::ParityTree => 4,    // pushdown / tree
+            Self::Probabilistic | Self::MultiTape => 5, // WFST-dependent
+            Self::TwoWay => 6,                    // most complex
+            Self::Sft => 5,                       // depends on symbolic-automata + weighted-mso
         }
     }
 }
@@ -327,7 +350,9 @@ impl ChannelContext {
     /// Check if a variable reference crosses channels (bound on a different
     /// channel than `current_channel`).
     pub fn is_cross_channel(&self, var: &str) -> bool {
-        if let (Some(bound_ch), Some(current_ch)) = (self.channel_of(var), self.current_channel.as_deref()) {
+        if let (Some(bound_ch), Some(current_ch)) =
+            (self.channel_of(var), self.current_channel.as_deref())
+        {
             bound_ch != current_ch
         } else {
             false
@@ -395,36 +420,28 @@ impl PredicateProfile {
 // §5  Feature Extraction — PredicateExpr → PredicateProfile
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Relation Name Heuristics ─────────────────────────────────────────────
+// ── Relation Name Fallbacks ──────────────────────────────────────────────
 //
 // The following `is_*_relation()` functions classify `PredicateExpr::Relation`
-// names into constraint theory modules via hardcoded keyword lists. This is a
-// **temporary, heuristic-based approach** that mirrors the existing M1–M11
-// classification pattern (equality → M6, cardinality → M9, etc.).
+// names into constraint theory modules when no explicit `guards { theories {} }`
+// registration owns the corresponding theory kind. Explicit registrations are
+// checked by `theory_registered()` below and bypass these fallbacks.
 //
 // Design notes:
 //
-// 1. **Conservative approximation**: These heuristics may activate extra modules
-//    (false positives) but never miss a needed one. Unrecognized relation names
-//    fall through to the default M6 (Register) path.
+// 1. **Backward-compatible approximation**: The fallbacks preserve the original
+//    M1–M11 keyword-based behavior for grammars that do not opt into
+//    data-driven theory registration.
 //
-// 2. **Not extensible**: User-defined languages that introduce novel relation
-//    names (e.g., a custom "resource_available" relation for a process algebra)
-//    will not trigger theory-specific modules via these heuristics. The correct
-//    long-term fix is to let `ConstraintTheory` implementers declare which
-//    relation names their theory handles — either via a trait method like
-//    `fn relation_names(&self) -> &[&str]` or via a registration table
-//    populated by the `theories { }` block in `language!`.
+// 2. **Explicit registration wins**: User-defined languages that introduce novel
+//    relation names should register their theory in `guards { theories {} }`.
+//    Once a known theory kind is registered, its fallback classifier is not used
+//    for that grammar.
 //
 // 3. **Overlap**: Some relation names appear in multiple classifiers (e.g.,
 //    ">=" appears in both `is_cardinality_relation` and `is_arithmetic_relation`).
 //    This is intentional — a relation may activate multiple modules, and
 //    `walk_predicate()` calls all classifiers independently.
-//
-// 4. **Planned removal**: These functions will be replaced when the `language!`
-//    macro gains a `theories { }` block that explicitly maps relation names to
-//    constraint theories (see `docs/design/predicated-types.md` §19.13).
-//    At that point, the mapping becomes data-driven rather than hardcoded.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Theory-kind classification for `guards { theories { } }` integration
@@ -474,9 +491,7 @@ pub enum TheoryKind {
 /// disabling any heuristics.
 pub fn known_theory_kind(theory_type: &str) -> Option<TheoryKind> {
     match theory_type {
-        "PresburgerAlgebra" | "Presburger" | "PresburgerTheory" => {
-            Some(TheoryKind::Presburger)
-        }
+        "PresburgerAlgebra" | "Presburger" | "PresburgerTheory" => Some(TheoryKind::Presburger),
         "UnificationTheory" | "Unification" => Some(TheoryKind::Unification),
         "LatticeTheory" | "Lattice" => Some(TheoryKind::Lattice),
         "RegisterTheory" | "EqualityTheory" => Some(TheoryKind::Register),
@@ -495,10 +510,7 @@ pub fn known_theory_kind(theory_type: &str) -> Option<TheoryKind> {
 ///
 /// Backward compatible: when `gc` is `None`, this returns `false` for every
 /// kind, so all heuristics run as before.
-pub fn theory_registered(
-    gc: Option<&crate::GuardConfigSpec>,
-    kind: TheoryKind,
-) -> bool {
+pub fn theory_registered(gc: Option<&crate::GuardConfigSpec>, kind: TheoryKind) -> bool {
     let Some(gc) = gc else {
         return false;
     };
@@ -513,8 +525,7 @@ pub fn theory_registered(
 fn is_equality_relation(name: &str) -> bool {
     matches!(
         name,
-        "eq" | "neq" | "equal" | "not_equal" | "fresh"
-            | "==" | "!=" | "equals" | "related"
+        "eq" | "neq" | "equal" | "not_equal" | "fresh" | "==" | "!=" | "equals" | "related"
     )
 }
 
@@ -524,8 +535,16 @@ fn is_equality_relation(name: &str) -> bool {
 fn is_cardinality_relation(name: &str) -> bool {
     matches!(
         name,
-        "count" | "size" | "cardinality" | "length"
-            | ">=" | "<=" | ">" | "<" | "at_least" | "at_most"
+        "count"
+            | "size"
+            | "cardinality"
+            | "length"
+            | ">="
+            | "<="
+            | ">"
+            | "<"
+            | "at_least"
+            | "at_most"
     )
 }
 
@@ -546,12 +565,33 @@ fn is_fixpoint_relation(name: &str) -> bool {
 fn is_arithmetic_relation(name: &str) -> bool {
     matches!(
         name,
-        "add" | "sub" | "mul" | "sum" | "diff" | "plus" | "minus"
-            | "linear" | "arithmetic" | "numeric"
-            | ">" | "<" | ">=" | "<=" | "==" | "!="
-            | "gt" | "lt" | "ge" | "le"
-            | "bounded" | "range" | "between" | "clamp"
-            | "mod" | "div" | "rem"
+        "add"
+            | "sub"
+            | "mul"
+            | "sum"
+            | "diff"
+            | "plus"
+            | "minus"
+            | "linear"
+            | "arithmetic"
+            | "numeric"
+            | ">"
+            | "<"
+            | ">="
+            | "<="
+            | "=="
+            | "!="
+            | "gt"
+            | "lt"
+            | "ge"
+            | "le"
+            | "bounded"
+            | "range"
+            | "between"
+            | "clamp"
+            | "mod"
+            | "div"
+            | "rem"
     )
 }
 
@@ -566,9 +606,15 @@ fn is_arithmetic_relation(name: &str) -> bool {
 fn is_unification_relation(name: &str) -> bool {
     matches!(
         name,
-        "match" | "unify" | "bind" | "pattern"
-            | "match_type" | "instantiate" | "substitute"
-            | "custom_match" | "structural_match"
+        "match"
+            | "unify"
+            | "bind"
+            | "pattern"
+            | "match_type"
+            | "instantiate"
+            | "substitute"
+            | "custom_match"
+            | "structural_match"
     )
 }
 
@@ -583,10 +629,19 @@ fn is_unification_relation(name: &str) -> bool {
 fn is_subtype_relation(name: &str) -> bool {
     matches!(
         name,
-        "subtype" | "supertype" | ":<" | ":>" | "is_a"
-            | "join" | "meet" | "lub" | "glb"
-            | "type_compatible" | "assignable"
-            | "exhaustive" | "covers"
+        "subtype"
+            | "supertype"
+            | ":<"
+            | ":>"
+            | "is_a"
+            | "join"
+            | "meet"
+            | "lub"
+            | "glb"
+            | "type_compatible"
+            | "assignable"
+            | "exhaustive"
+            | "covers"
     )
 }
 
@@ -697,48 +752,153 @@ fn walk_predicate(
     match expr {
         PredicateExpr::True | PredicateExpr::False | PredicateExpr::Atom(_) => {
             // Base cases: only M1 + M10 (already in base signature)
-        }
+        },
 
         PredicateExpr::Not(inner) => {
-            walk_predicate(inner, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
-        }
+            walk_predicate(
+                inner,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
+        },
 
         PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
-            walk_predicate(a, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
-            walk_predicate(b, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
-        }
+            walk_predicate(
+                a,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
+            walk_predicate(
+                b,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
+        },
 
         PredicateExpr::ForallFinite { body, .. } => {
             sig.set(PredicateSignature::M3_AWA); // universal branching
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
+            walk_predicate(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
 
         PredicateExpr::ExistsFinite { body, .. } => {
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
+            walk_predicate(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
 
         PredicateExpr::ForallInfinite { body, .. } => {
             sig.set(PredicateSignature::M2_BUCHI); // omega-regular
-            sig.set(PredicateSignature::M3_AWA);   // universal branching
+            sig.set(PredicateSignature::M3_AWA); // universal branching
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
+            walk_predicate(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
 
         PredicateExpr::ExistsInfinite { body, .. } => {
             sig.set(PredicateSignature::M2_BUCHI); // omega-regular
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
+            walk_predicate(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
 
         PredicateExpr::Relation { name, args } => {
             // ── Layer C cleanup: gate every heuristic relation-name dispatch
@@ -748,8 +908,7 @@ fn walk_predicate(
             // `is_arithmetic_relation` heuristic is bypassed; the explicit
             // theory activation block in `classify_grammar_with_config`
             // sets M12 instead.
-            if !theory_registered(guard_config, TheoryKind::Register)
-                && is_equality_relation(name)
+            if !theory_registered(guard_config, TheoryKind::Register) && is_equality_relation(name)
             {
                 sig.set(PredicateSignature::M6_REGISTER);
                 for arg in args {
@@ -763,8 +922,7 @@ fn walk_predicate(
                 *has_cardinality = true;
             }
             // Fixpoint/recursive relation → VPA + Parity Tree
-            if !theory_registered(guard_config, TheoryKind::Fixpoint)
-                && is_fixpoint_relation(name)
+            if !theory_registered(guard_config, TheoryKind::Fixpoint) && is_fixpoint_relation(name)
             {
                 sig.set(PredicateSignature::M4_VPA);
                 sig.set(PredicateSignature::M5_PARITY_TREE);
@@ -785,9 +943,7 @@ fn walk_predicate(
                 *has_unification = true;
             }
             // M14: Subtype/type-hierarchy → subtype lattice
-            if !theory_registered(guard_config, TheoryKind::Lattice)
-                && is_subtype_relation(name)
-            {
+            if !theory_registered(guard_config, TheoryKind::Lattice) && is_subtype_relation(name) {
                 sig.set(PredicateSignature::M14_SUBTYPE_LATTICE);
                 *has_subtype = true;
             }
@@ -816,11 +972,26 @@ fn walk_predicate(
                     registers.insert(arg.clone());
                 }
             }
-        }
+        },
 
         PredicateExpr::Bounded { body, .. } => {
-            walk_predicate(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, has_arithmetic, has_unification, has_subtype, guard_config);
-        }
+            walk_predicate(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                has_arithmetic,
+                has_unification,
+                has_subtype,
+                guard_config,
+            );
+        },
     }
 }
 
@@ -832,7 +1003,10 @@ fn walk_predicate(
 /// `extract_features_mso_with_config`.
 ///
 /// Equivalent to `extract_features_mso_with_config(formula, ctx, None)`.
-pub fn extract_features_mso(formula: &WeightedMsoFormula, ctx: &ChannelContext) -> PredicateProfile {
+pub fn extract_features_mso(
+    formula: &WeightedMsoFormula,
+    ctx: &ChannelContext,
+) -> PredicateProfile {
     extract_features_mso_with_config(formula, ctx, None)
 }
 
@@ -911,7 +1085,7 @@ fn walk_mso_formula(
     match formula {
         WeightedMsoFormula::Constant(_) => {
             // Base: only M1 + M10
-        }
+        },
 
         WeightedMsoFormula::AtomicPos { label, var } => {
             // "letprop" triggers VPA + Parity Tree (recursive predicate definition)
@@ -931,7 +1105,7 @@ fn walk_mso_formula(
             if let Some(ch) = ctx.channel_of(var) {
                 channels.insert(ch.to_string());
             }
-        }
+        },
 
         WeightedMsoFormula::NegAtomicPos { label, var } => {
             if !fixpoint_bypassed
@@ -949,7 +1123,7 @@ fn walk_mso_formula(
             if let Some(ch) = ctx.channel_of(var) {
                 channels.insert(ch.to_string());
             }
-        }
+        },
 
         WeightedMsoFormula::Order { x, y } | WeightedMsoFormula::NegOrder { x, y } => {
             // Order relations are register-relevant — bypassed under
@@ -969,9 +1143,10 @@ fn walk_mso_formula(
                     channels.insert(ch.to_string());
                 }
             }
-        }
+        },
 
-        WeightedMsoFormula::InSet { var, set_var } | WeightedMsoFormula::NotInSet { var, set_var } => {
+        WeightedMsoFormula::InSet { var, set_var }
+        | WeightedMsoFormula::NotInSet { var, set_var } => {
             // Set membership is MSO-native (already base)
             for v in [var, set_var] {
                 if ctx.is_cross_channel(v) {
@@ -983,43 +1158,115 @@ fn walk_mso_formula(
                     channels.insert(ch.to_string());
                 }
             }
-        }
+        },
 
         WeightedMsoFormula::And(a, b) | WeightedMsoFormula::Or(a, b) => {
-            walk_mso_formula(a, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, guard_config);
-            walk_mso_formula(b, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, guard_config);
-        }
+            walk_mso_formula(
+                a,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                guard_config,
+            );
+            walk_mso_formula(
+                b,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                guard_config,
+            );
+        },
 
         WeightedMsoFormula::ExistsFirst { body, .. } => {
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, guard_config);
+            walk_mso_formula(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
 
         WeightedMsoFormula::ForallFirst { body, .. } => {
             sig.set(PredicateSignature::M3_AWA); // universal first-order
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, guard_config);
+            walk_mso_formula(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
 
         WeightedMsoFormula::ExistsSecond { body, .. } => {
             // Second-order existential: MSO-native (already base)
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, guard_config);
+            walk_mso_formula(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
 
         WeightedMsoFormula::ForallSecond { body, .. } => {
             sig.set(PredicateSignature::M3_AWA); // universal second-order
             *depth += 1;
             *max_depth = (*max_depth).max(*depth);
-            walk_mso_formula(body, ctx, sig, depth, max_depth, channels, registers, has_backward, has_cardinality, has_recursive, guard_config);
+            walk_mso_formula(
+                body,
+                ctx,
+                sig,
+                depth,
+                max_depth,
+                channels,
+                registers,
+                has_backward,
+                has_cardinality,
+                has_recursive,
+                guard_config,
+            );
             *depth -= 1;
-        }
+        },
     }
 }
 
@@ -1123,23 +1370,32 @@ pub fn classify_grammar_with_config(
             match item {
                 SyntaxItemSpec::NonTerminal { category: ref cat, param_name } => {
                     ctx.bind(param_name.clone(), cat.clone());
-                    category_refs.entry(category.as_str()).or_default().insert(cat.as_str());
+                    category_refs
+                        .entry(category.as_str())
+                        .or_default()
+                        .insert(cat.as_str());
                     nt_count += 1;
-                }
+                },
                 SyntaxItemSpec::Binder { param_name, category: ref cat, .. } => {
                     ctx.bind(param_name.clone(), cat.clone());
-                    category_refs.entry(category.as_str()).or_default().insert(cat.as_str());
+                    category_refs
+                        .entry(category.as_str())
+                        .or_default()
+                        .insert(cat.as_str());
                     has_binders = true;
                     nt_count += 1;
-                }
+                },
                 SyntaxItemSpec::Collection { param_name, element_category, .. } => {
                     ctx.bind(param_name.clone(), element_category.clone());
-                    category_refs.entry(category.as_str()).or_default().insert(element_category.as_str());
-                }
+                    category_refs
+                        .entry(category.as_str())
+                        .or_default()
+                        .insert(element_category.as_str());
+                },
                 SyntaxItemSpec::Terminal(value) => {
                     terminals.insert(value.as_str());
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
@@ -1166,7 +1422,9 @@ pub fn classify_grammar_with_config(
                 .filter_map(|item| match item {
                     SyntaxItemSpec::NonTerminal { category: cat, .. } => Some(cat.as_str()),
                     SyntaxItemSpec::Binder { category: cat, .. } => Some(cat.as_str()),
-                    SyntaxItemSpec::Collection { element_category, .. } => Some(element_category.as_str()),
+                    SyntaxItemSpec::Collection { element_category, .. } => {
+                        Some(element_category.as_str())
+                    },
                     _ => None,
                 })
                 .collect();
@@ -1174,7 +1432,9 @@ pub fn classify_grammar_with_config(
             if referenced_categories.len() >= 2 {
                 aggregate.set(PredicateSignature::M8_MULTI_TAPE);
                 // Only set two-way if there's a cross-category reference that differs from rule's category
-                let has_cross = referenced_categories.iter().any(|cat| *cat != category.as_str());
+                let has_cross = referenced_categories
+                    .iter()
+                    .any(|cat| *cat != category.as_str());
                 if has_cross {
                     aggregate.set(PredicateSignature::M11_TWO_WAY);
                 }
@@ -1182,10 +1442,9 @@ pub fn classify_grammar_with_config(
         }
 
         // Collection patterns → multiset potential
-        let has_collection = syntax.iter().any(|item| matches!(
-            item,
-            SyntaxItemSpec::Collection { .. } | SyntaxItemSpec::Sep { .. }
-        ));
+        let has_collection = syntax.iter().any(|item| {
+            matches!(item, SyntaxItemSpec::Collection { .. } | SyntaxItemSpec::Sep { .. })
+        });
         if has_collection {
             aggregate.set(PredicateSignature::M9_MULTISET);
         }
@@ -1294,22 +1553,20 @@ pub fn classify_grammar_with_config(
         // bridge produces (e.g., "PresburgerAlgebra", "UnificationTheory").
         for theory in &gc.theories {
             match theory.theory_type.as_str() {
-                "PresburgerAlgebra"
-                | "Presburger"
-                | "PresburgerTheory" => {
+                "PresburgerAlgebra" | "Presburger" | "PresburgerTheory" => {
                     aggregate.set(PredicateSignature::M12_LINEAR_ARITHMETIC);
-                }
+                },
                 "UnificationTheory" | "Unification" => {
                     aggregate.set(PredicateSignature::M13_UNIFICATION);
-                }
+                },
                 "LatticeTheory" | "Lattice" => {
                     aggregate.set(PredicateSignature::M14_SUBTYPE_LATTICE);
-                }
+                },
                 _ => {
                     // Unknown theory type — fall through to heuristic
                     // (which already ran above). Future theories can
                     // register here.
-                }
+                },
             }
         }
 
@@ -1449,8 +1706,7 @@ impl BooleanAlgebra for DispatchAlgebra {
 
     fn is_satisfiable(&self, a: &SignaturePred) -> bool {
         // Brute-force over all 2^11 = 2048 signatures (fast enough for 11 bits)
-        (0..=PredicateSignature::ALL)
-            .any(|bits| a.eval(PredicateSignature::from_raw(bits)))
+        (0..=PredicateSignature::ALL).any(|bits| a.eval(PredicateSignature::from_raw(bits)))
     }
 
     fn witness(&self, a: &SignaturePred) -> Option<PredicateSignature> {
@@ -1465,7 +1721,7 @@ impl BooleanAlgebra for DispatchAlgebra {
                 } else {
                     None
                 }
-            }
+            },
             // Compound predicates: brute-force over all 2^11 signatures
             _ => (0..=PredicateSignature::ALL)
                 .map(PredicateSignature::from_raw)
@@ -1546,10 +1802,7 @@ pub fn verify_zero_rejected(sfa: &SymbolicAutomaton<DispatchAlgebra>) -> bool {
 pub fn dispatch_overlap_pairs() -> Vec<(ModuleId, ModuleId)> {
     // M1 and M10 are always co-activated (both in BASE)
     // M8 and M11 are typically co-activated (cross-channel triggers both)
-    vec![
-        (ModuleId::Symbolic, ModuleId::Mso),
-        (ModuleId::Mso, ModuleId::Symbolic),
-    ]
+    vec![(ModuleId::Symbolic, ModuleId::Mso), (ModuleId::Mso, ModuleId::Symbolic)]
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1677,8 +1930,7 @@ pub fn order_by_specificity(
 
     // Build specificity scores: count how many other predicates subsume each one.
     // Higher count = more specific (more guards are more general than this one).
-    let mut specificity: HashMap<&str, usize> =
-        HashMap::with_capacity(predicate_labels.len());
+    let mut specificity: HashMap<&str, usize> = HashMap::with_capacity(predicate_labels.len());
     for label in predicate_labels {
         specificity.insert(label.as_str(), 0);
     }
@@ -1733,16 +1985,16 @@ pub fn resolve_selectivity(
                 }
             }
             estimate_predicate_selectivity(expr)
-        }
+        },
         PredicateExpr::Not(inner) => 1.0 - resolve_selectivity(inner, guard_config),
         PredicateExpr::And(a, b) => {
             resolve_selectivity(a, guard_config) * resolve_selectivity(b, guard_config)
-        }
+        },
         PredicateExpr::Or(a, b) => {
             let sa = resolve_selectivity(a, guard_config);
             let sb = resolve_selectivity(b, guard_config);
             1.0 - (1.0 - sa) * (1.0 - sb)
-        }
+        },
         // For all other variants, fall back to the unconfigured estimate.
         _ => estimate_predicate_selectivity(expr),
     }
@@ -1755,10 +2007,7 @@ pub fn resolve_selectivity(
 /// Override precedence:
 /// 1. Explicit annotation (`cost_overrides[name]`)
 /// 2. Heuristic default (`estimate_predicate_cost`)
-pub fn resolve_cost(
-    expr: &PredicateExpr,
-    guard_config: Option<&crate::GuardConfigSpec>,
-) -> u32 {
+pub fn resolve_cost(expr: &PredicateExpr, guard_config: Option<&crate::GuardConfigSpec>) -> u32 {
     match expr {
         PredicateExpr::Relation { name, .. } => {
             if let Some(gc) = guard_config {
@@ -1767,11 +2016,11 @@ pub fn resolve_cost(
                 }
             }
             estimate_predicate_cost(expr)
-        }
+        },
         PredicateExpr::Not(inner) => resolve_cost(inner, guard_config) + 1,
         PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
             resolve_cost(a, guard_config) + resolve_cost(b, guard_config)
-        }
+        },
         _ => estimate_predicate_cost(expr),
     }
 }
@@ -1801,42 +2050,42 @@ pub fn estimate_predicate_selectivity(expr: &PredicateExpr) -> f64 {
             } else {
                 0.5 * arity_factor
             }
-        }
+        },
         PredicateExpr::Not(inner) => 1.0 - estimate_predicate_selectivity(inner),
         PredicateExpr::And(a, b) => {
             estimate_predicate_selectivity(a) * estimate_predicate_selectivity(b)
-        }
+        },
         PredicateExpr::Or(a, b) => {
             let sa = estimate_predicate_selectivity(a);
             let sb = estimate_predicate_selectivity(b);
             1.0 - (1.0 - sa) * (1.0 - sb)
-        }
+        },
         PredicateExpr::ForallFinite { body, domain, .. } => {
             // Universal over finite domain: selectivity = body_sel ^ |domain|
             let body_sel = estimate_predicate_selectivity(body);
             let n = domain.len().max(1) as i32;
             body_sel.powi(n)
-        }
+        },
         PredicateExpr::ExistsFinite { body, domain, .. } => {
             // Existential over finite domain: selectivity = 1 - (1 - body_sel)^|domain|
             let body_sel = estimate_predicate_selectivity(body);
             let n = domain.len().max(1) as i32;
             1.0 - (1.0 - body_sel).powi(n)
-        }
+        },
         PredicateExpr::ForallInfinite { body, .. } => {
             // Universal over infinite domain: very selective
             let body_sel = estimate_predicate_selectivity(body);
             body_sel * 0.05
-        }
+        },
         PredicateExpr::ExistsInfinite { body, .. } => {
             // Existential over infinite domain: moderate
             let body_sel = estimate_predicate_selectivity(body);
             1.0 - (1.0 - body_sel).powi(10)
-        }
+        },
         PredicateExpr::Bounded { body, .. } => {
             // Bounded wrapper: same selectivity as body
             estimate_predicate_selectivity(body)
-        }
+        },
     }
 }
 
@@ -1851,20 +2100,20 @@ pub fn estimate_predicate_cost(expr: &PredicateExpr) -> u32 {
         PredicateExpr::Not(inner) => estimate_predicate_cost(inner) + 1,
         PredicateExpr::And(a, b) | PredicateExpr::Or(a, b) => {
             estimate_predicate_cost(a) + estimate_predicate_cost(b)
-        }
+        },
         PredicateExpr::ForallFinite { body, domain, .. } => {
             let n = domain.len().max(1) as u32;
             n * estimate_predicate_cost(body)
-        }
+        },
         PredicateExpr::ExistsFinite { body, domain, .. } => {
             let n = domain.len().max(1) as u32;
             (n / 2).max(1) * estimate_predicate_cost(body)
-        }
+        },
         PredicateExpr::ForallInfinite { body, .. } => 100 + estimate_predicate_cost(body) * 10,
         PredicateExpr::ExistsInfinite { body, .. } => 50 + estimate_predicate_cost(body) * 10,
         PredicateExpr::Bounded { body, bound } => {
             (*bound as u32).min(100) * estimate_predicate_cost(body)
-        }
+        },
     }
 }
 
@@ -2004,7 +2253,10 @@ mod tests {
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M2_BUCHI), "ExistsInfinite → M2");
-        assert!(!profile.signature.contains(PredicateSignature::M3_AWA), "ExistsInfinite should NOT set M3");
+        assert!(
+            !profile.signature.contains(PredicateSignature::M3_AWA),
+            "ExistsInfinite should NOT set M3"
+        );
     }
 
     #[test]
@@ -2017,7 +2269,10 @@ mod tests {
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M3_AWA), "ForallFinite → M3");
-        assert!(!profile.signature.contains(PredicateSignature::M2_BUCHI), "ForallFinite should NOT set M2");
+        assert!(
+            !profile.signature.contains(PredicateSignature::M2_BUCHI),
+            "ForallFinite should NOT set M2"
+        );
     }
 
     #[test]
@@ -2067,8 +2322,16 @@ mod tests {
         ctx.bind("x".to_string(), "ch1".to_string());
         ctx.set_current_channel("ch2".to_string());
         let profile = extract_features(&expr, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M8_MULTI_TAPE), "cross-channel → M8");
-        assert!(profile.signature.contains(PredicateSignature::M11_TWO_WAY), "cross-channel → M11");
+        assert!(
+            profile
+                .signature
+                .contains(PredicateSignature::M8_MULTI_TAPE),
+            "cross-channel → M8"
+        );
+        assert!(
+            profile.signature.contains(PredicateSignature::M11_TWO_WAY),
+            "cross-channel → M11"
+        );
         assert!(profile.has_backward_constraint);
     }
 
@@ -2089,8 +2352,12 @@ mod tests {
         ctx.bind("x".to_string(), "ch1".to_string());
         ctx.bind("y".to_string(), "ch2".to_string());
         let profile = extract_features(&expr, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M7_PROBABILISTIC),
-            "≥2 channels → M7");
+        assert!(
+            profile
+                .signature
+                .contains(PredicateSignature::M7_PROBABILISTIC),
+            "≥2 channels → M7"
+        );
         assert_eq!(profile.channel_count, 2);
     }
 
@@ -2142,8 +2409,12 @@ mod tests {
         assert!(profile.signature.contains(PredicateSignature::M2_BUCHI));
         assert!(profile.signature.contains(PredicateSignature::M3_AWA));
         assert!(profile.signature.contains(PredicateSignature::M6_REGISTER));
-        assert!(profile.signature.contains(PredicateSignature::M7_PROBABILISTIC));
-        assert!(profile.signature.contains(PredicateSignature::M8_MULTI_TAPE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M7_PROBABILISTIC));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M8_MULTI_TAPE));
         assert!(profile.signature.contains(PredicateSignature::M9_MULTISET));
         assert!(profile.signature.contains(PredicateSignature::M10_MSO));
         assert!(profile.signature.contains(PredicateSignature::M11_TWO_WAY));
@@ -2187,7 +2458,9 @@ mod tests {
             let ctx = ChannelContext::new();
             let profile = extract_features(&expr, &ctx);
             assert!(
-                profile.signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC),
+                profile
+                    .signature
+                    .contains(PredicateSignature::M12_LINEAR_ARITHMETIC),
                 "'{name}' should trigger M12"
             );
             assert!(profile.has_arithmetic, "'{name}' should set has_arithmetic");
@@ -2204,7 +2477,9 @@ mod tests {
             let ctx = ChannelContext::new();
             let profile = extract_features(&expr, &ctx);
             assert!(
-                profile.signature.contains(PredicateSignature::M13_UNIFICATION),
+                profile
+                    .signature
+                    .contains(PredicateSignature::M13_UNIFICATION),
                 "'{name}' should trigger M13"
             );
             assert!(profile.has_unification, "'{name}' should set has_unification");
@@ -2221,7 +2496,9 @@ mod tests {
             let ctx = ChannelContext::new();
             let profile = extract_features(&expr, &ctx);
             assert!(
-                profile.signature.contains(PredicateSignature::M14_SUBTYPE_LATTICE),
+                profile
+                    .signature
+                    .contains(PredicateSignature::M14_SUBTYPE_LATTICE),
                 "'{name}' should trigger M14"
             );
             assert!(profile.has_subtype, "'{name}' should set has_subtype");
@@ -2236,9 +2513,15 @@ mod tests {
         };
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
-        assert!(!profile.signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
-        assert!(!profile.signature.contains(PredicateSignature::M13_UNIFICATION));
-        assert!(!profile.signature.contains(PredicateSignature::M14_SUBTYPE_LATTICE));
+        assert!(!profile
+            .signature
+            .contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
+        assert!(!profile
+            .signature
+            .contains(PredicateSignature::M13_UNIFICATION));
+        assert!(!profile
+            .signature
+            .contains(PredicateSignature::M14_SUBTYPE_LATTICE));
         // Falls through to default M6 (Register)
         assert!(profile.signature.contains(PredicateSignature::M6_REGISTER));
     }
@@ -2252,10 +2535,13 @@ mod tests {
         };
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M9_MULTISET),
-            ">= triggers M9");
-        assert!(profile.signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC),
-            ">= triggers M12");
+        assert!(profile.signature.contains(PredicateSignature::M9_MULTISET), ">= triggers M9");
+        assert!(
+            profile
+                .signature
+                .contains(PredicateSignature::M12_LINEAR_ARITHMETIC),
+            ">= triggers M12"
+        );
         assert!(profile.has_cardinality);
         assert!(profile.has_arithmetic);
     }
@@ -2337,7 +2623,9 @@ mod tests {
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M4_VPA));
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M5_PARITY_TREE));
         assert!(profile.has_recursive_predicate);
     }
 
@@ -2350,15 +2638,14 @@ mod tests {
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M4_VPA));
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M5_PARITY_TREE));
     }
 
     #[test]
     fn test_mso_order_triggers_m6() {
-        let formula = WeightedMsoFormula::Order {
-            x: "a".to_string(),
-            y: "b".to_string(),
-        };
+        let formula = WeightedMsoFormula::Order { x: "a".to_string(), y: "b".to_string() };
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M6_REGISTER));
@@ -2375,7 +2662,9 @@ mod tests {
         ctx.bind("x".to_string(), "ch1".to_string());
         ctx.set_current_channel("ch2".to_string());
         let profile = extract_features_mso(&formula, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M8_MULTI_TAPE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M8_MULTI_TAPE));
         assert!(profile.signature.contains(PredicateSignature::M11_TWO_WAY));
     }
 
@@ -2389,7 +2678,9 @@ mod tests {
         ctx.bind("x".to_string(), "ch1".to_string());
         ctx.set_current_channel("ch2".to_string());
         let profile = extract_features_mso(&formula, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M8_MULTI_TAPE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M8_MULTI_TAPE));
         assert!(profile.signature.contains(PredicateSignature::M11_TWO_WAY));
     }
 
@@ -2400,10 +2691,7 @@ mod tests {
                 var: "x".to_string(),
                 body: Box::new(WeightedMsoFormula::Constant("c".to_string())),
             }),
-            Box::new(WeightedMsoFormula::Order {
-                x: "a".to_string(),
-                y: "b".to_string(),
-            }),
+            Box::new(WeightedMsoFormula::Order { x: "a".to_string(), y: "b".to_string() }),
         );
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
@@ -2416,8 +2704,12 @@ mod tests {
     #[test]
     fn test_classify_empty_grammar() {
         let plan = classify_grammar(&[], &[]);
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M1_SYMBOLIC));
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M10_MSO));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M1_SYMBOLIC));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M10_MSO));
     }
 
     #[test]
@@ -2522,7 +2814,11 @@ mod tests {
         let sfa = build_dispatch_sfa();
         for module in &ModuleId::ALL {
             let sig = PredicateSignature::from_raw(module.bit());
-            assert!(sfa.accepts(&[sig]), "single-module signature for {} should be accepted", module);
+            assert!(
+                sfa.accepts(&[sig]),
+                "single-module signature for {} should be accepted",
+                module
+            );
         }
     }
 
@@ -2531,7 +2827,9 @@ mod tests {
         let alg = DispatchAlgebra;
         for module in &ModuleId::ALL {
             let pred = SignaturePred::HasBit(module.bit());
-            let w = alg.witness(&pred).expect(&format!("should have witness for {}", module));
+            let w = alg
+                .witness(&pred)
+                .expect(&format!("should have witness for {}", module));
             assert!(w.contains(module.bit()));
         }
     }
@@ -2760,16 +3058,34 @@ mod tests {
 
     #[test]
     fn test_classify_grammar_cross_category_activates_m8() {
-        let syntax = vec![
-            ("PInput".to_string(), "Proc".to_string(), vec![
+        let syntax = vec![(
+            "PInput".to_string(),
+            "Proc".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("for".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Name".to_string(), param_name: "ch".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "body".to_string() },
-            ]),
-        ];
+                SyntaxItemSpec::NonTerminal {
+                    category: "Name".to_string(),
+                    param_name: "ch".to_string(),
+                },
+                SyntaxItemSpec::NonTerminal {
+                    category: "Proc".to_string(),
+                    param_name: "body".to_string(),
+                },
+            ],
+        )];
         let categories = vec![
-            CategoryInfo { name: "Proc".to_string(), native_type: None, is_primary: true , has_var: true},
-            CategoryInfo { name: "Name".to_string(), native_type: None, is_primary: false , has_var: true},
+            CategoryInfo {
+                name: "Proc".to_string(),
+                native_type: None,
+                is_primary: true,
+                has_var: true,
+            },
+            CategoryInfo {
+                name: "Name".to_string(),
+                native_type: None,
+                is_primary: false,
+                has_var: true,
+            },
         ];
         let plan = classify_grammar(&syntax, &categories);
         assert!(plan.requires(ModuleId::MultiTape), "cross-category should activate M8");
@@ -2777,17 +3093,17 @@ mod tests {
 
     #[test]
     fn test_classify_grammar_collection_activates_m9() {
-        let syntax = vec![
-            ("PList".to_string(), "Proc".to_string(), vec![
-                SyntaxItemSpec::Collection {
-                    param_name: "elems".to_string(),
-                    element_category: "Proc".to_string(),
-                    separator: ",".to_string(),
-                    kind: crate::grammar::ir::CollectionKind::Vec,
-                    key_val_separator: None,
-                },
-            ]),
-        ];
+        let syntax = vec![(
+            "PList".to_string(),
+            "Proc".to_string(),
+            vec![SyntaxItemSpec::Collection {
+                param_name: "elems".to_string(),
+                element_category: "Proc".to_string(),
+                separator: ",".to_string(),
+                kind: crate::grammar::ir::CollectionKind::Vec,
+                key_val_separator: None,
+            }],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.requires(ModuleId::Multiset), "collection should activate M9");
     }
@@ -2799,7 +3115,8 @@ mod tests {
             assert!(
                 window[0].estimated_cost() <= window[1].estimated_cost(),
                 "schedule should be sorted by cost: {} vs {}",
-                window[0], window[1]
+                window[0],
+                window[1]
             );
         }
     }
@@ -2914,8 +3231,10 @@ mod tests {
         };
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M6_REGISTER),
-            "unknown relation should default to M6 (register)");
+        assert!(
+            profile.signature.contains(PredicateSignature::M6_REGISTER),
+            "unknown relation should default to M6 (register)"
+        );
     }
 
     #[test]
@@ -2940,15 +3259,14 @@ mod tests {
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M4_VPA));
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M5_PARITY_TREE));
     }
 
     #[test]
     fn test_mso_neg_order_triggers_m6() {
-        let formula = WeightedMsoFormula::NegOrder {
-            x: "a".to_string(),
-            y: "b".to_string(),
-        };
+        let formula = WeightedMsoFormula::NegOrder { x: "a".to_string(), y: "b".to_string() };
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M6_REGISTER));
@@ -2994,7 +3312,9 @@ mod tests {
         };
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M5_PARITY_TREE));
     }
 
     #[test]
@@ -3005,7 +3325,9 @@ mod tests {
         };
         let ctx = ChannelContext::new();
         let profile = extract_features_mso(&formula, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M5_PARITY_TREE));
     }
 
     // ── Dispatch SFA additional verification ──────────────────────────────
@@ -3077,7 +3399,8 @@ mod tests {
 
     #[test]
     fn test_signature_pred_eval_not() {
-        let pred = SignaturePred::Not(Box::new(SignaturePred::HasBit(PredicateSignature::M2_BUCHI)));
+        let pred =
+            SignaturePred::Not(Box::new(SignaturePred::HasBit(PredicateSignature::M2_BUCHI)));
         let sig_m2 = PredicateSignature::from_raw(PredicateSignature::M2_BUCHI);
         let sig_m1 = PredicateSignature::from_raw(PredicateSignature::M1_SYMBOLIC);
         assert!(!pred.eval(sig_m2));
@@ -3094,10 +3417,7 @@ mod tests {
             PredicateExpr::False,
             PredicateExpr::Atom("p".to_string()),
             PredicateExpr::Not(Box::new(PredicateExpr::True)),
-            PredicateExpr::And(
-                Box::new(PredicateExpr::True),
-                Box::new(PredicateExpr::False),
-            ),
+            PredicateExpr::And(Box::new(PredicateExpr::True), Box::new(PredicateExpr::False)),
             PredicateExpr::ForallInfinite {
                 var: "x".to_string(),
                 body: Box::new(PredicateExpr::True),
@@ -3116,11 +3436,13 @@ mod tests {
             let profile = extract_features(expr, &ctx);
             assert!(
                 profile.signature.contains(PredicateSignature::M1_SYMBOLIC),
-                "expr #{} should contain M1", i
+                "expr #{} should contain M1",
+                i
             );
             assert!(
                 profile.signature.contains(PredicateSignature::M10_MSO),
-                "expr #{} should contain M10", i
+                "expr #{} should contain M10",
+                i
             );
         }
     }
@@ -3153,13 +3475,21 @@ mod tests {
     #[test]
     fn test_classify_grammar_recursive_activates_buchi() {
         // Category "Expr" has a rule referencing itself → M2
-        let syntax = vec![
-            ("ExprAdd".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "left".to_string() },
+        let syntax = vec![(
+            "ExprAdd".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "left".to_string(),
+                },
                 SyntaxItemSpec::Terminal("+".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "right".to_string() },
-            ]),
-        ];
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "right".to_string(),
+                },
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.requires(ModuleId::Buchi), "recursive category should activate M2 Büchi");
     }
@@ -3167,15 +3497,26 @@ mod tests {
     #[test]
     fn test_classify_grammar_branching_activates_awa() {
         // Rule with ≥3 NonTerminal items → M3
-        let syntax = vec![
-            ("Ternary".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "cond".to_string() },
+        let syntax = vec![(
+            "Ternary".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "cond".to_string(),
+                },
                 SyntaxItemSpec::Terminal("?".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "then".to_string() },
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "then".to_string(),
+                },
                 SyntaxItemSpec::Terminal(":".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "else_".to_string() },
-            ]),
-        ];
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "else_".to_string(),
+                },
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.requires(ModuleId::Awa), "≥3 non-terminals should activate M3 AWA");
     }
@@ -3183,13 +3524,18 @@ mod tests {
     #[test]
     fn test_classify_grammar_brackets_activates_vpa() {
         // Terminals "(" and ")" → M4
-        let syntax = vec![
-            ("Paren".to_string(), "Expr".to_string(), vec![
+        let syntax = vec![(
+            "Paren".to_string(),
+            "Expr".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("(".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "inner".to_string() },
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "inner".to_string(),
+                },
                 SyntaxItemSpec::Terminal(")".to_string()),
-            ]),
-        ];
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.requires(ModuleId::Vpa), "paired brackets should activate M4 VPA");
     }
@@ -3197,16 +3543,29 @@ mod tests {
     #[test]
     fn test_classify_grammar_recursive_branching_activates_parity_tree() {
         // Recursive + ≥3 NTs → M5
-        let syntax = vec![
-            ("TreeNode".to_string(), "Tree".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Tree".to_string(), param_name: "left".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Tree".to_string(), param_name: "middle".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Tree".to_string(), param_name: "right".to_string() },
-            ]),
-        ];
+        let syntax = vec![(
+            "TreeNode".to_string(),
+            "Tree".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal {
+                    category: "Tree".to_string(),
+                    param_name: "left".to_string(),
+                },
+                SyntaxItemSpec::NonTerminal {
+                    category: "Tree".to_string(),
+                    param_name: "middle".to_string(),
+                },
+                SyntaxItemSpec::NonTerminal {
+                    category: "Tree".to_string(),
+                    param_name: "right".to_string(),
+                },
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(plan.requires(ModuleId::ParityTree),
-            "recursive + branching should activate M5 Parity Tree");
+        assert!(
+            plan.requires(ModuleId::ParityTree),
+            "recursive + branching should activate M5 Parity Tree"
+        );
         // Also check M2 and M3 are set
         assert!(plan.requires(ModuleId::Buchi));
         assert!(plan.requires(ModuleId::Awa));
@@ -3215,8 +3574,10 @@ mod tests {
     #[test]
     fn test_classify_grammar_binders_activates_register() {
         // Binder item → M6
-        let syntax = vec![
-            ("Lambda".to_string(), "Expr".to_string(), vec![
+        let syntax = vec![(
+            "Lambda".to_string(),
+            "Expr".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("\\".to_string()),
                 SyntaxItemSpec::Binder {
                     param_name: "x".to_string(),
@@ -3224,9 +3585,12 @@ mod tests {
                     is_multi: false,
                 },
                 SyntaxItemSpec::Terminal(".".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "body".to_string() },
-            ]),
-        ];
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "body".to_string(),
+                },
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.requires(ModuleId::Register), "binder items should activate M6 Register");
     }
@@ -3235,29 +3599,37 @@ mod tests {
     fn test_classify_grammar_ambiguous_activates_probabilistic() {
         // ≥3 rules in same category → M7
         let syntax = vec![
-            ("Add".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("+".to_string()),
-            ]),
-            ("Sub".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("-".to_string()),
-            ]),
-            ("Mul".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("*".to_string()),
-            ]),
+            (
+                "Add".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("+".to_string())],
+            ),
+            (
+                "Sub".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("-".to_string())],
+            ),
+            (
+                "Mul".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("*".to_string())],
+            ),
         ];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(plan.requires(ModuleId::Probabilistic),
-            "≥3 rules in same category should activate M7 Probabilistic");
+        assert!(
+            plan.requires(ModuleId::Probabilistic),
+            "≥3 rules in same category should activate M7 Probabilistic"
+        );
     }
 
     #[test]
     fn test_classify_grammar_base_only() {
         // Single terminal rule → only M1+M10
-        let syntax = vec![
-            ("Lit".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("42".to_string()),
-            ]),
-        ];
+        let syntax = vec![(
+            "Lit".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("42".to_string())],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.requires(ModuleId::Symbolic));
         assert!(plan.requires(ModuleId::Mso));
@@ -3269,12 +3641,17 @@ mod tests {
     #[test]
     fn test_classify_grammar_no_brackets_no_vpa() {
         // Has "(" but no ")" → M4 NOT set
-        let syntax = vec![
-            ("Open".to_string(), "Expr".to_string(), vec![
+        let syntax = vec![(
+            "Open".to_string(),
+            "Expr".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("(".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "inner".to_string() },
-            ]),
-        ];
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "inner".to_string(),
+                },
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(!plan.requires(ModuleId::Vpa), "unpaired bracket should not activate M4");
     }
@@ -3283,31 +3660,47 @@ mod tests {
     fn test_classify_grammar_non_recursive_no_buchi() {
         // Non-recursive categories → M2 NOT set
         let syntax = vec![
-            ("Lit".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Num".to_string(), param_name: "val".to_string() },
-            ]),
-            ("Digit".to_string(), "Num".to_string(), vec![
-                SyntaxItemSpec::Terminal("0".to_string()),
-            ]),
+            (
+                "Lit".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::NonTerminal {
+                    category: "Num".to_string(),
+                    param_name: "val".to_string(),
+                }],
+            ),
+            (
+                "Digit".to_string(),
+                "Num".to_string(),
+                vec![SyntaxItemSpec::Terminal("0".to_string())],
+            ),
         ];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(!plan.requires(ModuleId::Buchi), "non-recursive categories should not activate M2");
+        assert!(
+            !plan.requires(ModuleId::Buchi),
+            "non-recursive categories should not activate M2"
+        );
     }
 
     #[test]
     fn test_classify_grammar_two_rules_no_probabilistic() {
         // Exactly 2 rules in same category → M7 NOT set
         let syntax = vec![
-            ("Add".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("+".to_string()),
-            ]),
-            ("Sub".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("-".to_string()),
-            ]),
+            (
+                "Add".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("+".to_string())],
+            ),
+            (
+                "Sub".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("-".to_string())],
+            ),
         ];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(!plan.requires(ModuleId::Probabilistic),
-            "2 rules in same category should not activate M7");
+        assert!(
+            !plan.requires(ModuleId::Probabilistic),
+            "2 rules in same category should not activate M7"
+        );
     }
 
     // ── Sprint 4b: Predicate-level fixpoint detection tests ──────────────
@@ -3320,10 +3713,13 @@ mod tests {
         };
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
-        assert!(profile.signature.contains(PredicateSignature::M4_VPA),
-            "fixpoint relation → M4");
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE),
-            "fixpoint relation → M5");
+        assert!(profile.signature.contains(PredicateSignature::M4_VPA), "fixpoint relation → M4");
+        assert!(
+            profile
+                .signature
+                .contains(PredicateSignature::M5_PARITY_TREE),
+            "fixpoint relation → M5"
+        );
         assert!(profile.has_recursive_predicate);
     }
 
@@ -3336,7 +3732,9 @@ mod tests {
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M4_VPA));
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M5_PARITY_TREE));
         assert!(profile.has_recursive_predicate);
     }
 
@@ -3349,7 +3747,9 @@ mod tests {
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
         assert!(profile.signature.contains(PredicateSignature::M4_VPA));
-        assert!(profile.signature.contains(PredicateSignature::M5_PARITY_TREE));
+        assert!(profile
+            .signature
+            .contains(PredicateSignature::M5_PARITY_TREE));
     }
 
     #[test]
@@ -3360,10 +3760,16 @@ mod tests {
         };
         let ctx = ChannelContext::new();
         let profile = extract_features(&expr, &ctx);
-        assert!(!profile.signature.contains(PredicateSignature::M4_VPA),
-            "custom relation should not trigger M4");
-        assert!(!profile.signature.contains(PredicateSignature::M5_PARITY_TREE),
-            "custom relation should not trigger M5");
+        assert!(
+            !profile.signature.contains(PredicateSignature::M4_VPA),
+            "custom relation should not trigger M4"
+        );
+        assert!(
+            !profile
+                .signature
+                .contains(PredicateSignature::M5_PARITY_TREE),
+            "custom relation should not trigger M5"
+        );
     }
 
     // ── Sprint 4c: Dispatch gate consistency tests ───────────────────────
@@ -3392,8 +3798,10 @@ mod tests {
     #[test]
     fn test_dispatch_plan_empty_grammar_base_only() {
         let plan = classify_grammar(&[], &[]);
-        assert!(plan.aggregate_signature.is_base_only(),
-            "empty grammar should have only base modules");
+        assert!(
+            plan.aggregate_signature.is_base_only(),
+            "empty grammar should have only base modules"
+        );
     }
 
     #[test]
@@ -3402,61 +3810,102 @@ mod tests {
         // binders + collection + cross-category + ambiguity (≥3 same-cat rules)
         let syntax = vec![
             // Recursive + branching (3 NTs, self-ref) → M2+M3+M5
-            ("TreeNode".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "b".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "c".to_string() },
-            ]),
+            (
+                "TreeNode".to_string(),
+                "Expr".to_string(),
+                vec![
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "c".to_string(),
+                    },
+                ],
+            ),
             // Brackets → M4
-            ("Paren".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("(".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "inner".to_string() },
-                SyntaxItemSpec::Terminal(")".to_string()),
-            ]),
+            (
+                "Paren".to_string(),
+                "Expr".to_string(),
+                vec![
+                    SyntaxItemSpec::Terminal("(".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "inner".to_string(),
+                    },
+                    SyntaxItemSpec::Terminal(")".to_string()),
+                ],
+            ),
             // Binder → M6
-            ("Lambda".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Binder {
+            (
+                "Lambda".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Binder {
                     param_name: "x".to_string(),
                     category: "Expr".to_string(),
                     is_multi: false,
-                },
-            ]),
+                }],
+            ),
             // 3rd rule in "Expr" already exists above, this is the 4th → M7
-            ("Lit".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("42".to_string()),
-            ]),
+            (
+                "Lit".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("42".to_string())],
+            ),
             // Cross-category (≥2 distinct categories in one rule) → M8+M11
-            ("Apply".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "fn_".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Type".to_string(), param_name: "ty".to_string() },
-            ]),
+            (
+                "Apply".to_string(),
+                "Expr".to_string(),
+                vec![
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "fn_".to_string(),
+                    },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Type".to_string(),
+                        param_name: "ty".to_string(),
+                    },
+                ],
+            ),
             // Collection → M9
-            ("List".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Collection {
+            (
+                "List".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Collection {
                     param_name: "elems".to_string(),
                     element_category: "Expr".to_string(),
                     separator: ",".to_string(),
                     kind: crate::grammar::ir::CollectionKind::Vec,
                     key_val_separator: None,
-                },
-            ]),
+                }],
+            ),
             // Arithmetic terminal → M12
-            ("Add".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("+".to_string()),
-            ]),
+            (
+                "Add".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("+".to_string())],
+            ),
             // Pattern matching terminal → M13
-            ("Match".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("match".to_string()),
-            ]),
+            (
+                "Match".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("match".to_string())],
+            ),
             // Subtype terminal → M14
-            ("Extends".to_string(), "Decl".to_string(), vec![
-                SyntaxItemSpec::Terminal("extends".to_string()),
-            ]),
+            (
+                "Extends".to_string(),
+                "Decl".to_string(),
+                vec![SyntaxItemSpec::Terminal("extends".to_string())],
+            ),
         ];
         let plan = classify_grammar(&syntax, &[]);
         for module in &ModuleId::ALL {
-            assert!(plan.requires(*module),
-                "full grammar should activate {}", module);
+            assert!(plan.requires(*module), "full grammar should activate {}", module);
         }
     }
 
@@ -3464,8 +3913,10 @@ mod tests {
 
     #[test]
     fn test_classify_grammar_collection_and_binder() {
-        let syntax = vec![
-            ("CollBind".to_string(), "Expr".to_string(), vec![
+        let syntax = vec![(
+            "CollBind".to_string(),
+            "Expr".to_string(),
+            vec![
                 SyntaxItemSpec::Collection {
                     param_name: "items".to_string(),
                     element_category: "Expr".to_string(),
@@ -3478,8 +3929,8 @@ mod tests {
                     category: "Expr".to_string(),
                     is_multi: false,
                 },
-            ]),
-        ];
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.requires(ModuleId::Register), "binder → M6");
         assert!(plan.requires(ModuleId::Multiset), "collection → M9");
@@ -3490,39 +3941,70 @@ mod tests {
         // Construct a grammar triggering all 6 new heuristics plus existing ones
         let syntax = vec![
             // Self-recursive + branching → M2+M3+M5
-            ("Branch".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "b".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "c".to_string() },
-            ]),
+            (
+                "Branch".to_string(),
+                "Expr".to_string(),
+                vec![
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "c".to_string(),
+                    },
+                ],
+            ),
             // Brackets → M4
-            ("Parens".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("(".to_string()),
-                SyntaxItemSpec::Terminal(")".to_string()),
-            ]),
+            (
+                "Parens".to_string(),
+                "Expr".to_string(),
+                vec![
+                    SyntaxItemSpec::Terminal("(".to_string()),
+                    SyntaxItemSpec::Terminal(")".to_string()),
+                ],
+            ),
             // Binder → M6
-            ("Bind".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Binder {
+            (
+                "Bind".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Binder {
                     param_name: "v".to_string(),
                     category: "Expr".to_string(),
                     is_multi: false,
-                },
-            ]),
+                }],
+            ),
             // Collection → M9
-            ("Coll".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Collection {
+            (
+                "Coll".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Collection {
                     param_name: "xs".to_string(),
                     element_category: "Expr".to_string(),
                     separator: ",".to_string(),
                     kind: crate::grammar::ir::CollectionKind::Vec,
                     key_val_separator: None,
-                },
-            ]),
+                }],
+            ),
             // Cross-category → M8+M11
-            ("Cross".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "e".to_string() },
-                SyntaxItemSpec::NonTerminal { category: "Type".to_string(), param_name: "t".to_string() },
-            ]),
+            (
+                "Cross".to_string(),
+                "Expr".to_string(),
+                vec![
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "e".to_string(),
+                    },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Type".to_string(),
+                        param_name: "t".to_string(),
+                    },
+                ],
+            ),
             // 6th rule: already ≥3 rules in "Expr" → M7 (actually ≥6, threshold is 3)
         ];
         let plan = classify_grammar(&syntax, &[]);
@@ -3541,75 +4023,83 @@ mod tests {
 
     #[test]
     fn test_classify_grammar_arithmetic_terminals_trigger_m12() {
-        let syntax = vec![
-            ("Add".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("+".to_string()),
-            ]),
-        ];
+        let syntax = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("+".to_string())],
+        )];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(plan.requires(ModuleId::LinearArithmetic),
-            "arithmetic terminal '+' → M12");
+        assert!(plan.requires(ModuleId::LinearArithmetic), "arithmetic terminal '+' → M12");
     }
 
     #[test]
     fn test_classify_grammar_pattern_terminals_trigger_m13() {
-        let syntax = vec![
-            ("Match".to_string(), "Expr".to_string(), vec![
+        let syntax = vec![(
+            "Match".to_string(),
+            "Expr".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("match".to_string()),
                 SyntaxItemSpec::Terminal("|".to_string()),
-            ]),
-        ];
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(plan.requires(ModuleId::Unification),
-            "pattern-match terminals → M13");
+        assert!(plan.requires(ModuleId::Unification), "pattern-match terminals → M13");
     }
 
     #[test]
     fn test_classify_grammar_subtype_terminals_trigger_m14() {
-        let syntax = vec![
-            ("TypeDecl".to_string(), "Decl".to_string(), vec![
-                SyntaxItemSpec::Terminal("extends".to_string()),
-            ]),
-        ];
+        let syntax = vec![(
+            "TypeDecl".to_string(),
+            "Decl".to_string(),
+            vec![SyntaxItemSpec::Terminal("extends".to_string())],
+        )];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(plan.requires(ModuleId::SubtypeLattice),
-            "subtype terminal 'extends' → M14");
+        assert!(plan.requires(ModuleId::SubtypeLattice), "subtype terminal 'extends' → M14");
     }
 
     #[test]
     fn test_classify_grammar_no_theory_terminals() {
-        let syntax = vec![
-            ("Lit".to_string(), "Expr".to_string(), vec![
+        let syntax = vec![(
+            "Lit".to_string(),
+            "Expr".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("let".to_string()),
                 SyntaxItemSpec::Terminal("in".to_string()),
-            ]),
-        ];
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
-        assert!(!plan.requires(ModuleId::LinearArithmetic),
-            "no arithmetic terminals → no M12");
-        assert!(!plan.requires(ModuleId::Unification),
-            "no pattern terminals → no M13");
-        assert!(!plan.requires(ModuleId::SubtypeLattice),
-            "no subtype terminals → no M14");
+        assert!(!plan.requires(ModuleId::LinearArithmetic), "no arithmetic terminals → no M12");
+        assert!(!plan.requires(ModuleId::Unification), "no pattern terminals → no M13");
+        assert!(!plan.requires(ModuleId::SubtypeLattice), "no subtype terminals → no M14");
     }
 
     #[test]
     fn test_classify_grammar_m12_m13_m14_in_schedule() {
         // Grammar with all three theory terminal patterns
-        let syntax = vec![
-            ("Arith".to_string(), "Expr".to_string(), vec![
+        let syntax = vec![(
+            "Arith".to_string(),
+            "Expr".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("+".to_string()),
                 SyntaxItemSpec::Terminal("match".to_string()),
                 SyntaxItemSpec::Terminal("extends".to_string()),
-            ]),
-        ];
+            ],
+        )];
         let plan = classify_grammar(&syntax, &[]);
         assert!(plan.module_schedule.contains(&ModuleId::LinearArithmetic));
         assert!(plan.module_schedule.contains(&ModuleId::Unification));
         assert!(plan.module_schedule.contains(&ModuleId::SubtypeLattice));
         // SubtypeLattice (cost 2) should come before LinearArithmetic/Unification (cost 3)
-        let lat_pos = plan.module_schedule.iter().position(|m| *m == ModuleId::SubtypeLattice).expect("M14 in schedule");
-        let arith_pos = plan.module_schedule.iter().position(|m| *m == ModuleId::LinearArithmetic).expect("M12 in schedule");
+        let lat_pos = plan
+            .module_schedule
+            .iter()
+            .position(|m| *m == ModuleId::SubtypeLattice)
+            .expect("M14 in schedule");
+        let arith_pos = plan
+            .module_schedule
+            .iter()
+            .position(|m| *m == ModuleId::LinearArithmetic)
+            .expect("M12 in schedule");
         assert!(lat_pos < arith_pos, "M14 (cost 2) should be scheduled before M12 (cost 3)");
     }
 
@@ -3618,11 +4108,7 @@ mod tests {
     #[test]
     fn order_by_specificity_linear_chain() {
         // A ⊂ B ⊂ C — A is most specific
-        let labels = vec![
-            "Expr::C".to_string(),
-            "Expr::B".to_string(),
-            "Expr::A".to_string(),
-        ];
+        let labels = vec!["Expr::C".to_string(), "Expr::B".to_string(), "Expr::A".to_string()];
         let subsumed = vec![
             ("Expr::A".to_string(), "Expr::B".to_string()), // A ⊂ B
             ("Expr::B".to_string(), "Expr::C".to_string()), // B ⊂ C
@@ -3637,11 +4123,7 @@ mod tests {
 
     #[test]
     fn order_by_specificity_no_subsumption() {
-        let labels = vec![
-            "Expr::X".to_string(),
-            "Expr::Y".to_string(),
-            "Expr::Z".to_string(),
-        ];
+        let labels = vec!["Expr::X".to_string(), "Expr::Y".to_string(), "Expr::Z".to_string()];
         let subsumed: Vec<(String, String)> = vec![];
 
         let ordered = order_by_specificity(&labels, &subsumed);
@@ -3654,11 +4136,7 @@ mod tests {
     #[test]
     fn order_by_specificity_tiebreak_grammar_order() {
         // A and B are both subsumed by C equally — break tie by grammar order
-        let labels = vec![
-            "Expr::A".to_string(),
-            "Expr::B".to_string(),
-            "Expr::C".to_string(),
-        ];
+        let labels = vec!["Expr::A".to_string(), "Expr::B".to_string(), "Expr::C".to_string()];
         let subsumed = vec![
             ("Expr::A".to_string(), "Expr::C".to_string()),
             ("Expr::B".to_string(), "Expr::C".to_string()),
@@ -3690,7 +4168,9 @@ mod tests {
         // Without GuardConfigSpec, classify_grammar uses heuristics.
         let plan = classify_grammar(&make_minimal_grammar(), &[]);
         // Backward compat: M12 should NOT be set (no arithmetic terminals).
-        assert!(!plan.aggregate_signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
+        assert!(!plan
+            .aggregate_signature
+            .contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
     }
 
     #[test]
@@ -3704,7 +4184,9 @@ mod tests {
             ..Default::default()
         };
         let plan = classify_grammar_with_config(&make_minimal_grammar(), &[], Some(&gc));
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
     }
 
     #[test]
@@ -3718,7 +4200,9 @@ mod tests {
             ..Default::default()
         };
         let plan = classify_grammar_with_config(&make_minimal_grammar(), &[], Some(&gc));
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M13_UNIFICATION));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M13_UNIFICATION));
     }
 
     #[test]
@@ -3732,7 +4216,9 @@ mod tests {
             ..Default::default()
         };
         let plan = classify_grammar_with_config(&make_minimal_grammar(), &[], Some(&gc));
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M14_SUBTYPE_LATTICE));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M14_SUBTYPE_LATTICE));
     }
 
     #[test]
@@ -3746,9 +4232,13 @@ mod tests {
             ..Default::default()
         };
         let plan = classify_grammar_with_config(&make_minimal_grammar(), &[], Some(&gc));
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M8_MULTI_TAPE));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M8_MULTI_TAPE));
         // Same category twice → no M11 activation
-        assert!(!plan.aggregate_signature.contains(PredicateSignature::M11_TWO_WAY));
+        assert!(!plan
+            .aggregate_signature
+            .contains(PredicateSignature::M11_TWO_WAY));
     }
 
     #[test]
@@ -3762,8 +4252,12 @@ mod tests {
             ..Default::default()
         };
         let plan = classify_grammar_with_config(&make_minimal_grammar(), &[], Some(&gc));
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M8_MULTI_TAPE));
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M11_TWO_WAY));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M8_MULTI_TAPE));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M11_TWO_WAY));
     }
 
     #[test]
@@ -3778,7 +4272,9 @@ mod tests {
         };
         let plan = classify_grammar_with_config(&make_minimal_grammar(), &[], Some(&gc));
         // Single channel param → no multi-tape benefit
-        assert!(!plan.aggregate_signature.contains(PredicateSignature::M8_MULTI_TAPE));
+        assert!(!plan
+            .aggregate_signature
+            .contains(PredicateSignature::M8_MULTI_TAPE));
     }
 
     #[test]
@@ -3867,8 +4363,10 @@ mod tests {
     fn make_cross_category_grammar() -> Vec<(String, String, Vec<SyntaxItemSpec>)> {
         // A grammar that has cross-category references — would activate
         // the structural M8/M11 heuristic in absence of `channels { }`.
-        vec![
-            ("Lam".to_string(), "Term".to_string(), vec![
+        vec![(
+            "Lam".to_string(),
+            "Term".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("lam".to_string()),
                 SyntaxItemSpec::NonTerminal {
                     category: "Type".to_string(),
@@ -3878,8 +4376,8 @@ mod tests {
                     category: "Term".to_string(),
                     param_name: "body".to_string(),
                 },
-            ]),
-        ]
+            ],
+        )]
     }
 
     #[test]
@@ -3888,11 +4386,13 @@ mod tests {
         // heuristic still fires.
         let plan = classify_grammar(&make_cross_category_grammar(), &[]);
         assert!(
-            plan.aggregate_signature.contains(PredicateSignature::M8_MULTI_TAPE),
+            plan.aggregate_signature
+                .contains(PredicateSignature::M8_MULTI_TAPE),
             "no guards block → cross-category heuristic activates M8"
         );
         assert!(
-            plan.aggregate_signature.contains(PredicateSignature::M11_TWO_WAY),
+            plan.aggregate_signature
+                .contains(PredicateSignature::M11_TWO_WAY),
             "no guards block → cross-category heuristic activates M11"
         );
     }
@@ -3907,17 +4407,17 @@ mod tests {
             join_patterns: Vec::new(),
             ..Default::default()
         };
-        let plan = classify_grammar_with_config(
-            &make_cross_category_grammar(),
-            &[],
-            Some(&gc),
-        );
+        let plan = classify_grammar_with_config(&make_cross_category_grammar(), &[], Some(&gc));
         assert!(
-            !plan.aggregate_signature.contains(PredicateSignature::M8_MULTI_TAPE),
+            !plan
+                .aggregate_signature
+                .contains(PredicateSignature::M8_MULTI_TAPE),
             "explicit empty channels → no M8 from heuristic"
         );
         assert!(
-            !plan.aggregate_signature.contains(PredicateSignature::M11_TWO_WAY),
+            !plan
+                .aggregate_signature
+                .contains(PredicateSignature::M11_TWO_WAY),
             "explicit empty channels → no M11 from heuristic"
         );
     }
@@ -3934,14 +4434,12 @@ mod tests {
             }],
             ..Default::default()
         };
-        let plan = classify_grammar_with_config(
-            &make_cross_category_grammar(),
-            &[],
-            Some(&gc),
-        );
+        let plan = classify_grammar_with_config(&make_cross_category_grammar(), &[], Some(&gc));
         // Single-param join → no M8 even though structural would have set it
         assert!(
-            !plan.aggregate_signature.contains(PredicateSignature::M8_MULTI_TAPE),
+            !plan
+                .aggregate_signature
+                .contains(PredicateSignature::M8_MULTI_TAPE),
             "single-channel join → no M8 (heuristic bypassed; explicit single-arity)"
         );
     }
@@ -3951,33 +4449,35 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════
 
     fn make_arith_terminal_grammar() -> Vec<(String, String, Vec<SyntaxItemSpec>)> {
-        vec![
-            ("Add".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("+".to_string()),
-            ]),
-        ]
+        vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("+".to_string())],
+        )]
     }
 
     fn make_unif_terminal_grammar() -> Vec<(String, String, Vec<SyntaxItemSpec>)> {
-        vec![
-            ("Match".to_string(), "Expr".to_string(), vec![
-                SyntaxItemSpec::Terminal("match".to_string()),
-            ]),
-        ]
+        vec![(
+            "Match".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("match".to_string())],
+        )]
     }
 
     fn make_subtype_terminal_grammar() -> Vec<(String, String, Vec<SyntaxItemSpec>)> {
-        vec![
-            ("Sub".to_string(), "Decl".to_string(), vec![
-                SyntaxItemSpec::Terminal("extends".to_string()),
-            ]),
-        ]
+        vec![(
+            "Sub".to_string(),
+            "Decl".to_string(),
+            vec![SyntaxItemSpec::Terminal("extends".to_string())],
+        )]
     }
 
     #[test]
     fn cleanup_b_arith_terminal_no_theory_keeps_heuristic() {
         let plan = classify_grammar(&make_arith_terminal_grammar(), &[]);
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
     }
 
     #[test]
@@ -3990,14 +4490,12 @@ mod tests {
             }],
             ..Default::default()
         };
-        let plan = classify_grammar_with_config(
-            &make_arith_terminal_grammar(),
-            &[],
-            Some(&gc),
-        );
+        let plan = classify_grammar_with_config(&make_arith_terminal_grammar(), &[], Some(&gc));
         // M12 still set — but only by the explicit theory block, not the
         // terminal heuristic.
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M12_LINEAR_ARITHMETIC));
     }
 
     #[test]
@@ -4010,12 +4508,10 @@ mod tests {
             }],
             ..Default::default()
         };
-        let plan = classify_grammar_with_config(
-            &make_unif_terminal_grammar(),
-            &[],
-            Some(&gc),
-        );
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M13_UNIFICATION));
+        let plan = classify_grammar_with_config(&make_unif_terminal_grammar(), &[], Some(&gc));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M13_UNIFICATION));
     }
 
     #[test]
@@ -4028,12 +4524,10 @@ mod tests {
             }],
             ..Default::default()
         };
-        let plan = classify_grammar_with_config(
-            &make_subtype_terminal_grammar(),
-            &[],
-            Some(&gc),
-        );
-        assert!(plan.aggregate_signature.contains(PredicateSignature::M14_SUBTYPE_LATTICE));
+        let plan = classify_grammar_with_config(&make_subtype_terminal_grammar(), &[], Some(&gc));
+        assert!(plan
+            .aggregate_signature
+            .contains(PredicateSignature::M14_SUBTYPE_LATTICE));
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -4075,9 +4569,13 @@ mod tests {
         let p_configured = extract_features_with_config(&expr, &ctx, Some(&gc));
 
         // Unconfigured: M6 set by is_equality_relation heuristic.
-        assert!(p_unconfigured.signature.contains(PredicateSignature::M6_REGISTER));
+        assert!(p_unconfigured
+            .signature
+            .contains(PredicateSignature::M6_REGISTER));
         // Configured: M6 NOT set from heuristic (the bypass silenced it).
-        assert!(!p_configured.signature.contains(PredicateSignature::M6_REGISTER));
+        assert!(!p_configured
+            .signature
+            .contains(PredicateSignature::M6_REGISTER));
     }
 
     #[test]
@@ -4098,8 +4596,12 @@ mod tests {
         let p_unconfigured = extract_features(&expr, &ctx);
         let p_configured = extract_features_with_config(&expr, &ctx, Some(&gc));
 
-        assert!(p_unconfigured.signature.contains(PredicateSignature::M13_UNIFICATION));
-        assert!(!p_configured.signature.contains(PredicateSignature::M13_UNIFICATION));
+        assert!(p_unconfigured
+            .signature
+            .contains(PredicateSignature::M13_UNIFICATION));
+        assert!(!p_configured
+            .signature
+            .contains(PredicateSignature::M13_UNIFICATION));
     }
 
     #[test]
@@ -4156,22 +4658,28 @@ mod proptest_tests {
 
     fn arb_var() -> impl Strategy<Value = String> {
         prop::sample::select(vec![
-            "x".to_string(), "y".to_string(), "z".to_string(),
-            "w".to_string(), "v".to_string(),
+            "x".to_string(),
+            "y".to_string(),
+            "z".to_string(),
+            "w".to_string(),
+            "v".to_string(),
         ])
     }
 
     fn arb_channel() -> impl Strategy<Value = String> {
-        prop::sample::select(vec![
-            "ch1".to_string(), "ch2".to_string(), "ch3".to_string(),
-        ])
+        prop::sample::select(vec!["ch1".to_string(), "ch2".to_string(), "ch3".to_string()])
     }
 
     fn arb_relation_name() -> impl Strategy<Value = String> {
         prop::sample::select(vec![
-            "eq".to_string(), "neq".to_string(), "fresh".to_string(),
-            "count".to_string(), "size".to_string(), "custom".to_string(),
-            "related".to_string(), ">=".to_string(),
+            "eq".to_string(),
+            "neq".to_string(),
+            "fresh".to_string(),
+            "count".to_string(),
+            "size".to_string(),
+            "custom".to_string(),
+            "related".to_string(),
+            ">=".to_string(),
         ])
     }
 
@@ -4188,52 +4696,52 @@ mod proptest_tests {
         } else {
             prop_oneof![
                 leaf,
-                arb_predicate_expr(depth - 1)
-                    .prop_map(|e| PredicateExpr::Not(Box::new(e))),
+                arb_predicate_expr(depth - 1).prop_map(|e| PredicateExpr::Not(Box::new(e))),
                 (arb_predicate_expr(depth - 1), arb_predicate_expr(depth - 1))
                     .prop_map(|(a, b)| PredicateExpr::And(Box::new(a), Box::new(b))),
                 (arb_predicate_expr(depth - 1), arb_predicate_expr(depth - 1))
                     .prop_map(|(a, b)| PredicateExpr::Or(Box::new(a), Box::new(b))),
-                (arb_var(), arb_predicate_expr(depth - 1))
-                    .prop_map(|(var, body)| PredicateExpr::ForallFinite {
-                        var, domain: vec!["a".to_string()], body: Box::new(body),
-                    }),
-                (arb_var(), arb_predicate_expr(depth - 1))
-                    .prop_map(|(var, body)| PredicateExpr::ExistsFinite {
-                        var, domain: vec!["a".to_string()], body: Box::new(body),
-                    }),
-                (arb_var(), arb_predicate_expr(depth - 1))
-                    .prop_map(|(var, body)| PredicateExpr::ForallInfinite {
-                        var, body: Box::new(body),
-                    }),
-                (arb_var(), arb_predicate_expr(depth - 1))
-                    .prop_map(|(var, body)| PredicateExpr::ExistsInfinite {
-                        var, body: Box::new(body),
-                    }),
+                (arb_var(), arb_predicate_expr(depth - 1)).prop_map(|(var, body)| {
+                    PredicateExpr::ForallFinite {
+                        var,
+                        domain: vec!["a".to_string()],
+                        body: Box::new(body),
+                    }
+                }),
+                (arb_var(), arb_predicate_expr(depth - 1)).prop_map(|(var, body)| {
+                    PredicateExpr::ExistsFinite {
+                        var,
+                        domain: vec!["a".to_string()],
+                        body: Box::new(body),
+                    }
+                }),
+                (arb_var(), arb_predicate_expr(depth - 1)).prop_map(|(var, body)| {
+                    PredicateExpr::ForallInfinite { var, body: Box::new(body) }
+                }),
+                (arb_var(), arb_predicate_expr(depth - 1)).prop_map(|(var, body)| {
+                    PredicateExpr::ExistsInfinite { var, body: Box::new(body) }
+                }),
                 arb_predicate_expr(depth - 1)
-                    .prop_map(|body| PredicateExpr::Bounded {
-                        body: Box::new(body), bound: 100,
-                    }),
+                    .prop_map(|body| PredicateExpr::Bounded { body: Box::new(body), bound: 100 }),
             ]
             .boxed()
         }
     }
 
     fn arb_channel_context() -> impl Strategy<Value = ChannelContext> {
-        prop::collection::vec((arb_var(), arb_channel()), 0..=5)
-            .prop_flat_map(|bindings| {
-                let ctx_bindings = bindings.clone();
-                prop::option::of(arb_channel()).prop_map(move |current| {
-                    let mut ctx = ChannelContext::new();
-                    for (var, ch) in &ctx_bindings {
-                        ctx.bind(var.clone(), ch.clone());
-                    }
-                    if let Some(ch) = current {
-                        ctx.set_current_channel(ch);
-                    }
-                    ctx
-                })
+        prop::collection::vec((arb_var(), arb_channel()), 0..=5).prop_flat_map(|bindings| {
+            let ctx_bindings = bindings.clone();
+            prop::option::of(arb_channel()).prop_map(move |current| {
+                let mut ctx = ChannelContext::new();
+                for (var, ch) in &ctx_bindings {
+                    ctx.bind(var.clone(), ch.clone());
+                }
+                if let Some(ch) = current {
+                    ctx.set_current_channel(ch);
+                }
+                ctx
             })
+        })
     }
 
     // ── Arbitrary WeightedMsoFormula generator ────────────────────────────
@@ -4243,8 +4751,7 @@ mod proptest_tests {
             arb_var().prop_map(|v| WeightedMsoFormula::Constant(v)),
             (arb_var(), arb_var())
                 .prop_map(|(label, var)| WeightedMsoFormula::AtomicPos { label, var }),
-            (arb_var(), arb_var())
-                .prop_map(|(x, y)| WeightedMsoFormula::Order { x, y }),
+            (arb_var(), arb_var()).prop_map(|(x, y)| WeightedMsoFormula::Order { x, y }),
             (arb_var(), arb_var())
                 .prop_map(|(var, set_var)| WeightedMsoFormula::InSet { var, set_var }),
             (arb_var(), arb_var())
@@ -4259,22 +4766,18 @@ mod proptest_tests {
                     .prop_map(|(a, b)| WeightedMsoFormula::And(Box::new(a), Box::new(b))),
                 (arb_mso_formula(depth - 1), arb_mso_formula(depth - 1))
                     .prop_map(|(a, b)| WeightedMsoFormula::Or(Box::new(a), Box::new(b))),
-                (arb_var(), arb_mso_formula(depth - 1))
-                    .prop_map(|(var, body)| WeightedMsoFormula::ExistsFirst {
-                        var, body: Box::new(body),
-                    }),
-                (arb_var(), arb_mso_formula(depth - 1))
-                    .prop_map(|(var, body)| WeightedMsoFormula::ForallFirst {
-                        var, body: Box::new(body),
-                    }),
-                (arb_var(), arb_mso_formula(depth - 1))
-                    .prop_map(|(var, body)| WeightedMsoFormula::ExistsSecond {
-                        var, body: Box::new(body),
-                    }),
-                (arb_var(), arb_mso_formula(depth - 1))
-                    .prop_map(|(var, body)| WeightedMsoFormula::ForallSecond {
-                        var, body: Box::new(body),
-                    }),
+                (arb_var(), arb_mso_formula(depth - 1)).prop_map(|(var, body)| {
+                    WeightedMsoFormula::ExistsFirst { var, body: Box::new(body) }
+                }),
+                (arb_var(), arb_mso_formula(depth - 1)).prop_map(|(var, body)| {
+                    WeightedMsoFormula::ForallFirst { var, body: Box::new(body) }
+                }),
+                (arb_var(), arb_mso_formula(depth - 1)).prop_map(|(var, body)| {
+                    WeightedMsoFormula::ExistsSecond { var, body: Box::new(body) }
+                }),
+                (arb_var(), arb_mso_formula(depth - 1)).prop_map(|(var, body)| {
+                    WeightedMsoFormula::ForallSecond { var, body: Box::new(body) }
+                }),
             ]
             .boxed()
         }
@@ -4777,31 +5280,33 @@ mod proptest_tests {
 
     fn arb_category() -> impl Strategy<Value = String> {
         prop::sample::select(vec![
-            "Expr".to_string(), "Term".to_string(),
-            "Stmt".to_string(), "Type".to_string(),
+            "Expr".to_string(),
+            "Term".to_string(),
+            "Stmt".to_string(),
+            "Type".to_string(),
         ])
     }
 
     fn arb_syntax_item() -> impl Strategy<Value = SyntaxItemSpec> {
         prop_oneof![
-            prop::sample::select(vec![
-                "(", ")", "{", "}", "[", "]", "+", "-", ";", "let", "in",
-            ]).prop_map(|s| SyntaxItemSpec::Terminal(s.to_string())),
-            (arb_category(), arb_var())
-                .prop_map(|(cat, param)| SyntaxItemSpec::NonTerminal {
-                    category: cat, param_name: param,
-                }),
-            (arb_var(), arb_category())
-                .prop_map(|(param, cat)| SyntaxItemSpec::Binder {
-                    param_name: param, category: cat, is_multi: false,
-                }),
-            (arb_var(), arb_category())
-                .prop_map(|(param, cat)| SyntaxItemSpec::Collection {
-                    param_name: param, element_category: cat,
-                    separator: ",".to_string(),
-                    kind: crate::grammar::ir::CollectionKind::Vec,
-                    key_val_separator: None,
-                }),
+            prop::sample::select(vec!["(", ")", "{", "}", "[", "]", "+", "-", ";", "let", "in",])
+                .prop_map(|s| SyntaxItemSpec::Terminal(s.to_string())),
+            (arb_category(), arb_var()).prop_map(|(cat, param)| SyntaxItemSpec::NonTerminal {
+                category: cat,
+                param_name: param,
+            }),
+            (arb_var(), arb_category()).prop_map(|(param, cat)| SyntaxItemSpec::Binder {
+                param_name: param,
+                category: cat,
+                is_multi: false,
+            }),
+            (arb_var(), arb_category()).prop_map(|(param, cat)| SyntaxItemSpec::Collection {
+                param_name: param,
+                element_category: cat,
+                separator: ",".to_string(),
+                kind: crate::grammar::ir::CollectionKind::Vec,
+                key_val_separator: None,
+            }),
         ]
     }
 
@@ -4821,7 +5326,7 @@ mod proptest_tests {
     // These properties formalize the soundness theorem from
     // docs/design/dispatch/predicate-dispatch-integration.md §6.
 
-    use crate::{GuardConfigSpec, JoinPatternSpec, TheoryRegistrationSpec};
+    use crate::{GuardConfigSpec, TheoryRegistrationSpec};
 
     /// Build a `GuardConfigSpec` with a single theory registration of the
     /// given type. Used to test bypass behavior.

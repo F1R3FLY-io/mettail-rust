@@ -98,9 +98,9 @@ This is the formal basis for aliasing: two variables at the same address see eac
 | Get-after-set | CeskStoreCorrectness.v | Proved |
 | Non-interference | CeskStoreCorrectness.v | Proved |
 | Remove correctness | CeskStoreCorrectness.v | Proved |
-| Refcount roundtrip | CeskStoreCorrectness.v | Admitted (aux lemma needed) |
+| Refcount roundtrip | CeskStoreCorrectness.v | Proved |
 | Refcount dead iff count=1 | CeskStoreCorrectness.v | Proved |
-| n inc / n dec = 0 | CeskStoreCorrectness.v | Admitted (aux lemma needed) |
+| n inc / n dec = 0 | CeskStoreCorrectness.v | Proved |
 | Two-stage equivalence | CeskStoreCorrectness.v | Proved |
 | Mutation locality | CeskMutation.v | Proved |
 | Mutation visibility | CeskMutation.v | Proved |

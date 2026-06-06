@@ -56,31 +56,37 @@ pub mod rd_analysis;
 // Stage 10.5b conclusion (2026-05-05): `pub mod recursive` DELETED (file
 // deleted, ~1,200 LoC). Trampoline-side recursive-descent emitter; data
 // types (RDRuleInfo, RDSyntaxItem, CollectionKind) migrated to grammar::ir.
-pub mod grammar;
-pub mod hang_dump;
-pub mod token_id;
-/// Phase F.13 walker statistics counters (gated by `walker-stats` feature).
-pub mod walker_stats;
-/// Phase F.13 H12 Tomita-GLR dispatch-cohort sharing. Shares
-/// cross-cat-projection sub-parse work across cohort members at the
-/// same `(pos, source_src_idx, inner_cur_bp)` key. Each cohort member
-/// retains its own return frame; only the sub-parse work is shared.
-pub mod dispatch_cohort;
+/// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.a (2026-05-26):
+/// realize-time cohort fanout. `CohortContinuation<W>` defers cohort
+/// revives into outer-rule-wrap records interned as SPPF packings at
+/// EOI. Targets `cohort_cursors_emitted=335,808` on chain_1000
+/// (projected ~3.4 M revived cursors at chain_10000). See ledger +
+/// `phase-f13-stage-1-5-4-approach-p-realize-time-fanout.md`.
+pub mod cohort_continuation;
 /// Phase F.13 Stage L1 (2026-05-25): cohort lazy materialization
 /// scaffolding. Adds `Frame<W>` (Concrete | Cohort) + `CohortFrame<W>`
 /// + `CohortShell<W>` + `CohortMemberState<W>` types. L2 wires the
 /// `InflightCollision` arm to construct cohorts; L3 implements the
 /// ObsInvariant fast path. See `docs/design/plans/cohort-lazy-materialization.md`.
 pub mod cohort_lazy;
-/// Phase F.13 chain_10000 Plan D E6 (2026-05-26): generic path-tree
-/// interning arena. Both `SppfStackArena` and `EdgeStackArena` are
-/// type aliases over `PathTreeArena<T>`. See module docs.
-pub mod path_tree_arena;
-/// Phase F.13 chain_10000 Plan D E3 (2026-05-25 / refactored 2026-05-26):
-/// SPPF-stack interning arena. Thin specialization over
-/// `path_tree_arena::PathTreeArena<SppfId>`. Wired into BranchCursor
-/// at commit `f18a847`. See module docs + ledger row 3.
-pub mod sppf_stack_arena;
+/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): CursorId
+/// newtype + recycle allocator for the planned CPS walker rewrite.
+/// See `prattail/docs/design/plans/exp15-cps-trampolined-walker.md`.
+pub mod cursor_id;
+/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): walker-global
+/// persistent state map (HAMT-backed via `im`). Replaces the per-cursor
+/// `Arc<FxHashSet<PackedDispatchConfig>>` visited sets + per-cursor
+/// recovery_deltas/scope_marks/lex_fork_path Vecs with walker-global
+/// im::OrdSet / im::HashMap indexed by CursorId. Lineage chain via
+/// `parent_of_inheritance` resolves Fork inheritance in O(Fork-depth x
+/// log32 N) without sweeping the visited set at Fork. Substage 1 is
+/// dead code; Substage 2 introduces mirror-write feature gate.
+pub mod cursor_store;
+/// Phase F.13 H12 Tomita-GLR dispatch-cohort sharing. Shares
+/// cross-cat-projection sub-parse work across cohort members at the
+/// same `(pos, source_src_idx, inner_cur_bp)` key. Each cohort member
+/// retains its own return frame; only the sub-parse work is shared.
+pub mod dispatch_cohort;
 /// Phase F.13 chain_10000 Plan D E6 Substage 1 (2026-05-26):
 /// GSS edge-stack interning arena. Thin specialization over
 /// `path_tree_arena::PathTreeArena<GssEdgeId>`. Standalone (no
@@ -88,6 +94,33 @@ pub mod sppf_stack_arena;
 /// `BranchCursor::incoming_edge_stack_id`. See module docs +
 /// ledger row 4-alt.
 pub mod edge_stack_arena;
+pub mod grammar;
+pub mod hang_dump;
+/// Phase F.13 chain_10000 Plan D E6 (2026-05-26): generic path-tree
+/// interning arena. Both `SppfStackArena` and `EdgeStackArena` are
+/// type aliases over `PathTreeArena<T>`. See module docs.
+pub mod path_tree_arena;
+/// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
+/// Synchronous analogue of `dispatch_cohort` for the
+/// `emit_recovery_fork` path — shares the WFST-produced
+/// `Vec<ForkBranch<W>>` across cohort members that hit the same
+/// `(pos, state_cat_src_idx, cur_bp)` recovery dead-end.
+pub mod recovery_cohort;
+/// Phase F.13 chain_10000 Plan D E3 (2026-05-25 / refactored 2026-05-26):
+/// SPPF-stack interning arena. Thin specialization over
+/// `path_tree_arena::PathTreeArena<SppfId>`. Wired into BranchCursor
+/// at commit `f18a847`. See module docs + ledger row 3.
+pub mod sppf_stack_arena;
+pub mod token_id;
+/// Phase F.13 chain_10000 Exp 14 Substage 1 (2026-05-27): Tomita-style
+/// frontier merge map data structure. Coarsens the current 11-axis
+/// ConfigKey to a 5-axis TomitaKey = (state, node, pos, edge_top,
+/// collection_depth) and groups cursors with the same key under a
+/// shared CohortShell + N FrontierArc records. Substage 1 ships only
+/// the types + tests as dead code; downstream substages wire the
+/// ingest path at step_fanout. See
+/// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
+pub mod tomita_frontier;
 /// Phase F.13 chain_10000 Exp 8 Substage 1 (2026-05-26): canonical-order
 /// path-tree interning arena for SET semantics + walker-global LRU cache
 /// for O(1) `contains()`. Designed to replace
@@ -100,58 +133,8 @@ pub mod edge_stack_arena;
 /// Substage 2 REJECTED per Welch falsifier (commit 365039e); standalone
 /// module retained for reference / future workloads.
 pub mod visited_set_arena;
-/// Phase F.13 chain_10000 Exp 9 / Approach P Substage 1.a (2026-05-26):
-/// realize-time cohort fanout. `CohortContinuation<W>` defers cohort
-/// revives into outer-rule-wrap records interned as SPPF packings at
-/// EOI. Targets `cohort_cursors_emitted=335,808` on chain_1000
-/// (projected ~3.4 M revived cursors at chain_10000). See ledger +
-/// `phase-f13-stage-1-5-4-approach-p-realize-time-fanout.md`.
-pub mod cohort_continuation;
-/// Phase F.13 chain_10000 Exp 14 Substage 1 (2026-05-27): Tomita-style
-/// frontier merge map data structure. Coarsens the current 11-axis
-/// ConfigKey to a 5-axis TomitaKey = (state, node, pos, edge_top,
-/// collection_depth) and groups cursors with the same key under a
-/// shared CohortShell + N FrontierArc records. Substage 1 ships only
-/// the types + tests as dead code; downstream substages wire the
-/// ingest path at step_fanout. See
-/// `prattail/docs/design/plans/exp14-tomita-per-arc-gss-merge.md`.
-pub mod tomita_frontier;
-/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): CursorId
-/// newtype + recycle allocator for the planned CPS walker rewrite.
-/// See `prattail/docs/design/plans/exp15-cps-trampolined-walker.md`.
-pub mod cursor_id;
-/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): walker-global
-/// persistent state map (HAMT-backed via `im`). Replaces the per-cursor
-/// `Arc<FxHashSet<PackedDispatchConfig>>` visited sets + per-cursor
-/// recovery_deltas/scope_marks/lex_fork_path Vecs with walker-global
-/// im::OrdSet / im::HashMap indexed by CursorId. Lineage chain via
-/// `parent_of_inheritance` resolves Fork inheritance in O(Fork-depth ×
-/// log32 N) without sweeping the visited set at Fork. Substage 1 is
-/// dead code; Substage 2 introduces mirror-write feature gate.
-pub mod cursor_store;
-/// Phase F.13 chain_10000 Exp 15 Substage 1 (2026-05-27): CPS
-/// `Continuation<W>` enum + FIFO `ContinuationQueue` for the planned
-/// trampolined walker rewrite. Substage 1 is dead code; Substage 5
-/// wires the queue into `step_fanout`.
-pub mod cps_walker;
-/// Phase F.13 chain_10000 Lazy redesign L1 (2026-05-27):
-/// `BranchCursorThunk<W>` enum — the lazy-evaluation kernel of the
-/// weight-keyed priority queue walker. Fork-arm emits one thunk per
-/// alternative (~48 B vs ~3 KB materialized BranchCursor). The min-
-/// heap pops thunks in lex-min weight order and forces them via
-/// `force()` which reconstructs a `BranchCursor` from the parent's
-/// CursorStore entry + the thunk's deltas. Deferred thunks (never
-/// popped because the lex-min head resolves first) cost zero
-/// `BranchCursor` allocations. L1 ships ONLY the enum + force() +
-/// size_of asserts as dead code; L2 wires it into the Push arm.
-/// See `prattail/docs/design/plans/lazy-weight-guided-walker.md`.
-pub mod lazy_thunk;
-/// Phase F.13 Task #117 (2026-05-23): recovery-dispatch cohort cache.
-/// Synchronous analogue of `dispatch_cohort` for the
-/// `emit_recovery_fork` path — shares the WFST-produced
-/// `Vec<ForkBranch<W>>` across cohort members that hit the same
-/// `(pos, state_cat_src_idx, cur_bp)` recovery dead-end.
-pub mod recovery_cohort;
+/// Phase F.13 walker statistics counters (gated by `walker-stats` feature).
+pub mod walker_stats;
 // Stage 10.6 (2026-05-05): `pub mod trampoline` DELETED (file deleted, 7,351 LoC).
 // The Walker (WPDS) is the surviving parser backend. All recovery infrastructure
 // (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>, RUNNING_WEIGHT_<CAT>,
@@ -452,9 +435,9 @@ pub mod cegar;
 pub mod repair;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 pub mod test_generators;
+#[cfg(test)]
+mod tests;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -669,10 +652,7 @@ pub enum SyncConstraintSpec {
         boundary_pattern: String,
     },
     /// Track `auxiliary` stream positions relative to `primary` stream.
-    Track {
-        auxiliary: String,
-        primary: String,
-    },
+    Track { auxiliary: String, primary: String },
 }
 
 /// Specification for a tree structural invariant.
@@ -951,9 +931,7 @@ pub enum SyntaxItemSpec {
     /// Structured body pattern: multiple items forming one logical element.
     /// When inside Sep, represents the template for each iteration.
     /// When standalone, equivalent to an inline sequence of items.
-    Map {
-        body_items: Vec<SyntaxItemSpec>,
-    },
+    Map { body_items: Vec<SyntaxItemSpec> },
     /// Parallel dual-accumulator collection. Each iteration of the body
     /// produces values for both left and right accumulators in lockstep.
     /// The body is typically a Map whose items reference the accumulator
@@ -1146,8 +1124,8 @@ impl RuleSpec {
 }
 
 // Re-exports for generated code and external use
-pub use recovery::{RecoveryConfig, ParseSimulator, SimulationResult};
-pub use lint::{LintDiagnostic, LintSeverity, LintContext};
+pub use lint::{LintContext, LintDiagnostic, LintSeverity};
+pub use recovery::{ParseSimulator, RecoveryConfig, SimulationResult};
 
 // ── Refinement Type Specifications (unconditional — used by LanguageSpec) ────
 

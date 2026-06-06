@@ -209,7 +209,7 @@ impl fmt::Display for IntervalPred {
                     write!(f, "[{}, {})", lo, hi)?;
                 }
                 write!(f, ")")
-            }
+            },
             IntervalPred::Not(inner) => write!(f, "~{}", inner),
         }
     }
@@ -256,7 +256,7 @@ impl IntervalAlgebra {
                 } else {
                     vec![]
                 }
-            }
+            },
             IntervalPred::Union(ranges) => {
                 // Clip and merge ranges into canonical form.
                 let mut clipped: Vec<(i64, i64)> = ranges
@@ -273,11 +273,11 @@ impl IntervalAlgebra {
                     .collect();
                 clipped.sort_unstable();
                 merge_ranges(&clipped)
-            }
+            },
             IntervalPred::Not(inner) => {
                 let inner_ranges = self.normalize(inner);
                 complement_ranges(&inner_ranges, self.min_val, self.max_val)
-            }
+            },
         }
     }
 
@@ -443,7 +443,7 @@ impl fmt::Display for CharClassPred {
                 } else {
                     write!(f, "[{}-{}]", lo.escape_debug(), hi.escape_debug())
                 }
-            }
+            },
             CharClassPred::Union(ranges) => {
                 write!(f, "[")?;
                 for (i, (lo, hi)) in ranges.iter().enumerate() {
@@ -457,7 +457,7 @@ impl fmt::Display for CharClassPred {
                     }
                 }
                 write!(f, "]")
-            }
+            },
             CharClassPred::Not(inner) => write!(f, "~{}", inner),
         }
     }
@@ -490,7 +490,7 @@ impl CharClassAlgebra {
                 } else {
                     vec![]
                 }
-            }
+            },
             CharClassPred::Union(ranges) => {
                 let mut u32_ranges: Vec<(u32, u32)> = ranges
                     .iter()
@@ -504,11 +504,11 @@ impl CharClassAlgebra {
                     .collect();
                 u32_ranges.sort_unstable();
                 merge_u32_ranges(&u32_ranges)
-            }
+            },
             CharClassPred::Not(inner) => {
                 let inner_ranges = Self::normalize_u32(inner);
                 complement_u32_ranges(&inner_ranges, 0, (char::MAX as u32) + 1)
-            }
+            },
         }
     }
 
@@ -746,9 +746,7 @@ impl BooleanAlgebra for KatBooleanAlgebra {
 
     fn is_satisfiable(&self, a: &BooleanTest) -> bool {
         // Exhaustive search over 2^n truth assignments.
-        self.all_valuations()
-            .iter()
-            .any(|v| eval_test_public(a, v))
+        self.all_valuations().iter().any(|v| eval_test_public(a, v))
     }
 
     fn witness(&self, a: &BooleanTest) -> Option<HashMap<String, bool>> {
@@ -832,11 +830,7 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
     /// Add a state and return its ID.
     pub fn add_state(&mut self, is_accepting: bool, label: Option<String>) -> usize {
         let id = self.states.len();
-        self.states.push(SymbolicState {
-            id,
-            is_accepting,
-            label,
-        });
+        self.states.push(SymbolicState { id, is_accepting, label });
         if is_accepting {
             self.accepting_states.insert(id);
         }
@@ -863,7 +857,8 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
             to,
             self.states.len(),
         );
-        self.transitions.push(SymbolicTransition { from, to, guard });
+        self.transitions
+            .push(SymbolicTransition { from, to, guard });
     }
 
     /// Get the number of states.
@@ -1191,11 +1186,10 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
             return result;
         }
 
-        let is_accepting = initial_set.iter().any(|s| self.accepting_states.contains(s));
-        let dfa_id = result.add_state(
-            is_accepting,
-            Some(format!("{:?}", initial_set)),
-        );
+        let is_accepting = initial_set
+            .iter()
+            .any(|s| self.accepting_states.contains(s));
+        let dfa_id = result.add_state(is_accepting, Some(format!("{:?}", initial_set)));
         result.set_initial(dfa_id);
         state_map.insert(initial_set.clone(), dfa_id);
         worklist.push_back(initial_set);
@@ -1252,10 +1246,7 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
                     let is_acc = successor_set
                         .iter()
                         .any(|s| self.accepting_states.contains(s));
-                    let new_id = result.add_state(
-                        is_acc,
-                        Some(format!("{:?}", successor_set)),
-                    );
+                    let new_id = result.add_state(is_acc, Some(format!("{:?}", successor_set)));
                     state_map.insert(successor_set.clone(), new_id);
                     worklist.push_back(successor_set);
                     new_id
@@ -1307,10 +1298,7 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
 
         // Check satisfiability of each guard.
         for (i, trans) in self.transitions.iter().enumerate() {
-            let desc = format!(
-                "q{} --[{:?}]--> q{}",
-                trans.from, trans.guard, trans.to,
-            );
+            let desc = format!("q{} --[{:?}]--> q{}", trans.from, trans.guard, trans.to,);
             let sat = self.algebra.is_satisfiable(&trans.guard);
             guard_satisfiability.push((desc.clone(), sat));
 
@@ -1354,15 +1342,16 @@ impl<A: BooleanAlgebra> SymbolicAutomaton<A> {
 
 impl<A: BooleanAlgebra> fmt::Display for SymbolicAutomaton<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SymbolicAutomaton ({} states, {} transitions)", self.states.len(), self.transitions.len())?;
+        writeln!(
+            f,
+            "SymbolicAutomaton ({} states, {} transitions)",
+            self.states.len(),
+            self.transitions.len()
+        )?;
         writeln!(f, "  Initial: {:?}", self.initial_states)?;
         writeln!(f, "  Accepting: {:?}", self.accepting_states)?;
         for trans in &self.transitions {
-            writeln!(
-                f,
-                "  q{} --[{:?}]--> q{}",
-                trans.from, trans.guard, trans.to,
-            )?;
+            writeln!(f, "  q{} --[{:?}]--> q{}", trans.from, trans.guard, trans.to,)?;
         }
         Ok(())
     }
@@ -1394,7 +1383,10 @@ impl<A: BooleanAlgebra> fmt::Display for SymbolicAutomaton<A> {
 ///
 /// Worst case O(2^k) minterms for k predicates, but in practice many
 /// conjunctions are unsatisfiable and are pruned.
-fn compute_minterms<A: BooleanAlgebra>(algebra: &A, predicates: &[A::Predicate]) -> Vec<A::Predicate> {
+fn compute_minterms<A: BooleanAlgebra>(
+    algebra: &A,
+    predicates: &[A::Predicate],
+) -> Vec<A::Predicate> {
     // Deduplicate predicates.
     let unique_preds: Vec<&A::Predicate> = {
         let mut seen = HashSet::new();
@@ -1571,22 +1563,22 @@ impl fmt::Display for PredicateExpr {
             PredicateExpr::Or(a, b) => write!(f, "({} \\/ {})", a, b),
             PredicateExpr::ForallFinite { var, domain, body } => {
                 write!(f, "forall {} in {:?}. {}", var, domain, body)
-            }
+            },
             PredicateExpr::ExistsFinite { var, domain, body } => {
                 write!(f, "exists {} in {:?}. {}", var, domain, body)
-            }
+            },
             PredicateExpr::ForallInfinite { var, body } => {
                 write!(f, "forall {}. {}", var, body)
-            }
+            },
             PredicateExpr::ExistsInfinite { var, body } => {
                 write!(f, "exists {}. {}", var, body)
-            }
+            },
             PredicateExpr::Relation { name, args } => {
                 write!(f, "{}({})", name, args.join(", "))
-            }
+            },
             PredicateExpr::Bounded { body, bound } => {
                 write!(f, "bounded({}, {})", body, bound)
-            }
+            },
         }
     }
 }
@@ -1624,7 +1616,7 @@ fn classify_decidability_inner(expr: &PredicateExpr, in_bounded: bool) -> Decida
     match expr {
         PredicateExpr::True | PredicateExpr::False | PredicateExpr::Atom(_) => {
             DecidabilityTier::CompileTimeDecidable
-        }
+        },
 
         PredicateExpr::Not(inner) => classify_decidability_inner(inner, in_bounded),
 
@@ -1632,16 +1624,15 @@ fn classify_decidability_inner(expr: &PredicateExpr, in_bounded: bool) -> Decida
             let ta = classify_decidability_inner(a, in_bounded);
             let tb = classify_decidability_inner(b, in_bounded);
             ta.max(tb)
-        }
+        },
 
         PredicateExpr::ForallFinite { body, .. } | PredicateExpr::ExistsFinite { body, .. } => {
             // Finite-domain quantification is at most T1 from the quantifier itself.
             // But the body may push it higher.
             classify_decidability_inner(body, in_bounded)
-        }
+        },
 
-        PredicateExpr::ForallInfinite { body, .. }
-        | PredicateExpr::ExistsInfinite { body, .. } => {
+        PredicateExpr::ForallInfinite { body, .. } | PredicateExpr::ExistsInfinite { body, .. } => {
             if in_bounded {
                 // Inside a Bounded wrapper → T3 from the quantifier.
                 let body_tier = classify_decidability_inner(body, in_bounded);
@@ -1650,14 +1641,14 @@ fn classify_decidability_inner(expr: &PredicateExpr, in_bounded: bool) -> Decida
                 // Unbounded infinite quantification → T4.
                 DecidabilityTier::Undecidable
             }
-        }
+        },
 
         PredicateExpr::Relation { .. } => DecidabilityTier::RuntimeDecidable,
 
         PredicateExpr::Bounded { body, .. } => {
             // The Bounded wrapper enables semi-decidability for infinite quantifiers.
             classify_decidability_inner(body, true)
-        }
+        },
     }
 }
 
@@ -1693,7 +1684,11 @@ pub struct SymbolicAnalysis {
 
 impl fmt::Display for SymbolicAnalysis {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "SymbolicAnalysis: {} states, {} transitions", self.num_states, self.num_transitions)?;
+        writeln!(
+            f,
+            "SymbolicAnalysis: {} states, {} transitions",
+            self.num_states, self.num_transitions
+        )?;
         writeln!(f, "  Guard satisfiability:")?;
         for (desc, sat) in &self.guard_satisfiability {
             writeln!(f, "    {} : {}", desc, if *sat { "SAT" } else { "UNSAT" })?;
@@ -1722,23 +1717,23 @@ fn collect_leading_terminals(item: &crate::SyntaxItemSpec, out: &mut HashSet<Str
     match item {
         crate::SyntaxItemSpec::Terminal(t) => {
             out.insert(t.clone());
-        }
+        },
         crate::SyntaxItemSpec::Optional { inner } => {
             if let Some(first) = inner.first() {
                 collect_leading_terminals(first, out);
             }
-        }
+        },
         crate::SyntaxItemSpec::Map { body_items } => {
             if let Some(first) = body_items.first() {
                 collect_leading_terminals(first, out);
             }
-        }
+        },
         crate::SyntaxItemSpec::Sep { body, .. } => {
             collect_leading_terminals(body, out);
-        }
+        },
         // NonTerminal, IdentCapture, Binder, Collection, Zip, BinderCollection
         // don't contribute concrete terminal tokens to the guard.
-        _ => {}
+        _ => {},
     }
 }
 
@@ -1792,10 +1787,7 @@ pub fn analyze_from_bundle(
                 )
             });
             let is_empty_rule = items.is_empty();
-            (
-                qualified.clone(),
-                has_terminal || has_nonterminal_start || is_empty_rule,
-            )
+            (qualified.clone(), has_terminal || has_nonterminal_start || is_empty_rule)
         })
         .collect();
 
@@ -1923,17 +1915,17 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> std::hash::Hash for ProductPred<A, B>
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            ProductPred::True | ProductPred::False => {}
+            ProductPred::True | ProductPred::False => {},
             ProductPred::Both(a, b) => {
                 a.hash(state);
                 b.hash(state);
-            }
+            },
             ProductPred::LeftOnly(a) => a.hash(state),
             ProductPred::RightOnly(b) => b.hash(state),
             ProductPred::And(l, r) | ProductPred::Or(l, r) => {
                 l.hash(state);
                 r.hash(state);
-            }
+            },
             ProductPred::Not(inner) => inner.hash(state),
         }
     }
@@ -1993,7 +1985,7 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> ProductAlgebra<A, B> {
         match pred {
             ProductPred::True => {
                 vec![(self.left.true_pred(), self.right.true_pred())]
-            }
+            },
             ProductPred::False => vec![],
             ProductPred::Both(a, b) => vec![(a.clone(), b.clone())],
             ProductPred::LeftOnly(a) => vec![(a.clone(), self.right.true_pred())],
@@ -2010,13 +2002,13 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> ProductAlgebra<A, B> {
                     }
                 }
                 result
-            }
+            },
             ProductPred::Or(l, r) => {
                 let mut l_dnf = self.to_dnf(l);
                 let r_dnf = self.to_dnf(r);
                 l_dnf.extend(r_dnf);
                 l_dnf
-            }
+            },
             ProductPred::Not(inner) => {
                 // ¬P: push negation down to atoms using De Morgan's laws.
                 // ¬(A ∧ B) = ¬A ∨ ¬B
@@ -2027,7 +2019,7 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> ProductAlgebra<A, B> {
                 // ¬RightOnly(b) = RightOnly(¬b) (left was True, remains True)
                 let negated = self.negate_pred(inner);
                 self.to_dnf(&negated)
-            }
+            },
         }
     }
 
@@ -2042,23 +2034,17 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> ProductAlgebra<A, B> {
                     Box::new(ProductPred::LeftOnly(self.left.not(a))),
                     Box::new(ProductPred::RightOnly(self.right.not(b))),
                 )
-            }
+            },
             ProductPred::LeftOnly(a) => ProductPred::LeftOnly(self.left.not(a)),
             ProductPred::RightOnly(b) => ProductPred::RightOnly(self.right.not(b)),
             ProductPred::And(l, r) => {
                 // ¬(L ∧ R) = ¬L ∨ ¬R
-                ProductPred::Or(
-                    Box::new(self.negate_pred(l)),
-                    Box::new(self.negate_pred(r)),
-                )
-            }
+                ProductPred::Or(Box::new(self.negate_pred(l)), Box::new(self.negate_pred(r)))
+            },
             ProductPred::Or(l, r) => {
                 // ¬(L ∨ R) = ¬L ∧ ¬R
-                ProductPred::And(
-                    Box::new(self.negate_pred(l)),
-                    Box::new(self.negate_pred(r)),
-                )
-            }
+                ProductPred::And(Box::new(self.negate_pred(l)), Box::new(self.negate_pred(r)))
+            },
             ProductPred::Not(inner) => (**inner).clone(), // Double negation
         }
     }
@@ -2116,9 +2102,8 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> BooleanAlgebra for ProductAlgebra<A, 
         // A disjunct (left, right) is satisfiable iff both components are.
         // The overall predicate is satisfiable iff any disjunct is.
         let dnf = self.to_dnf(pred);
-        dnf.iter().any(|(l, r)| {
-            self.left.is_satisfiable(l) && self.right.is_satisfiable(r)
-        })
+        dnf.iter()
+            .any(|(l, r)| self.left.is_satisfiable(l) && self.right.is_satisfiable(r))
     }
 
     fn witness(&self, pred: &ProductPred<A, B>) -> Option<ProductDomain<A, B>> {
@@ -2137,7 +2122,7 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> BooleanAlgebra for ProductAlgebra<A, 
             ProductPred::False => false,
             ProductPred::Both(a, b) => {
                 self.left.evaluate(a, &elem.0) && self.right.evaluate(b, &elem.1)
-            }
+            },
             ProductPred::LeftOnly(a) => self.left.evaluate(a, &elem.0),
             ProductPred::RightOnly(b) => self.right.evaluate(b, &elem.1),
             ProductPred::And(l, r) => self.evaluate(l, elem) && self.evaluate(r, elem),
@@ -2193,10 +2178,7 @@ mod tests {
     fn interval_and() {
         let alg = IntervalAlgebra::new(0, 100);
         // [10, 30) AND [20, 40) = [20, 30)
-        let result = alg.and(
-            &IntervalPred::Range(10, 30),
-            &IntervalPred::Range(20, 40),
-        );
+        let result = alg.and(&IntervalPred::Range(10, 30), &IntervalPred::Range(20, 40));
         assert!(alg.is_satisfiable(&result));
         assert!(alg.evaluate(&result, &25));
         assert!(!alg.evaluate(&result, &10));
@@ -2207,10 +2189,7 @@ mod tests {
     fn interval_or() {
         let alg = IntervalAlgebra::new(0, 100);
         // [10, 20) OR [30, 40) — disjoint union.
-        let result = alg.or(
-            &IntervalPred::Range(10, 20),
-            &IntervalPred::Range(30, 40),
-        );
+        let result = alg.or(&IntervalPred::Range(10, 20), &IntervalPred::Range(30, 40));
         assert!(alg.evaluate(&result, &15));
         assert!(alg.evaluate(&result, &35));
         assert!(!alg.evaluate(&result, &25));
@@ -2230,43 +2209,25 @@ mod tests {
     fn interval_overlaps() {
         let alg = IntervalAlgebra::new(0, 100);
         // [10, 30) and [20, 40) overlap.
-        assert!(alg.overlaps(
-            &IntervalPred::Range(10, 30),
-            &IntervalPred::Range(20, 40),
-        ));
+        assert!(alg.overlaps(&IntervalPred::Range(10, 30), &IntervalPred::Range(20, 40),));
         // [10, 20) and [30, 40) do not overlap.
-        assert!(!alg.overlaps(
-            &IntervalPred::Range(10, 20),
-            &IntervalPred::Range(30, 40),
-        ));
+        assert!(!alg.overlaps(&IntervalPred::Range(10, 20), &IntervalPred::Range(30, 40),));
     }
 
     #[test]
     fn interval_implies() {
         let alg = IntervalAlgebra::new(0, 100);
         // [15, 25) implies [10, 30) (subset).
-        assert!(alg.implies(
-            &IntervalPred::Range(15, 25),
-            &IntervalPred::Range(10, 30),
-        ));
+        assert!(alg.implies(&IntervalPred::Range(15, 25), &IntervalPred::Range(10, 30),));
         // [10, 30) does NOT imply [15, 25).
-        assert!(!alg.implies(
-            &IntervalPred::Range(10, 30),
-            &IntervalPred::Range(15, 25),
-        ));
+        assert!(!alg.implies(&IntervalPred::Range(10, 30), &IntervalPred::Range(15, 25),));
     }
 
     #[test]
     fn interval_equivalent() {
         let alg = IntervalAlgebra::new(0, 100);
-        assert!(alg.equivalent(
-            &IntervalPred::Range(10, 20),
-            &IntervalPred::Range(10, 20),
-        ));
-        assert!(!alg.equivalent(
-            &IntervalPred::Range(10, 20),
-            &IntervalPred::Range(10, 25),
-        ));
+        assert!(alg.equivalent(&IntervalPred::Range(10, 20), &IntervalPred::Range(10, 20),));
+        assert!(!alg.equivalent(&IntervalPred::Range(10, 20), &IntervalPred::Range(10, 25),));
     }
 
     #[test]
@@ -2309,10 +2270,7 @@ mod tests {
     fn charclass_union() {
         let alg = CharClassAlgebra::new();
         // [a-z] OR [0-9]
-        let result = alg.or(
-            &CharClassPred::Range('a', 'z'),
-            &CharClassPred::Range('0', '9'),
-        );
+        let result = alg.or(&CharClassPred::Range('a', 'z'), &CharClassPred::Range('0', '9'));
         assert!(alg.evaluate(&result, &'m'));
         assert!(alg.evaluate(&result, &'5'));
         assert!(!alg.evaluate(&result, &'!'));
@@ -2332,10 +2290,7 @@ mod tests {
     fn charclass_intersection() {
         let alg = CharClassAlgebra::new();
         // [a-m] AND [h-z] = [h-m]
-        let result = alg.and(
-            &CharClassPred::Range('a', 'm'),
-            &CharClassPred::Range('h', 'z'),
-        );
+        let result = alg.and(&CharClassPred::Range('a', 'm'), &CharClassPred::Range('h', 'z'));
         assert!(alg.evaluate(&result, &'h'));
         assert!(alg.evaluate(&result, &'m'));
         assert!(!alg.evaluate(&result, &'a'));
@@ -2519,8 +2474,8 @@ mod tests {
         let inter = sfa1.intersect(&sfa2);
         // Intersection should accept [25, 50).
         assert!(inter.accepts(&[30]));
-        assert!(!inter.accepts(&[10]));  // in SFA1 but not SFA2
-        assert!(!inter.accepts(&[60]));  // in SFA2 but not SFA1
+        assert!(!inter.accepts(&[10])); // in SFA1 but not SFA2
+        assert!(!inter.accepts(&[60])); // in SFA2 but not SFA1
     }
 
     #[test]
@@ -2589,12 +2544,7 @@ mod tests {
 
         // Both should accept the same inputs.
         for val in [5, 15, 30, 45, 60, 70, 80, 90] {
-            assert_eq!(
-                sfa.accepts(&[val]),
-                det.accepts(&[val]),
-                "Mismatch at input [{}]",
-                val,
-            );
+            assert_eq!(sfa.accepts(&[val]), det.accepts(&[val]), "Mismatch at input [{}]", val,);
         }
     }
 
@@ -2658,7 +2608,7 @@ mod tests {
         assert_eq!(analysis.num_states, 2);
         assert_eq!(analysis.num_transitions, 2);
         assert_eq!(analysis.guard_satisfiability.len(), 2);
-        assert!(analysis.guard_satisfiability[0].1);  // [10, 20) is SAT
+        assert!(analysis.guard_satisfiability[0].1); // [10, 20) is SAT
         assert!(!analysis.guard_satisfiability[1].1); // [200, 300) is UNSAT
     }
 
@@ -2777,10 +2727,7 @@ mod tests {
             format!("{}", DecidabilityTier::CompileTimeDecidable),
             "T1 (compile-time decidable)",
         );
-        assert_eq!(
-            format!("{}", DecidabilityTier::Undecidable),
-            "T4 (undecidable)",
-        );
+        assert_eq!(format!("{}", DecidabilityTier::Undecidable), "T4 (undecidable)",);
     }
 
     #[test]
@@ -2800,10 +2747,7 @@ mod tests {
         let analysis = SymbolicAnalysis {
             num_states: 3,
             num_transitions: 2,
-            guard_satisfiability: vec![
-                ("guard1".to_string(), true),
-                ("guard2".to_string(), false),
-            ],
+            guard_satisfiability: vec![("guard1".to_string(), true), ("guard2".to_string(), false)],
             overlapping_guards: vec![],
             subsumed_guards: vec![],
             unsatisfiable_rule_labels: vec!["guard2".to_string()],
@@ -2850,10 +2794,7 @@ mod tests {
     #[test]
     fn minterms_two_overlapping_predicates() {
         let alg = IntervalAlgebra::new(0, 100);
-        let preds = vec![
-            IntervalPred::Range(0, 50),
-            IntervalPred::Range(25, 75),
-        ];
+        let preds = vec![IntervalPred::Range(0, 50), IntervalPred::Range(25, 75)];
         let minterms = compute_minterms(&alg, &preds);
         // Expected minterms:
         // [0,25): in first, not in second
@@ -2865,11 +2806,7 @@ mod tests {
         // But [0,25) may not exist since the complement logic works differently.
         // We just verify all are satisfiable and they partition the universe.
         for m in &minterms {
-            assert!(
-                alg.is_satisfiable(m),
-                "Minterm {:?} should be satisfiable",
-                m,
-            );
+            assert!(alg.is_satisfiable(m), "Minterm {:?} should be satisfiable", m,);
         }
         // At least 3 minterms (the 3 non-empty regions).
         assert!(minterms.len() >= 3, "Expected >= 3 minterms, got {}", minterms.len());
@@ -2903,10 +2840,7 @@ mod tests {
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            result.overlapping_guards.is_empty(),
-            "different terminals should not overlap"
-        );
+        assert!(result.overlapping_guards.is_empty(), "different terminals should not overlap");
         assert!(result.unsatisfiable_rule_labels.is_empty());
         assert_eq!(result.guard_satisfiability.len(), 2);
         assert!(result.guard_satisfiability.iter().all(|(_, sat)| *sat));
@@ -2938,11 +2872,7 @@ mod tests {
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert_eq!(
-            result.overlapping_guards.len(),
-            1,
-            "same leading terminal should overlap"
-        );
+        assert_eq!(result.overlapping_guards.len(), 1, "same leading terminal should overlap");
     }
 
     #[test]
@@ -2979,10 +2909,7 @@ mod tests {
         let result = analyze_from_bundle(&all_syntax, &categories);
         // Both have guard {"if"}, so they overlap but neither subsumes the other (equal sets).
         assert!(!result.overlapping_guards.is_empty());
-        assert!(
-            result.subsumed_guards.is_empty(),
-            "equal sets are not subsumed"
-        );
+        assert!(result.subsumed_guards.is_empty(), "equal sets are not subsumed");
     }
 
     #[test]
@@ -3025,10 +2952,7 @@ mod tests {
         )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            result.guard_satisfiability[0].1,
-            "NonTerminal start should be satisfiable"
-        );
+        assert!(result.guard_satisfiability[0].1, "NonTerminal start should be satisfiable");
         assert!(result.unsatisfiable_rule_labels.is_empty());
     }
 
@@ -3093,10 +3017,7 @@ mod tests {
         )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            result.guard_satisfiability[0].1,
-            "Optional with terminal should be satisfiable"
-        );
+        assert!(result.guard_satisfiability[0].1, "Optional with terminal should be satisfiable");
     }
 
     #[test]
@@ -3125,10 +3046,7 @@ mod tests {
         )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            !result.guard_satisfiability[0].1,
-            "Zip start should be unsatisfiable"
-        );
+        assert!(!result.guard_satisfiability[0].1, "Zip start should be unsatisfiable");
         assert_eq!(result.unsatisfiable_rule_labels.len(), 1);
         assert_eq!(result.unsatisfiable_rule_labels[0], "Expr::ZipRule");
     }
@@ -3183,10 +3101,7 @@ mod tests {
             result.subsumed_guards.is_empty(),
             "disjoint single-terminal guards cannot be subsumed"
         );
-        assert!(
-            result.overlapping_guards.is_empty(),
-            "disjoint terminals should not overlap"
-        );
+        assert!(result.overlapping_guards.is_empty(), "disjoint terminals should not overlap");
     }
 
     #[test]
@@ -3201,17 +3116,10 @@ mod tests {
         }];
 
         // Empty rule (epsilon production) -> satisfiable.
-        let all_syntax = vec![(
-            "Epsilon".to_string(),
-            "Expr".to_string(),
-            vec![],
-        )];
+        let all_syntax = vec![("Epsilon".to_string(), "Expr".to_string(), vec![])];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            result.guard_satisfiability[0].1,
-            "empty rule (epsilon) should be satisfiable"
-        );
+        assert!(result.guard_satisfiability[0].1, "empty rule (epsilon) should be satisfiable");
     }
 
     #[test]
@@ -3229,16 +3137,11 @@ mod tests {
         let all_syntax = vec![(
             "Var".to_string(),
             "Expr".to_string(),
-            vec![crate::SyntaxItemSpec::IdentCapture {
-                param_name: "name".to_string(),
-            }],
+            vec![crate::SyntaxItemSpec::IdentCapture { param_name: "name".to_string() }],
         )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            result.guard_satisfiability[0].1,
-            "IdentCapture start should be satisfiable"
-        );
+        assert!(result.guard_satisfiability[0].1, "IdentCapture start should be satisfiable");
     }
 
     #[test]
@@ -3264,10 +3167,7 @@ mod tests {
         )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            result.guard_satisfiability[0].1,
-            "Binder start should be satisfiable"
-        );
+        assert!(result.guard_satisfiability[0].1, "Binder start should be satisfiable");
     }
 
     #[test]
@@ -3295,10 +3195,7 @@ mod tests {
         )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            result.guard_satisfiability[0].1,
-            "Collection start should be satisfiable"
-        );
+        assert!(result.guard_satisfiability[0].1, "Collection start should be satisfiable");
     }
 
     #[test]
@@ -3501,7 +3398,7 @@ mod tests {
         let product = ProductAlgebra::new(left, right);
 
         let pred = ProductPred::Both(
-            IntervalPred::Range(65, 91),   // ASCII codes for 'A'..'Z'+1
+            IntervalPred::Range(65, 91),    // ASCII codes for 'A'..'Z'+1
             CharClassPred::Range('a', 'z'), // lowercase letters
         );
         assert!(product.is_satisfiable(&pred));
@@ -3548,9 +3445,9 @@ mod tests {
 #[cfg(test)]
 mod proptest_tests {
     use super::*;
-    use proptest::prelude::*;
     use crate::test_generators::*;
     use crate::SyntaxItemSpec;
+    use proptest::prelude::*;
 
     /// Helper: extract the category prefix from a qualified label.
     ///
@@ -3783,24 +3680,15 @@ mod proptest_tests {
             native_type: None,
         }];
 
-        let all_syntax = vec![
-            (
-                "Epsilon".to_string(),
-                "Expr".to_string(),
-                vec![], // empty items — epsilon production
-            ),
-        ];
+        let all_syntax = vec![(
+            "Epsilon".to_string(),
+            "Expr".to_string(),
+            vec![], // empty items — epsilon production
+        )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert_eq!(
-            result.guard_satisfiability.len(),
-            1,
-            "should have exactly one guard entry",
-        );
-        assert!(
-            result.guard_satisfiability[0].1,
-            "empty rule (epsilon) should be satisfiable",
-        );
+        assert_eq!(result.guard_satisfiability.len(), 1, "should have exactly one guard entry",);
+        assert!(result.guard_satisfiability[0].1, "empty rule (epsilon) should be satisfiable",);
         assert!(
             result.unsatisfiable_rule_labels.is_empty(),
             "epsilon rule should not appear in unsatisfiable list",

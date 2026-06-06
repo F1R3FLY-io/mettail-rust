@@ -307,8 +307,7 @@ impl BindingPowerTable {
             let Some(o_s) = cat_src_idx(&other.result_category) else {
                 continue;
             };
-            let other_key =
-                (value_home_rank(&other.result_category), o_s, other.label.as_str());
+            let other_key = (value_home_rank(&other.result_category), o_s, other.label.as_str());
             // A strictly-lower (value_home_rank, src_idx, label) candidate
             // exists for this terminal ⇒ `op` is not canonical. Strict `<`
             // makes the self-comparison a no-op without an identity check.
@@ -421,10 +420,8 @@ impl BindingPowerTable {
             }
         }
 
-        let entry_tokens: Vec<TokenStream> = entries
-            .iter()
-            .map(|(l, r)| quote! { (#l, #r) })
-            .collect();
+        let entry_tokens: Vec<TokenStream> =
+            entries.iter().map(|(l, r)| quote! { (#l, #r) }).collect();
         let len_lit = array_len;
 
         quote! {
@@ -653,7 +650,12 @@ mod tests {
     use super::*;
 
     /// Helper to create an InfixRuleInfo with default flags (non-cross, non-postfix, non-mixfix).
-    fn make_rule(label: &str, terminal: &str, category: &str, assoc: Associativity) -> InfixRuleInfo {
+    fn make_rule(
+        label: &str,
+        terminal: &str,
+        category: &str,
+        assoc: Associativity,
+    ) -> InfixRuleInfo {
         InfixRuleInfo {
             label: label.to_string(),
             terminal: terminal.to_string(),
@@ -714,10 +716,42 @@ mod tests {
         // cross-cat projection at a worse tier). The value-home key selects
         // Int; the OLD lowest-src_idx-only rule wrongly selected AddBigRat.
         let mut table = BindingPowerTable::new();
-        table.operators.push(make_op("AddBigRat", "+", "BigRat", "BigRat", 2, 3, false, false, false));
-        table.operators.push(make_op("AddInt", "+", "Int", "Int", 2, 3, false, false, false));
-        table.operators.push(make_op("AddUInt32", "+", "UInt32", "UInt32", 2, 3, false, false, false));
-        table.operators.push(make_op("AddBigInt", "+", "BigInt", "BigInt", 2, 3, false, false, false));
+        table.operators.push(make_op(
+            "AddBigRat",
+            "+",
+            "BigRat",
+            "BigRat",
+            2,
+            3,
+            false,
+            false,
+            false,
+        ));
+        table
+            .operators
+            .push(make_op("AddInt", "+", "Int", "Int", 2, 3, false, false, false));
+        table.operators.push(make_op(
+            "AddUInt32",
+            "+",
+            "UInt32",
+            "UInt32",
+            2,
+            3,
+            false,
+            false,
+            false,
+        ));
+        table.operators.push(make_op(
+            "AddBigInt",
+            "+",
+            "BigInt",
+            "BigInt",
+            2,
+            3,
+            false,
+            false,
+            false,
+        ));
         let src = |n: &str| -> Option<u16> {
             match n {
                 "BigRat" => Some(1),
@@ -759,8 +793,12 @@ mod tests {
         // `^` shared across Int(src 2, integer-home) and Float(5, not). Right-
         // assoc (left_bp > right_bp). Int is the winner (only integer-home).
         let mut table = BindingPowerTable::new();
-        table.operators.push(make_op("PowInt", "^", "Int", "Int", 27, 26, false, false, false));
-        table.operators.push(make_op("PowFloat", "^", "Float", "Float", 27, 26, false, false, false));
+        table
+            .operators
+            .push(make_op("PowInt", "^", "Int", "Int", 27, 26, false, false, false));
+        table
+            .operators
+            .push(make_op("PowFloat", "^", "Float", "Float", 27, 26, false, false, false));
         let src = |n: &str| -> Option<u16> {
             match n {
                 "Int" => Some(2),
@@ -768,7 +806,13 @@ mod tests {
                 _ => None,
             }
         };
-        let home = |n: &str| -> u8 { if n == "Int" { 0 } else { 1 } };
+        let home = |n: &str| -> u8 {
+            if n == "Int" {
+                0
+            } else {
+                1
+            }
+        };
         let by_label = |lbl: &str| table.operators.iter().find(|o| o.label == lbl).unwrap();
         assert!(
             table.is_canonical_iter_op(by_label("PowInt"), &src, &home),
@@ -785,8 +829,16 @@ mod tests {
         // A terminal owned by a single (non-integer-home) category is
         // trivially canonical despite the rank-1 penalty — uniqueness wins.
         let mut table = BindingPowerTable::new();
-        table.operators.push(make_op("EPar", "|", "Expr", "Expr", 2, 3, false, false, false));
-        let src = |n: &str| -> Option<u16> { if n == "Expr" { Some(4) } else { None } };
+        table
+            .operators
+            .push(make_op("EPar", "|", "Expr", "Expr", 2, 3, false, false, false));
+        let src = |n: &str| -> Option<u16> {
+            if n == "Expr" {
+                Some(4)
+            } else {
+                None
+            }
+        };
         let home = |_: &str| -> u8 { 1 };
         let by_label = |lbl: &str| table.operators.iter().find(|o| o.label == lbl).unwrap();
         assert!(
@@ -799,9 +851,15 @@ mod tests {
     fn test_operators_for_category_filter() {
         let mut table = BindingPowerTable::new();
         // Two Int operators, one Bool operator
-        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
-        table.operators.push(make_op("Mul", "*", "Int", "Int", 4, 5, false, false, false));
-        table.operators.push(make_op("And", "&&", "Bool", "Bool", 2, 3, false, false, false));
+        table
+            .operators
+            .push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        table
+            .operators
+            .push(make_op("Mul", "*", "Int", "Int", 4, 5, false, false, false));
+        table
+            .operators
+            .push(make_op("And", "&&", "Bool", "Bool", 2, 3, false, false, false));
 
         let int_ops = table.operators_for_category("Int");
         assert_eq!(int_ops.len(), 2, "should return only Int operators");
@@ -819,9 +877,15 @@ mod tests {
     #[test]
     fn test_postfix_operators_for_category() {
         let mut table = BindingPowerTable::new();
-        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
-        table.operators.push(make_op("Fact", "!", "Int", "Int", 10, 0, false, true, false));
-        table.operators.push(make_op("Incr", "++", "Int", "Int", 12, 0, false, true, false));
+        table
+            .operators
+            .push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        table
+            .operators
+            .push(make_op("Fact", "!", "Int", "Int", 10, 0, false, true, false));
+        table
+            .operators
+            .push(make_op("Incr", "++", "Int", "Int", 12, 0, false, true, false));
 
         let postfix = table.postfix_operators_for_category("Int");
         assert_eq!(postfix.len(), 2, "should return only postfix operators");
@@ -832,7 +896,9 @@ mod tests {
     #[test]
     fn test_mixfix_operators_for_category() {
         let mut table = BindingPowerTable::new();
-        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        table
+            .operators
+            .push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
         let mut ternary = make_op("Ternary", "?", "Int", "Int", 2, 3, false, false, true);
         ternary.mixfix_parts = vec![
             MixfixPart {
@@ -860,11 +926,17 @@ mod tests {
     fn test_cross_category_operators() {
         let mut table = BindingPowerTable::new();
         // Regular same-category op
-        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        table
+            .operators
+            .push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
         // Cross-category: Int == Int -> Bool
-        table.operators.push(make_op("Eq", "==", "Int", "Bool", 2, 3, true, false, false));
+        table
+            .operators
+            .push(make_op("Eq", "==", "Int", "Bool", 2, 3, true, false, false));
         // Cross-category: Int < Int -> Bool
-        table.operators.push(make_op("Lt", "<", "Int", "Bool", 2, 3, true, false, false));
+        table
+            .operators
+            .push(make_op("Lt", "<", "Int", "Bool", 2, 3, true, false, false));
 
         let cross = table.cross_category_operators("Bool");
         assert_eq!(cross.len(), 2, "should return cross-cat ops producing Bool");
@@ -888,7 +960,9 @@ mod tests {
             assert!(
                 op.left_bp < op.right_bp,
                 "left-assoc operator {} should have left_bp({}) < right_bp({})",
-                op.label, op.left_bp, op.right_bp
+                op.label,
+                op.left_bp,
+                op.right_bp
             );
         }
     }
@@ -906,7 +980,9 @@ mod tests {
             assert!(
                 op.left_bp > op.right_bp,
                 "right-assoc operator {} should have left_bp({}) > right_bp({})",
-                op.label, op.left_bp, op.right_bp
+                op.label,
+                op.left_bp,
+                op.right_bp
             );
         }
     }
@@ -920,19 +996,29 @@ mod tests {
         ];
         let table = analyze_binding_powers(&rules);
 
-        let add = table.operators.iter().find(|op| op.label == "Add").expect("Add not found");
-        let mul = table.operators.iter().find(|op| op.label == "Mul").expect("Mul not found");
+        let add = table
+            .operators
+            .iter()
+            .find(|op| op.label == "Add")
+            .expect("Add not found");
+        let mul = table
+            .operators
+            .iter()
+            .find(|op| op.label == "Mul")
+            .expect("Mul not found");
 
         // Mul should have strictly higher binding powers than Add
         assert!(
             mul.left_bp > add.left_bp,
             "Mul.left_bp({}) should be > Add.left_bp({})",
-            mul.left_bp, add.left_bp
+            mul.left_bp,
+            add.left_bp
         );
         assert!(
             mul.right_bp > add.right_bp,
             "Mul.right_bp({}) should be > Add.right_bp({})",
-            mul.right_bp, add.right_bp
+            mul.right_bp,
+            add.right_bp
         );
     }
 
@@ -957,12 +1043,17 @@ mod tests {
             .max()
             .expect("should have infix operators");
 
-        let fact = table.operators.iter().find(|op| op.label == "Fact").expect("Fact not found");
+        let fact = table
+            .operators
+            .iter()
+            .find(|op| op.label == "Fact")
+            .expect("Fact not found");
         assert!(fact.is_postfix, "Fact should be postfix");
         assert!(
             fact.left_bp > max_infix_bp,
             "postfix left_bp({}) should be > max infix bp({})",
-            fact.left_bp, max_infix_bp
+            fact.left_bp,
+            max_infix_bp
         );
     }
 
@@ -1032,7 +1123,9 @@ mod tests {
             bp,
             7 + PREFIX_BP_OFFSET,
             "default prefix_bp should be max_infix_bp ({}) + PREFIX_BP_OFFSET ({}) = {}",
-            7, PREFIX_BP_OFFSET, 7 + PREFIX_BP_OFFSET,
+            7,
+            PREFIX_BP_OFFSET,
+            7 + PREFIX_BP_OFFSET,
         );
     }
 
@@ -1089,7 +1182,8 @@ mod tests {
         assert!(
             postfix_min > prefix,
             "postfix l_bp {} must exceed prefix_bp {} so `-x!` parses as `-(x!)`",
-            postfix_min, prefix,
+            postfix_min,
+            prefix,
         );
     }
 
@@ -1098,8 +1192,12 @@ mod tests {
         // Cross-cat operator with operand=Int, result=Bool should NOT contribute
         // to Bool's prefix_bp computation (it's filtered by operand category).
         let mut table = BindingPowerTable::new();
-        table.operators.push(make_op("Lt", "<", "Int", "Bool", 4, 5, true, false, false));
-        table.operators.push(make_op("And", "&&", "Bool", "Bool", 2, 3, false, false, false));
+        table
+            .operators
+            .push(make_op("Lt", "<", "Int", "Bool", 4, 5, true, false, false));
+        table
+            .operators
+            .push(make_op("And", "&&", "Bool", "Bool", 2, 3, false, false, false));
 
         // For Bool's prefix_bp: only `&&` (operand=Bool) contributes; `<` (operand=Int) is filtered.
         // max from Bool ops = 3, so prefix_bp = 3 + 2 = 5.

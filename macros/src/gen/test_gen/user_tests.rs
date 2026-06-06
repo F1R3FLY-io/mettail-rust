@@ -12,27 +12,12 @@ use mettail_ast::language::LanguageDef;
 /// Generate user-supplied tests for the language.
 ///
 /// Checks if the `LanguageDef` has a `tests` field. Since the spec change
-/// for `tests { }` blocks has not yet been approved, this currently generates
-/// no tests. The module exists as a forward-compatible placeholder that
-/// compiles unconditionally.
-///
-/// When the `tests` field is added to `LanguageDef`, this function will
-/// iterate over user-supplied test cases and generate corresponding
-/// `#[test]` functions.
+/// for `tests { }` blocks has not yet been approved, this emits an explanatory
+/// generated section and no `#[test]` functions.
 ///
 /// Returns a string of `#[test]` functions (currently empty).
 pub fn generate_user_tests(language: &LanguageDef) -> String {
     let lang_name = language.name.to_string();
-
-    // Forward-compatible: the LanguageDef struct does not yet have a `tests` field.
-    // When it is added, uncomment and implement the following:
-    //
-    // if let Some(tests) = &language.tests {
-    //     for test_case in tests {
-    //         // Generate #[test] fn for each user-supplied test case
-    //         // test_case.input → parse → eval → assert matches test_case.expected
-    //     }
-    // }
 
     let mut out = String::with_capacity(256);
 

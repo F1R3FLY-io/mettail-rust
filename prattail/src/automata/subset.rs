@@ -204,21 +204,17 @@ fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> ResolvedAccept {
     // Only populate alt_accepts when 2+ distinct token kinds
     let alt_accepts = if alts.len() >= 2 { alts } else { Vec::new() };
 
-    ResolvedAccept {
-        kind: Some(kind),
-        weight,
-        alt_accepts,
-    }
+    ResolvedAccept { kind: Some(kind), weight, alt_accepts }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::automata::nfa::{build_nfa, BuiltinNeeds};
-    use crate::LiteralPatterns;
     use crate::automata::partition::compute_equivalence_classes;
     use crate::automata::TerminalPattern;
     use crate::automata::TokenKind;
+    use crate::LiteralPatterns;
 
     #[test]
     fn test_subset_construction_simple() {
@@ -343,10 +339,7 @@ mod tests {
         let dfa_state = &dfa.states[state as usize];
 
         // Primary winner is Fixed("error") (higher priority)
-        assert_eq!(
-            dfa_state.accept,
-            Some(TokenKind::Fixed("error".to_string())),
-        );
+        assert_eq!(dfa_state.accept, Some(TokenKind::Fixed("error".to_string())),);
 
         // alt_accepts should contain both Fixed("error") and Ident
         assert!(
@@ -370,13 +363,11 @@ mod tests {
     #[test]
     fn test_unambiguous_states_have_empty_alt_accepts() {
         // Pure operators like "+" should NOT have alt_accepts
-        let terminals = vec![
-            TerminalPattern {
-                text: "+".to_string(),
-                kind: TokenKind::Fixed("+".to_string()),
-                is_keyword: false,
-            },
-        ];
+        let terminals = vec![TerminalPattern {
+            text: "+".to_string(),
+            kind: TokenKind::Fixed("+".to_string()),
+            is_keyword: false,
+        }];
         let needs = BuiltinNeeds {
             ident: true,
             integer: true,
@@ -399,10 +390,7 @@ mod tests {
 
         let dfa_state = &dfa.states[state as usize];
         assert_eq!(dfa_state.accept, Some(TokenKind::Fixed("+".to_string())));
-        assert!(
-            !dfa_state.is_ambiguous(),
-            "'+' should not be ambiguous"
-        );
+        assert!(!dfa_state.is_ambiguous(), "'+' should not be ambiguous");
         assert!(dfa_state.alt_accepts.is_empty());
     }
 

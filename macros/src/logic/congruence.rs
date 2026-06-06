@@ -13,11 +13,11 @@ use super::common::{
     count_nonterminals, generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter,
     PoolArm,
 };
+use crate::logic::bloom_filter::BloomFilter;
 use mettail_ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use mettail_ast::language::{LanguageDef, RewriteRule};
 use mettail_ast::pattern::{Pattern, PatternTerm};
 use mettail_ast::types::TypeExpr;
-use crate::logic::bloom_filter::BloomFilter;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -74,10 +74,8 @@ pub fn generate_all_explicit_congruences(
         let source_cat = format_ident!("{}", src_str);
         let field_cat = format_ident!("{}", fld_str);
         // Count distinct constructors in this group for diagnostics
-        let distinct_constructors: std::collections::BTreeSet<String> = entries
-            .iter()
-            .map(|e| e.constructor.to_string())
-            .collect();
+        let distinct_constructors: std::collections::BTreeSet<String> =
+            entries.iter().map(|e| e.constructor.to_string()).collect();
         art04_total_constructors += distinct_constructors.len();
         if let Some(rule) =
             generate_consolidated_simple_congruence(&source_cat, &field_cat, entries)
@@ -599,7 +597,8 @@ fn generate_consolidated_simple_congruence(
     // generated `matches!()` guard is exact (no false positives) since we
     // know the full set at compile time.
     let mut bloom = BloomFilter::new(by_constructor.len().max(1));
-    let participating_labels: Vec<&Ident> = by_constructor.values()
+    let participating_labels: Vec<&Ident> = by_constructor
+        .values()
         .map(|ctor_entries| &ctor_entries[0].1.constructor)
         .collect();
     for label in &participating_labels {
@@ -607,7 +606,9 @@ fn generate_consolidated_simple_congruence(
     }
     // Verify no false negatives (invariant check at codegen time)
     debug_assert!(
-        participating_labels.iter().all(|l| bloom.might_contain_str(&l.to_string())),
+        participating_labels
+            .iter()
+            .all(|l| bloom.might_contain_str(&l.to_string())),
         "A-RT04: bloom filter false negative detected for rewrite congruence constructors"
     );
 

@@ -74,22 +74,23 @@ impl FreeExpr {
                 FreeExpr::Zero | FreeExpr::One | FreeExpr::Gen(_) => {
                     result_stack.push(current.clone());
                     break;
-                }
+                },
                 FreeExpr::Plus(left, right) => {
                     stack.push(Frame::SimplifyPlus(right));
                     current = *left;
-                }
+                },
                 FreeExpr::Times(left, right) => {
                     stack.push(Frame::SimplifyTimes(right));
                     current = *left;
-                }
+                },
             }
         }
 
         while let Some(frame) = stack.pop() {
             match frame {
                 Frame::SimplifyPlus(right) => {
-                    let left_result = result_stack.pop()
+                    let left_result = result_stack
+                        .pop()
                         .expect("result_stack should have the left operand");
                     stack.push(Frame::AssemblePlus(left_result));
                     current = *right;
@@ -99,20 +100,21 @@ impl FreeExpr {
                             FreeExpr::Zero | FreeExpr::One | FreeExpr::Gen(_) => {
                                 result_stack.push(current.clone());
                                 break;
-                            }
+                            },
                             FreeExpr::Plus(l, r) => {
                                 stack.push(Frame::SimplifyPlus(r));
                                 current = *l;
-                            }
+                            },
                             FreeExpr::Times(l, r) => {
                                 stack.push(Frame::SimplifyTimes(r));
                                 current = *l;
-                            }
+                            },
                         }
                     }
-                }
+                },
                 Frame::SimplifyTimes(right) => {
-                    let left_result = result_stack.pop()
+                    let left_result = result_stack
+                        .pop()
                         .expect("result_stack should have the left operand");
                     stack.push(Frame::AssembleTimes(left_result));
                     current = *right;
@@ -121,20 +123,21 @@ impl FreeExpr {
                             FreeExpr::Zero | FreeExpr::One | FreeExpr::Gen(_) => {
                                 result_stack.push(current.clone());
                                 break;
-                            }
+                            },
                             FreeExpr::Plus(l, r) => {
                                 stack.push(Frame::SimplifyPlus(r));
                                 current = *l;
-                            }
+                            },
                             FreeExpr::Times(l, r) => {
                                 stack.push(Frame::SimplifyTimes(r));
                                 current = *l;
-                            }
+                            },
                         }
                     }
-                }
+                },
                 Frame::AssemblePlus(left) => {
-                    let right = result_stack.pop()
+                    let right = result_stack
+                        .pop()
                         .expect("result_stack should have the right operand");
                     let simplified = match (&left, &right) {
                         (FreeExpr::Zero, _) => right,
@@ -142,9 +145,10 @@ impl FreeExpr {
                         _ => FreeExpr::Plus(Box::new(left), Box::new(right)),
                     };
                     result_stack.push(simplified);
-                }
+                },
                 Frame::AssembleTimes(left) => {
-                    let right = result_stack.pop()
+                    let right = result_stack
+                        .pop()
                         .expect("result_stack should have the right operand");
                     let simplified = match (&left, &right) {
                         (FreeExpr::Zero, _) | (_, FreeExpr::Zero) => FreeExpr::Zero,
@@ -153,7 +157,7 @@ impl FreeExpr {
                         _ => FreeExpr::Times(Box::new(left), Box::new(right)),
                     };
                     result_stack.push(simplified);
-                }
+                },
             }
         }
 
@@ -166,12 +170,12 @@ impl FreeExpr {
         let mut work: Vec<&FreeExpr> = vec![self];
         while let Some(expr) = work.pop() {
             match expr {
-                FreeExpr::Zero | FreeExpr::One => {}
+                FreeExpr::Zero | FreeExpr::One => {},
                 FreeExpr::Gen(_) => count += 1,
                 FreeExpr::Plus(l, r) | FreeExpr::Times(l, r) => {
                     work.push(l);
                     work.push(r);
-                }
+                },
             }
         }
         count
@@ -183,14 +187,14 @@ impl FreeExpr {
         let mut work: Vec<&FreeExpr> = vec![self];
         while let Some(expr) = work.pop() {
             match expr {
-                FreeExpr::Zero | FreeExpr::One => {}
+                FreeExpr::Zero | FreeExpr::One => {},
                 FreeExpr::Gen(name) => {
                     gens.insert(name.clone());
-                }
+                },
                 FreeExpr::Plus(l, r) | FreeExpr::Times(l, r) => {
                     work.push(l);
                     work.push(r);
-                }
+                },
             }
         }
         gens
@@ -223,28 +227,36 @@ impl FreeExpr {
                     FreeExpr::One => values.push(1.0),
                     FreeExpr::Gen(name) => {
                         values.push(*env.get(name).unwrap_or(&0.0));
-                    }
+                    },
                     FreeExpr::Plus(l, r) => {
                         stack.push(Frame::ApplyPlus);
                         stack.push(Frame::Eval(r));
                         stack.push(Frame::Eval(l));
-                    }
+                    },
                     FreeExpr::Times(l, r) => {
                         stack.push(Frame::ApplyTimes);
                         stack.push(Frame::Eval(r));
                         stack.push(Frame::Eval(l));
-                    }
+                    },
                 },
                 Frame::ApplyPlus => {
-                    let b = values.pop().expect("values stack underflow in ApplyPlus (right)");
-                    let a = values.pop().expect("values stack underflow in ApplyPlus (left)");
+                    let b = values
+                        .pop()
+                        .expect("values stack underflow in ApplyPlus (right)");
+                    let a = values
+                        .pop()
+                        .expect("values stack underflow in ApplyPlus (left)");
                     values.push(a + b);
-                }
+                },
                 Frame::ApplyTimes => {
-                    let b = values.pop().expect("values stack underflow in ApplyTimes (right)");
-                    let a = values.pop().expect("values stack underflow in ApplyTimes (left)");
+                    let b = values
+                        .pop()
+                        .expect("values stack underflow in ApplyTimes (right)");
+                    let a = values
+                        .pop()
+                        .expect("values stack underflow in ApplyTimes (left)");
                     values.push(a * b);
-                }
+                },
             }
         }
 
@@ -402,10 +414,7 @@ mod tests {
     fn test_display() {
         let expr = FreeExpr::Plus(
             Box::new(FreeExpr::gen("x")),
-            Box::new(FreeExpr::Times(
-                Box::new(FreeExpr::gen("y")),
-                Box::new(FreeExpr::gen("z")),
-            )),
+            Box::new(FreeExpr::Times(Box::new(FreeExpr::gen("y")), Box::new(FreeExpr::gen("z")))),
         );
         assert_eq!(format!("{}", expr), "(x + (y * z))");
     }
@@ -414,10 +423,7 @@ mod tests {
     fn test_generators() {
         let expr = FreeExpr::Plus(
             Box::new(FreeExpr::gen("a")),
-            Box::new(FreeExpr::Times(
-                Box::new(FreeExpr::gen("b")),
-                Box::new(FreeExpr::gen("a")),
-            )),
+            Box::new(FreeExpr::Times(Box::new(FreeExpr::gen("b")), Box::new(FreeExpr::gen("a")))),
         );
         let gens = expr.generators();
         assert_eq!(gens.len(), 2);
@@ -429,10 +435,7 @@ mod tests {
     fn test_generator_count() {
         let expr = FreeExpr::Plus(
             Box::new(FreeExpr::gen("a")),
-            Box::new(FreeExpr::Times(
-                Box::new(FreeExpr::gen("b")),
-                Box::new(FreeExpr::gen("a")),
-            )),
+            Box::new(FreeExpr::Times(Box::new(FreeExpr::gen("b")), Box::new(FreeExpr::gen("a")))),
         );
         assert_eq!(expr.generator_count(), 3);
     }
@@ -441,10 +444,7 @@ mod tests {
     fn test_evaluate() {
         let expr = FreeExpr::Plus(
             Box::new(FreeExpr::gen("x")),
-            Box::new(FreeExpr::Times(
-                Box::new(FreeExpr::gen("y")),
-                Box::new(FreeExpr::gen("z")),
-            )),
+            Box::new(FreeExpr::Times(Box::new(FreeExpr::gen("y")), Box::new(FreeExpr::gen("z")))),
         );
         let mut env = std::collections::HashMap::new();
         env.insert("x".to_string(), 2.0);
@@ -488,19 +488,13 @@ mod tests {
         let sum = x.plus_ref(&y);
         assert_eq!(
             sum.expr,
-            FreeExpr::Plus(
-                Box::new(FreeExpr::gen("x")),
-                Box::new(FreeExpr::gen("y")),
-            ),
+            FreeExpr::Plus(Box::new(FreeExpr::gen("x")), Box::new(FreeExpr::gen("y")),),
         );
 
         let prod = x.times_ref(&y);
         assert_eq!(
             prod.expr,
-            FreeExpr::Times(
-                Box::new(FreeExpr::gen("x")),
-                Box::new(FreeExpr::gen("y")),
-            ),
+            FreeExpr::Times(Box::new(FreeExpr::gen("x")), Box::new(FreeExpr::gen("y")),),
         );
     }
 
@@ -700,10 +694,6 @@ mod tests {
 
         let val = result.expr.evaluate(&env);
         // (2 + 3) * 4 = 20
-        assert!(
-            (val - 20.0).abs() < 1e-10,
-            "(x + y) * z = {}, expected 20.0",
-            val,
-        );
+        assert!((val - 20.0).abs() < 1e-10, "(x + y) * z = {}, expected 20.0", val,);
     }
 }

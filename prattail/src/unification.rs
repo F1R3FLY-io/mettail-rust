@@ -91,7 +91,7 @@ impl fmt::Display for TermExpr {
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ")")
-            }
+            },
         }
     }
 }
@@ -117,18 +117,15 @@ impl TermExpr {
                 } else {
                     self.clone()
                 }
-            }
+            },
             TermExpr::Const(_) => self.clone(),
             TermExpr::App { head, args } => {
                 let applied_args: Vec<TermExpr> = args
                     .iter()
                     .map(|arg| arg.apply_substitution(subst))
                     .collect();
-                TermExpr::App {
-                    head: head.clone(),
-                    args: applied_args,
-                }
-            }
+                TermExpr::App { head: head.clone(), args: applied_args }
+            },
         }
     }
 
@@ -149,13 +146,13 @@ impl TermExpr {
                     if *idx == var {
                         return true;
                     }
-                }
-                TermExpr::Const(_) => {}
+                },
+                TermExpr::Const(_) => {},
                 TermExpr::App { args, .. } => {
                     for arg in args {
                         work_stack.push(arg);
                     }
-                }
+                },
             }
         }
         false
@@ -171,13 +168,13 @@ impl TermExpr {
             match current {
                 TermExpr::Var(idx) => {
                     vars.insert(*idx);
-                }
-                TermExpr::Const(_) => {}
+                },
+                TermExpr::Const(_) => {},
                 TermExpr::App { args, .. } => {
                     for arg in args {
                         work_stack.push(arg);
                     }
-                }
+                },
             }
         }
         vars
@@ -203,9 +200,7 @@ pub struct TermSignature {
 impl TermSignature {
     /// Create an empty signature (no constructors declared).
     pub fn new() -> Self {
-        TermSignature {
-            constructors: HashMap::new(),
-        }
+        TermSignature { constructors: HashMap::new() }
     }
 
     /// Register a constructor with its arity.
@@ -228,7 +223,7 @@ impl TermSignature {
                     // (for structural unification, we allow unregistered constructors)
                     args.iter().all(|a| self.is_well_formed(a))
                 }
-            }
+            },
         }
     }
 }
@@ -286,9 +281,7 @@ pub struct Substitution {
 impl Substitution {
     /// Create an empty substitution (identity).
     pub fn empty() -> Self {
-        Substitution {
-            bindings: HashMap::new(),
-        }
+        Substitution { bindings: HashMap::new() }
     }
 
     /// Create a substitution from a map of bindings.
@@ -435,9 +428,7 @@ impl UnificationTheory {
 
     /// Create a new unification theory with a term signature.
     pub fn with_signature(signature: TermSignature) -> Self {
-        UnificationTheory {
-            signature: Some(signature),
-        }
+        UnificationTheory { signature: Some(signature) }
     }
 
     /// Run the Martelli-Montanari unification algorithm.
@@ -463,8 +454,7 @@ impl UnificationTheory {
         initial_equations: &[UnificationEquation],
     ) -> Option<HashMap<usize, TermExpr>> {
         // Work stack: pending equations to process.
-        let mut work_stack: Vec<(TermExpr, TermExpr)> =
-            Vec::with_capacity(initial_equations.len());
+        let mut work_stack: Vec<(TermExpr, TermExpr)> = Vec::with_capacity(initial_equations.len());
         for eq in initial_equations {
             work_stack.push((eq.lhs.clone(), eq.rhs.clone()));
         }
@@ -478,7 +468,7 @@ impl UnificationTheory {
                 // ── Case 1: Identical variables — trivial, skip ──────────
                 (TermExpr::Var(x), TermExpr::Var(y)) if x == y => {
                     continue;
-                }
+                },
 
                 // ── Case 2: Variable on left — bind after occurs check ───
                 (TermExpr::Var(x), _) => {
@@ -496,7 +486,7 @@ impl UnificationTheory {
                         *value = value.apply_substitution(&new_binding_map);
                     }
                     substitution.insert(*x, t);
-                }
+                },
 
                 // ── Case 3: Variable on right — orient and bind ──────────
                 (_, TermExpr::Var(y)) => {
@@ -509,18 +499,12 @@ impl UnificationTheory {
                         *value = value.apply_substitution(&new_binding_map);
                     }
                     substitution.insert(*y, s);
-                }
+                },
 
                 // ── Case 4: Two Apps with same head — decompose ──────────
                 (
-                    TermExpr::App {
-                        head: head_s,
-                        args: args_s,
-                    },
-                    TermExpr::App {
-                        head: head_t,
-                        args: args_t,
-                    },
+                    TermExpr::App { head: head_s, args: args_s },
+                    TermExpr::App { head: head_t, args: args_t },
                 ) => {
                     if head_s != head_t {
                         // Constructor clash: f(...) ≢ g(...)
@@ -534,7 +518,7 @@ impl UnificationTheory {
                     for (arg_s, arg_t) in args_s.iter().zip(args_t.iter()) {
                         work_stack.push((arg_s.clone(), arg_t.clone()));
                     }
-                }
+                },
 
                 // ── Case 5: Identical constants — trivial, skip ──────────
                 (TermExpr::Const(a), TermExpr::Const(b)) => {
@@ -543,14 +527,14 @@ impl UnificationTheory {
                         return None;
                     }
                     // Same constant — nothing to do.
-                }
+                },
 
                 // ── Case 6: Kind clash — Const vs App or App vs Const ────
                 (TermExpr::Const(_), TermExpr::App { .. })
                 | (TermExpr::App { .. }, TermExpr::Const(_)) => {
                     // A constant cannot unify with a function application.
                     return None;
-                }
+                },
             }
         }
 
@@ -644,11 +628,7 @@ impl ConstraintTheory for UnificationTheory {
     /// Evaluate whether an equation is satisfied under a given substitution.
     ///
     /// Applies the substitution to both sides and checks structural equality.
-    fn evaluate(
-        &self,
-        constraint: &UnificationEquation,
-        assignment: &Substitution,
-    ) -> bool {
+    fn evaluate(&self, constraint: &UnificationEquation, assignment: &Substitution) -> bool {
         let lhs_applied = constraint.lhs.apply_substitution(&assignment.bindings);
         let rhs_applied = constraint.rhs.apply_substitution(&assignment.bindings);
         lhs_applied == rhs_applied
@@ -706,10 +686,7 @@ fn items_to_term(
         .iter()
         .map(|it| item_to_term(it, param_index))
         .collect();
-    TermExpr::App {
-        head: "seq".into(),
-        args: child_terms,
-    }
+    TermExpr::App { head: "seq".into(), args: child_terms }
 }
 
 /// Convert a single [`SyntaxItemSpec`] to a `TermExpr`.
@@ -724,17 +701,16 @@ fn item_to_term(
             let next = param_index.len();
             let idx = *param_index.entry(param_name.clone()).or_insert(next);
             TermExpr::Var(idx)
-        }
+        },
 
         crate::SyntaxItemSpec::Binder { param_name, .. } => {
             let next = param_index.len();
             let idx = *param_index.entry(param_name.clone()).or_insert(next);
             TermExpr::Var(idx)
-        }
+        },
 
-        crate::SyntaxItemSpec::NonTerminal { category, .. } => TermExpr::App {
-            head: category.clone(),
-            args: vec![],
+        crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+            TermExpr::App { head: category.clone(), args: vec![] }
         },
 
         crate::SyntaxItemSpec::Optional { inner } => {
@@ -743,11 +719,9 @@ fn item_to_term(
                 head: "optional".into(),
                 args: vec![inner_term],
             }
-        }
+        },
 
-        crate::SyntaxItemSpec::Collection {
-            element_category, ..
-        } => TermExpr::App {
+        crate::SyntaxItemSpec::Collection { element_category, .. } => TermExpr::App {
             head: "collection".into(),
             args: vec![TermExpr::App {
                 head: element_category.clone(),
@@ -763,24 +737,17 @@ fn item_to_term(
                 head: "sep".into(),
                 args: vec![body_term],
             }
-        }
+        },
 
         crate::SyntaxItemSpec::Map { body_items } => {
             let child_terms: Vec<TermExpr> = body_items
                 .iter()
                 .map(|it| item_to_term(it, param_index))
                 .collect();
-            TermExpr::App {
-                head: "map".into(),
-                args: child_terms,
-            }
-        }
+            TermExpr::App { head: "map".into(), args: child_terms }
+        },
 
-        crate::SyntaxItemSpec::Zip {
-            left_category,
-            right_category,
-            ..
-        } => TermExpr::App {
+        crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => TermExpr::App {
             head: "zip".into(),
             args: vec![
                 TermExpr::App {
@@ -803,7 +770,7 @@ fn item_to_term(
             let next = param_index.len();
             let idx = *param_index.entry(param_name.clone()).or_insert(next);
             TermExpr::Var(idx)
-        }
+        },
     }
 }
 
@@ -817,7 +784,7 @@ fn is_tautological(term: &TermExpr) -> bool {
         TermExpr::App { args, .. } => {
             // Pure-variable App: all args must themselves be tautological.
             !args.is_empty() && args.iter().all(is_tautological)
-        }
+        },
     }
 }
 
@@ -864,9 +831,8 @@ fn subsumes(general: &TermExpr, specific: &TermExpr) -> bool {
             let gen_vars = general.variables();
             let spec_vars = specific.variables();
             // Check that general has variables not present in specific.
-            gen_vars.len() > spec_vars.len()
-                || gen_vars.iter().any(|v| !spec_vars.contains(v))
-        }
+            gen_vars.len() > spec_vars.len() || gen_vars.iter().any(|v| !spec_vars.contains(v))
+        },
     }
 }
 
@@ -915,8 +881,7 @@ pub fn analyze_from_bundle(
     // ── Phase 1: Convert each rule to a TermExpr ─────────────────────────
 
     // (qualified_label, category, term, param_index_map)
-    let mut rule_terms: Vec<(String, String, TermExpr)> =
-        Vec::with_capacity(all_syntax.len());
+    let mut rule_terms: Vec<(String, String, TermExpr)> = Vec::with_capacity(all_syntax.len());
 
     for (label, cat, items) in all_syntax {
         let qualified = format!("{}::{}", cat, label);
@@ -969,29 +934,23 @@ pub fn analyze_from_bundle(
                     // unsatisfiable because disjoint patterns are a normal and
                     // expected outcome in well-structured grammars.
                     // (No action needed.)
-                }
+                },
                 Some(_unified_store) => {
                     // Patterns can unify — check subsumption.
                     if subsumes(term_i, term_j) {
                         subsumed_guards.push((
                             qual_i.clone(),
                             qual_j.clone(),
-                            format!(
-                                "'{}' is more general than '{}'",
-                                qual_i, qual_j
-                            ),
+                            format!("'{}' is more general than '{}'", qual_i, qual_j),
                         ));
                     } else if subsumes(term_j, term_i) {
                         subsumed_guards.push((
                             qual_j.clone(),
                             qual_i.clone(),
-                            format!(
-                                "'{}' is more general than '{}'",
-                                qual_j, qual_i
-                            ),
+                            format!("'{}' is more general than '{}'", qual_j, qual_i),
                         ));
                     }
-                }
+                },
             }
         }
     }
@@ -1039,10 +998,7 @@ mod tests {
     }
 
     fn app(head: &str, args: Vec<TermExpr>) -> TermExpr {
-        TermExpr::App {
-            head: head.into(),
-            args,
-        }
+        TermExpr::App { head: head.into(), args }
     }
 
     fn eq(lhs: TermExpr, rhs: TermExpr) -> UnificationEquation {
@@ -1255,14 +1211,10 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let equation = eq(
-            app("f", vec![var(0), constant("a")]),
-            app("f", vec![constant("b"), var(1)]),
-        );
+        let equation =
+            eq(app("f", vec![var(0), constant("a")]), app("f", vec![constant("b"), var(1)]));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("b")));
@@ -1277,10 +1229,7 @@ mod tests {
 
         let equation = eq(var(0), app("f", vec![var(0)]));
 
-        assert!(
-            theory.propagate(&store, &equation).is_none(),
-            "occurs check should fail"
-        );
+        assert!(theory.propagate(&store, &equation).is_none(), "occurs check should fail");
     }
 
     #[test]
@@ -1289,15 +1238,9 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let equation = eq(
-            app("f", vec![constant("a")]),
-            app("g", vec![constant("a")]),
-        );
+        let equation = eq(app("f", vec![constant("a")]), app("g", vec![constant("a")]));
 
-        assert!(
-            theory.propagate(&store, &equation).is_none(),
-            "constructor clash should fail"
-        );
+        assert!(theory.propagate(&store, &equation).is_none(), "constructor clash should fail");
     }
 
     #[test]
@@ -1308,10 +1251,7 @@ mod tests {
 
         let equation = eq(constant("a"), constant("b"));
 
-        assert!(
-            theory.propagate(&store, &equation).is_none(),
-            "constant clash should fail"
-        );
+        assert!(theory.propagate(&store, &equation).is_none(), "constant clash should fail");
     }
 
     #[test]
@@ -1327,10 +1267,7 @@ mod tests {
             .expect("should unify trivially");
         let witness = theory.witness(&result).expect("should have witness");
 
-        assert!(
-            witness.is_empty(),
-            "identity unification should produce empty substitution"
-        );
+        assert!(witness.is_empty(), "identity unification should produce empty substitution");
     }
 
     #[test]
@@ -1344,9 +1281,7 @@ mod tests {
             app("f", vec![app("g", vec![constant("b")]), constant("a")]),
         );
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("b")));
@@ -1359,15 +1294,10 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let equation = eq(
-            app("f", vec![constant("a"), constant("b")]),
-            app("f", vec![constant("a")]),
-        );
+        let equation =
+            eq(app("f", vec![constant("a"), constant("b")]), app("f", vec![constant("a")]));
 
-        assert!(
-            theory.propagate(&store, &equation).is_none(),
-            "arity mismatch should fail"
-        );
+        assert!(theory.propagate(&store, &equation).is_none(), "arity mismatch should fail");
     }
 
     #[test]
@@ -1378,10 +1308,7 @@ mod tests {
 
         let equation = eq(constant("a"), app("f", vec![constant("b")]));
 
-        assert!(
-            theory.propagate(&store, &equation).is_none(),
-            "const vs app should fail"
-        );
+        assert!(theory.propagate(&store, &equation).is_none(), "const vs app should fail");
     }
 
     #[test]
@@ -1392,10 +1319,7 @@ mod tests {
 
         let equation = eq(app("f", vec![constant("b")]), constant("a"));
 
-        assert!(
-            theory.propagate(&store, &equation).is_none(),
-            "app vs const should fail"
-        );
+        assert!(theory.propagate(&store, &equation).is_none(), "app vs const should fail");
     }
 
     #[test]
@@ -1407,9 +1331,7 @@ mod tests {
         let rhs = app("f", vec![constant("a"), constant("b")]);
         let equation = eq(var(0), rhs.clone());
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&rhs));
@@ -1423,9 +1345,7 @@ mod tests {
 
         let equation = eq(var(0), var(1));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         // One variable should be bound to the other.
@@ -1443,9 +1363,7 @@ mod tests {
 
         let equation = eq(constant("a"), constant("a"));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert!(witness.is_empty());
@@ -1461,14 +1379,10 @@ mod tests {
         let store = theory.empty_store();
 
         let eq1 = eq(app("f", vec![var(0)]), app("f", vec![constant("a")]));
-        let store = theory
-            .propagate(&store, &eq1)
-            .expect("eq1 should unify");
+        let store = theory.propagate(&store, &eq1).expect("eq1 should unify");
 
         let eq2 = eq(app("g", vec![var(1)]), app("g", vec![var(0)]));
-        let store = theory
-            .propagate(&store, &eq2)
-            .expect("eq2 should unify");
+        let store = theory.propagate(&store, &eq2).expect("eq2 should unify");
 
         let witness = theory.witness(&store).expect("should have witness");
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1483,9 +1397,7 @@ mod tests {
         let store = theory.empty_store();
 
         let eq1 = eq(var(0), constant("a"));
-        let store = theory
-            .propagate(&store, &eq1)
-            .expect("eq1 should unify");
+        let store = theory.propagate(&store, &eq1).expect("eq1 should unify");
 
         let eq2 = eq(var(0), constant("b"));
         assert!(
@@ -1502,9 +1414,7 @@ mod tests {
         let store = theory.empty_store();
 
         let eq1 = eq(var(0), constant("a"));
-        let store = theory
-            .propagate(&store, &eq1)
-            .expect("eq1 should unify");
+        let store = theory.propagate(&store, &eq1).expect("eq1 should unify");
 
         let eq2 = eq(var(0), constant("a"));
         let store = theory
@@ -1528,9 +1438,7 @@ mod tests {
             app("f", vec![app("g", vec![app("h", vec![constant("a")])])]),
         );
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1542,10 +1450,7 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let equation = eq(
-            var(0),
-            app("f", vec![app("g", vec![app("h", vec![var(0)])])]),
-        );
+        let equation = eq(var(0), app("f", vec![app("g", vec![app("h", vec![var(0)])])]));
 
         assert!(
             theory.propagate(&store, &equation).is_none(),
@@ -1566,9 +1471,7 @@ mod tests {
             app("f", vec![constant("a"), constant("b"), constant("c")]),
         );
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1582,14 +1485,10 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let equation = eq(
-            app("f", vec![var(0), var(0)]),
-            app("f", vec![constant("a"), constant("a")]),
-        );
+        let equation =
+            eq(app("f", vec![var(0), var(0)]), app("f", vec![constant("a"), constant("a")]));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1601,10 +1500,8 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let equation = eq(
-            app("f", vec![var(0), var(0)]),
-            app("f", vec![constant("a"), constant("b")]),
-        );
+        let equation =
+            eq(app("f", vec![var(0), var(0)]), app("f", vec![constant("a"), constant("b")]));
 
         assert!(
             theory.propagate(&store, &equation).is_none(),
@@ -1619,14 +1516,10 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let equation = eq(
-            app("f", vec![var(0), var(1)]),
-            app("f", vec![constant("a"), constant("b")]),
-        );
+        let equation =
+            eq(app("f", vec![var(0), var(1)]), app("f", vec![constant("a"), constant("b")]));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         // Verify witness structure
@@ -1640,7 +1533,9 @@ mod tests {
         let theory = UnificationTheory::new();
         let store = theory.empty_store();
 
-        let witness = theory.witness(&store).expect("empty store has empty witness");
+        let witness = theory
+            .witness(&store)
+            .expect("empty store has empty witness");
         assert!(witness.is_empty());
     }
 
@@ -1648,10 +1543,8 @@ mod tests {
     fn evaluate_satisfied_equation() {
         let theory = UnificationTheory::new();
 
-        let equation = eq(
-            app("f", vec![var(0), constant("a")]),
-            app("f", vec![constant("b"), var(1)]),
-        );
+        let equation =
+            eq(app("f", vec![var(0), constant("a")]), app("f", vec![constant("b"), var(1)]));
 
         let mut bindings = HashMap::new();
         bindings.insert(0, constant("b"));
@@ -1668,10 +1561,8 @@ mod tests {
     fn evaluate_unsatisfied_equation() {
         let theory = UnificationTheory::new();
 
-        let equation = eq(
-            app("f", vec![var(0), constant("a")]),
-            app("f", vec![constant("b"), var(1)]),
-        );
+        let equation =
+            eq(app("f", vec![var(0), constant("a")]), app("f", vec![constant("b"), var(1)]));
 
         // Wrong substitution: x₀ ↦ a (should be b)
         let mut bindings = HashMap::new();
@@ -1714,9 +1605,7 @@ mod tests {
         let store = theory.empty_store();
 
         let equation = eq(var(0), constant("a"));
-        let store = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let store = theory.propagate(&store, &equation).expect("should unify");
 
         assert!(theory.is_consistent(&store));
     }
@@ -1730,10 +1619,7 @@ mod tests {
         let store = theory.empty_store();
 
         let stream = theory.label(&store);
-        assert!(
-            stream.is_empty(),
-            "label should return empty stream for decidable theory"
-        );
+        assert!(stream.is_empty(), "label should return empty stream for decidable theory");
     }
 
     // ── Variable chain unification ───────────────────────────────────────
@@ -1745,19 +1631,13 @@ mod tests {
         let store = theory.empty_store();
 
         let eq1 = eq(var(0), var(1));
-        let store = theory
-            .propagate(&store, &eq1)
-            .expect("eq1 should unify");
+        let store = theory.propagate(&store, &eq1).expect("eq1 should unify");
 
         let eq2 = eq(var(1), var(2));
-        let store = theory
-            .propagate(&store, &eq2)
-            .expect("eq2 should unify");
+        let store = theory.propagate(&store, &eq2).expect("eq2 should unify");
 
         let eq3 = eq(var(2), constant("a"));
-        let store = theory
-            .propagate(&store, &eq3)
-            .expect("eq3 should unify");
+        let store = theory.propagate(&store, &eq3).expect("eq3 should unify");
 
         let witness = theory.witness(&store).expect("should have witness");
 
@@ -1777,9 +1657,7 @@ mod tests {
 
         let equation = eq(app("nil", vec![]), app("nil", vec![]));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert!(witness.is_empty());
@@ -1808,18 +1686,10 @@ mod tests {
         let nil = app("nil", vec![]);
         let equation = eq(
             app("cons", vec![var(0), app("cons", vec![var(1), nil.clone()])]),
-            app(
-                "cons",
-                vec![
-                    constant("a"),
-                    app("cons", vec![constant("b"), nil]),
-                ],
-            ),
+            app("cons", vec![constant("a"), app("cons", vec![constant("b"), nil])]),
         );
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1835,10 +1705,7 @@ mod tests {
         let equation = eq(
             app(
                 "pair",
-                vec![
-                    app("pair", vec![var(0), var(1)]),
-                    app("pair", vec![var(2), var(3)]),
-                ],
+                vec![app("pair", vec![var(0), var(1)]), app("pair", vec![var(2), var(3)])],
             ),
             app(
                 "pair",
@@ -1849,9 +1716,7 @@ mod tests {
             ),
         );
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1867,14 +1732,8 @@ mod tests {
         // f(a) ≡ f(x₀) should yield the same result as f(x₀) ≡ f(a)
         let theory = UnificationTheory::new();
 
-        let eq1 = eq(
-            app("f", vec![constant("a")]),
-            app("f", vec![var(0)]),
-        );
-        let eq2 = eq(
-            app("f", vec![var(0)]),
-            app("f", vec![constant("a")]),
-        );
+        let eq1 = eq(app("f", vec![constant("a")]), app("f", vec![var(0)]));
+        let eq2 = eq(app("f", vec![var(0)]), app("f", vec![constant("a")]));
 
         let store = theory.empty_store();
         let r1 = theory.propagate(&store, &eq1).expect("eq1 should unify");
@@ -1912,9 +1771,7 @@ mod tests {
 
         let equation = eq(var(0), constant("a"));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1928,9 +1785,7 @@ mod tests {
 
         let equation = eq(constant("a"), var(0));
 
-        let result = theory
-            .propagate(&store, &equation)
-            .expect("should unify");
+        let result = theory.propagate(&store, &equation).expect("should unify");
         let witness = theory.witness(&result).expect("should have witness");
 
         assert_eq!(witness.get(0), Some(&constant("a")));
@@ -1944,26 +1799,16 @@ mod tests {
         let store = theory.empty_store();
 
         let eq1 = eq(var(0), var(1));
-        let store = theory
-            .propagate(&store, &eq1)
-            .expect("eq1 should unify");
+        let store = theory.propagate(&store, &eq1).expect("eq1 should unify");
 
         let eq2 = eq(var(1), app("f", vec![constant("a")]));
-        let store = theory
-            .propagate(&store, &eq2)
-            .expect("eq2 should unify");
+        let store = theory.propagate(&store, &eq2).expect("eq2 should unify");
 
         let witness = theory.witness(&store).expect("should have witness");
 
         // Both should resolve to f(a)
-        assert_eq!(
-            witness.apply(&var(0)),
-            app("f", vec![constant("a")])
-        );
-        assert_eq!(
-            witness.apply(&var(1)),
-            app("f", vec![constant("a")])
-        );
+        assert_eq!(witness.apply(&var(0)), app("f", vec![constant("a")]));
+        assert_eq!(witness.apply(&var(1)), app("f", vec![constant("a")]));
     }
 
     #[test]
@@ -1973,15 +1818,10 @@ mod tests {
         let store = theory.empty_store();
 
         let eq1 = eq(var(0), var(1));
-        let store = theory
-            .propagate(&store, &eq1)
-            .expect("eq1 should unify");
+        let store = theory.propagate(&store, &eq1).expect("eq1 should unify");
 
         let eq2 = eq(var(1), app("f", vec![var(0)]));
-        assert!(
-            theory.propagate(&store, &eq2).is_none(),
-            "transitive occurs check should fail"
-        );
+        assert!(theory.propagate(&store, &eq2).is_none(), "transitive occurs check should fail");
     }
 
     // ── Default trait implementations ────────────────────────────────────
@@ -2028,14 +1868,8 @@ mod tests {
             analysis.unsatisfiable_guards.is_empty(),
             "empty bundle: no unsatisfiable guards"
         );
-        assert!(
-            analysis.tautological_guards.is_empty(),
-            "empty bundle: no tautological guards"
-        );
-        assert!(
-            analysis.subsumed_guards.is_empty(),
-            "empty bundle: no subsumed guards"
-        );
+        assert!(analysis.tautological_guards.is_empty(), "empty bundle: no tautological guards");
+        assert!(analysis.subsumed_guards.is_empty(), "empty bundle: no subsumed guards");
         assert!(
             analysis.search_bound_exceeded.is_empty(),
             "empty bundle: search_bound_exceeded always empty for unification"
@@ -2097,9 +1931,7 @@ mod tests {
             (
                 "Wild".to_string(),
                 "Expr".to_string(),
-                vec![crate::SyntaxItemSpec::IdentCapture {
-                    param_name: "x".to_string(),
-                }],
+                vec![crate::SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }],
             ),
             (
                 "Lit".to_string(),
@@ -2141,12 +1973,8 @@ mod tests {
             "AllVar".to_string(),
             "Stmt".to_string(),
             vec![
-                crate::SyntaxItemSpec::IdentCapture {
-                    param_name: "a".to_string(),
-                },
-                crate::SyntaxItemSpec::IdentCapture {
-                    param_name: "b".to_string(),
-                },
+                crate::SyntaxItemSpec::IdentCapture { param_name: "a".to_string() },
+                crate::SyntaxItemSpec::IdentCapture { param_name: "b".to_string() },
             ],
         )];
         let analysis = analyze_from_bundle(&bundle);
@@ -2160,10 +1988,7 @@ mod tests {
             .any(|(q, _)| q.contains("AllVar"));
         assert!(taut, "AllVar should appear in tautological_guards");
         // No subsumption with only one rule.
-        assert!(
-            analysis.subsumed_guards.is_empty(),
-            "single rule: no subsumption possible"
-        );
+        assert!(analysis.subsumed_guards.is_empty(), "single rule: no subsumption possible");
         assert!(analysis.search_bound_exceeded.is_empty());
     }
 }

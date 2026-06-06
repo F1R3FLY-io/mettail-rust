@@ -120,10 +120,7 @@ pub fn with_two_pools_or_fallback<T, U, F, R>(
 where
     F: FnOnce(&mut Vec<T>, &mut Vec<U>) -> R,
 {
-    match (
-        task_pool.try_with(|cell| cell.take()),
-        result_pool.try_with(|cell| cell.take()),
-    ) {
+    match (task_pool.try_with(|cell| cell.take()), result_pool.try_with(|cell| cell.take())) {
         (Ok(mut tasks), Ok(mut results)) => {
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 f(&mut tasks, &mut results)

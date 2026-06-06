@@ -12,9 +12,8 @@ use proc_macro2::TokenStream;
 
 use crate::automata::{
     codegen::{
-        analyze_sparsity, generate_lexer_code, generate_lexer_string,
-        generate_lexer_string_hybrid, terminal_to_variant_name,
-        CodegenStrategy, LexerAmbiguityInfo, TokenVariantMap,
+        analyze_sparsity, generate_lexer_code, generate_lexer_string, generate_lexer_string_hybrid,
+        terminal_to_variant_name, CodegenStrategy, LexerAmbiguityInfo, TokenVariantMap,
     },
     minimize::minimize_dfa,
     nfa::{build_nfa_with_custom, BuiltinNeeds},
@@ -87,7 +86,12 @@ pub struct LexerStats {
 /// Run the full lexer generation pipeline and return generated Rust code.
 pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     // Step 1: Build NFA from terminal patterns + custom tokens
-    let nfa = build_nfa_with_custom(&input.terminals, &input.needs, &input.literal_patterns, &input.custom_tokens);
+    let nfa = build_nfa_with_custom(
+        &input.terminals,
+        &input.needs,
+        &input.literal_patterns,
+        &input.custom_tokens,
+    );
     let num_nfa_states = nfa.states.len();
 
     // Step 2: Compute alphabet equivalence classes
@@ -160,8 +164,13 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code
-    let (code, codegen_strategy) =
-        generate_lexer_code(&min_dfa, &partition, &token_kinds, &input.language_name, &input.custom_tokens);
+    let (code, codegen_strategy) = generate_lexer_code(
+        &min_dfa,
+        &partition,
+        &token_kinds,
+        &input.language_name,
+        &input.custom_tokens,
+    );
 
     // Build variant map and ambiguity info (also needed for diagnostics)
     let variant_map = TokenVariantMap::from_token_kinds(&token_kinds);
@@ -189,7 +198,12 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
 /// `parse::<TokenStream>()` call at the end, avoiding per-component proc_macro2 overhead.
 pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     // Step 1: Build NFA from terminal patterns + custom tokens
-    let nfa = build_nfa_with_custom(&input.terminals, &input.needs, &input.literal_patterns, &input.custom_tokens);
+    let nfa = build_nfa_with_custom(
+        &input.terminals,
+        &input.needs,
+        &input.literal_patterns,
+        &input.custom_tokens,
+    );
     let num_nfa_states = nfa.states.len();
 
     // Step 2: Compute alphabet equivalence classes
@@ -260,8 +274,13 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code as string
-    let (code, codegen_strategy, variant_map, ambiguity_info) =
-        generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name, &input.custom_tokens);
+    let (code, codegen_strategy, variant_map, ambiguity_info) = generate_lexer_string(
+        &min_dfa,
+        &partition,
+        &token_kinds,
+        &input.language_name,
+        &input.custom_tokens,
+    );
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
@@ -283,7 +302,10 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
 /// Same as [`generate_lexer_as_string`] but accepts the `hybrid_lexer` optimization gate.
 /// When true and the DFA exceeds the direct-coded threshold, hot states (BFS depth ≤ 2)
 /// are direct-coded while cold states use compressed table lookup.
-pub fn generate_lexer_as_string_hybrid(input: &LexerInput, hybrid_lexer: bool) -> (String, LexerStats) {
+pub fn generate_lexer_as_string_hybrid(
+    input: &LexerInput,
+    hybrid_lexer: bool,
+) -> (String, LexerStats) {
     let trace = std::env::var("PRATTAIL_MACRO_TRACE").is_ok();
     macro_rules! stage {
         ($name:literal, $val:expr) => {
@@ -299,7 +321,12 @@ pub fn generate_lexer_as_string_hybrid(input: &LexerInput, hybrid_lexer: bool) -
     }
 
     stage!("build_nfa.start");
-    let nfa = build_nfa_with_custom(&input.terminals, &input.needs, &input.literal_patterns, &input.custom_tokens);
+    let nfa = build_nfa_with_custom(
+        &input.terminals,
+        &input.needs,
+        &input.literal_patterns,
+        &input.custom_tokens,
+    );
     let num_nfa_states = nfa.states.len();
     stage!("build_nfa.done", num_nfa_states);
 
@@ -350,36 +377,52 @@ pub fn generate_lexer_as_string_hybrid(input: &LexerInput, hybrid_lexer: bool) -
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code as string with hybrid gating
-    let (mut code, codegen_strategy, variant_map, ambiguity_info) =
-        generate_lexer_string_hybrid(&min_dfa, &partition, &token_kinds, &input.language_name, hybrid_lexer, &input.custom_tokens);
+    let (mut code, codegen_strategy, variant_map, ambiguity_info) = generate_lexer_string_hybrid(
+        &min_dfa,
+        &partition,
+        &token_kinds,
+        &input.language_name,
+        hybrid_lexer,
+        &input.custom_tokens,
+    );
 
     // Step 7: If modes or stream annotations are present, use modal lexer codegen.
     // Stream-annotated tokens (-> stream_name) require the modal lex loop for routing
     // even if no explicit mode blocks are defined.
     let has_streams = input.custom_tokens.iter().any(|s| s.stream.is_some())
-        || input.modes.iter().any(|m| m.custom_tokens.iter().any(|s| s.stream.is_some()));
+        || input
+            .modes
+            .iter()
+            .any(|m| m.custom_tokens.iter().any(|s| s.stream.is_some()));
     if !input.modes.is_empty() || has_streams {
         use crate::automata::nfa::build_nfa_for_mode;
 
-        let mode_results: Vec<ModeDfaResult> = input.modes.iter().enumerate().map(|(i, mode_input)| {
-            let mode_nfa = build_nfa_for_mode(&mode_input.custom_tokens);
-            let mode_partition = compute_equivalence_classes(&mode_nfa);
-            let mode_dfa = subset_construction(&mode_nfa, &mode_partition);
-            let mode_min_dfa = minimize_dfa(&mode_dfa);
+        let mode_results: Vec<ModeDfaResult> = input
+            .modes
+            .iter()
+            .enumerate()
+            .map(|(i, mode_input)| {
+                let mode_nfa = build_nfa_for_mode(&mode_input.custom_tokens);
+                let mode_partition = compute_equivalence_classes(&mode_nfa);
+                let mode_dfa = subset_construction(&mode_nfa, &mode_partition);
+                let mode_min_dfa = minimize_dfa(&mode_dfa);
 
-            let mode_token_kinds: Vec<TokenKind> = mode_input.custom_tokens.iter()
-                .map(|spec| TokenKind::Custom(spec.name.clone()))
-                .collect();
+                let mode_token_kinds: Vec<TokenKind> = mode_input
+                    .custom_tokens
+                    .iter()
+                    .map(|spec| TokenKind::Custom(spec.name.clone()))
+                    .collect();
 
-            ModeDfaResult {
-                name: mode_input.name.clone(),
-                mode_id: (i + 1) as u8,
-                min_dfa: mode_min_dfa,
-                partition: mode_partition,
-                token_kinds: mode_token_kinds,
-                custom_tokens: mode_input.custom_tokens.clone(),
-            }
-        }).collect();
+                ModeDfaResult {
+                    name: mode_input.name.clone(),
+                    mode_id: (i + 1) as u8,
+                    min_dfa: mode_min_dfa,
+                    partition: mode_partition,
+                    token_kinds: mode_token_kinds,
+                    custom_tokens: mode_input.custom_tokens.clone(),
+                }
+            })
+            .collect();
 
         // Merge all mode token kinds into a combined list for the Token enum
         let mut all_custom_tokens = input.custom_tokens.clone();
@@ -502,7 +545,7 @@ pub fn extract_terminals(
             Some(other)
                 // BigInt (incl. CanonicalBigInt) needs integer tokenization. BigRat / CanonicalBigRat
                 // uses the separate rational literal path when configured in `literals { ... }`;
-                // constructor-only languages should not pull in the legacy `…r` integer stub.
+                // constructor-only languages should not pull in the legacy `...r` integer suffix.
                 if other.ends_with("BigInt") =>
             {
                 needs.integer = true;

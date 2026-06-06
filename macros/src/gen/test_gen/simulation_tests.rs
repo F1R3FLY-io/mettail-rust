@@ -33,7 +33,8 @@ pub fn generate_simulation_tests(language: &LanguageDef, pipeline: &PipelineAnal
 
     // Pick the highest-entropy category for Test 5 — most ambiguous = hardest to test.
     // Falls back to the first type if entropy data is unavailable.
-    let primary_cat = pipeline.per_category_entropy
+    let primary_cat = pipeline
+        .per_category_entropy
         .iter()
         .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(k, _)| k.clone())
@@ -395,14 +396,16 @@ fn generate_test_input_literals(language: &LanguageDef, pipeline: &PipelineAnaly
     // reduction chains.
     for rule in &language.terms {
         // Count non-terminal items (fields/subterms).
-        let non_terminal_count = rule.items.iter().filter(|item| {
-            matches!(item, mettail_ast::grammar::GrammarItem::NonTerminal { .. })
-        }).count();
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, mettail_ast::grammar::GrammarItem::NonTerminal { .. }))
+            .count();
 
         // Categories in accepting SCCs get a higher limit to expose multi-step chains.
-        let is_in_scc = pipeline.recursive_scc_categories.contains(
-            &rule.category.to_string()
-        );
+        let is_in_scc = pipeline
+            .recursive_scc_categories
+            .contains(&rule.category.to_string());
         let max_nt = if is_in_scc { 3 } else { 2 };
 
         // Only consider rules with native eval and at most max_nt subterms.
@@ -422,13 +425,17 @@ fn generate_test_input_literals(language: &LanguageDef, pipeline: &PipelineAnaly
     // that have no native types but still have rewritable terms).
     if inputs.len() < 6 {
         for rule in &language.terms {
-            let non_terminal_count = rule.items.iter().filter(|item| {
-                matches!(item, mettail_ast::grammar::GrammarItem::NonTerminal { .. })
-            }).count();
+            let non_terminal_count = rule
+                .items
+                .iter()
+                .filter(|item| {
+                    matches!(item, mettail_ast::grammar::GrammarItem::NonTerminal { .. })
+                })
+                .count();
 
-            let is_in_scc = pipeline.recursive_scc_categories.contains(
-                &rule.category.to_string()
-            );
+            let is_in_scc = pipeline
+                .recursive_scc_categories
+                .contains(&rule.category.to_string());
             let max_nt = if is_in_scc { 3 } else { 2 };
 
             if non_terminal_count <= max_nt {
@@ -453,12 +460,14 @@ fn generate_test_input_literals(language: &LanguageDef, pipeline: &PipelineAnaly
         if let Some(ref native) = lang_type.native_type {
             let native_str = crate::gen::native::native_type_to_string(native);
             let lit = match native_str.as_str() {
-                "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "i128"
-                | "u8" | "u16" | "u128" | "isize" | "usize" => {
-                    crate::gen::spec_admitted_integer_samples(
-                        language, crate::gen::SamplePurpose::Safe,
-                    ).into_iter().next().unwrap_or_else(|| "1".to_string())
-                }
+                "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "i128" | "u8" | "u16" | "u128"
+                | "isize" | "usize" => crate::gen::spec_admitted_integer_samples(
+                    language,
+                    crate::gen::SamplePurpose::Safe,
+                )
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| "1".to_string()),
                 "f64" | "f32" => "1.0".to_string(),
                 "bool" => "true".to_string(),
                 "String" | "str" => "\"hello\"".to_string(),
@@ -476,17 +485,23 @@ fn generate_test_input_literals(language: &LanguageDef, pipeline: &PipelineAnaly
         // simulation. NOT a "0" string fabrication, which the spec
         // may not admit.
         for rule in &language.terms {
-            let has_non_terminals = rule.items.iter().any(|item| {
-                !matches!(item, mettail_ast::grammar::GrammarItem::Terminal(_))
-            });
+            let has_non_terminals = rule
+                .items
+                .iter()
+                .any(|item| !matches!(item, mettail_ast::grammar::GrammarItem::Terminal(_)));
             if !has_non_terminals && !rule.items.is_empty() {
-                let expr: String = rule.items.iter().filter_map(|item| {
-                    if let mettail_ast::grammar::GrammarItem::Terminal(s) = item {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                }).collect::<Vec<_>>().join(" ");
+                let expr: String = rule
+                    .items
+                    .iter()
+                    .filter_map(|item| {
+                        if let mettail_ast::grammar::GrammarItem::Terminal(s) = item {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 if !expr.is_empty() && !inputs.contains(&expr) {
                     inputs.push(expr);
                     break;
@@ -517,7 +532,7 @@ pub(crate) fn construct_test_expression(
     rule: &mettail_ast::grammar::GrammarRule,
     language: &LanguageDef,
 ) -> Option<String> {
-    use mettail_ast::grammar::{GrammarItem, SyntaxExpr, TermParam};
+    use mettail_ast::grammar::{GrammarItem, SyntaxExpr};
 
     // Try new-style syntax first (term_context + syntax_pattern).
     if let (Some(ref ctx), Some(ref pattern)) = (&rule.term_context, &rule.syntax_pattern) {
@@ -526,7 +541,7 @@ pub(crate) fn construct_test_expression(
             match expr {
                 SyntaxExpr::Literal(lit) => {
                     parts.push(lit.clone());
-                }
+                },
                 SyntaxExpr::Param(param_name) => {
                     // S3: spec-derived. If the param category is found
                     // in the term_context, route through
@@ -544,11 +559,11 @@ pub(crate) fn construct_test_expression(
                     } else {
                         parts.push(crate::gen::spec_admitted_integer_default(language));
                     }
-                }
+                },
                 SyntaxExpr::Op(_) => {
                     // Pattern operations (sep, map, etc.) are too complex to synthesize.
                     return None;
-                }
+                },
             }
         }
         if parts.is_empty() {
@@ -567,19 +582,19 @@ pub(crate) fn construct_test_expression(
         match item {
             GrammarItem::Terminal(text) => {
                 parts.push(text.clone());
-            }
+            },
             GrammarItem::NonTerminal { ident: cat_ident, .. } => {
                 let cat = cat_ident.to_string();
                 parts.push(default_value_for_category(&cat, language));
-            }
+            },
             GrammarItem::Binder { .. } => {
                 // Binder positions are complex; skip these rules.
                 return None;
-            }
+            },
             GrammarItem::Collection { .. } => {
                 // Collections are complex; skip these rules.
                 return None;
-            }
+            },
         }
     }
 
@@ -595,7 +610,6 @@ pub(crate) fn find_param_category(
     ctx: &[mettail_ast::grammar::TermParam],
 ) -> Option<String> {
     use mettail_ast::grammar::TermParam;
-    use mettail_ast::types::TypeExpr;
 
     for param in ctx {
         match param {
@@ -603,22 +617,22 @@ pub(crate) fn find_param_category(
                 if pname == name {
                     return type_expr_to_category(ty);
                 }
-            }
+            },
             TermParam::Abstraction { binder, body, ty } => {
                 if binder == name || body == name {
                     return type_expr_to_category(ty);
                 }
-            }
+            },
             TermParam::MultiAbstraction { binder, body, ty } => {
                 if binder == name || body == name {
                     return type_expr_to_category(ty);
                 }
-            }
+            },
             TermParam::GuardBody { name: gname, .. } => {
                 if gname == name {
                     return Some("Bool".to_string());
                 }
-            }
+            },
             TermParam::Optional { params: inner } => {
                 // Opt-Group: simulation-test parser-input synthesis uses
                 // this lookup to pick a category for each named param. A
@@ -629,7 +643,7 @@ pub(crate) fn find_param_category(
                 if let Some(found) = find_param_category(name, inner) {
                     return Some(found);
                 }
-            }
+            },
         }
     }
     None
@@ -661,12 +675,14 @@ pub(crate) fn default_value_for_category(category: &str, language: &LanguageDef)
         if lang_type.name.to_string() == category {
             if let Some(ref native) = lang_type.native_type {
                 return match crate::gen::native::native_type_to_string(native).as_str() {
-                    "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "i128"
-                    | "u8" | "u16" | "u128" | "isize" | "usize" => {
-                        crate::gen::spec_admitted_integer_samples(
-                            language, crate::gen::SamplePurpose::Safe,
-                        ).into_iter().next().unwrap_or_else(|| "1".to_string())
-                    }
+                    "i32" | "i64" | "u32" | "u64" | "i8" | "i16" | "i128" | "u8" | "u16"
+                    | "u128" | "isize" | "usize" => crate::gen::spec_admitted_integer_samples(
+                        language,
+                        crate::gen::SamplePurpose::Safe,
+                    )
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| "1".to_string()),
                     "f64" | "f32" => "1.0".to_string(),
                     "bool" => "true".to_string(),
                     "String" | "str" => "\"a\"".to_string(),

@@ -1,5 +1,5 @@
 #![allow(warnings)]
-// extern crate proc_macro; // Removed - using stub
+// extern crate proc_macro; // Removed - using shim
 
 use quote::{quote, quote_spanned};
 use std::collections::{HashMap, HashSet};
@@ -655,7 +655,6 @@ impl Parse for RuleNode {
     }
 }
 
-// TODO maybe remove?
 #[allow(dead_code)]
 pub fn rule_node_summary(rule: &RuleNode) -> String {
     fn bitem_to_str(bitem: &BodyItemNode) -> String {
@@ -668,7 +667,14 @@ pub fn rule_node_summary(rule: &RuleNode) -> String {
             ),
             BodyItemNode::Clause(bcl) => format!("{}", bcl.rel),
             BodyItemNode::Call(cl) => format!("call(..) with {}", cl.schema_name),
-            BodyItemNode::Disjunction(_) => todo!(),
+            BodyItemNode::Disjunction(disj) => {
+                let parts: Vec<String> = disj
+                    .disjuncts
+                    .iter()
+                    .map(|conj| conj.iter().map(bitem_to_str).collect::<Vec<_>>().join(","))
+                    .collect();
+                format!("({})", parts.join("|"))
+            },
             BodyItemNode::Cond(_cl) => format!("if_"),
             BodyItemNode::Agg(agg) => format!("agg {}", agg_in_goal_summary(&agg.in_goal)),
             BodyItemNode::Negation(neg) => format!("! {}", negation_goal_summary(&neg.goal)),

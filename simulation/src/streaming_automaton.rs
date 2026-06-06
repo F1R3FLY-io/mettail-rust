@@ -119,7 +119,12 @@ pub enum WindowCheck {
 
 impl WindowedMonitor {
     /// Create a new windowed monitor.
-    pub fn new(name: impl Into<String>, window_size: usize, threshold: f64, check: WindowCheck) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        window_size: usize,
+        threshold: f64,
+        check: WindowCheck,
+    ) -> Self {
         Self {
             name: name.into(),
             window_size,
@@ -161,12 +166,15 @@ impl WindowedMonitor {
                         step: 0, // Will be filled by caller
                         monitor_name: self.name.clone(),
                         severity: AlertSeverity::Warning,
-                        message: format!("Window mean {:.2} exceeds threshold {:.2}", mean, self.threshold),
+                        message: format!(
+                            "Window mean {:.2} exceeds threshold {:.2}",
+                            mean, self.threshold
+                        ),
                     })
                 } else {
                     None
                 }
-            }
+            },
             WindowCheck::MeanBelow => {
                 let mean: f64 = self.window.iter().sum::<f64>() / self.window.len() as f64;
                 if mean < self.threshold {
@@ -174,12 +182,15 @@ impl WindowedMonitor {
                         step: 0,
                         monitor_name: self.name.clone(),
                         severity: AlertSeverity::Warning,
-                        message: format!("Window mean {:.2} below threshold {:.2}", mean, self.threshold),
+                        message: format!(
+                            "Window mean {:.2} below threshold {:.2}",
+                            mean, self.threshold
+                        ),
                     })
                 } else {
                     None
                 }
-            }
+            },
             WindowCheck::VarianceAbove => {
                 let mean: f64 = self.window.iter().sum::<f64>() / self.window.len() as f64;
                 let variance: f64 = self.window.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
@@ -189,40 +200,55 @@ impl WindowedMonitor {
                         step: 0,
                         monitor_name: self.name.clone(),
                         severity: AlertSeverity::Warning,
-                        message: format!("Window variance {:.2} exceeds threshold {:.2}", variance, self.threshold),
+                        message: format!(
+                            "Window variance {:.2} exceeds threshold {:.2}",
+                            variance, self.threshold
+                        ),
                     })
                 } else {
                     None
                 }
-            }
+            },
             WindowCheck::MonotonicallyIncreasing => {
-                let increasing = self.window.iter().zip(self.window.iter().skip(1))
+                let increasing = self
+                    .window
+                    .iter()
+                    .zip(self.window.iter().skip(1))
                     .all(|(a, b)| b >= a);
                 if increasing {
                     Some(MonitorAlert {
                         step: 0,
                         monitor_name: self.name.clone(),
                         severity: AlertSeverity::Warning,
-                        message: format!("Term size monotonically increasing over {} steps", self.window_size),
+                        message: format!(
+                            "Term size monotonically increasing over {} steps",
+                            self.window_size
+                        ),
                     })
                 } else {
                     None
                 }
-            }
+            },
             WindowCheck::Stagnant => {
                 let first = self.window.front().copied().unwrap_or(0.0);
-                let all_same = self.window.iter().all(|x| (*x - first).abs() < f64::EPSILON);
+                let all_same = self
+                    .window
+                    .iter()
+                    .all(|x| (*x - first).abs() < f64::EPSILON);
                 if all_same {
                     Some(MonitorAlert {
                         step: 0,
                         monitor_name: self.name.clone(),
                         severity: AlertSeverity::Info,
-                        message: format!("Term stagnant (size = {:.0}) for {} steps", first, self.window_size),
+                        message: format!(
+                            "Term stagnant (size = {:.0}) for {} steps",
+                            first, self.window_size
+                        ),
                     })
                 } else {
                     None
                 }
-            }
+            },
         }
     }
 }
@@ -353,7 +379,10 @@ impl StreamingMonitor for AggregateMonitor {
                     severity: AlertSeverity::Warning,
                     message: format!(
                         "Running mean {:.2} exceeds threshold {:.2} (n={}, σ={:.2})",
-                        self.mean, threshold, self.count, self.std_dev()
+                        self.mean,
+                        threshold,
+                        self.count,
+                        self.std_dev()
                     ),
                 }];
             }
@@ -369,7 +398,11 @@ impl StreamingMonitor for AggregateMonitor {
             severity: AlertSeverity::Info,
             message: format!(
                 "Final stats: mean={:.2}, σ={:.2}, min={:.0}, max={:.0}, n={}",
-                self.mean, self.std_dev(), self.min, self.max, self.count
+                self.mean,
+                self.std_dev(),
+                self.min,
+                self.max,
+                self.count
             ),
         }]
     }
@@ -394,10 +427,7 @@ pub struct CompositeMonitor {
 impl CompositeMonitor {
     /// Create a new composite monitor.
     pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            monitors: Vec::new(),
-        }
+        Self { name: name.into(), monitors: Vec::new() }
     }
 
     /// Add a monitor to the composite.

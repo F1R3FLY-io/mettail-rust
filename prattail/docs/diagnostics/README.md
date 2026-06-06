@@ -27,7 +27,7 @@ Ordering: `Info < Note < Warning < Error`
 | [G05](grammar/G05-empty-category.md)          | empty-category                | Warning  | Category with zero rules                                |
 | [G06](grammar/G06-shadowed-operator.md)       | shadowed-operator             | Note     | Operator used as both infix and prefix                  |
 | [G07](grammar/G07-identical-rules.md)         | identical-rules               | Warning  | Structurally identical rules in same category           |
-| [G08](grammar/G08-missing-cast-to-root.md)    | missing-cast-to-root          | Warning  | No cast path from category to primary                   |
+| [G08](grammar/G08-missing-cast-to-root.md)    | missing-cast-to-root          | Warning  | No value-flow path from category to primary             |
 | [G09](grammar/G09-unbalanced-delimiters.md)   | unbalanced-delimiters         | Warning  | Mismatched open/close brackets in rule syntax           |
 | [G10](grammar/G10-ambiguous-associativity.md) | ambiguous-associativity       | Warning  | Same-precedence operators with mixed associativity      |
 | G24                                           | alpha-equivalent-rules        | Note     | Rules with identical De Bruijn structure                |

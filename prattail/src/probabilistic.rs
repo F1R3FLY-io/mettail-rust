@@ -51,9 +51,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::automata::semiring::{
-    EntropyWeight, LogWeight, Semiring, TropicalWeight,
-};
+use crate::automata::semiring::{EntropyWeight, LogWeight, Semiring, TropicalWeight};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Core types
@@ -492,8 +490,7 @@ impl ProbabilisticAutomaton {
                         None => false,
                     };
                     if matches {
-                        let cost =
-                            TropicalWeight::new(delta[from].value() + weight.value());
+                        let cost = TropicalWeight::new(delta[from].value() + weight.value());
                         // Tropical plus = min: keep the lower-cost path.
                         if cost.value() < delta_next[to].value() {
                             delta_next[to] = cost;
@@ -580,8 +577,7 @@ impl ProbabilisticAutomaton {
 
         // Build n×n adjacency matrix in EntropyWeight.
         // For each pair (i, j), aggregate all transitions i → j.
-        let mut adj: Vec<Vec<EntropyWeight>> =
-            vec![vec![EntropyWeight::zero(); n]; n];
+        let mut adj: Vec<Vec<EntropyWeight>> = vec![vec![EntropyWeight::zero(); n]; n];
 
         for from in 0..n {
             for &(to, _, weight) in &self.transitions[from] {
@@ -831,23 +827,6 @@ impl ProbabilisticAutomaton {
             // We accumulate in probability space for numerical reasons, then
             // convert back to log-domain.
 
-            // Build a symbol-to-index map for this iteration.
-            let symbols: Vec<Option<String>> = {
-                let mut syms: Vec<Option<String>> = Vec::new();
-                for from_trans in &self.transitions {
-                    for &(_, ref lbl, _) in from_trans {
-                        // Collect unique (to, label) patterns — but we just
-                        // need labels for matching. We'll match by transition
-                        // index instead.
-                        let _ = lbl;
-                    }
-                }
-                // Use transition indices directly.
-                syms.push(None); // placeholder
-                syms
-            };
-            let _ = symbols; // We'll index by transition position instead.
-
             // Accumulate expected transition counts in probability space.
             // trans_count[from][trans_idx] = expected count (probability sum).
             let mut trans_count: Vec<Vec<f64>> = Vec::with_capacity(n);
@@ -862,8 +841,7 @@ impl ProbabilisticAutomaton {
 
             for word_owned in corpus {
                 // Convert &[String] to &[&str] for the internal methods.
-                let word_refs: Vec<&str> =
-                    word_owned.iter().map(|s| s.as_str()).collect();
+                let word_refs: Vec<&str> = word_owned.iter().map(|s| s.as_str()).collect();
 
                 if word_refs.is_empty() {
                     // Empty word: only contribute to accepting states from initial.
@@ -909,8 +887,7 @@ impl ProbabilisticAutomaton {
                         continue;
                     }
                     let gamma_0_q =
-                        (-(alpha[0][q].times(&beta[0][q]).value() - p_word.value()))
-                            .exp();
+                        (-(alpha[0][q].times(&beta[0][q]).value() - p_word.value())).exp();
                     init_count[q] += gamma_0_q;
                 }
 
@@ -1350,7 +1327,11 @@ pub fn estimate_channel_load(
     let mut processing_times: Vec<f64> = Vec::with_capacity(channel_names.len());
 
     for name in channel_names {
-        let rate = weight_map.get(name.as_str()).copied().unwrap_or(0.0).max(0.0);
+        let rate = weight_map
+            .get(name.as_str())
+            .copied()
+            .unwrap_or(0.0)
+            .max(0.0);
         rates.push(rate);
 
         // Processing time: inverse of rate (busier channels process faster per msg).
@@ -1370,10 +1351,7 @@ pub fn estimate_channel_load(
     let total_load: f64 = loads.iter().sum();
 
     // Maximum rate for confidence normalization.
-    let max_rate = rates
-        .iter()
-        .cloned()
-        .fold(0.0_f64, f64::max);
+    let max_rate = rates.iter().cloned().fold(0.0_f64, f64::max);
 
     // Allocate workers proportionally to load.
     let mut suggested_workers: Vec<usize> = vec![0; channel_names.len()];
@@ -1499,7 +1477,9 @@ mod tests {
     fn test_add_transition_out_of_bounds_from() {
         let mut pa = ProbabilisticAutomaton::new();
         pa.add_state(None);
-        let err = pa.add_transition(5, Some("a".to_string()), 0, LogWeight::one()).unwrap_err();
+        let err = pa
+            .add_transition(5, Some("a".to_string()), 0, LogWeight::one())
+            .unwrap_err();
         assert!(err.contains("source state"), "{err}");
     }
 
@@ -1507,7 +1487,9 @@ mod tests {
     fn test_add_transition_out_of_bounds_to() {
         let mut pa = ProbabilisticAutomaton::new();
         pa.add_state(None);
-        let err = pa.add_transition(0, Some("a".to_string()), 5, LogWeight::one()).unwrap_err();
+        let err = pa
+            .add_transition(0, Some("a".to_string()), 5, LogWeight::one())
+            .unwrap_err();
         assert!(err.contains("target state"), "{err}");
     }
 
@@ -1537,11 +1519,7 @@ mod tests {
         // should sum to 1.0 (in probability space).
         let p_a = pa.transitions[q0][0].2.to_probability();
         let p_b = pa.transitions[q0][1].2.to_probability();
-        assert!(
-            approx_eq(p_a + p_b, 1.0),
-            "Expected sum ~1.0, got {:.6}",
-            p_a + p_b
-        );
+        assert!(approx_eq(p_a + p_b, 1.0), "Expected sum ~1.0, got {:.6}", p_a + p_b);
     }
 
     #[test]
@@ -1551,20 +1529,10 @@ mod tests {
         let q0 = pa.add_state(None);
         let q1 = pa.add_state(None);
 
-        pa.add_transition(
-            q0,
-            Some("a".to_string()),
-            q1,
-            LogWeight::from_probability(0.6),
-        )
-        .expect("valid transition");
-        pa.add_transition(
-            q0,
-            Some("b".to_string()),
-            q1,
-            LogWeight::from_probability(0.4),
-        )
-        .expect("valid transition");
+        pa.add_transition(q0, Some("a".to_string()), q1, LogWeight::from_probability(0.6))
+            .expect("valid transition");
+        pa.add_transition(q0, Some("b".to_string()), q1, LogWeight::from_probability(0.4))
+            .expect("valid transition");
         pa.set_initial(q0, LogWeight::one());
         pa.set_accepting(q1, LogWeight::one());
 
@@ -1596,12 +1564,7 @@ mod tests {
     fn test_probability_of_simple() {
         // Linear automaton: q0 --a(0.8)--> q1 --b(0.5)--> q2
         // P("ab") = 0.8 * 0.5 = 0.4
-        let pa = build_simple_pa(
-            3,
-            &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)],
-            0,
-            &[2],
-        );
+        let pa = build_simple_pa(3, &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)], 0, &[2]);
 
         let p = pa.probability_of(&["a", "b"]);
         assert!(
@@ -1617,12 +1580,7 @@ mod tests {
         // P("ab") = 0.3*1.0 + 0.7*1.0 = 1.0
         let pa = build_simple_pa(
             4,
-            &[
-                (0, "a", 1, 0.3),
-                (0, "a", 2, 0.7),
-                (1, "b", 3, 1.0),
-                (2, "b", 3, 1.0),
-            ],
+            &[(0, "a", 1, 0.3), (0, "a", 2, 0.7), (1, "b", 3, 1.0), (2, "b", 3, 1.0)],
             0,
             &[3],
         );
@@ -1653,10 +1611,7 @@ mod tests {
         // q0 --a--> q1, but only q0 is accepting. P("a") = 0 (q1 not accepting).
         let pa = build_simple_pa(2, &[(0, "a", 1, 1.0)], 0, &[0]);
         let p = pa.probability_of(&["a"]);
-        assert!(
-            p.is_zero(),
-            "Expected zero probability for word ending in non-accepting state"
-        );
+        assert!(p.is_zero(), "Expected zero probability for word ending in non-accepting state");
     }
 
     #[test]
@@ -1681,12 +1636,7 @@ mod tests {
         //   P("xy") = 0.7 * 1.0 = 0.7
         let pa = build_simple_pa(
             3,
-            &[
-                (0, "x", 1, 0.5),
-                (0, "x", 2, 0.5),
-                (1, "y", 2, 0.8),
-                (2, "y", 2, 0.6),
-            ],
+            &[(0, "x", 1, 0.5), (0, "x", 2, 0.5), (1, "y", 2, 0.8), (2, "y", 2, 0.6)],
             0,
             &[2],
         );
@@ -1704,12 +1654,7 @@ mod tests {
     #[test]
     fn test_viterbi_simple_path() {
         // Linear: q0 --a(0.8)--> q1 --b(0.5)--> q2
-        let pa = build_simple_pa(
-            3,
-            &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)],
-            0,
-            &[2],
-        );
+        let pa = build_simple_pa(3, &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)], 0, &[2]);
 
         let (cost, path) = pa.viterbi(&["a", "b"]);
         assert!(!cost.is_zero(), "Viterbi should find a valid path");
@@ -1732,12 +1677,7 @@ mod tests {
         // Best path: q0 -> q1 -> q3 (higher probability = lower tropical cost)
         let pa = build_simple_pa(
             4,
-            &[
-                (0, "a", 1, 0.9),
-                (0, "a", 2, 0.1),
-                (1, "b", 3, 0.9),
-                (2, "b", 3, 0.1),
-            ],
+            &[(0, "a", 1, 0.9), (0, "a", 2, 0.1), (1, "b", 3, 0.9), (2, "b", 3, 0.1)],
             0,
             &[3],
         );
@@ -1767,12 +1707,7 @@ mod tests {
     #[test]
     fn test_entropy_single_deterministic_path() {
         // A single path with probability 1: H = -1 * ln(1) = 0.
-        let pa = build_simple_pa(
-            2,
-            &[(0, "a", 1, 1.0)],
-            0,
-            &[1],
-        );
+        let pa = build_simple_pa(2, &[(0, "a", 1, 1.0)], 0, &[1]);
 
         let h = pa.entropy();
         assert!(
@@ -1792,20 +1727,11 @@ mod tests {
     fn test_entropy_uniform_binary_choice() {
         // q0 --a(0.5)--> q1, q0 --b(0.5)--> q1
         // Two equally likely single-symbol words: H = -2 * 0.5 * ln(0.5) = ln(2)
-        let pa = build_simple_pa(
-            2,
-            &[(0, "a", 1, 0.5), (0, "b", 1, 0.5)],
-            0,
-            &[1],
-        );
+        let pa = build_simple_pa(2, &[(0, "a", 1, 0.5), (0, "b", 1, 0.5)], 0, &[1]);
 
         let h = pa.entropy();
         // For a uniform distribution over 2 outcomes, H = ln(2) ~= 0.693
-        assert!(
-            h > 0.0,
-            "Entropy of uniform binary choice should be positive, got {:.6}",
-            h
-        );
+        assert!(h > 0.0, "Entropy of uniform binary choice should be positive, got {:.6}", h);
     }
 
     // ── Selectivity ──────────────────────────────────────────────────────────
@@ -1813,12 +1739,7 @@ mod tests {
     #[test]
     fn test_selectivity_simple() {
         // q0 --a(0.5)--> q1 (accepting), P("a") = 0.5
-        let pa = build_simple_pa(
-            2,
-            &[(0, "a", 1, 0.5)],
-            0,
-            &[1],
-        );
+        let pa = build_simple_pa(2, &[(0, "a", 1, 0.5)], 0, &[1]);
 
         let s = pa.selectivity();
         assert!(
@@ -1847,12 +1768,7 @@ mod tests {
         // q0 --a(0.5)--> q0 (self-loop), q0 is accepting.
         // P("") = 1.0, P("a") = 0.5, P("aa") = 0.25, ...
         // Geometric series: total selectivity = 1/(1-0.5) = 2.0
-        let pa = build_simple_pa(
-            1,
-            &[(0, "a", 0, 0.5)],
-            0,
-            &[0],
-        );
+        let pa = build_simple_pa(1, &[(0, "a", 0, 0.5)], 0, &[0]);
 
         // P("a") should be 0.5.
         let p_a = pa.probability_of(&["a"]);
@@ -1888,12 +1804,7 @@ mod tests {
         // observed sequences.
         let mut pa = build_simple_pa(
             3,
-            &[
-                (0, "a", 1, 0.5),
-                (0, "b", 1, 0.5),
-                (1, "a", 2, 0.5),
-                (1, "b", 2, 0.5),
-            ],
+            &[(0, "a", 1, 0.5), (0, "b", 1, 0.5), (1, "a", 2, 0.5), (1, "b", 2, 0.5)],
             0,
             &[2],
         );
@@ -1921,12 +1832,7 @@ mod tests {
     #[test]
     fn test_train_from_corpus_convergence() {
         // Verify that training converges (stops early with tight tolerance).
-        let mut pa = build_simple_pa(
-            2,
-            &[(0, "a", 1, 0.5)],
-            0,
-            &[1],
-        );
+        let mut pa = build_simple_pa(2, &[(0, "a", 1, 0.5)], 0, &[1]);
 
         let corpus = vec![vec!["a".to_string()]; 5];
         pa.train_from_corpus(&corpus, 100, 1e-10);
@@ -1938,12 +1844,7 @@ mod tests {
 
     #[test]
     fn test_train_empty_corpus() {
-        let mut pa = build_simple_pa(
-            2,
-            &[(0, "a", 1, 0.5)],
-            0,
-            &[1],
-        );
+        let mut pa = build_simple_pa(2, &[(0, "a", 1, 0.5)], 0, &[1]);
 
         let w_before = pa.transitions[0][0].2;
         pa.train_from_corpus(&[], 10, 1e-6);
@@ -1964,12 +1865,7 @@ mod tests {
 
     #[test]
     fn test_analyze_basic() {
-        let pa = build_simple_pa(
-            3,
-            &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)],
-            0,
-            &[2],
-        );
+        let pa = build_simple_pa(3, &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)], 0, &[2]);
 
         let analysis = pa.analyze(0.01);
         assert_eq!(analysis.num_states, 3);
@@ -1984,19 +1880,16 @@ mod tests {
         let q0 = pa.add_state(Some("weak_rule".to_string()));
         let q1 = pa.add_state(None);
 
-        pa.add_transition(
-            q0,
-            Some("a".to_string()),
-            q1,
-            LogWeight::from_probability(0.001),
-        )
-        .expect("valid transition");
+        pa.add_transition(q0, Some("a".to_string()), q1, LogWeight::from_probability(0.001))
+            .expect("valid transition");
         pa.set_initial(q0, LogWeight::one());
         pa.set_accepting(q1, LogWeight::one());
 
         let analysis = pa.analyze(0.01);
         assert!(
-            analysis.low_selectivity_rules.contains(&"weak_rule".to_string()),
+            analysis
+                .low_selectivity_rules
+                .contains(&"weak_rule".to_string()),
             "Should flag 'weak_rule' as low-selectivity"
         );
     }
@@ -2005,12 +1898,7 @@ mod tests {
 
     #[test]
     fn test_build_simple_pa() {
-        let pa = build_simple_pa(
-            3,
-            &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)],
-            0,
-            &[2],
-        );
+        let pa = build_simple_pa(3, &[(0, "a", 1, 0.8), (1, "b", 2, 0.5)], 0, &[2]);
 
         assert_eq!(pa.num_states(), 3);
         assert_eq!(pa.num_transitions(), 2);
@@ -2025,16 +1913,8 @@ mod tests {
 
     #[test]
     fn test_normalized_stays_normalized_after_renormalization() {
-        let mut pa = build_simple_pa(
-            3,
-            &[
-                (0, "a", 1, 0.6),
-                (0, "b", 2, 0.4),
-                (1, "c", 2, 1.0),
-            ],
-            0,
-            &[2],
-        );
+        let mut pa =
+            build_simple_pa(3, &[(0, "a", 1, 0.6), (0, "b", 2, 0.4), (1, "c", 2, 1.0)], 0, &[2]);
 
         pa.normalize();
         assert!(pa.is_normalized);
@@ -2062,12 +1942,7 @@ mod tests {
         // probability (sum over all paths).
         let pa = build_simple_pa(
             4,
-            &[
-                (0, "a", 1, 0.6),
-                (0, "a", 2, 0.4),
-                (1, "b", 3, 0.8),
-                (2, "b", 3, 0.7),
-            ],
+            &[(0, "a", 1, 0.6), (0, "a", 2, 0.4), (1, "b", 3, 0.8), (2, "b", 3, 0.7)],
             0,
             &[3],
         );
@@ -2113,10 +1988,7 @@ mod tests {
 
         assert!(p_ab_before > 0.0, "P('ab') should be positive before normalize");
         assert!(p_a_before > 0.0, "P('a') should be positive before normalize");
-        assert!(
-            approx_eq(p_c_before, 0.0),
-            "P('c') should be zero before normalize"
-        );
+        assert!(approx_eq(p_c_before, 0.0), "P('c') should be zero before normalize");
 
         pa.normalize();
 
@@ -2185,30 +2057,48 @@ mod tests {
     fn analyze_bundle_nonuniform_selectivity() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Expr".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
 
         // Rule A has 1 item, Rule B has 5 items.
         // A should have higher selectivity than B (simpler = more likely).
         let all_syntax = vec![
-            ("A".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("a".to_string()),
-            ]),
-            ("B".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("b".to_string()),
-                crate::SyntaxItemSpec::Terminal("c".to_string()),
-                crate::SyntaxItemSpec::Terminal("d".to_string()),
-                crate::SyntaxItemSpec::Terminal("e".to_string()),
-                crate::SyntaxItemSpec::Terminal("f".to_string()),
-            ]),
+            (
+                "A".to_string(),
+                "Expr".to_string(),
+                vec![crate::SyntaxItemSpec::Terminal("a".to_string())],
+            ),
+            (
+                "B".to_string(),
+                "Expr".to_string(),
+                vec![
+                    crate::SyntaxItemSpec::Terminal("b".to_string()),
+                    crate::SyntaxItemSpec::Terminal("c".to_string()),
+                    crate::SyntaxItemSpec::Terminal("d".to_string()),
+                    crate::SyntaxItemSpec::Terminal("e".to_string()),
+                    crate::SyntaxItemSpec::Terminal("f".to_string()),
+                ],
+            ),
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
         assert!(result.is_normalized);
-        let sel_a = result.rule_selectivities.get("Expr::A").expect("should have A");
-        let sel_b = result.rule_selectivities.get("Expr::B").expect("should have B");
-        assert!(sel_a > sel_b, "simpler rule A should have higher selectivity than complex rule B");
+        let sel_a = result
+            .rule_selectivities
+            .get("Expr::A")
+            .expect("should have A");
+        let sel_b = result
+            .rule_selectivities
+            .get("Expr::B")
+            .expect("should have B");
+        assert!(
+            sel_a > sel_b,
+            "simpler rule A should have higher selectivity than complex rule B"
+        );
     }
 
     #[test]
@@ -2216,20 +2106,36 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-            CategoryInfo { name: "Stmt".to_string(), is_primary: false, has_var: true, native_type: None },
+            CategoryInfo {
+                name: "Expr".to_string(),
+                is_primary: true,
+                has_var: true,
+                native_type: None,
+            },
+            CategoryInfo {
+                name: "Stmt".to_string(),
+                is_primary: false,
+                has_var: true,
+                native_type: None,
+            },
         ];
 
         let all_syntax = vec![
-            ("A".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("a".to_string()),
-            ]),
-            ("B".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("b".to_string()),
-            ]),
-            ("C".to_string(), "Stmt".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("c".to_string()),
-            ]),
+            (
+                "A".to_string(),
+                "Expr".to_string(),
+                vec![crate::SyntaxItemSpec::Terminal("a".to_string())],
+            ),
+            (
+                "B".to_string(),
+                "Expr".to_string(),
+                vec![crate::SyntaxItemSpec::Terminal("b".to_string())],
+            ),
+            (
+                "C".to_string(),
+                "Stmt".to_string(),
+                vec![crate::SyntaxItemSpec::Terminal("c".to_string())],
+            ),
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
@@ -2242,41 +2148,59 @@ mod tests {
     fn analyze_bundle_entropy_nonzero() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Expr".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
 
         // Two rules with different complexity: non-uniform distribution yields positive entropy.
         let all_syntax = vec![
-            ("A".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("a".to_string()),
-            ]),
-            ("B".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("b".to_string()),
-                crate::SyntaxItemSpec::Terminal("c".to_string()),
-            ]),
+            (
+                "A".to_string(),
+                "Expr".to_string(),
+                vec![crate::SyntaxItemSpec::Terminal("a".to_string())],
+            ),
+            (
+                "B".to_string(),
+                "Expr".to_string(),
+                vec![
+                    crate::SyntaxItemSpec::Terminal("b".to_string()),
+                    crate::SyntaxItemSpec::Terminal("c".to_string()),
+                ],
+            ),
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(result.mean_entropy > 0.0, "non-uniform distribution should have positive entropy");
+        assert!(
+            result.mean_entropy > 0.0,
+            "non-uniform distribution should have positive entropy"
+        );
     }
 
     #[test]
     fn analyze_bundle_single_rule_selectivity() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Expr".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
 
-        let all_syntax = vec![
-            ("Only".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("x".to_string()),
-            ]),
-        ];
+        let all_syntax = vec![(
+            "Only".to_string(),
+            "Expr".to_string(),
+            vec![crate::SyntaxItemSpec::Terminal("x".to_string())],
+        )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        let sel = result.rule_selectivities.get("Expr::Only").expect("should have Only");
+        let sel = result
+            .rule_selectivities
+            .get("Expr::Only")
+            .expect("should have Only");
         assert!((*sel - 1.0).abs() < 0.001, "single rule should have selectivity 1.0");
     }
 
@@ -2284,9 +2208,12 @@ mod tests {
     fn analyze_bundle_low_selectivity_detection() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Expr".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
 
         // Many rules: individual selectivities drop below 0.01.
         let mut all_syntax = Vec::new();
@@ -2300,7 +2227,10 @@ mod tests {
 
         let result = analyze_from_bundle(&all_syntax, &categories);
         // With 200 rules of equal complexity, each has selectivity ~1/200 = 0.005 < 0.01.
-        assert!(!result.low_selectivity_rules.is_empty(), "many rules should produce low-selectivity entries");
+        assert!(
+            !result.low_selectivity_rules.is_empty(),
+            "many rules should produce low-selectivity entries"
+        );
     }
 }
 
@@ -2311,8 +2241,8 @@ mod tests {
 #[cfg(test)]
 mod proptest_tests {
     use super::*;
-    use proptest::prelude::*;
     use crate::test_generators::*;
+    use proptest::prelude::*;
 
     /// Tolerance for floating-point comparisons.
     const EPS: f64 = 1e-9;
@@ -2581,10 +2511,7 @@ mod green_thread_channel_load_tests {
         // Two channels: one with 3x the rate of the other.
         // With 4 workers: expect ~3 for the busy channel, ~1 for the quiet one.
         let channels = vec!["busy".to_string(), "quiet".to_string()];
-        let weights = vec![
-            ("busy".to_string(), 30.0),
-            ("quiet".to_string(), 10.0),
-        ];
+        let weights = vec![("busy".to_string(), 30.0), ("quiet".to_string(), 10.0)];
         let result = estimate_channel_load(&channels, &weights, 4);
 
         assert_eq!(result.len(), 2);
@@ -2604,7 +2531,8 @@ mod green_thread_channel_load_tests {
         assert!(
             busy.suggested_workers >= quiet.suggested_workers,
             "busy channel ({}) should get >= workers than quiet ({})",
-            busy.suggested_workers, quiet.suggested_workers
+            busy.suggested_workers,
+            quiet.suggested_workers
         );
 
         // Confidence: busy channel should have confidence 1.0 (it is the max).
@@ -2635,10 +2563,7 @@ mod green_thread_channel_load_tests {
     fn channel_load_total_workers_one() {
         // Edge case: only 1 worker total. Should go to the busiest channel.
         let channels = vec!["x".to_string(), "y".to_string()];
-        let weights = vec![
-            ("x".to_string(), 100.0),
-            ("y".to_string(), 1.0),
-        ];
+        let weights = vec![("x".to_string(), 100.0), ("y".to_string(), 1.0)];
         let result = estimate_channel_load(&channels, &weights, 1);
 
         assert_eq!(result.len(), 2);
@@ -2662,8 +2587,10 @@ mod green_thread_channel_load_tests {
         assert!(total >= 3, "should assign at least 3 workers total");
 
         // The channel with the highest rate should have the highest confidence.
-        assert!((result[9].confidence - 1.0).abs() < EPS,
-            "ch9 (rate 100) should have confidence 1.0");
+        assert!(
+            (result[9].confidence - 1.0).abs() < EPS,
+            "ch9 (rate 100) should have confidence 1.0"
+        );
     }
 
     #[test]
@@ -2672,12 +2599,15 @@ mod green_thread_channel_load_tests {
         let channels = vec!["dup".to_string()];
         let weights = vec![
             ("dup".to_string(), 10.0),
-            ("dup".to_string(), 99.0),  // should override
+            ("dup".to_string(), 99.0), // should override
         ];
         let result = estimate_channel_load(&channels, &weights, 2);
 
         assert_eq!(result.len(), 1);
-        assert!((result[0].message_rate - 99.0).abs() < EPS,
-            "last weight entry should win, got {}", result[0].message_rate);
+        assert!(
+            (result[0].message_rate - 99.0).abs() < EPS,
+            "last weight entry should win, got {}",
+            result[0].message_rate
+        );
     }
 }

@@ -52,11 +52,7 @@ fn h3_chain_5_ones_evals_to_5() {
 fn h3_chain_10_ones_evals_to_10() {
     // 10 atoms → well past the H3 gate.
     let nfs = eval_calc("1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1");
-    assert!(
-        nfs.iter().any(|d| d == "10"),
-        "ten 1s summed should eval to 10, got {:?}",
-        nfs
-    );
+    assert!(nfs.iter().any(|d| d == "10"), "ten 1s summed should eval to 10, got {:?}", nfs);
 }
 
 #[test]

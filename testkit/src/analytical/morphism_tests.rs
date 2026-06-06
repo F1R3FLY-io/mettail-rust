@@ -10,9 +10,7 @@
 
 use std::collections::HashMap;
 
-use mettail_prattail::morphism::{
-    self, GapKind, MorphismGap, Operation, Sort, TranslationCase,
-};
+use mettail_prattail::morphism::{self, GapKind, MorphismGap, Operation, Sort, TranslationCase};
 use mettail_runtime::LanguageMetadata;
 
 /// Result of morphism preservation analysis on a language.
@@ -62,11 +60,7 @@ pub fn check_morphism_preservation(metadata: &dyn LanguageMetadata) -> MorphismR
         .terms()
         .iter()
         .map(|td| {
-            let arg_sorts: Vec<String> = td
-                .fields
-                .iter()
-                .map(|f| f.ty.to_string())
-                .collect();
+            let arg_sorts: Vec<String> = td.fields.iter().map(|f| f.ty.to_string()).collect();
             Operation::new(td.name, arg_sorts, td.type_name)
         })
         .collect();
@@ -103,13 +97,9 @@ pub fn check_morphism_preservation(metadata: &dyn LanguageMetadata) -> MorphismR
                 missing_sorts: 0,
                 missing_operations: 0,
                 failed_preservations: 1,
-                summary: format!(
-                    "{}: self-morphism construction failed: {}",
-                    metadata.name(),
-                    e
-                ),
+                summary: format!("{}: self-morphism construction failed: {}", metadata.name(), e),
             };
-        }
+        },
     };
 
     // Build axioms from the language's equation definitions.
@@ -128,7 +118,10 @@ pub fn check_morphism_preservation(metadata: &dyn LanguageMetadata) -> MorphismR
     };
     let gaps: Vec<MorphismGap> = morphism::detect_gaps(&morphism, axiom_slice);
 
-    let missing_sorts = gaps.iter().filter(|g| g.kind == GapKind::MissingSort).count();
+    let missing_sorts = gaps
+        .iter()
+        .filter(|g| g.kind == GapKind::MissingSort)
+        .count();
     let missing_operations = gaps
         .iter()
         .filter(|g| g.kind == GapKind::MissingOperation)

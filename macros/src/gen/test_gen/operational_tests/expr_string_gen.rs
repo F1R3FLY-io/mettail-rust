@@ -27,10 +27,7 @@ pub fn generate_test_function(test: &TestCase) -> String {
     out.push_str("#[test]\n");
     out.push_str(&format!("fn {}() {{\n", test.test_name));
     out.push_str("    mettail_runtime::clear_var_cache();\n");
-    out.push_str(&format!(
-        "    let input_term = {};\n",
-        test.construction_code
-    ));
+    out.push_str(&format!("    let input_term = {};\n", test.construction_code));
     out.push_str("    let input_str = format!(\"{}\", input_term);\n");
     out.push_str(&format!("    let lang = {};\n", test.lang_struct));
     out.push_str(
@@ -47,22 +44,15 @@ pub fn generate_test_function(test: &TestCase) -> String {
         );
         // Escape the expected string for embedding in Rust source
         let escaped_expected = escape_rust_string(expected);
-        out.push_str(&format!(
-            "    assert!(nfs.iter().any(|d| d == \"{}\"),\n",
-            escaped_expected
-        ));
+        out.push_str(&format!("    assert!(nfs.iter().any(|d| d == \"{}\"),\n", escaped_expected));
         out.push_str(&format!(
             "        \"{{}} should evaluate to {}, got {{:?}}\", input_str, nfs);\n",
             escaped_expected
         ));
     } else {
         // Smoke test
-        out.push_str(
-            "    assert!(!results.normal_forms().is_empty(),\n",
-        );
-        out.push_str(
-            "        \"{} should evaluate to at least one normal form\", input_str);\n",
-        );
+        out.push_str("    assert!(!results.normal_forms().is_empty(),\n");
+        out.push_str("        \"{} should evaluate to at least one normal form\", input_str);\n");
     }
 
     out.push_str("}\n\n");

@@ -88,10 +88,7 @@ where
 {
     mettail_runtime::clear_var_cache();
     match input.parse::<T>() {
-        Ok(_) => Err(format!(
-            "Expected parse to fail for '{}', but it succeeded",
-            input
-        )),
+        Ok(_) => Err(format!("Expected parse to fail for '{}', but it succeeded", input)),
         Err(_) => Ok(()),
     }
 }

@@ -53,10 +53,7 @@ pub struct SafetyResult<W: Semiring> {
 /// let result = check_safety(&wpds, &bad);
 /// assert!(result.safe, "bad state should be unreachable");
 /// ```
-pub fn check_safety<W: Semiring>(
-    wpds: &Wpds<W>,
-    bad_states: &PAutomaton<W>,
-) -> SafetyResult<W> {
+pub fn check_safety<W: Semiring>(wpds: &Wpds<W>, bad_states: &PAutomaton<W>) -> SafetyResult<W> {
     let prestar_result = crate::wpds::prestar(wpds, bad_states);
 
     // Check if the initial configuration is in the prestar result.
@@ -69,11 +66,7 @@ pub fn check_safety<W: Semiring>(
         Vec::new()
     };
 
-    SafetyResult {
-        safe,
-        initial_weight,
-        witness_trace,
-    }
+    SafetyResult { safe, initial_weight, witness_trace }
 }
 
 /// Build a P-automaton representing a set of "bad" configurations.
@@ -207,10 +200,7 @@ pub struct VerificationResult<W: Semiring> {
 /// * `result` — The `SafetyResult` from `check_safety`.
 /// * `wpds` — The WPDS used in the analysis (provides grammar context for
 ///   descriptive messages).
-pub fn suggest_safety_repairs<W: Semiring>(
-    result: &SafetyResult<W>,
-    wpds: &Wpds<W>,
-) -> RepairSet {
+pub fn suggest_safety_repairs<W: Semiring>(result: &SafetyResult<W>, wpds: &Wpds<W>) -> RepairSet {
     let mut repairs = RepairSet::new();
 
     if result.safe {
@@ -232,18 +222,12 @@ pub fn suggest_safety_repairs<W: Semiring>(
         let description = if sym.rule_label.is_empty() {
             format!(
                 "Add guard at category entry {} (trace step {}) in grammar '{}'",
-                sym.category,
-                step_idx,
-                wpds.grammar_name,
+                sym.category, step_idx, wpds.grammar_name,
             )
         } else {
             format!(
                 "Add guard at {}.{}@{} (trace step {}) in grammar '{}'",
-                sym.category,
-                sym.rule_label,
-                sym.position,
-                step_idx,
-                wpds.grammar_name,
+                sym.category, sym.rule_label, sym.position, step_idx, wpds.grammar_name,
             )
         };
 
@@ -268,8 +252,7 @@ pub fn suggest_safety_repairs<W: Semiring>(
     // Suggest restricting the initial configuration.
     let restrict_description = format!(
         "Restrict initial configuration at {} to exclude unsafe paths in grammar '{}'",
-        wpds.initial_symbol,
-        wpds.grammar_name,
+        wpds.initial_symbol, wpds.grammar_name,
     );
 
     let restrict_suggestion = RepairSuggestion::new(
@@ -309,9 +292,7 @@ pub fn suggest_safety_repairs<W: Semiring>(
 /// # Arguments
 ///
 /// * `result` — The `VerificationResult` to analyze.
-pub fn suggest_invariant_strengthening<W: Semiring>(
-    result: &VerificationResult<W>,
-) -> RepairSet {
+pub fn suggest_invariant_strengthening<W: Semiring>(result: &VerificationResult<W>) -> RepairSet {
     let mut repairs = RepairSet::new();
 
     if result.verdict != Verdict::Violated {
@@ -589,10 +570,7 @@ mod tests {
                 (i as u32) + 1,
                 "edit cost should increase with trace position"
             );
-            assert_eq!(
-                suggestion.alternative_count, 3,
-                "alternatives should equal trace length"
-            );
+            assert_eq!(suggestion.alternative_count, 3, "alternatives should equal trace length");
             assert!(
                 suggestion.description.contains("test_unsafe"),
                 "description should include grammar name"
@@ -601,10 +579,7 @@ mod tests {
 
         // Verify restrict-initial-config suggestion.
         let restrict = &repairs.suggestions[3];
-        assert_eq!(
-            restrict.kind,
-            RepairKind::Custom("RestrictInitialConfig".to_string()),
-        );
+        assert_eq!(restrict.kind, RepairKind::Custom("RestrictInitialConfig".to_string()),);
         assert_eq!(restrict.edit_cost, 3);
         assert!((restrict.confidence - 0.5).abs() < f64::EPSILON);
     }
@@ -759,12 +734,14 @@ mod tests {
     #[test]
     fn test_verify_from_bundle_with_unreachable() {
         let mut wpds_analysis = make_empty_wpds_analysis();
-        wpds_analysis.unreachable_rules.push(crate::wpds::WpdsUnreachableRule {
-            rule_label: "DeadRule".to_string(),
-            category: "Expr".to_string(),
-            missing_contexts: vec!["Main".to_string()],
-            witness_trace: vec!["Main".to_string(), "Expr".to_string()],
-        });
+        wpds_analysis
+            .unreachable_rules
+            .push(crate::wpds::WpdsUnreachableRule {
+                rule_label: "DeadRule".to_string(),
+                category: "Expr".to_string(),
+                missing_contexts: vec!["Main".to_string()],
+                witness_trace: vec!["Main".to_string(), "Expr".to_string()],
+            });
         let cats = vec![crate::pipeline::CategoryInfo {
             name: "Expr".to_string(),
             native_type: None,
@@ -777,7 +754,10 @@ mod tests {
             vec![crate::SyntaxItemSpec::Terminal("+".to_string())],
         )];
         let result = verify_from_bundle(&wpds_analysis, &cats, &syntax);
-        assert!(result.is_some(), "should return Some(SafetyResult) when unreachable rules exist");
+        assert!(
+            result.is_some(),
+            "should return Some(SafetyResult) when unreachable rules exist"
+        );
     }
 
     #[test]

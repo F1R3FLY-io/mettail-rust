@@ -20,14 +20,14 @@ use mettail_prattail::automata::{Dfa, Nfa, TokenKind};
 use mettail_prattail::binding_power::{
     analyze_binding_powers, Associativity, BindingPowerTable, InfixRuleInfo,
 };
-use mettail_prattail::dispatch::{categories_needing_dispatch, CastRule, CrossCategoryRule};
+use mettail_prattail::grammar::ir::{
+    CastRule, CollectionKind, CrossCategoryRule, RDRuleInfo, RDSyntaxItem,
+};
 use mettail_prattail::lexer::{extract_terminals, GrammarRuleInfo, LexerInput, TypeInfo};
-use mettail_prattail::pratt::{PrattConfig, PrefixHandler};
 use mettail_prattail::prediction::{
     analyze_cross_category_overlaps, build_dispatch_tables, compute_first_sets,
     CrossCategoryOverlap, DispatchTable, FirstItem, FirstSet, RuleInfo,
 };
-use mettail_prattail::recursive::{write_rd_handler, CollectionKind, RDRuleInfo, RDSyntaxItem};
 use mettail_prattail::recovery::RecoveryConfig;
 use mettail_prattail::{
     BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
@@ -64,7 +64,22 @@ fn base_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>) -> RuleSp
         rust_code: None,
         eval_mode: None,
         source_location: None,
+        is_auto_injected: false,
     }
+}
+
+fn categories_needing_dispatch(
+    cross_rules: &[CrossCategoryRule],
+    cast_rules: &[CastRule],
+) -> Vec<String> {
+    let mut categories = BTreeSet::new();
+    for rule in cross_rules {
+        categories.insert(rule.result_category.clone());
+    }
+    for rule in cast_rules {
+        categories.insert(rule.target_category.clone());
+    }
+    categories.into_iter().collect()
 }
 
 fn infix_rule(label: &str, cat: &str, op: &str) -> RuleSpec {
@@ -199,6 +214,7 @@ fn collection_rule(
                 element_category: elem_cat.to_string(),
                 separator: sep.to_string(),
                 kind,
+                key_val_separator: None,
             },
             SyntaxItemSpec::Terminal(close.to_string()),
         ],
@@ -221,6 +237,7 @@ pub fn minimal_spec() -> LanguageSpec {
             name: "Term".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }],
         rules: vec![
             var_rule("TVar", "Term"),
@@ -252,6 +269,8 @@ pub fn minimal_spec() -> LanguageSpec {
         modes: Vec::new(),
         sync: None,
         tree_invariants: Vec::new(),
+        refinement_types: Vec::new(),
+        guard_config: None,
     }
 }
 
@@ -264,16 +283,19 @@ pub fn small_spec() -> LanguageSpec {
                 name: "Int".to_string(),
                 native_type: Some("i64".to_string()),
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Bool".to_string(),
                 native_type: Some("bool".to_string()),
                 is_primary: false,
+                has_var: true,
             },
             CategorySpec {
                 name: "Str".to_string(),
                 native_type: Some("String".to_string()),
                 is_primary: false,
+                has_var: true,
             },
         ],
         rules: vec![
@@ -303,6 +325,8 @@ pub fn small_spec() -> LanguageSpec {
         modes: Vec::new(),
         sync: None,
         tree_invariants: Vec::new(),
+        refinement_types: Vec::new(),
+        guard_config: None,
     }
 }
 
@@ -315,11 +339,13 @@ pub fn medium_spec() -> LanguageSpec {
                 name: "Proc".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Name".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
         ],
         rules: vec![
@@ -352,6 +378,8 @@ pub fn medium_spec() -> LanguageSpec {
         modes: Vec::new(),
         sync: None,
         tree_invariants: Vec::new(),
+        refinement_types: Vec::new(),
+        guard_config: None,
     }
 }
 
@@ -364,16 +392,19 @@ pub fn complex_spec() -> LanguageSpec {
                 name: "Proc".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Name".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
             CategorySpec {
                 name: "Int".to_string(),
                 native_type: Some("i64".to_string()),
                 is_primary: false,
+                has_var: true,
             },
         ],
         rules: vec![
@@ -410,6 +441,8 @@ pub fn complex_spec() -> LanguageSpec {
         modes: Vec::new(),
         sync: None,
         tree_invariants: Vec::new(),
+        refinement_types: Vec::new(),
+        guard_config: None,
     }
 }
 
@@ -457,6 +490,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
             name: "Expr".to_string(),
             native_type: Some("i64".to_string()),
             is_primary: true,
+            has_var: true,
         }],
         rules,
         beam_width: BeamWidthConfig::Disabled,
@@ -468,6 +502,8 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
         modes: Vec::new(),
         sync: None,
         tree_invariants: Vec::new(),
+        refinement_types: Vec::new(),
+        guard_config: None,
     }
 }
 
@@ -507,24 +543,13 @@ pub struct PreparedSpec {
     pub overlaps: HashMap<(String, String), CrossCategoryOverlap>,
     pub max_infix_bp: HashMap<String, u8>,
 
-    // Phase 4: RD handlers
+    // Phase 4: RD rule IR
     pub rd_rules: Vec<RDRuleInfo>,
-    pub prefix_handlers: Vec<PrefixHandler>,
 
     // Phase 5: Cross-category and cast rules
     pub cross_rules: Vec<CrossCategoryRule>,
     pub cast_rules: Vec<CastRule>,
     pub dispatch_categories: Vec<String>,
-
-    // Phase 5b: Pratt configs per category
-    pub pratt_configs: Vec<PrattPerCategory>,
-}
-
-/// Per-category Pratt parser configuration and precomputed data.
-pub struct PrattPerCategory {
-    pub category: String,
-    pub config: PrattConfig,
-    pub handlers: Vec<PrefixHandler>,
 }
 
 /// Recursively collect all terminal strings from syntax items.
@@ -577,11 +602,13 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
             element_category,
             separator,
             kind,
+            key_val_separator,
         } => RDSyntaxItem::Collection {
             param_name: param_name.clone(),
             element_category: element_category.clone(),
             separator: separator.clone(),
             kind: *kind,
+            key_val_separator: key_val_separator.clone(),
         },
         SyntaxItemSpec::Sep { body, separator, kind } => RDSyntaxItem::Sep {
             body: Box::new(convert_syntax_item_to_rd(body)),
@@ -591,14 +618,18 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         SyntaxItemSpec::Map { body_items } => RDSyntaxItem::Map {
             body_items: body_items.iter().map(convert_syntax_item_to_rd).collect(),
         },
-        SyntaxItemSpec::Zip { left_name, right_name, left_category, right_category, body } => {
-            RDSyntaxItem::Zip {
-                left_name: left_name.clone(),
-                right_name: right_name.clone(),
-                left_category: left_category.clone(),
-                right_category: right_category.clone(),
-                body: Box::new(convert_syntax_item_to_rd(body)),
-            }
+        SyntaxItemSpec::Zip {
+            left_name,
+            right_name,
+            left_category,
+            right_category,
+            body,
+        } => RDSyntaxItem::Zip {
+            left_name: left_name.clone(),
+            right_name: right_name.clone(),
+            left_category: left_category.clone(),
+            right_category: right_category.clone(),
+            body: Box::new(convert_syntax_item_to_rd(body)),
         },
         SyntaxItemSpec::BinderCollection { param_name, separator } => {
             RDSyntaxItem::BinderCollection {
@@ -608,6 +639,9 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         },
         SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
             inner: inner.iter().map(convert_syntax_item_to_rd).collect(),
+        },
+        SyntaxItemSpec::GuardExpression { param_name } => {
+            RDSyntaxItem::GuardExpression { param_name: param_name.clone() }
         },
     }
 }
@@ -738,6 +772,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
                     SyntaxItemSpec::Map { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Zip { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Optional { .. } => FirstItem::Ident,
+                    SyntaxItemSpec::GuardExpression { .. } => FirstItem::Ident,
                 })
                 .collect(),
             is_infix: r.is_infix,
@@ -786,11 +821,9 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
         map
     };
 
-    // ── Phase 4: Generate RD handlers ──
+    // ── Phase 4: Build RD rule IR ──
 
     let mut rd_rules: Vec<RDRuleInfo> = Vec::new();
-    let mut prefix_handlers: Vec<PrefixHandler> = Vec::new();
-    let mut rd_buf = String::with_capacity(4096);
 
     for rule in &spec.rules {
         if rule.is_infix || rule.is_var || rule.is_literal {
@@ -817,9 +850,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
             eval_mode: rule.eval_mode.clone(),
         };
 
-        let handler = write_rd_handler(&mut rd_buf, &rd_rule);
         rd_rules.push(rd_rule);
-        prefix_handlers.push(handler);
     }
 
     // ── Phase 5a: Extract cross-category and cast rules ──
@@ -861,60 +892,6 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
 
     let dispatch_categories = categories_needing_dispatch(&cross_rules, &cast_rules_vec);
 
-    // ── Phase 5b: Pratt configs per category ──
-
-    let mut pratt_configs: Vec<PrattPerCategory> = Vec::with_capacity(categories.len());
-
-    for (idx, cat) in categories.iter().enumerate() {
-        let has_infix = !bp_table.operators_for_category(cat).is_empty();
-        let needs_dispatch = dispatch_categories.contains(cat);
-
-        let native_type = spec
-            .types
-            .iter()
-            .find(|t| t.name == *cat)
-            .and_then(|t| t.native_type.clone());
-
-        let cat_cast_rules: Vec<CastRule> = cast_rules_vec
-            .iter()
-            .filter(|r| r.target_category == *cat)
-            .cloned()
-            .collect();
-
-        let own_first = first_sets.get(cat).cloned().unwrap_or_default();
-
-        let has_postfix = !bp_table.postfix_operators_for_category(cat).is_empty();
-
-        let config = PrattConfig {
-            category: cat.clone(),
-            is_primary: idx == 0,
-            has_infix,
-            has_postfix,
-            has_mixfix: false,
-            all_categories: categories.clone(),
-            needs_dispatch,
-            native_type,
-            cast_rules: cat_cast_rules,
-            own_first_set: own_first,
-            all_first_sets: first_sets.clone(),
-            follow_set: mettail_prattail::prediction::FirstSet::new(),
-            led_delegation: Vec::new(),
-            pda_merged: false,
-        };
-
-        let cat_handlers: Vec<PrefixHandler> = prefix_handlers
-            .iter()
-            .filter(|h| h.category == *cat)
-            .cloned()
-            .collect();
-
-        pratt_configs.push(PrattPerCategory {
-            category: cat.clone(),
-            config,
-            handlers: cat_handlers,
-        });
-    }
-
     PreparedSpec {
         spec: spec.clone(),
         grammar_rules,
@@ -934,11 +911,9 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
         overlaps,
         max_infix_bp,
         rd_rules,
-        prefix_handlers,
         cross_rules,
         cast_rules: cast_rules_vec,
         dispatch_categories,
-        pratt_configs,
     }
 }
 
@@ -979,14 +954,19 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
             TokenKind::Eof => "Eof".to_string(),
             TokenKind::Ident => "Ident".to_string(),
             TokenKind::Integer => "Integer".to_string(),
+            TokenKind::IntegerLit(cat) => cat.clone(),
+            TokenKind::RationalLit(cat) => cat.clone(),
+            TokenKind::FixedPointLit(cat) => cat.clone(),
             TokenKind::Float => "Float".to_string(),
             TokenKind::True => "True".to_string(),
             TokenKind::False => "False".to_string(),
+            TokenKind::BooleanLit => "Boolean".to_string(),
             TokenKind::StringLit => "StringLit".to_string(),
             TokenKind::Fixed(s) => mettail_prattail::automata::codegen::terminal_to_variant_name(s),
             TokenKind::Dollar => "Dollar".to_string(),
             TokenKind::DoubleDollar => "DoubleDollar".to_string(),
             TokenKind::Custom(name) => name.clone(),
+            TokenKind::LexError(kind) => format!("LexError{:?}", kind),
         })
         .collect();
 

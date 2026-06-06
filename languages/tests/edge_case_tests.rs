@@ -1052,8 +1052,7 @@ mod lambda_edge_cases {
 
     fn lambda_parses(input: &str) {
         mettail_runtime::clear_var_cache();
-        Term::parse(input)
-            .unwrap_or_else(|e| panic!("lambda parse({:?}) failed: {}", input, e));
+        Term::parse(input).unwrap_or_else(|e| panic!("lambda parse({:?}) failed: {}", input, e));
     }
 
     #[test]
@@ -1116,8 +1115,7 @@ mod ambient_edge_cases {
 
     fn ambient_parses(input: &str) {
         mettail_runtime::clear_var_cache();
-        Proc::parse(input)
-            .unwrap_or_else(|e| panic!("ambient parse({:?}) failed: {}", input, e));
+        Proc::parse(input).unwrap_or_else(|e| panic!("ambient parse({:?}) failed: {}", input, e));
     }
 
     #[test]
@@ -1181,8 +1179,7 @@ mod rhocalc_edge_cases {
 
     fn rhocalc_parses(input: &str) {
         mettail_runtime::clear_var_cache();
-        Proc::parse(input)
-            .unwrap_or_else(|e| panic!("rhocalc parse({:?}) failed: {}", input, e));
+        Proc::parse(input).unwrap_or_else(|e| panic!("rhocalc parse({:?}) failed: {}", input, e));
     }
 
     fn rhocalc_reduces_to(input: &str, expected: &str) {

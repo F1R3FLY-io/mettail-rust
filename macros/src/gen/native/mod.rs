@@ -129,55 +129,6 @@ impl NativeType {
         matches!(self, Self::Str)
     }
 
-    /// Whether this is a boolean type.
-    #[inline]
-    pub fn is_bool(&self) -> bool {
-        matches!(self, Self::Bool)
-    }
-
-    /// Whether this is a rational type (`CanonicalBigRat`).
-    #[inline]
-    pub fn is_rational(&self) -> bool {
-        matches!(self, Self::CanonicalBigRat)
-    }
-
-    /// Whether this is a fixed-point type (`CanonicalFixedPoint`).
-    #[inline]
-    pub fn is_fixed_point(&self) -> bool {
-        matches!(self, Self::CanonicalFixedPoint)
-    }
-
-    /// Get the Rust type name as a string (for code generation).
-    pub fn as_rust_str(&self) -> &str {
-        match self {
-            Self::Int8 => "i8",
-            Self::Int16 => "i16",
-            Self::Int32 => "i32",
-            Self::Int64 => "i64",
-            Self::Int128 => "i128",
-            Self::Isize => "isize",
-            Self::UInt8 => "u8",
-            Self::UInt16 => "u16",
-            Self::UInt32 => "u32",
-            Self::UInt64 => "u64",
-            Self::UInt128 => "u128",
-            Self::Usize => "usize",
-            Self::Float32 => "f32",
-            Self::Float64 => "f64",
-            Self::Bool => "bool",
-            Self::Str => "str",
-            Self::CanonicalBigInt => "CanonicalBigInt",
-            Self::CanonicalBigRat => "CanonicalBigRat",
-            Self::CanonicalFixedPoint => "CanonicalFixedPoint",
-            Self::VecCollection => "Vec",
-            Self::HashBagCollection => "HashBag",
-            Self::HashSetCollection => "HashSet",
-            Self::HashMapLitCollection => "HashMapLit",
-            Self::HashMapCollection => "HashMap",
-            Self::Other(s) => s,
-        }
-    }
-
     /// Whether this is a known collection wrapper type.
     #[inline]
     pub fn is_collection(&self) -> bool {

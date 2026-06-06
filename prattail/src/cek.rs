@@ -571,7 +571,11 @@ impl IncrementalSession {
     /// may be stale.
     pub fn invalidate_after(&mut self, pos: usize) {
         // Collect keys to remove (can't mutate while iterating)
-        let to_remove: Vec<usize> = self.checkpoints.range((pos + 1)..).map(|(k, _)| *k).collect();
+        let to_remove: Vec<usize> = self
+            .checkpoints
+            .range((pos + 1)..)
+            .map(|(k, _)| *k)
+            .collect();
         for key in to_remove {
             self.checkpoints.remove(&key);
         }
@@ -892,10 +896,7 @@ mod tests {
 
     #[test]
     fn test_cek_state_display() {
-        assert_eq!(
-            CekState::Ready { min_bp: 0 }.to_string(),
-            "Ready(min_bp=0)"
-        );
+        assert_eq!(CekState::Ready { min_bp: 0 }.to_string(), "Ready(min_bp=0)");
         assert_eq!(
             CekState::PrefixDispatch { pos: 5, cur_bp: 3 }.to_string(),
             "PrefixDispatch(pos=5, cur_bp=3)"
@@ -1089,11 +1090,15 @@ mod tests {
         assert_eq!(session.checkpoint_count(), 3); // 0, 5, 10
 
         // Lookup: closest at or before pos 7
-        let (pos, _state) = session.checkpoint_at_or_before(7).expect("should find checkpoint");
+        let (pos, _state) = session
+            .checkpoint_at_or_before(7)
+            .expect("should find checkpoint");
         assert_eq!(pos, 5);
 
         // Lookup: exact match
-        let (pos, _state) = session.checkpoint_at_or_before(10).expect("should find checkpoint");
+        let (pos, _state) = session
+            .checkpoint_at_or_before(10)
+            .expect("should find checkpoint");
         assert_eq!(pos, 10);
     }
 

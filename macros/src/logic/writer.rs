@@ -70,7 +70,10 @@ fn find_workspace_root(start: &Path) -> Option<PathBuf> {
     while let Some(dir) = cur {
         let manifest = dir.join("Cargo.toml");
         if let Ok(contents) = fs::read_to_string(&manifest) {
-            if contents.lines().any(|l| l.trim_start().starts_with("[workspace]")) {
+            if contents
+                .lines()
+                .any(|l| l.trim_start().starts_with("[workspace]"))
+            {
                 return Some(dir.to_path_buf());
             }
         }
@@ -141,7 +144,7 @@ pub fn spill_and_include(lang_name: &str, module_name: &str, tokens: TokenStream
                 lang_name, module_name, e
             );
             tokens
-        }
+        },
     }
 }
 
@@ -162,11 +165,7 @@ pub fn write_ascent_file(
     let theory_name_lower = theory_name.to_lowercase();
     let file_path = dir.join(format!("{}-datalog.rs", theory_name_lower));
     if write_if_changed(&file_path, ascent_content)? {
-        eprintln!(
-            "  ({}) Generated Ascent Datalog: {}",
-            grammar_name,
-            file_path.display()
-        );
+        eprintln!("  ({}) Generated Ascent Datalog: {}", grammar_name, file_path.display());
     }
     Ok(())
 }

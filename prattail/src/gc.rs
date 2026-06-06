@@ -432,15 +432,15 @@ impl MarkSweepGc {
                         worklist.push(*id);
                     }
                 }
-            }
+            },
             // These variants contain no store address references
             StoreValue::Simple(_)
             | StoreValue::Void
             | StoreValue::Relation { .. }
             | StoreValue::Constraint { .. }
             | StoreValue::RewriteRule { .. }
-            | StoreValue::EClass { .. } => {}
-            StoreValue::ChannelRef(_) => {}
+            | StoreValue::EClass { .. } => {},
+            StoreValue::ChannelRef(_) => {},
         }
     }
 }
@@ -731,7 +731,7 @@ impl GcThread {
                     match result {
                         Ok(response) => {
                             let _ = response_tx.send(response);
-                        }
+                        },
                         Err(_) => {
                             // Mark-sweep panicked — send empty response to unblock coordinator
                             let _ = response_tx.send(GcResponse {
@@ -739,12 +739,12 @@ impl GcThread {
                                 dead_channel_refs: Vec::new(),
                                 snapshot_epoch: snapshot.epoch,
                             });
-                        }
+                        },
                     }
-                }
+                },
                 Ok(GcRequest::Shutdown) | Err(_) => {
                     break;
-                }
+                },
             }
         }
     }
@@ -808,14 +808,14 @@ pub fn live_locations(
                             worklist.push(*a);
                         }
                     }
-                }
+                },
                 StoreValue::Simple(_)
                 | StoreValue::Void
                 | StoreValue::Relation { .. }
                 | StoreValue::Constraint { .. }
                 | StoreValue::RewriteRule { .. }
-                | StoreValue::EClass { .. } => {}
-                StoreValue::ChannelRef(_) => {}
+                | StoreValue::EClass { .. } => {},
+                StoreValue::ChannelRef(_) => {},
             }
         }
     }
@@ -1035,50 +1035,50 @@ mod tests {
 
         #[test]
         fn mark_sweep_closure_chain_deep() {
-        // Test a chain: root → closure A → closure B → value C
-        let gc = MarkSweepGc::new();
-        let mut cells = HashMap::new();
+            // Test a chain: root → closure A → closure B → value C
+            let gc = MarkSweepGc::new();
+            let mut cells = HashMap::new();
 
-        // Closure B at addr 2 references addr 3
-        let mut env_b = HashMap::new();
-        env_b.insert("z".to_string(), StoreAddr::Global(3));
-        cells.insert(
-            2,
-            StoreValue::Closure {
-                env_snapshot: env_b,
-                body: "b_body".to_string(),
-            },
-        );
+            // Closure B at addr 2 references addr 3
+            let mut env_b = HashMap::new();
+            env_b.insert("z".to_string(), StoreAddr::Global(3));
+            cells.insert(
+                2,
+                StoreValue::Closure {
+                    env_snapshot: env_b,
+                    body: "b_body".to_string(),
+                },
+            );
 
-        // Closure A at addr 1 references addr 2
-        let mut env_a = HashMap::new();
-        env_a.insert("y".to_string(), StoreAddr::Global(2));
-        cells.insert(
-            1,
-            StoreValue::Closure {
-                env_snapshot: env_a,
-                body: "a_body".to_string(),
-            },
-        );
+            // Closure A at addr 1 references addr 2
+            let mut env_a = HashMap::new();
+            env_a.insert("y".to_string(), StoreAddr::Global(2));
+            cells.insert(
+                1,
+                StoreValue::Closure {
+                    env_snapshot: env_a,
+                    body: "a_body".to_string(),
+                },
+            );
 
-        // Simple value at addr 3 (reachable through B)
-        cells.insert(3, StoreValue::Simple("deep".to_string()));
+            // Simple value at addr 3 (reachable through B)
+            cells.insert(3, StoreValue::Simple("deep".to_string()));
 
-        // Dead value at addr 4
-        cells.insert(4, StoreValue::Simple("dead".to_string()));
+            // Dead value at addr 4
+            cells.insert(4, StoreValue::Simple("dead".to_string()));
 
-        let snapshot = GcSnapshot {
-            roots: vec![1], // Root at addr 1
-            store_cells: cells,
-            epoch: 5,
-        };
+            let snapshot = GcSnapshot {
+                roots: vec![1], // Root at addr 1
+                store_cells: cells,
+                epoch: 5,
+            };
 
-        let live = gc.mark(&snapshot);
-        assert!(live.contains(&1)); // Root
-        assert!(live.contains(&2)); // Closure A → Closure B
-        assert!(live.contains(&3)); // Closure B → value
-        assert!(!live.contains(&4)); // Dead
-    }
+            let live = gc.mark(&snapshot);
+            assert!(live.contains(&1)); // Root
+            assert!(live.contains(&2)); // Closure A → Closure B
+            assert!(live.contains(&3)); // Closure B → value
+            assert!(!live.contains(&4)); // Dead
+        }
     } // end mod mark_sweep_tests
 
     // ── MarkSweepGc sweep tests (green-threads) ────────────────────────
@@ -1161,7 +1161,9 @@ mod tests {
             let snapshot = GcSnapshot::new(vec![0], cells, 2);
             gc_thread.request_gc(snapshot);
 
-            let response = gc_thread.recv_response_blocking().expect("should get response");
+            let response = gc_thread
+                .recv_response_blocking()
+                .expect("should get response");
             assert_eq!(response.dead_addrs, vec![1]);
             assert_eq!(response.snapshot_epoch, 2);
 
@@ -1179,7 +1181,7 @@ mod tests {
         fn gc_thread_try_recv_empty() {
             let gc_thread = GcThread::spawn(MarkSweepGc::new());
             match gc_thread.try_recv_response() {
-                TryRecvGcResult::Empty => {} // expected
+                TryRecvGcResult::Empty => {}, // expected
                 other => panic!("expected Empty, got {:?}", other),
             }
         }

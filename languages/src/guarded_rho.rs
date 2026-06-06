@@ -29,8 +29,8 @@
 //!
 //! ## Logic relations
 //!
-//! - `halts(Proc)` — placeholder relation; populated by user code
-//! - `safe(Proc)` — placeholder relation; populated by user code
+//! - `halts(Proc)` — external relation populated by user code
+//! - `safe(Proc)` — external relation populated by user code
 //!
 //! ## Equations
 //!

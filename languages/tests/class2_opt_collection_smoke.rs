@@ -26,10 +26,8 @@ fn choosemaybe_some_empty_constructs_and_clones() {
 
 #[test]
 fn choosemaybe_some_nonempty_constructs_and_clones() {
-    let term = Proc::ChooseMaybe(
-        std::sync::Arc::new(Proc::PZero),
-        Some(vec![Proc::PZero, Proc::PZero]),
-    );
+    let term =
+        Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero, Proc::PZero]));
     let cloned = term.clone();
     assert_eq!(term, cloned);
     // Debug format works.
@@ -47,7 +45,8 @@ fn choosemaybe_none_ne_some() {
 #[test]
 fn choosemaybe_some_different_lengths_ne() {
     let a = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero]));
-    let b = Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero, Proc::PZero]));
+    let b =
+        Proc::ChooseMaybe(std::sync::Arc::new(Proc::PZero), Some(vec![Proc::PZero, Proc::PZero]));
     assert_ne!(a, b);
 }
 
@@ -69,41 +68,29 @@ fn choosemaybe_some_hash_consistent_with_eq() {
 
 #[test]
 fn choosemaybe_parse_none_via_wpda() {
-    let result = Proc::parse_via_wpda("choose 0")
-        .expect("'choose 0' parses");
+    let result = Proc::parse_via_wpda("choose 0").expect("'choose 0' parses");
     match &result {
         Proc::ChooseMaybe(_a, q) => {
             assert!(q.is_none(), "expected None for absent optional collection");
-        }
+        },
         other => panic!("expected ChooseMaybe, got {:?}", other),
     }
 }
 
-// Phase 4 #3 (2026-05-12): the Some parsing path of *opt(SimpleCollection)
-// is not yet wired end-to-end through WPDS. The parse-side runtime work
-// (macros/src/gen/runtime/wpda_codegen/binder.rs) handles the Optional
-// extractor's CollectionDrain inner arm and the None case, but the
-// CollectionLoop sub-parse inside the optional group doesn't currently
-// fire to populate elements. Once that's wired, the test below should
-// pass. Disabled to keep the suite green; codegen for the Some case is
-// already correct (the AST `ChooseMaybe(_, Some(vec![..]))` constructs,
-// clones, hashes, and compares as expected — see the constructs+clones
-// tests above).
-//
-// #[test]
-// fn choosemaybe_parse_some_via_wpda() {
-//     let result = Proc::parse_via_wpda("choose 0 with ( 0 | 0 )")
-//         .expect("'choose 0 with ( 0 | 0 )' parses");
-//     match &result {
-//         Proc::ChooseMaybe(_a, q) => match q {
-//             Some(v) => {
-//                 assert_eq!(v.len(), 2, "expected 2 elements in optional collection");
-//                 for elem in v.iter() {
-//                     assert!(matches!(elem, Proc::PZero));
-//                 }
-//             }
-//             None => panic!("expected Some collection"),
-//         },
-//         other => panic!("expected ChooseMaybe, got {:?}", other),
-//     }
-// }
+#[test]
+fn choosemaybe_parse_some_via_wpda() {
+    let result =
+        Proc::parse_via_wpda("choose 0 with ( 0 | 0 )").expect("'choose 0 with ( 0 | 0 )' parses");
+    match &result {
+        Proc::ChooseMaybe(_a, q) => match q {
+            Some(v) => {
+                assert_eq!(v.len(), 2, "expected 2 elements in optional collection");
+                for elem in v.iter() {
+                    assert!(matches!(elem, Proc::PZero));
+                }
+            },
+            None => panic!("expected Some collection"),
+        },
+        other => panic!("expected ChooseMaybe, got {:?}", other),
+    }
+}

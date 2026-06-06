@@ -11,10 +11,10 @@
 //! All recursive operations use iterative work-stacks (trampolines).
 //! Everything is derived from the `language!` spec.
 
+use crate::gen::native::native_type_to_string;
 use mettail_ast::grammar::{GrammarRule, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
-use crate::gen::native::native_type_to_string;
 use std::collections::{HashMap, HashSet};
 
 use super::expr_string_gen::TestCase;
@@ -47,14 +47,6 @@ struct CrossCatEvalRule {
     params: Vec<(String, String)>, // (param_name, param_category)
 }
 
-/// An edge in the cast graph: from source category to target category via a rule.
-#[derive(Debug, Clone)]
-struct CastEdge {
-    from_category: String,
-    to_category: String,
-    rule_label: String,
-}
-
 /// Generate cross-category tests for the language.
 ///
 /// Returns a vector of `TestCase` suitable for code generation.
@@ -85,7 +77,6 @@ pub fn generate_cross_category_tests(
     //   - Typed conversion casts (with rust_code): e.g., IntToFloat(Int) → Float
 
     let cast_rules = find_all_cast_rules(language, ambiguous_prefix_rules);
-    let cast_graph = build_cast_graph(&cast_rules);
 
     // Build leaf map for constructing representative terms.
     let leaf_map = super::nested_expr_gen::build_simple_leaf_map_pub(language);
@@ -185,7 +176,7 @@ pub fn generate_cross_category_tests(
     }
 
     // 1A-iii: Multi-hop chain tests (A → B → C where A→B and B→C exist)
-    let multi_hop_chains = find_multi_hop_chains(&cast_graph, &cast_rules);
+    let multi_hop_chains = find_multi_hop_chains(&cast_rules);
     for chain in &multi_hop_chains {
         if test_cases.len() >= MAX_CROSS_CAT_TESTS {
             break;
@@ -210,11 +201,7 @@ pub fn generate_cross_category_tests(
                 labels.push(hop.label.to_lowercase());
             }
 
-            let test_name = format!(
-                "cross_cat_{}_chain_{}",
-                lang_name_lower,
-                labels.join("_"),
-            );
+            let test_name = format!("cross_cat_{}_chain_{}", lang_name_lower, labels.join("_"),);
 
             test_cases.push(TestCase {
                 test_name,
@@ -264,33 +251,18 @@ pub fn generate_cross_category_tests(
             parts.push("None".to_string());
         }
 
-        let construction = format!(
-            "{}::{}({})",
-            cross.result_category, cross.label, parts.join(", ")
-        );
+        let construction =
+            format!("{}::{}({})", cross.result_category, cross.label, parts.join(", "));
 
         // Try symbolic evaluation
         let param_info = ground_term_enum::extract_param_info(rule, language);
-        let expected = try_symbolic_eval_cross(
-            rule,
-            &param_info,
-            &cross.params,
-            &leaf_map,
-            language,
-        );
+        let expected =
+            try_symbolic_eval_cross(rule, &param_info, &cross.params, &leaf_map, language);
 
         let test_name = if expected.is_some() {
-            format!(
-                "cross_cat_{}_eval_{}",
-                lang_name_lower,
-                cross.label.to_lowercase(),
-            )
+            format!("cross_cat_{}_eval_{}", lang_name_lower, cross.label.to_lowercase(),)
         } else {
-            format!(
-                "cross_cat_{}_eval_{}_smoke",
-                lang_name_lower,
-                cross.label.to_lowercase(),
-            )
+            format!("cross_cat_{}_eval_{}_smoke", lang_name_lower, cross.label.to_lowercase(),)
         };
 
         test_cases.push(TestCase {
@@ -376,12 +348,8 @@ pub fn generate_cross_category_tests(
                     eval_parts.push("None".to_string());
                 }
 
-                let construction = format!(
-                    "{}::{}({})",
-                    result_cat,
-                    eval_rule.label,
-                    eval_parts.join(", ")
-                );
+                let construction =
+                    format!("{}::{}({})", result_cat, eval_rule.label, eval_parts.join(", "));
 
                 let test_name = format!(
                     "cross_cat_{}_castop_{}_{}_smoke",
@@ -467,7 +435,11 @@ pub fn generate_cross_category_tests(
             // Opt-Group: build the optional-None tail once for both lhs/rhs.
             let optional_tail: String = {
                 let n = ground_term_enum::count_optional_inner_simples(eval_rule);
-                if n == 0 { String::new() } else { ", ".to_string() + &vec!["None"; n].join(", ") }
+                if n == 0 {
+                    String::new()
+                } else {
+                    ", ".to_string() + &vec!["None"; n].join(", ")
+                }
             };
 
             // Mixed test: cast value as first param, native as second
@@ -574,12 +546,8 @@ pub fn generate_cross_category_tests(
                     eval_parts.push("None".to_string());
                 }
 
-                let construction = format!(
-                    "{}::{}({})",
-                    result_cat,
-                    eval_rule.label,
-                    eval_parts.join(", ")
-                );
+                let construction =
+                    format!("{}::{}({})", result_cat, eval_rule.label, eval_parts.join(", "));
 
                 let test_name = format!(
                     "cross_cat_{}_composite_{}_{}_smoke",
@@ -640,20 +608,6 @@ fn find_all_cast_rules(
         .collect()
 }
 
-/// Build a directed cast graph from the cast rules.
-///
-/// Each edge represents a cast from one category to another.
-fn build_cast_graph(cast_rules: &[CastRule]) -> Vec<CastEdge> {
-    cast_rules
-        .iter()
-        .map(|cr| CastEdge {
-            from_category: cr.param_category.clone(),
-            to_category: cr.result_category.clone(),
-            rule_label: cr.label.clone(),
-        })
-        .collect()
-}
-
 /// Find roundtrip cast pairs: (A → B, B → A) where both directions exist.
 fn find_roundtrip_cast_pairs(cast_rules: &[CastRule]) -> Vec<(CastRule, CastRule)> {
     let mut pairs: Vec<(CastRule, CastRule)> = Vec::new();
@@ -666,8 +620,14 @@ fn find_roundtrip_cast_pairs(cast_rules: &[CastRule]) -> Vec<(CastRule, CastRule
                 && forward.param_category != forward.result_category
             {
                 let key = (
-                    forward.param_category.clone().min(forward.result_category.clone()),
-                    forward.param_category.clone().max(forward.result_category.clone()),
+                    forward
+                        .param_category
+                        .clone()
+                        .min(forward.result_category.clone()),
+                    forward
+                        .param_category
+                        .clone()
+                        .max(forward.result_category.clone()),
                 );
                 if !seen.contains(&key) {
                     seen.insert(key);
@@ -683,7 +643,7 @@ fn find_roundtrip_cast_pairs(cast_rules: &[CastRule]) -> Vec<(CastRule, CastRule
 /// Find multi-hop chain paths (length 2) in the cast graph using BFS.
 ///
 /// For each pair of edges A→B and B→C where A ≠ C, yield [A→B, B→C].
-fn find_multi_hop_chains(_cast_graph: &[CastEdge], cast_rules: &[CastRule]) -> Vec<Vec<CastRule>> {
+fn find_multi_hop_chains(cast_rules: &[CastRule]) -> Vec<Vec<CastRule>> {
     let mut chains: Vec<Vec<CastRule>> = Vec::new();
     let mut seen: HashSet<(String, String, String)> = HashSet::new();
 

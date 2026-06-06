@@ -34,24 +34,23 @@ use mettail_languages::class2hashmapsmoke::Proc;
 
 #[test]
 fn pred1_empty_map() {
-    let result =
-        Proc::parse_via_wpda("chooseMap 0 ( )").expect("'chooseMap 0 ( )' parses");
+    let result = Proc::parse_via_wpda("chooseMap 0 ( )").expect("'chooseMap 0 ( )' parses");
     match &result {
         Proc::ChooseMap(_a, ms) => {
             assert_eq!(ms.len(), 0, "ms should be empty");
-        }
+        },
         other => panic!("expected Proc::ChooseMap, got {:?}", other),
     }
 }
 
 #[test]
 fn pred2_singleton_pair() {
-    let result = Proc::parse_via_wpda("chooseMap 0 ( 0 : 0 )")
-        .expect("'chooseMap 0 ( 0 : 0 )' parses");
+    let result =
+        Proc::parse_via_wpda("chooseMap 0 ( 0 : 0 )").expect("'chooseMap 0 ( 0 : 0 )' parses");
     match &result {
         Proc::ChooseMap(_a, ms) => {
             assert_eq!(ms.len(), 1, "ms should have one entry");
-        }
+        },
         other => panic!("expected Proc::ChooseMap, got {:?}", other),
     }
 }
@@ -65,7 +64,7 @@ fn pred3_two_pairs() {
             // HashMap dedups identical keys: PZero -> PZero inserted twice
             // collapses to a single entry. Length remains 1.
             assert_eq!(ms.len(), 1, "ms should have one entry (dedup PZero key)");
-        }
+        },
         other => panic!("expected Proc::ChooseMap, got {:?}", other),
     }
 }

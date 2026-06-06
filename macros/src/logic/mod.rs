@@ -17,14 +17,14 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use mettail_ast::grammar::{GrammarItem, TermParam};
-use mettail_ast::types::{EvalMode, TypeExpr};
-use mettail_ast::language::LanguageDef;
 use crate::logic::rules::generate_base_rewrites;
 use common::{in_cat_filter, CategoryFilter};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use mettail_ast::grammar::{GrammarItem, TermParam};
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::{EvalMode, TypeExpr};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Rewrite user `![...]` Rust code to a closure that returns `Option<T>`:
 /// every `+ - * / % unary-neg .pow .product::<_>()` etc. becomes a
@@ -89,6 +89,7 @@ pub mod common;
 mod equations;
 pub mod fusion;
 pub mod helpers;
+#[cfg(test)]
 pub mod multi_channel_analysis;
 mod pattern_codec;
 pub mod pattern_trie;
@@ -305,16 +306,17 @@ pub fn generate_ascent_source(
             } else {
                 // Truncate for readability; full listing available via PRATTAIL_LINT_VERBOSE
                 let mut truncated = stratum_details[..5].to_vec();
-                truncated.push(format!("... and {} more strata (set PRATTAIL_LINT_VERBOSE=1 to see all)", stratum_details.len() - 5));
+                truncated.push(format!(
+                    "... and {} more strata (set PRATTAIL_LINT_VERBOSE=1 to see all)",
+                    stratum_details.len() - 5
+                ));
                 truncated.join("; ")
             };
             mettail_prattail::lint::emit_diagnostic(&build_lint(
-                mettail_prattail::lint::DiagnosticId::G42, "eq-strata-analysis",
+                mettail_prattail::lint::DiagnosticId::G42,
+                "eq-strata-analysis",
                 mettail_prattail::lint::LintSeverity::Note,
-                format!(
-                    "BCG06 equation stratification: {}",
-                    strat_info,
-                ),
+                format!("BCG06 equation stratification: {}", strat_info,),
                 Some(hint_text),
                 Some(grammar_name.clone()),
             ));
@@ -324,7 +326,16 @@ pub fn generate_ascent_source(
     let helper_fns = helpers::generate_helper_functions(language);
     let relations = generate_relations(language, &demanded);
     let category_rules = generate_category_rules(language, None);
-    let equation_rules = generate_equation_rules(language, None, analysis, &subsumed_equations, &cancellation_equations, true, &demanded, Some(&strat_info));
+    let equation_rules = generate_equation_rules(
+        language,
+        None,
+        analysis,
+        &subsumed_equations,
+        &cancellation_equations,
+        true,
+        &demanded,
+        Some(&strat_info),
+    );
     let rewrite_rules = generate_rewrite_rules(language, None, analysis, true, &demanded);
 
     // BCG02: Generate fused rules for safe deconstruction-rewrite chains.
@@ -380,8 +391,18 @@ pub fn generate_ascent_source(
     let core_raw_content = common::compute_core_categories(language).map(|core_cats| {
         let core_relations = generate_relations(language, &demanded);
         let core_category_rules = generate_category_rules(language, Some(&core_cats));
-        let core_equation_rules = generate_equation_rules(language, Some(&core_cats), analysis, &subsumed_equations, &cancellation_equations, false, &demanded, Some(&strat_info));
-        let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats), analysis, false, &demanded);
+        let core_equation_rules = generate_equation_rules(
+            language,
+            Some(&core_cats),
+            analysis,
+            &subsumed_equations,
+            &cancellation_equations,
+            false,
+            &demanded,
+            Some(&strat_info),
+        );
+        let core_rewrite_rules =
+            generate_rewrite_rules(language, Some(&core_cats), analysis, false, &demanded);
 
         // Refinement rules are shared — they don't depend on category filtering
         let core_refinement_rules = generate_refinement_type_rules(language);
@@ -435,7 +456,8 @@ pub fn generate_ascent_source(
     if let Err(e) = writer::write_ascent_file(&grammar_name, &theory_name, &formatted_source) {
         // I10 emits immediately (one-off infrastructure diagnostic, not groupable)
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            mettail_prattail::lint::DiagnosticId::I10, "ascent-file-write-failed",
+            mettail_prattail::lint::DiagnosticId::I10,
+            "ascent-file-write-failed",
             mettail_prattail::lint::LintSeverity::Warning,
             format!("failed to write Ascent Datalog file: {}", e),
             Some("check directory permissions".to_string()),
@@ -456,8 +478,8 @@ pub fn generate_ascent_source(
     // consumer. Skip it for large grammars — the user can re-enable via
     // PRATTAIL_LINT_SUBSUMPTION=1 if they specifically want the warnings.
     let rule_count = language.equations.len() + language.rewrites.len();
-    let subsumption_enabled = rule_count <= 200
-        || std::env::var("PRATTAIL_LINT_SUBSUMPTION").is_ok();
+    let subsumption_enabled =
+        rule_count <= 200 || std::env::var("PRATTAIL_LINT_SUBSUMPTION").is_ok();
     // Sprint 6g/6h: Accumulates per-stratum Ascent content for multi-stratum split.
     // Populated below when the dependency-group analysis identifies splittable groups.
     let mut stratum_contents: Vec<StratumContent> = Vec::new();
@@ -478,32 +500,43 @@ pub fn generate_ascent_source(
             for sub in &subsumptions {
                 let general_name = rule_id_name(sub.general, language);
                 let specific_name = rule_id_name(sub.specific, language);
-                let eliminated = if let (
-                    pattern_trie::RuleId::Equation(_),
-                    pattern_trie::RuleId::Equation(i),
-                ) = (sub.general, sub.specific) {
-                    subsumed_equations.contains(&i)
-                } else {
-                    false
-                };
+                let eliminated =
+                    if let (pattern_trie::RuleId::Equation(_), pattern_trie::RuleId::Equation(i)) =
+                        (sub.general, sub.specific)
+                    {
+                        subsumed_equations.contains(&i)
+                    } else {
+                        false
+                    };
                 if eliminated {
                     macro_diagnostics.push(build_lint(
-                        mettail_prattail::lint::DiagnosticId::G26, "equation-subsumed",
+                        mettail_prattail::lint::DiagnosticId::G26,
+                        "equation-subsumed",
                         mettail_prattail::lint::LintSeverity::Note,
-                        format!("equation `{}` eliminated — subsumed by more general equation `{}`", specific_name, general_name),
-                        Some(format!("the more general equation `{}` covers all cases", general_name)),
+                        format!(
+                            "equation `{}` eliminated — subsumed by more general equation `{}`",
+                            specific_name, general_name
+                        ),
+                        Some(format!(
+                            "the more general equation `{}` covers all cases",
+                            general_name
+                        )),
                         Some(grammar_name.clone()),
                     ));
                 } else {
                     macro_diagnostics.push(build_lint(
-                        mettail_prattail::lint::DiagnosticId::G27, "rule-subsumption-candidate",
+                        mettail_prattail::lint::DiagnosticId::G27,
+                        "rule-subsumption-candidate",
                         mettail_prattail::lint::LintSeverity::Warning,
                         format!(
                             "rule `{}` may be subsumed by more general rule `{}` \
                              (both LHS patterns match the same terms, but `{}` is more general)",
                             specific_name, general_name, general_name,
                         ),
-                        Some(format!("review whether rule `{}` can be removed or merged with `{}`", specific_name, general_name)),
+                        Some(format!(
+                            "review whether rule `{}` can be removed or merged with `{}`",
+                            specific_name, general_name
+                        )),
                         Some(grammar_name.clone()),
                     ));
                 }
@@ -530,13 +563,19 @@ pub fn generate_ascent_source(
         let independent = dep_groups.iter().filter(|g| g.len() == 1).count();
         if dep_groups.len() > 1 {
             macro_diagnostics.push(build_lint(
-                mettail_prattail::lint::DiagnosticId::G29, "dependency-groups",
+                mettail_prattail::lint::DiagnosticId::G29,
+                "dependency-groups",
                 mettail_prattail::lint::LintSeverity::Note,
                 format!(
                     "{} fine-grained dependency group(s) detected ({} independent, {} cross-group)",
-                    dep_groups.len(), independent, dep_groups.len() - independent,
+                    dep_groups.len(),
+                    independent,
+                    dep_groups.len() - independent,
                 ),
-                Some("independent groups can be evaluated in separate strata for performance".to_string()),
+                Some(
+                    "independent groups can be evaluated in separate strata for performance"
+                        .to_string(),
+                ),
                 Some(grammar_name.clone()),
             ));
         }
@@ -567,8 +606,15 @@ pub fn generate_ascent_source(
                 &strat_info,
             );
             if !stratum_contents.is_empty() {
-                let stratum_summary: Vec<String> = stratum_contents.iter()
-                    .map(|s| format!("stratum {}: [{}]", s.index, s.categories.iter().cloned().collect::<Vec<_>>().join(", ")))
+                let stratum_summary: Vec<String> = stratum_contents
+                    .iter()
+                    .map(|s| {
+                        format!(
+                            "stratum {}: [{}]",
+                            s.index,
+                            s.categories.iter().cloned().collect::<Vec<_>>().join(", ")
+                        )
+                    })
                     .collect();
                 mettail_prattail::lint::emit_diagnostic(&build_lint(
                     mettail_prattail::lint::DiagnosticId::G29, "multi-stratum-split-active",
@@ -616,7 +662,8 @@ pub fn generate_ascent_source(
             &demanded,
             Some(&strat_info),
         );
-        let main_rewrite_rules = generate_rewrite_rules(language, main_filter, analysis, false, &demanded);
+        let main_rewrite_rules =
+            generate_rewrite_rules(language, main_filter, analysis, false, &demanded);
         let main_raw = quote! {
             #relations
 
@@ -643,16 +690,22 @@ pub fn generate_ascent_source(
     if let Some(ref a) = analysis {
         if !a.isomorphic_groups.is_empty() {
             let total_cats: usize = a.isomorphic_groups.iter().map(|g| g.len()).sum();
-            let group_lines: Vec<String> = a.isomorphic_groups.iter().enumerate()
+            let group_lines: Vec<String> = a
+                .isomorphic_groups
+                .iter()
+                .enumerate()
                 .map(|(i, group)| format!("  group {}: [{}]", i, group.join(", ")))
                 .collect();
             mettail_prattail::lint::emit_diagnostic(&build_lint(
-                mettail_prattail::lint::DiagnosticId::G30, "isomorphic-wfst-groups",
+                mettail_prattail::lint::DiagnosticId::G30,
+                "isomorphic-wfst-groups",
                 mettail_prattail::lint::LintSeverity::Note,
                 format!(
                     "{} isomorphic WFST group(s) detected ({} categories total) \
                      — these categories share identical dispatch topology\n{}",
-                    a.isomorphic_groups.len(), total_cats, group_lines.join("\n"),
+                    a.isomorphic_groups.len(),
+                    total_cats,
+                    group_lines.join("\n"),
                 ),
                 Some("categories with identical topology can share a single WFST".to_string()),
                 Some(grammar_name.clone()),
@@ -668,8 +721,7 @@ pub fn generate_ascent_source(
     // B-CG04: Detect ground-LHS rewrite rules and generate seed tuples.
     // These are pushed into rw_cat at Ascent initialization (iteration 0),
     // making the rewrite result immediately available without fixpoint scanning.
-    let (ground_rewrite_seeds, ground_count) =
-        rules::generate_ground_rewrite_seeds(language);
+    let (ground_rewrite_seeds, ground_count) = rules::generate_ground_rewrite_seeds(language);
     if ground_count > 0 {
         emit_collected_diagnostics(vec![build_lint(
             mettail_prattail::lint::DiagnosticId::G35,
@@ -697,16 +749,16 @@ pub fn generate_ascent_source(
 /// Get a human-readable name for a RuleId.
 fn rule_id_name(id: pattern_trie::RuleId, language: &LanguageDef) -> String {
     match id {
-        pattern_trie::RuleId::Equation(i) => {
-            language.equations.get(i)
-                .map(|eq| eq.name.to_string())
-                .unwrap_or_else(|| format!("equation[{}]", i))
-        }
-        pattern_trie::RuleId::Rewrite(i) => {
-            language.rewrites.get(i)
-                .map(|rw| rw.name.to_string())
-                .unwrap_or_else(|| format!("rewrite[{}]", i))
-        }
+        pattern_trie::RuleId::Equation(i) => language
+            .equations
+            .get(i)
+            .map(|eq| eq.name.to_string())
+            .unwrap_or_else(|| format!("equation[{}]", i)),
+        pattern_trie::RuleId::Rewrite(i) => language
+            .rewrites
+            .get(i)
+            .map(|rw| rw.name.to_string())
+            .unwrap_or_else(|| format!("rewrite[{}]", i)),
     }
 }
 
@@ -735,20 +787,23 @@ fn compute_subsumed_equations(language: &LanguageDef, grammar_name: &str) -> Has
         // Only eliminate subsumed equations (not rewrites).
         // The general rule must also be an equation for correctness:
         // equation symmetry guarantees RHS subsumption is automatic.
-        if let (
-            pattern_trie::RuleId::Equation(_),
-            pattern_trie::RuleId::Equation(specific_idx),
-        ) = (pair.general, pair.specific) {
+        if let (pattern_trie::RuleId::Equation(_), pattern_trie::RuleId::Equation(specific_idx)) =
+            (pair.general, pair.specific)
+        {
             subsumed.insert(specific_idx);
         }
     }
 
     if !subsumed.is_empty() {
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            mettail_prattail::lint::DiagnosticId::G31, "subsumed-equations-eliminated",
+            mettail_prattail::lint::DiagnosticId::G31,
+            "subsumed-equations-eliminated",
             mettail_prattail::lint::LintSeverity::Note,
             format!("{} subsumed equation(s) eliminated from Ascent codegen", subsumed.len()),
-            Some("subsumed equations are redundant and have been removed from Ascent codegen".to_string()),
+            Some(
+                "subsumed equations are redundant and have been removed from Ascent codegen"
+                    .to_string(),
+            ),
             Some(grammar_name.to_string()),
         ));
     }
@@ -780,9 +835,13 @@ fn emit_cancellation_pair_lints(
 
         // G25: note — cancellation pair detected and suppressed
         mettail_prattail::lint::emit_diagnostic(&build_lint(
-            mettail_prattail::lint::DiagnosticId::G25, "cancellation-pair-detected",
+            mettail_prattail::lint::DiagnosticId::G25,
+            "cancellation-pair-detected",
             mettail_prattail::lint::LintSeverity::Note,
-            format!("equation `{}` is a cancellation pair and has been suppressed", pair.equation_name),
+            format!(
+                "equation `{}` is a cancellation pair and has been suppressed",
+                pair.equation_name
+            ),
             Some(format!(
                 "{}({}(X)) = X is handled by normalize() instead of eq_{}",
                 pair.outer_constructor, pair.inner_constructor, eq_rel,
@@ -795,29 +854,30 @@ fn emit_cancellation_pair_lints(
             // Check if LHS is Outer(Inner(Var(X))) and RHS is Var(X)
             match (&rw.left, &rw.right) {
                 (
-                    Pattern::Term(PatternTerm::Apply {
-                        constructor: outer,
-                        args: outer_args,
-                    }),
+                    Pattern::Term(PatternTerm::Apply { constructor: outer, args: outer_args }),
                     Pattern::Term(PatternTerm::Var(rhs_var)),
-                ) if outer.to_string() == pair.outer_constructor.to_string() && outer_args.len() == 1 => {
+                ) if outer.to_string() == pair.outer_constructor.to_string()
+                    && outer_args.len() == 1 =>
+                {
                     // Check inner: Apply(inner_ctor, [Var(X)])
                     match &outer_args[0] {
                         Pattern::Term(PatternTerm::Apply {
                             constructor: inner,
                             args: inner_args,
-                        }) if inner.to_string() == pair.inner_constructor.to_string() && inner_args.len() == 1 => {
+                        }) if inner.to_string() == pair.inner_constructor.to_string()
+                            && inner_args.len() == 1 =>
+                        {
                             // Check innermost is Var(X) matching RHS
                             match &inner_args[0] {
                                 Pattern::Term(PatternTerm::Var(lhs_var)) => {
                                     lhs_var.to_string() == rhs_var.to_string()
-                                }
+                                },
                                 _ => false,
                             }
-                        }
+                        },
                         _ => false,
                     }
-                }
+                },
                 _ => false,
             }
         });
@@ -829,23 +889,25 @@ fn emit_cancellation_pair_lints(
             let cat_str = pair.outer_category.to_string();
             let has_congruence_rewrites = language.rewrites.iter().any(|rw| {
                 rw.is_congruence_rule()
-                    && rw
-                        .left
-                        .category(language)
-                        .map(|c| c.to_string())
-                        == Some(cat_str.clone())
+                    && rw.left.category(language).map(|c| c.to_string()) == Some(cat_str.clone())
             });
 
             if has_congruence_rewrites {
                 mettail_prattail::lint::emit_diagnostic(&build_lint(
-                    mettail_prattail::lint::DiagnosticId::W09, "cancellation-pair-missing-rewrite",
+                    mettail_prattail::lint::DiagnosticId::W09,
+                    "cancellation-pair-missing-rewrite",
                     mettail_prattail::lint::LintSeverity::Warning,
-                    format!("cancellation pair `{}` has no corresponding rewrite", pair.equation_name),
+                    format!(
+                        "cancellation pair `{}` has no corresponding rewrite",
+                        pair.equation_name
+                    ),
                     Some(format!(
                         "add `|- ({} ({} X)) ~> X ;` to ensure runtime reduction; \
                          without this rewrite, {}({}(X)) can only be collapsed by normalize()",
-                        pair.outer_constructor, pair.inner_constructor,
-                        pair.outer_constructor, pair.inner_constructor,
+                        pair.outer_constructor,
+                        pair.inner_constructor,
+                        pair.outer_constructor,
+                        pair.inner_constructor,
                     )),
                     Some(grammar_name.to_string()),
                 ));
@@ -874,19 +936,24 @@ fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
     let mut diagnostics = Vec::new();
 
     // Collect individual depth-increasing rules
-    let increasing: Vec<&rules::DepthDeltaResult> = results.iter().filter(|r| r.delta > 0).collect();
+    let increasing: Vec<&rules::DepthDeltaResult> =
+        results.iter().filter(|r| r.delta > 0).collect();
 
     for r in &increasing {
         let rule_kind = if r.is_equation { "equation" } else { "rewrite" };
 
         // Derive the category from the equation/rewrite's LHS pattern
         let category = if r.is_equation {
-            language.equations.iter()
+            language
+                .equations
+                .iter()
                 .find(|eq| eq.name.to_string() == r.rule_name)
                 .and_then(|eq| eq.left.category(language))
                 .map(|c| c.to_string())
         } else {
-            language.rewrites.iter()
+            language
+                .rewrites
+                .iter()
                 .find(|rw| rw.name.to_string() == r.rule_name)
                 .and_then(|rw| rw.left.category(language))
                 .map(|c| c.to_string())
@@ -1140,7 +1207,10 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
             .filter(|r| {
                 r.category == *cat
                     && r.bindings.is_empty()
-                    && !r.items.iter().any(|i| matches!(i, GrammarItem::Collection { .. }))
+                    && !r
+                        .items
+                        .iter()
+                        .any(|i| matches!(i, GrammarItem::Collection { .. }))
             })
             .collect();
 
@@ -1175,11 +1245,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
                 }
 
                 descriptors.push(RuleDescriptor {
-                    name: format!(
-                        "eq-congruence/{}/{}",
-                        cat,
-                        arg_cats.join(",")
-                    ),
+                    name: format!("eq-congruence/{}/{}", cat, arg_cats.join(",")),
                     kind: RuleKind::EqCongruence,
                     body_relations: body,
                     head_relations: [eq_rel.clone()].into_iter().collect(),
@@ -1273,16 +1339,10 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
                     if let Some(field_cat_name) =
                         find_congruence_field_category(&rw.left, &source_str, language)
                     {
-                        body.insert(format!(
-                            "rw_{}",
-                            field_cat_name.to_lowercase()
-                        ));
+                        body.insert(format!("rw_{}", field_cat_name.to_lowercase()));
                     } else {
                         // Conservative: add rw_<same_cat> as fallback
-                        body.insert(format!(
-                            "rw_{}",
-                            field_cat.to_string().to_lowercase()
-                        ));
+                        body.insert(format!("rw_{}", field_cat.to_string().to_lowercase()));
                     }
                 }
             }
@@ -1314,10 +1374,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
         // HOL step rules join on rw_<field_cat> for each non-terminal arg
         for item in &rule.items {
             if let GrammarItem::NonTerminal { ident: field_cat, .. } = item {
-                body.insert(format!(
-                    "rw_{}",
-                    field_cat.to_string().to_lowercase()
-                ));
+                body.insert(format!("rw_{}", field_cat.to_string().to_lowercase()));
             }
         }
 
@@ -1347,10 +1404,7 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
         // Fold rules join on fold_<field_cat> for each non-terminal arg
         for item in &rule.items {
             if let GrammarItem::NonTerminal { ident: field_cat, .. } = item {
-                body.insert(format!(
-                    "fold_{}",
-                    field_cat.to_string().to_lowercase()
-                ));
+                body.insert(format!("fold_{}", field_cat.to_string().to_lowercase()));
             }
         }
 
@@ -1374,11 +1428,11 @@ fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
                 match item {
                     GrammarItem::NonTerminal { ident: tgt, .. } => {
                         decon_pairs.insert((src.clone(), tgt.to_string()));
-                    }
+                    },
                     GrammarItem::Collection { element_type, .. } => {
                         decon_pairs.insert((src.clone(), element_type.to_string()));
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
@@ -1425,7 +1479,7 @@ fn find_congruence_field_category(
                             }
                         }
                         nt_idx += 1;
-                    }
+                    },
                     GrammarItem::Collection { element_type, .. } => {
                         // Check if source_var appears in the collection position
                         if nt_idx < args.len() {
@@ -1436,12 +1490,12 @@ fn find_congruence_field_category(
                             }
                         }
                         nt_idx += 1;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
             None
-        }
+        },
         _ => None,
     }
 }
@@ -1669,10 +1723,14 @@ fn emit_delta_guard_lints(language: &LanguageDef, grammar_name: &str) {
     // Append multi-rule group details
     if !group_summaries.is_empty() {
         if std::env::var("PRATTAIL_LINT_VERBOSE").is_ok() {
-            message.push_str("\nmulti-rule delta groups (rules sharing identical body relations):\n");
+            message
+                .push_str("\nmulti-rule delta groups (rules sharing identical body relations):\n");
             message.push_str(&group_summaries.join("\n"));
         } else {
-            message.push_str(&format!("\n{} multi-rule delta group(s) (set PRATTAIL_LINT_VERBOSE=1 for details)", group_summaries.len()));
+            message.push_str(&format!(
+                "\n{} multi-rule delta group(s) (set PRATTAIL_LINT_VERBOSE=1 for details)",
+                group_summaries.len()
+            ));
         }
     }
 
@@ -1835,7 +1893,8 @@ pub fn generate_rewrite_rules(
 
     // Generate explicit congruence rules (with premise: if S => T then ...)
     // These are user-declared rules that control where rewrites propagate
-    let congruence_rules = generate_all_explicit_congruences(language, cat_filter, emit_diagnostics);
+    let congruence_rules =
+        generate_all_explicit_congruences(language, cat_filter, emit_diagnostics);
     rules.extend(congruence_rules);
 
     // Equation-rewrite closure: if a is equation-equivalent to b and b rewrites
@@ -1938,23 +1997,32 @@ fn generate_stratified_content(
     // category). We skip subsumed equations the same way the main codegen
     // path does so our count reflects what would actually be emitted.
     let rule_count_for = |cat: &str| -> usize {
-        let eqs = language.equations.iter().enumerate().filter(|(i, eq)| {
-            if subsumed_equations.contains(i) || cancellation_equations.contains(i) {
-                return false;
-            }
-            eq.left
-                .category(language)
-                .or_else(|| eq.right.category(language))
-                .map(|c| c.to_string() == cat)
-                .unwrap_or(false)
-        }).count();
-        let rws = language.rewrites.iter().filter(|rw| {
-            rw.left
-                .category(language)
-                .or_else(|| rw.right.category(language))
-                .map(|c| c.to_string() == cat)
-                .unwrap_or(false)
-        }).count();
+        let eqs = language
+            .equations
+            .iter()
+            .enumerate()
+            .filter(|(i, eq)| {
+                if subsumed_equations.contains(i) || cancellation_equations.contains(i) {
+                    return false;
+                }
+                eq.left
+                    .category(language)
+                    .or_else(|| eq.right.category(language))
+                    .map(|c| c.to_string() == cat)
+                    .unwrap_or(false)
+            })
+            .count();
+        let rws = language
+            .rewrites
+            .iter()
+            .filter(|rw| {
+                rw.left
+                    .category(language)
+                    .or_else(|| rw.right.category(language))
+                    .map(|c| c.to_string() == cat)
+                    .unwrap_or(false)
+            })
+            .count();
         eqs + rws
     };
 
@@ -2000,7 +2068,8 @@ fn generate_stratified_content(
         // Category deconstruction: restricted to this stratum's single
         // category so its own fold/expansion rules can discover subterms
         // as they arise during the fixpoint.
-        let category_rules = crate::logic::categories::generate_category_rules(language, cat_filter);
+        let category_rules =
+            crate::logic::categories::generate_category_rules(language, cat_filter);
 
         let equation_rules = crate::logic::equations::generate_equation_rules(
             language,
@@ -2107,7 +2176,8 @@ fn generate_pre_stratum_content(
     let expansion = quote! { #(#expansion_rules)* };
 
     // Reflexivity rules for eq relations (needed because some rules may reference eq_*)
-    let reflexivity = equations::generate_equation_rules_reflexivity_only(language, None, &all_cats);
+    let reflexivity =
+        equations::generate_equation_rules_reflexivity_only(language, None, &all_cats);
 
     Some(quote! {
         #relations
@@ -2200,7 +2270,9 @@ fn generate_ground_hol_step_rules(
                         let left_lit = common::literal_label_for(language, &left_ty);
                         let right_lit = common::literal_label_for(language, &right_ty);
                         match (left_lit, right_lit) {
-                            (Some(ll), Some(rl)) => Some((left_ty.clone(), ll, right_ty.clone(), rl)),
+                            (Some(ll), Some(rl)) => {
+                                Some((left_ty.clone(), ll, right_ty.clone(), rl))
+                            },
                             _ => None,
                         }
                     } else {
@@ -2233,12 +2305,20 @@ fn generate_ground_hol_step_rules(
                 });
             },
             1 => {
-                let Some(ref term_context) = rule.term_context else { continue };
+                let Some(ref term_context) = rule.term_context else {
+                    continue;
+                };
                 let [TermParam::Simple { name: param_name, ty: ref param_ty }] =
                     term_context.as_slice()
-                else { continue };
-                let TypeExpr::Base(arg_category) = param_ty else { continue };
-                let Some(arg_lit_label) = common::literal_label_for(language, arg_category) else { continue };
+                else {
+                    continue;
+                };
+                let TypeExpr::Base(arg_category) = param_ty else {
+                    continue;
+                };
+                let Some(arg_lit_label) = common::literal_label_for(language, arg_category) else {
+                    continue;
+                };
 
                 let term_var = format_ident!("orig");
                 rules.push(quote! {
@@ -2252,7 +2332,9 @@ fn generate_ground_hol_step_rules(
                 });
             },
             _ => {
-                let Some(ref term_context) = rule.term_context else { continue };
+                let Some(ref term_context) = rule.term_context else {
+                    continue;
+                };
                 let simple_params: Vec<_> = term_context
                     .iter()
                     .filter_map(|p| match p {
@@ -2266,7 +2348,9 @@ fn generate_ground_hol_step_rules(
                         _ => None,
                     })
                     .collect();
-                if simple_params.len() != non_terminal_count { continue }
+                if simple_params.len() != non_terminal_count {
+                    continue;
+                }
 
                 let mut arg_infos = Vec::with_capacity(simple_params.len());
                 let mut all_resolved = true;
@@ -2278,7 +2362,9 @@ fn generate_ground_hol_step_rules(
                         break;
                     }
                 }
-                if !all_resolved { continue }
+                if !all_resolved {
+                    continue;
+                }
 
                 let field_names: Vec<Ident> = (0..arg_infos.len())
                     .map(|i| format_ident!("f{}", i))
@@ -2637,10 +2723,6 @@ fn generate_hol_step_rules(
     rules
 }
 
-// fold_param_names, fold_params_all_same_category, fold_field_count
-// moved to common module
-use common::{fold_field_count, fold_param_names, fold_params_all_same_category};
-
 /// Generate big-step fold rules for constructors with eval_mode Fold.
 /// fold_<cat>(t, v) computes the value term v of t; one rw_<cat>(s, t) step for whole expression.
 /// Supports both native categories (fold to literal) and non-native (e.g. Proc with CastInt/Add).
@@ -2707,7 +2789,9 @@ fn generate_fold_big_step_rules(
                 // Zero-ary `Err` is already a value (e.g. `BigRat::Err` for zero denominator).
                 let err_ident = format_ident!("Err");
                 if language.terms.iter().any(|r| {
-                    r.category == *category && r.label == err_ident && common::fold_field_count(r) == 0
+                    r.category == *category
+                        && r.label == err_ident
+                        && common::fold_field_count(r) == 0
                 }) {
                     rules.push(quote! {
                         #fold_rel(t.clone(), t.clone()) <--
@@ -2759,7 +2843,9 @@ fn generate_fold_big_step_rules(
 
                 let err_ident = format_ident!("Err");
                 let category_has_err = language.terms.iter().any(|r| {
-                    r.category == *category && r.label == err_ident && common::fold_field_count(r) == 0
+                    r.category == *category
+                        && r.label == err_ident
+                        && common::fold_field_count(r) == 0
                 });
                 let div_bigrat_zero_to_err = param_count == 2
                     && *category == "BigRat"
@@ -2778,17 +2864,20 @@ fn generate_fold_big_step_rules(
                         // fold silently fails instead of crashing the Ascent
                         // runner. Binary operators stay as-is since `Vec`/
                         // `HashBag` arithmetic isn't routed through SafeArith.
-                        let safe_code = crate::gen::native::rust_code_rewrite::safeify_methods_and_wrap(rust_code);
+                        let safe_code =
+                            crate::gen::native::rust_code_rewrite::safeify_methods_and_wrap(
+                                rust_code,
+                            );
                         quote! { #safe_code }
                     } else if div_bigrat_zero_to_err {
                         // `1r/0r` parses as `1r / 0r` (division), not a single rational literal; avoid
                         // num-rational panics when the divisor is zero (same normal form as `fraction(1n,0n)`).
                         quote! {
-                            match (if ::num_traits::Zero::is_zero(b.get()) {
+                            match if ::num_traits::Zero::is_zero(b.get()) {
                                 std::option::Option::None
                             } else {
-                                std::option::Option::Some((#rust_code))
-                            }) {
+                                std::option::Option::Some(#rust_code)
+                            } {
                                 Some(__q) => #category::#num_lit(__q),
                                 None => #category::#err_ident,
                             }
@@ -2914,10 +3003,10 @@ fn generate_fold_big_step_rules(
                     rules.push(quote! {
                         #rw_rel(s.clone(), #category::#num_lit(t.clone())) <--
                             #cat_rel(s),
-                            if (match s {
+                            if match s {
                                 #(#trigger_arms)*
                                 _ => false,
-                            }),
+                            },
                             #fold_rel(s, t);
                     });
                 }
@@ -2941,10 +3030,10 @@ fn generate_fold_big_step_rules(
                     rules.push(quote! {
                         #rw_rel(s.clone(), t.clone()) <--
                             #cat_rel(s),
-                            if (match s {
+                            if match s {
                                 #(#trigger_arms)*
                                 _ => false,
-                            }),
+                            },
                             #fold_rel(s, t);
                     });
                 }
@@ -3018,8 +3107,7 @@ fn generate_fold_big_step_rules(
                     // the corpus is calc `CountBag` (Bag,Proc→Int) whose action
                     // is infallible — its `None` arm is dead, so surfacing a
                     // cast-error there is behaviorally inert.
-                    let bind_res: TokenStream = match cast_error_variant_for(language, category)
-                    {
+                    let bind_res: TokenStream = match cast_error_variant_for(language, category) {
                         Some(err_variant) => quote! {
                             let res = match #safe {
                                 Some(__v) => #category::#num_lit(__v),
@@ -3094,7 +3182,7 @@ fn generate_fold_big_step_rules(
                             let bag_label = language
                                 .injection_term_label_for_collection("Bag")
                                 .unwrap_or_else(|| format_ident!("ProcBag"));
-                            quote! { if (match & lv { #primary_cat::#bag_label(_) => true, _ => false }), }
+                            quote! { if match & lv { #primary_cat::#bag_label(_) => true, _ => false }, }
                         } else {
                             quote! {}
                         };
@@ -3195,7 +3283,9 @@ fn generate_fold_big_step_rules(
         } else if is_collection {
             // Collection category (List, Bag, Map): literal folds to payload so rust_code gets Vec/HashBag/HashMapLit
             let num_lit = match lang_type.collection_kind.as_ref() {
-                Some(mettail_ast::language::CollectionCategory::List(_)) => format_ident!("ListLit"),
+                Some(mettail_ast::language::CollectionCategory::List(_)) => {
+                    format_ident!("ListLit")
+                },
                 Some(mettail_ast::language::CollectionCategory::Bag(_)) => format_ident!("BagLit"),
                 Some(mettail_ast::language::CollectionCategory::Map(_)) => format_ident!("MapLit"),
                 None => continue,
@@ -3227,7 +3317,8 @@ fn generate_fold_big_step_rules(
                 // panicking the Ascent runner. Binary operators stay
                 // untouched (collection rust_code rarely needs them, and
                 // SafeArith doesn't apply to Vec/HashBag arithmetic).
-                let safe_code = crate::gen::native::rust_code_rewrite::safeify_methods_and_wrap(rust_code);
+                let safe_code =
+                    crate::gen::native::rust_code_rewrite::safeify_methods_and_wrap(rust_code);
                 let res_expr = quote! { #safe_code };
                 if param_count == 1 {
                     let p0 = &param_names[0];
@@ -3343,10 +3434,10 @@ fn generate_fold_big_step_rules(
                 rules.push(quote! {
                     #rw_rel(s.clone(), #category::#num_lit(t.clone())) <--
                         #cat_rel(s),
-                        if (match s {
+                        if match s {
                             #(#trigger_arms)*
                             _ => false,
-                        }),
+                        },
                         #fold_rel(s, t);
                 });
             }
@@ -3387,10 +3478,10 @@ fn generate_fold_big_step_rules(
                 rules.push(quote! {
                     #fold_rel(t.clone(), t.clone()) <--
                         #cat_rel(t),
-                        if (match t {
+                        if match t {
                             #(#identity_arms)*
                             _ => false,
-                        });
+                        };
                 });
             }
 
@@ -3587,10 +3678,10 @@ fn generate_fold_big_step_rules(
                 rules.push(quote! {
                     #rw_rel(s.clone(), t.clone()) <--
                         #cat_rel(s),
-                        if (match s {
+                        if match s {
                             #(#trigger_arms)*
                             _ => false,
-                        }),
+                        },
                         #fold_rel(s, t);
                 });
             }
@@ -4275,9 +4366,9 @@ mod tests {
             name: "test-rule".to_string(),
             kind: RuleKind::HolStep,
             body_relations: [
-                "proc".to_string(),     // cat family
-                "eq_name".to_string(),  // eq family
-                "rw_int".to_string(),   // rw family
+                "proc".to_string(),    // cat family
+                "eq_name".to_string(), // eq family
+                "rw_int".to_string(),  // rw family
             ]
             .into_iter()
             .collect(),

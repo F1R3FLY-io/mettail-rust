@@ -60,10 +60,7 @@ impl ExpectationWeight {
     #[inline]
     pub fn from_probability(p: f64, cost: f64) -> Self {
         assert!(p > 0.0, "ExpectationWeight::from_probability: p must be > 0, got {p}");
-        ExpectationWeight {
-            weight: -p.ln(),
-            expected_cost: cost,
-        }
+        ExpectationWeight { weight: -p.ln(), expected_cost: cost }
     }
 
     /// Convert the weight back to a probability: `p = exp(-w)`.
@@ -107,10 +104,7 @@ impl Semiring for ExpectationWeight {
     /// One = `(0.0, 0.0)`: probability 1, zero cost.
     #[inline]
     fn one() -> Self {
-        ExpectationWeight {
-            weight: 0.0,
-            expected_cost: 0.0,
-        }
+        ExpectationWeight { weight: 0.0, expected_cost: 0.0 }
     }
 
     /// Plus: combine parallel paths.
@@ -246,8 +240,11 @@ mod tests {
         let b = ExpectationWeight::new(0.0, 20.0);
         let sum = a.plus(&b);
         // Expected cost should be average: (1.0*10 + 1.0*20) / (1.0 + 1.0) = 15.0
-        assert!((sum.expected_cost - 15.0).abs() < 1e-10,
-            "equal-weight plus averages cost: {}", sum.expected_cost);
+        assert!(
+            (sum.expected_cost - 15.0).abs() < 1e-10,
+            "equal-weight plus averages cost: {}",
+            sum.expected_cost
+        );
     }
 
     #[test]

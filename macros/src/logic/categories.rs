@@ -230,17 +230,16 @@ fn generate_collection_plus_binding_deconstruction(
     for (i, param) in term_context.iter().enumerate() {
         match param {
             TermParam::Simple {
-                ty: TypeExpr::Collection { element, .. },
-                ..
+                ty: TypeExpr::Collection { element, .. }, ..
             } => {
                 if let TypeExpr::Base(elem) = element.as_ref() {
                     collection_fields.push((i, elem.clone()));
                 }
-            }
+            },
             TermParam::MultiAbstraction { .. } => {
                 scope_field_idx = Some(i);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     if collection_fields.is_empty() {

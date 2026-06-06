@@ -1,16 +1,16 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-/// Generate eval() method for native types
-use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
-use mettail_ast::language::{LanguageDef, NativeKind};
-use mettail_ast::types::TypeExpr;
 use crate::gen::native::lossless_coercion::build_lossless_coercion;
 use crate::gen::native::{native_type_to_string, NativeType};
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
+/// Generate eval() method for native types
+use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
+use mettail_ast::language::{LanguageDef, NativeKind};
+use mettail_ast::types::TypeExpr;
 
 /// Classify a HOL rule for PDA purposes: determine whether we can generate the
 /// work-stack form (PDA), or whether we must fall back to the recursive match.
@@ -56,10 +56,10 @@ fn classify_hol_rule_for_pda<'a>(
                     };
                     let same_cat = base == category;
                     out.push((name.clone(), base, same_cat, in_opt));
-                }
+                },
                 TermParam::Optional { params: inner } => {
                     collect(inner, category, true, out)?;
-                }
+                },
                 _ => return None,
             }
         }
@@ -68,35 +68,6 @@ fn classify_hol_rule_for_pda<'a>(
     let mut out = Vec::with_capacity(ctx.len());
     collect(ctx, category, false, &mut out)?;
     Some(out)
-}
-
-/// Extract parameter names from term_context in the same order as generated variant fields.
-/// Used for rust_code eval arms: param names match constructor field names.
-fn term_context_param_names(term_context: &[TermParam]) -> Vec<syn::Ident> {
-    let mut names = Vec::new();
-    fn collect(params: &[TermParam], names: &mut Vec<syn::Ident>) {
-        for p in params {
-            match p {
-                TermParam::Simple { name, .. } => names.push(name.clone()),
-                TermParam::Abstraction { binder, body, .. } => {
-                    names.push(binder.clone());
-                    names.push(body.clone());
-                },
-                TermParam::MultiAbstraction { binder, body, .. } => {
-                    names.push(binder.clone());
-                    names.push(body.clone());
-                },
-                TermParam::GuardBody { name, .. } => {
-                    let _ = name;
-                },
-                TermParam::Optional { params: inner } => {
-                    collect(inner, names);
-                },
-            }
-        }
-    }
-    collect(term_context, &mut names);
-    names
 }
 
 /// True if the type is a category with `native_type` (e.g. `Int`, `Float`).
@@ -204,7 +175,7 @@ fn rust_code_returns_option(code: &syn::Expr) -> bool {
                 }
             }
             false
-        }
+        },
         // `x.try_xxx(...)` — method call.
         Expr::MethodCall(mc) => mc.method.to_string().starts_with("try_"),
         // Bare path that resolves to `None`.
@@ -233,31 +204,33 @@ fn rust_code_returns_option(code: &syn::Expr) -> bool {
                 .map(|(_, e)| rust_code_returns_option(e))
                 .unwrap_or(false);
             then_returns || else_returns
-        }
+        },
         // `match scrutinee { Some(_) => ..., None => ... }` — check arms.
         Expr::Match(expr_match) => {
-            expr_match.arms.iter().any(|arm| {
-                rust_code_returns_option(&arm.body)
-            }) || expr_match.arms.iter().all(|arm| {
-                // Pattern matches `Some(...)` or `None`.
-                match &arm.pat {
-                    syn::Pat::TupleStruct(ts) => ts
-                        .path
-                        .segments
-                        .last()
-                        .map(|s| s.ident == "Some")
-                        .unwrap_or(false),
-                    syn::Pat::Path(p) => p
-                        .path
-                        .segments
-                        .last()
-                        .map(|s| s.ident == "None")
-                        .unwrap_or(false),
-                    syn::Pat::Ident(i) => i.ident == "None",
-                    _ => false,
-                }
-            })
-        }
+            expr_match
+                .arms
+                .iter()
+                .any(|arm| rust_code_returns_option(&arm.body))
+                || expr_match.arms.iter().all(|arm| {
+                    // Pattern matches `Some(...)` or `None`.
+                    match &arm.pat {
+                        syn::Pat::TupleStruct(ts) => ts
+                            .path
+                            .segments
+                            .last()
+                            .map(|s| s.ident == "Some")
+                            .unwrap_or(false),
+                        syn::Pat::Path(p) => p
+                            .path
+                            .segments
+                            .last()
+                            .map(|s| s.ident == "None")
+                            .unwrap_or(false),
+                        syn::Pat::Ident(i) => i.ident == "None",
+                        _ => false,
+                    }
+                })
+        },
         // `{ ... ; final_expr }` — check the tail expression.
         Expr::Block(b) => b
             .block
@@ -400,136 +373,136 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // fold pipeline, which runs with different param types than `.eval()`
         // would use. Skip the per-rule arm generation entirely for them —
         // `.eval()` falls through to the catch-all panic arm when the term
-        // has not yet been folded to its literal variant.
+        // remains unfolded instead of already being a literal variant.
         if is_collection_for_eval {
             // Keep only the literal and Var arms already pushed above.
         } else {
-        for rule in &rules {
-            let label = &rule.label;
+            for rule in &rules {
+                let label = &rule.label;
 
-            // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
-            if is_literal_rule(rule) {
-                let use_clone = literal_rule_nonterminal(rule) == Some(NonTerminalKind::StringLiteral);
-                if use_clone {
-                    match_arms.push(quote! {
-                        #category::#label(n) => n.clone(),
-                    });
-                    try_eval_arms.push(quote! {
-                        #category::#label(n) => Some(n.clone()),
-                    });
-                    pda_visit_arms.push(quote! {
-                        #category::#label(n) => values.push(n.clone()),
-                    });
-                } else {
-                    match_arms.push(quote! {
-                        #category::#label(n) => *n,
-                    });
-                    try_eval_arms.push(quote! {
-                        #category::#label(n) => Some(*n),
-                    });
-                    pda_visit_arms.push(quote! {
-                        #category::#label(n) => values.push(*n),
-                    });
+                // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
+                if is_literal_rule(rule) {
+                    let use_clone =
+                        literal_rule_nonterminal(rule) == Some(NonTerminalKind::StringLiteral);
+                    if use_clone {
+                        match_arms.push(quote! {
+                            #category::#label(n) => n.clone(),
+                        });
+                        try_eval_arms.push(quote! {
+                            #category::#label(n) => Some(n.clone()),
+                        });
+                        pda_visit_arms.push(quote! {
+                            #category::#label(n) => values.push(n.clone()),
+                        });
+                    } else {
+                        match_arms.push(quote! {
+                            #category::#label(n) => *n,
+                        });
+                        try_eval_arms.push(quote! {
+                            #category::#label(n) => Some(*n),
+                        });
+                        pda_visit_arms.push(quote! {
+                            #category::#label(n) => values.push(*n),
+                        });
+                    }
                 }
-            }
-            // Stage 3.12.9 β-2 (2026-05-04): synthetic auto-injection wrapper.
-            //
-            // Stage 3.13's auto_inject.rs::make_injection_rule emits
-            // `<Source>To<Target> . v:Source |- v : Target ;` constructors
-            // with `is_auto_injected = true`. Pre-Stage-3.12.9 these
-            // synthetic variants fell through `try_eval`'s catch-all
-            // `_ => None` arm, which made `eval()` panic when the rewrite
-            // pipeline didn't collapse the wrapper before evaluation —
-            // surfacing as the 7 `cross_cat_rhocalc_castop_*` failures.
-            //
-            // β-2 closes the gap: detect the synthetic rule via
-            // `classify_simple_projection_shape`, look up source/target
-            // NativeKinds, and (if the lattice declares the edge as
-            // lossless) emit a `try_eval` arm that recursively evaluates
-            // the inner term and applies the lossless coercion.
-            //
-            // Cross-category recursion: same idiom as calc's existing
-            // `BigRat::Fraction(a, b)` arm at
-            // `target/generated/calculator/eval.rs:1002-1009`. Bounded by
-            // lossless-lattice depth (≤ 4 hops in practice).
-            else if rule.is_auto_injected
-                && classify_simple_projection_shape(rule).is_some()
-            {
-                let shape = classify_simple_projection_shape(rule)
-                    .expect("just checked classify_simple_projection_shape");
-                let source_native_kind = language
-                    .types
-                    .iter()
-                    .find(|t| t.name.to_string() == shape.source_category)
-                    .and_then(|t| t.native_type.as_ref())
-                    .map(NativeKind::from_syn_type);
-                let target_native_kind = NativeKind::from_syn_type(native_type);
+                // Stage 3.12.9 β-2 (2026-05-04): synthetic auto-injection wrapper.
+                //
+                // Stage 3.13's auto_inject.rs::make_injection_rule emits
+                // `<Source>To<Target> . v:Source |- v : Target ;` constructors
+                // with `is_auto_injected = true`. Pre-Stage-3.12.9 these
+                // synthetic variants fell through `try_eval`'s catch-all
+                // `_ => None` arm, which made `eval()` panic when the rewrite
+                // pipeline didn't collapse the wrapper before evaluation —
+                // surfacing as the 7 `cross_cat_rhocalc_castop_*` failures.
+                //
+                // β-2 closes the gap: detect the synthetic rule via
+                // `classify_simple_projection_shape`, look up source/target
+                // NativeKinds, and (if the lattice declares the edge as
+                // lossless) emit a `try_eval` arm that recursively evaluates
+                // the inner term and applies the lossless coercion.
+                //
+                // Cross-category recursion: same idiom as calc's existing
+                // `BigRat::Fraction(a, b)` arm at
+                // `target/generated/calculator/eval.rs:1002-1009`. Bounded by
+                // lossless-lattice depth (≤ 4 hops in practice).
+                else if rule.is_auto_injected && classify_simple_projection_shape(rule).is_some()
+                {
+                    let shape = classify_simple_projection_shape(rule)
+                        .expect("just checked classify_simple_projection_shape");
+                    let source_native_kind = language
+                        .types
+                        .iter()
+                        .find(|t| t.name.to_string() == shape.source_category)
+                        .and_then(|t| t.native_type.as_ref())
+                        .map(NativeKind::from_syn_type);
+                    let target_native_kind = NativeKind::from_syn_type(native_type);
 
-                // Coercion only emits for declared lossless edges. Lossy
-                // auto-injection (gated behind `auto_inject_lossy`) and
-                // edges with no Rust-level coercion fall through to the
-                // existing catch-all `_ => None`.
-                let coercion = source_native_kind.and_then(|src| {
-                    let v_ident = format_ident!("__v");
-                    let v_expr = quote! { #v_ident };
-                    build_lossless_coercion(src, target_native_kind, &v_expr)
-                });
-
-                if let Some(coercion_expr) = coercion {
-                    let v_ident = format_ident!("__v");
-                    // match_arms is the gate that decides whether
-                    // `eval()` / `try_eval()` impls are emitted (line
-                    // ~837: `if !match_arms.is_empty()`). The body here
-                    // is unused — `eval()` delegates to `try_eval()` —
-                    // but the gate needs at least one arm, so we push a
-                    // placeholder that mirrors the try_eval semantics.
-                    match_arms.push(quote! {
-                        #category::#label(__v_box) => {
-                            let #v_ident = __v_box.as_ref().eval();
-                            (#coercion_expr)
-                        },
+                    // Coercion only emits for declared lossless edges. Lossy
+                    // auto-injection (gated behind `auto_inject_lossy`) and
+                    // edges with no Rust-level coercion fall through to the
+                    // existing catch-all `_ => None`.
+                    let coercion = source_native_kind.and_then(|src| {
+                        let v_ident = format_ident!("__v");
+                        let v_expr = quote! { #v_ident };
+                        build_lossless_coercion(src, target_native_kind, &v_expr)
                     });
 
-                    // try_eval arm (recursive form): bubbles `None` on
-                    // either inner failure (e.g., source contains a Var)
-                    // or fallible coercion (NaN→Float→BigRat).
-                    try_eval_arms.push(quote! {
-                        #category::#label(__v_box) => {
-                            let #v_ident = __v_box.as_ref().try_eval()?;
-                            Some(#coercion_expr)
-                        }
-                    });
+                    if let Some(coercion_expr) = coercion {
+                        let v_ident = format_ident!("__v");
+                        // match_arms is the gate that decides whether
+                        // `eval()` / `try_eval()` impls are emitted (line
+                        // ~837: `if !match_arms.is_empty()`). The body here
+                        // is unused — `eval()` delegates to `try_eval()` —
+                        // but the gate needs at least one arm, so we push a
+                        // gate arm that mirrors the try_eval semantics.
+                        match_arms.push(quote! {
+                            #category::#label(__v_box) => {
+                                let #v_ident = __v_box.as_ref().eval();
+                                (#coercion_expr)
+                            },
+                        });
 
-                    // PDA Visit arm: cross-category recursion via the
-                    // inner type's `try_eval`. Bounded by lossless-lattice
-                    // depth (≤ 4-hop chain like Int → BigInt → BigRat).
-                    pda_visit_arms.push(quote! {
-                        #category::#label(__v_box) => {
-                            let #v_ident = __v_box.as_ref().try_eval()?;
-                            values.push(#coercion_expr);
-                        }
-                    });
+                        // try_eval arm (recursive form): bubbles `None` on
+                        // either inner failure (e.g., source contains a Var)
+                        // or fallible coercion (NaN→Float→BigRat).
+                        try_eval_arms.push(quote! {
+                            #category::#label(__v_box) => {
+                                let #v_ident = __v_box.as_ref().try_eval()?;
+                                Some(#coercion_expr)
+                            }
+                        });
+
+                        // PDA Visit arm: cross-category recursion via the
+                        // inner type's `try_eval`. Bounded by lossless-lattice
+                        // depth (≤ 4-hop chain like Int → BigInt → BigRat).
+                        pda_visit_arms.push(quote! {
+                            #category::#label(__v_box) => {
+                                let #v_ident = __v_box.as_ref().try_eval()?;
+                                values.push(#coercion_expr);
+                            }
+                        });
+                    }
                 }
-            }
-            // HOL syntax: rule with Rust code block - generate eval from rust_code
-            else if let Some(ref rust_code_block) = rule.rust_code {
-                // Resolve `(name, use_eval)` per param: native-typed categories
-                // bind via `.eval()`; collection / non-native categories bind
-                // via `.clone()` (cannot be `.eval()`'d).
-                let params_with_eval = rule
-                    .term_context
-                    .as_ref()
-                    .map(|ctx| term_context_params_with_eval(ctx, language))
-                    .unwrap_or_default();
-                let param_names: Vec<syn::Ident> =
-                    params_with_eval.iter().map(|(n, _, _)| n.clone()).collect();
-                let param_count = param_names.len();
-                // Opt-Group: when `is_optional`, the variant field is
-                // `Option<Box<Cat>>` (not `Box<Cat>`). The user's eval
-                // code expects the param bound to `Option<NativeT>`
-                // (when use_eval) or `Option<&Cat>` (when !use_eval).
-                // Map each binding accordingly.
-                let param_bindings: Vec<_> = params_with_eval
+                // HOL syntax: rule with Rust code block - generate eval from rust_code
+                else if let Some(ref rust_code_block) = rule.rust_code {
+                    // Resolve `(name, use_eval)` per param: native-typed categories
+                    // bind via `.eval()`; collection / non-native categories bind
+                    // via `.clone()` (cannot be `.eval()`'d).
+                    let params_with_eval = rule
+                        .term_context
+                        .as_ref()
+                        .map(|ctx| term_context_params_with_eval(ctx, language))
+                        .unwrap_or_default();
+                    let param_names: Vec<syn::Ident> =
+                        params_with_eval.iter().map(|(n, _, _)| n.clone()).collect();
+                    let param_count = param_names.len();
+                    // Opt-Group: when `is_optional`, the variant field is
+                    // `Option<Box<Cat>>` (not `Box<Cat>`). The user's eval
+                    // code expects the param bound to `Option<NativeT>`
+                    // (when use_eval) or `Option<&Cat>` (when !use_eval).
+                    // Map each binding accordingly.
+                    let param_bindings: Vec<_> = params_with_eval
                     .iter()
                     .map(|(name, use_eval, is_optional)| {
                         if *is_optional {
@@ -551,206 +524,213 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                         }
                     })
                     .collect();
-                let try_param_bindings: Vec<_> = params_with_eval
-                    .iter()
-                    .map(|(name, use_eval, is_optional)| {
-                        if *is_optional {
-                            if *use_eval {
-                                quote! {
-                                    let #name: Option<_> = match #name.as_ref() {
-                                        Some(__b) => Some(__b.as_ref().try_eval()?),
-                                        None => None,
-                                    };
+                    let try_param_bindings: Vec<_> = params_with_eval
+                        .iter()
+                        .map(|(name, use_eval, is_optional)| {
+                            if *is_optional {
+                                if *use_eval {
+                                    quote! {
+                                        let #name: Option<_> = match #name.as_ref() {
+                                            Some(__b) => Some(__b.as_ref().try_eval()?),
+                                            None => None,
+                                        };
+                                    }
+                                } else {
+                                    quote! { let #name = #name.as_ref().map(|__b| __b.as_ref()); }
                                 }
+                            } else if *use_eval {
+                                quote! { let #name = #name.as_ref().try_eval()?; }
                             } else {
-                                quote! { let #name = #name.as_ref().map(|__b| __b.as_ref()); }
+                                quote! { let #name = #name.as_ref(); }
                             }
-                        } else if *use_eval {
-                            quote! { let #name = #name.as_ref().try_eval()?; }
-                        } else {
-                            quote! { let #name = #name.as_ref(); }
+                        })
+                        .collect();
+                    let rust_code = &rust_code_block.code;
+                    // Phase D Layer 2 (2026-05-17, per
+                    // `~/.claude/plans/principled-fold-root-cause.md`): replace
+                    // FOUR string-vocabulary helpers (each matching specific
+                    // (category, label) tuples for `Fraction`/`*Bin`/`*Cast`/
+                    // `Fact`/`DivBigRat`) with ONE structural detector
+                    // (`rust_code_returns_option`) that walks the user's
+                    // `syn::Expr` to determine whether the code returns
+                    // `Option<T>` natively.
+                    //
+                    // The unified Option-returning arm replaces three of the
+                    // four previous special cases (the three `_option`
+                    // helpers). The fourth (`hol_bigrat_div_zero_guard`) was
+                    // a pre-condition guard for `DivBigRat` that pre-checks
+                    // divisor-zero before invoking num-rational's reduce.
+                    // Layer 2 removes the pre-check: divisor-zero is now the
+                    // grammar author's responsibility — declare a rewrite
+                    // `(div_bigrat a b) ~> error` premised on `b == 0` in the
+                    // `rewrites { }` block. num-rational's natural panic on
+                    // divisor-zero serves as the "should have been rewritten
+                    // first" failure-mode indicator.
+                    let returns_option = rust_code_returns_option(rust_code);
+                    let match_arm = if returns_option && param_count > 0 {
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#param_bindings)*
+                                let __mettail_eval_option = #rust_code;
+                                __mettail_eval_option.expect(
+                                    "evaluation reached unreachable Option::None sentinel; \
+                                     user grammar must normalize via rewrite rules \
+                                     (e.g., (cast_op a) ~> cast_error) before eval()",
+                                )
+                            },
                         }
-                    })
-                    .collect();
-                let rust_code = &rust_code_block.code;
-                // Phase D Layer 2 (2026-05-17, per
-                // `~/.claude/plans/principled-fold-root-cause.md`): replace
-                // FOUR string-vocabulary helpers (each matching specific
-                // (category, label) tuples for `Fraction`/`*Bin`/`*Cast`/
-                // `Fact`/`DivBigRat`) with ONE structural detector
-                // (`rust_code_returns_option`) that walks the user's
-                // `syn::Expr` to determine whether the code returns
-                // `Option<T>` natively.
-                //
-                // The unified Option-returning arm replaces three of the
-                // four previous special cases (the three `_option`
-                // helpers). The fourth (`hol_bigrat_div_zero_guard`) was
-                // a pre-condition guard for `DivBigRat` that pre-checks
-                // divisor-zero before invoking num-rational's reduce.
-                // Layer 2 removes the pre-check: divisor-zero is now the
-                // grammar author's responsibility — declare a rewrite
-                // `(div_bigrat a b) ~> error` premised on `b == 0` in the
-                // `rewrites { }` block. num-rational's natural panic on
-                // divisor-zero serves as the "should have been rewritten
-                // first" failure-mode indicator.
-                let returns_option = rust_code_returns_option(rust_code);
-                let match_arm = if returns_option && param_count > 0 {
-                    quote! {
-                        #category::#label(#(#param_names),*) => {
-                            #(#param_bindings)*
-                            (#rust_code).expect(
-                                "evaluation reached unreachable Option::None sentinel; \
-                                 user grammar must normalize via rewrite rules \
-                                 (e.g., (cast_op a) ~> cast_error) before eval()",
-                            )
-                        },
-                    }
-                } else if param_count == 0 {
-                    quote! {
-                        #category::#label => (#rust_code),
-                    }
-                } else {
-                    quote! {
-                        #category::#label(#(#param_names),*) => {
-                            #(#param_bindings)*
-                            (#rust_code)
-                        },
-                    }
-                };
-                match_arms.push(match_arm);
-                // `try_eval` treats each evaluation step as a trampoline frame: if
-                // the step's arithmetic overflows (e.g., i32 factorial) or produces
-                // `NaN` (e.g., `0.0 / 0.0`), the frame yields `None` rather than
-                // panicking. We achieve this by rewriting the user's `#rust_code`
-                // through `rust_code_rewrite::safeify` — every `+`, `-`, `*`, `/`,
-                // `%`, unary `-`, `.pow(…)`, `.product::<_>()`, `.sqrt()`, etc. is
-                // replaced with its `SafeArith` / `SafeFloat` counterpart, and the
-                // whole expression is wrapped in a closure returning `Option<_>`.
-                // No panic is ever raised, so there is no unwind path for
-                // proptest's panic hook to race with under nextest.
-                //
-                // The rewritten expression parses as a `syn::Expr`. For the
-                // parameter-less arm (where the user's code is embedded as a
-                // statement-or-expression block), we parse and re-rewrite.
-                let rust_code_expr: syn::Expr = syn::parse_quote!({ #rust_code });
-                let safe_closure_call = crate::gen::native::rust_code_rewrite::safeify_and_wrap(&rust_code_expr);
-                let try_arm = if param_count == 0 {
-                    quote! {
-                        #category::#label => {
-                            #safe_closure_call
+                    } else if param_count == 0 {
+                        quote! {
+                            #category::#label => #rust_code,
                         }
-                    }
-                } else {
-                    quote! {
-                        #category::#label(#(#param_names),*) => {
-                            #(#try_param_bindings)*
-                            #safe_closure_call
-                        },
-                    }
-                };
-                try_eval_arms.push(try_arm);
+                    } else {
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#param_bindings)*
+                                #rust_code
+                            },
+                        }
+                    };
+                    match_arms.push(match_arm);
+                    // `try_eval` treats each evaluation step as a trampoline frame: if
+                    // the step's arithmetic overflows (e.g., i32 factorial) or produces
+                    // `NaN` (e.g., `0.0 / 0.0`), the frame yields `None` rather than
+                    // panicking. We achieve this by rewriting the user's `#rust_code`
+                    // through `rust_code_rewrite::safeify` — every `+`, `-`, `*`, `/`,
+                    // `%`, unary `-`, `.pow(…)`, `.product::<_>()`, `.sqrt()`, etc. is
+                    // replaced with its `SafeArith` / `SafeFloat` counterpart, and the
+                    // whole expression is wrapped in a closure returning `Option<_>`.
+                    // No panic is ever raised, so there is no unwind path for
+                    // proptest's panic hook to race with under nextest.
+                    //
+                    // The rewritten expression parses as a `syn::Expr`. For the
+                    // parameter-less arm (where the user's code is embedded as a
+                    // statement-or-expression block), we parse and re-rewrite.
+                    let rust_code_expr: syn::Expr = syn::parse_quote!({ #rust_code });
+                    let safe_closure_call =
+                        crate::gen::native::rust_code_rewrite::safeify_and_wrap(&rust_code_expr);
+                    let try_arm = if param_count == 0 {
+                        quote! {
+                            #category::#label => {
+                                #safe_closure_call
+                            }
+                        }
+                    } else {
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#try_param_bindings)*
+                                #safe_closure_call
+                            },
+                        }
+                    };
+                    try_eval_arms.push(try_arm);
 
-                // Also build PDA Visit/Reduce arms for this rule if possible.
-                // If the rule has any non-Simple param (e.g. Abstraction), we
-                // leave the PDA path un-built for the whole category — the
-                // recursive fallback still handles this rule correctly.
-                if pda_supported {
-                    match classify_hol_rule_for_pda(rule, category) {
-                        Some(classified) => {
-                            let reduce_variant = format_ident!("Reduce{}", label);
-                            // For each cross-category param, decide how it's
-                            // captured in the Reduce frame:
-                            //   - CrossKind::Native(storage_ty): evaluate to a
-                            //     native value at Visit time and store it.
-                            //   - CrossKind::Borrow(cat): the param's category
-                            //     has no native_type (e.g. Proc in calculator).
-                            //     We store an owned clone of the child term
-                            //     (`Box<Cat>`) in the frame and bind `&Cat` to
-                            //     the user's rust_code at Reduce time — the
-                            //     recursive fallback does exactly the same
-                            //     via `let #n = #n.as_ref();`.
-                            // Opt-Group: `Optional(storage_ty, use_eval)` represents
-                            // an `Option<storage_ty>` field; visit emits
-                            // `Option::map` over `try_eval()` (Native) or
-                            // `Option::clone()` (Borrow). Optional same-cat
-                            // children are routed through cross_kinds (not the
-                            // same-cat Visit-push path) because the `Some(_)`/
-                            // `None` branching doesn't fit the unconditional
-                            // Visit-frame push.
-                            enum CrossKind {
-                                Native(TokenStream),
-                                Borrow(TokenStream),
-                                OptionalNative(TokenStream),
-                                OptionalBorrow(TokenStream),
-                            }
-                            let mut cross_kinds: Vec<(syn::Ident, CrossKind)> = Vec::new();
-                            for (name, ty_id, same, is_optional) in &classified {
-                                if *same && !*is_optional { continue; }
-                                let target_native = language
-                                    .types
+                    // Also build PDA Visit/Reduce arms for this rule if possible.
+                    // If the rule has any non-Simple param (e.g. Abstraction), we
+                    // leave the PDA path un-built for the whole category — the
+                    // recursive fallback still handles this rule correctly.
+                    if pda_supported {
+                        match classify_hol_rule_for_pda(rule, category) {
+                            Some(classified) => {
+                                let reduce_variant = format_ident!("Reduce{}", label);
+                                // For each cross-category param, decide how it's
+                                // captured in the Reduce frame:
+                                //   - CrossKind::Native(storage_ty): evaluate to a
+                                //     native value at Visit time and store it.
+                                //   - CrossKind::Borrow(cat): the param's category
+                                //     has no native_type (e.g. Proc in calculator).
+                                //     We store an owned clone of the child term
+                                //     (`Box<Cat>`) in the frame and bind `&Cat` to
+                                //     the user's rust_code at Reduce time — the
+                                //     recursive fallback does exactly the same
+                                //     via `let #n = #n.as_ref();`.
+                                // Opt-Group: `Optional(storage_ty, use_eval)` represents
+                                // an `Option<storage_ty>` field; visit emits
+                                // `Option::map` over `try_eval()` (Native) or
+                                // `Option::clone()` (Borrow). Optional same-cat
+                                // children are routed through cross_kinds (not the
+                                // same-cat Visit-push path) because the `Some(_)`/
+                                // `None` branching doesn't fit the unconditional
+                                // Visit-frame push.
+                                enum CrossKind {
+                                    Native(TokenStream),
+                                    Borrow(TokenStream),
+                                    OptionalNative(TokenStream),
+                                    OptionalBorrow(TokenStream),
+                                }
+                                let mut cross_kinds: Vec<(syn::Ident, CrossKind)> = Vec::new();
+                                for (name, ty_id, same, is_optional) in &classified {
+                                    if *same && !*is_optional {
+                                        continue;
+                                    }
+                                    let target_native = language
+                                        .types
+                                        .iter()
+                                        .find(|t| t.name == **ty_id)
+                                        .and_then(|t| t.native_type.as_ref());
+                                    let storage_ty: TokenStream = match target_native {
+                                        Some(nt) => match NativeType::from_syn_type(nt) {
+                                            NativeType::Str => quote! { std::string::String },
+                                            NativeType::Float32 => {
+                                                quote! { ::mettail_runtime::CanonicalFloat32 }
+                                            },
+                                            NativeType::Float64 => {
+                                                quote! { ::mettail_runtime::CanonicalFloat64 }
+                                            },
+                                            _ => quote! { #nt },
+                                        },
+                                        None => {
+                                            // ARC refactor (2026-05-28): AST children are
+                                            // `Arc<Cat>`, and the eval frame receives the
+                                            // shared Arc extracted from the AST field — so
+                                            // the frame's storage type must be `Arc<Cat>`
+                                            // (was `Box<Cat>`). The user's rust_code binds
+                                            // `&Cat` via deref, which works identically for
+                                            // Arc.
+                                            let ty_ident = *ty_id;
+                                            quote! { ::std::sync::Arc<#ty_ident> }
+                                        },
+                                    };
+                                    let kind = match (target_native.is_some(), *is_optional) {
+                                        (true, false) => CrossKind::Native(storage_ty),
+                                        (false, false) => CrossKind::Borrow(storage_ty),
+                                        (true, true) => CrossKind::OptionalNative(storage_ty),
+                                        (false, true) => CrossKind::OptionalBorrow(storage_ty),
+                                    };
+                                    cross_kinds.push((name.clone(), kind));
+                                }
+
+                                let cross_fields: Vec<TokenStream> = cross_kinds
                                     .iter()
-                                    .find(|t| t.name == **ty_id)
-                                    .and_then(|t| t.native_type.as_ref());
-                                let storage_ty: TokenStream = match target_native {
-                                    Some(nt) => match NativeType::from_syn_type(nt) {
-                                        NativeType::Str => quote! { std::string::String },
-                                        NativeType::Float32 => quote! { ::mettail_runtime::CanonicalFloat32 },
-                                        NativeType::Float64 => quote! { ::mettail_runtime::CanonicalFloat64 },
-                                        _ => quote! { #nt },
-                                    },
-                                    None => {
-                                        // ARC refactor (2026-05-28): AST children are
-                                        // `Arc<Cat>`, and the eval frame receives the
-                                        // shared Arc extracted from the AST field — so
-                                        // the frame's storage type must be `Arc<Cat>`
-                                        // (was `Box<Cat>`). The user's rust_code binds
-                                        // `&Cat` via deref, which works identically for
-                                        // Arc.
-                                        let ty_ident = *ty_id;
-                                        quote! { ::std::sync::Arc<#ty_ident> }
-                                    }
-                                };
-                                let kind = match (target_native.is_some(), *is_optional) {
-                                    (true, false) => CrossKind::Native(storage_ty),
-                                    (false, false) => CrossKind::Borrow(storage_ty),
-                                    (true, true) => CrossKind::OptionalNative(storage_ty),
-                                    (false, true) => CrossKind::OptionalBorrow(storage_ty),
-                                };
-                                cross_kinds.push((name.clone(), kind));
-                            }
+                                    .map(|(n, k)| match k {
+                                        CrossKind::Native(ty) | CrossKind::Borrow(ty) => {
+                                            quote! { #n: #ty }
+                                        },
+                                        CrossKind::OptionalNative(ty)
+                                        | CrossKind::OptionalBorrow(ty) => {
+                                            quote! { #n: ::std::option::Option<#ty> }
+                                        },
+                                    })
+                                    .collect();
+                                let cross_field_names: Vec<syn::Ident> =
+                                    cross_kinds.iter().map(|(n, _)| n.clone()).collect();
 
-                            let cross_fields: Vec<TokenStream> = cross_kinds
-                                .iter()
-                                .map(|(n, k)| match k {
-                                    CrossKind::Native(ty) | CrossKind::Borrow(ty) => {
-                                        quote! { #n: #ty }
-                                    }
-                                    CrossKind::OptionalNative(ty) | CrossKind::OptionalBorrow(ty) => {
-                                        quote! { #n: ::std::option::Option<#ty> }
-                                    }
-                                })
-                                .collect();
-                            let cross_field_names: Vec<syn::Ident> = cross_kinds
-                                .iter()
-                                .map(|(n, _)| n.clone())
-                                .collect();
+                                // Emit Frame variant.
+                                if cross_fields.is_empty() {
+                                    pda_frame_variants.push(quote! { #reduce_variant, });
+                                } else {
+                                    pda_frame_variants.push(quote! {
+                                        #reduce_variant { #(#cross_fields),* },
+                                    });
+                                }
 
-                            // Emit Frame variant.
-                            if cross_fields.is_empty() {
-                                pda_frame_variants.push(quote! { #reduce_variant, });
-                            } else {
-                                pda_frame_variants.push(quote! {
-                                    #reduce_variant { #(#cross_fields),* },
-                                });
-                            }
-
-                            // Emit Visit arm for this constructor.
-                            // Pattern: #category::#label(p0, p1, ...).
-                            let param_pat: Vec<_> = classified
-                                .iter()
-                                .map(|(n, _, _, _)| quote! { #n })
-                                .collect();
-                            let eager_cross_evals: Vec<TokenStream> = cross_kinds
+                                // Emit Visit arm for this constructor.
+                                // Pattern: #category::#label(p0, p1, ...).
+                                let param_pat: Vec<_> = classified
+                                    .iter()
+                                    .map(|(n, _, _, _)| quote! { #n })
+                                    .collect();
+                                let eager_cross_evals: Vec<TokenStream> = cross_kinds
                                 .iter()
                                 .map(|(n, k)| match k {
                                     CrossKind::Native(_) => quote! {
@@ -781,77 +761,81 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     },
                                 })
                                 .collect();
-                            let reduce_push = if cross_field_names.is_empty() {
-                                quote! { work.push(__EvalFrame::#reduce_variant); }
-                            } else {
-                                quote! {
-                                    work.push(__EvalFrame::#reduce_variant {
-                                        #(#cross_field_names),*
-                                    });
-                                }
-                            };
-                            // Same-category children: push in REVERSE so the left-
-                            // most child is processed first (LIFO stack).
-                            // Opt-Group: Optional same-cat children are routed
-                            // through cross_kinds (with OptionalBorrow), NOT
-                            // through this Visit-push path — they're captured
-                            // unconditionally and unwrapped at Reduce time.
-                            let same_cat_pushes: Vec<TokenStream> = classified
-                                .iter()
-                                .rev()
-                                .filter(|(_, _, same, is_opt)| *same && !*is_opt)
-                                .map(|(n, _, _, _)| quote! {
-                                    work.push(__EvalFrame::Visit(#n.as_ref()));
-                                })
-                                .collect();
+                                let reduce_push = if cross_field_names.is_empty() {
+                                    quote! { work.push(__EvalFrame::#reduce_variant); }
+                                } else {
+                                    quote! {
+                                        work.push(__EvalFrame::#reduce_variant {
+                                            #(#cross_field_names),*
+                                        });
+                                    }
+                                };
+                                // Same-category children: push in REVERSE so the left-
+                                // most child is processed first (LIFO stack).
+                                // Opt-Group: Optional same-cat children are routed
+                                // through cross_kinds (with OptionalBorrow), NOT
+                                // through this Visit-push path — they're captured
+                                // unconditionally and unwrapped at Reduce time.
+                                let same_cat_pushes: Vec<TokenStream> = classified
+                                    .iter()
+                                    .rev()
+                                    .filter(|(_, _, same, is_opt)| *same && !*is_opt)
+                                    .map(|(n, _, _, _)| {
+                                        quote! {
+                                            work.push(__EvalFrame::Visit(#n.as_ref()));
+                                        }
+                                    })
+                                    .collect();
 
-                            // For zero-ary rules (classified empty), match pattern
-                            // has no parens: `Int::Err` not `Int::Err()`.
-                            let visit_pat = if param_pat.is_empty() {
-                                quote! { #category::#label }
-                            } else {
-                                quote! { #category::#label(#(#param_pat),*) }
-                            };
-                            pda_visit_arms.push(quote! {
-                                #visit_pat => {
-                                    #(#eager_cross_evals)*
-                                    #reduce_push
-                                    #(#same_cat_pushes)*
-                                }
-                            });
+                                // For zero-ary rules (classified empty), match pattern
+                                // has no parens: `Int::Err` not `Int::Err()`.
+                                let visit_pat = if param_pat.is_empty() {
+                                    quote! { #category::#label }
+                                } else {
+                                    quote! { #category::#label(#(#param_pat),*) }
+                                };
+                                pda_visit_arms.push(quote! {
+                                    #visit_pat => {
+                                        #(#eager_cross_evals)*
+                                        #reduce_push
+                                        #(#same_cat_pushes)*
+                                    }
+                                });
 
-                            // Emit Reduce arm: pop same-cat values (in reverse
-                            // param order = pop order), then run the safeified
-                            // rust_code with all params in scope. Non-native
-                            // cross-cat params bind as `&Cat` (deref the Box
-                            // stored in the frame) so user rust_code sees the
-                            // same borrow as the recursive fallback.
-                            let frame_pat = if cross_field_names.is_empty() {
-                                quote! { __EvalFrame::#reduce_variant }
-                            } else {
-                                quote! {
-                                    __EvalFrame::#reduce_variant { #(#cross_field_names),* }
-                                }
-                            };
-                            // Opt-Group: Optional same-cat children are NOT
-                            // popped from values (they were captured into the
-                            // frame as `Option<Box<Cat>>`); only pure-same-cat
-                            // children are pushed/popped via Visit frames.
-                            let pops: Vec<TokenStream> = classified
-                                .iter()
-                                .rev()
-                                .filter(|(_, _, same, is_opt)| *same && !*is_opt)
-                                .map(|(n, _, _, _)| quote! {
-                                    // Pops are in reverse param order; since we
-                                    // push in reverse earlier (so leftmost is
-                                    // visited first = processed first = pushed to
-                                    // value stack first), popping in reverse gives
-                                    // us rightmost-first which matches the name
-                                    // binding order below.
-                                    let #n = values.pop().expect("PDA same-cat value");
-                                })
-                                .collect();
-                            let borrow_rebinds: Vec<TokenStream> = cross_kinds
+                                // Emit Reduce arm: pop same-cat values (in reverse
+                                // param order = pop order), then run the safeified
+                                // rust_code with all params in scope. Non-native
+                                // cross-cat params bind as `&Cat` (deref the Box
+                                // stored in the frame) so user rust_code sees the
+                                // same borrow as the recursive fallback.
+                                let frame_pat = if cross_field_names.is_empty() {
+                                    quote! { __EvalFrame::#reduce_variant }
+                                } else {
+                                    quote! {
+                                        __EvalFrame::#reduce_variant { #(#cross_field_names),* }
+                                    }
+                                };
+                                // Opt-Group: Optional same-cat children are NOT
+                                // popped from values (they were captured into the
+                                // frame as `Option<Box<Cat>>`); only pure-same-cat
+                                // children are pushed/popped via Visit frames.
+                                let pops: Vec<TokenStream> = classified
+                                    .iter()
+                                    .rev()
+                                    .filter(|(_, _, same, is_opt)| *same && !*is_opt)
+                                    .map(|(n, _, _, _)| {
+                                        quote! {
+                                            // Pops are in reverse param order; since we
+                                            // push in reverse earlier (so leftmost is
+                                            // visited first = processed first = pushed to
+                                            // value stack first), popping in reverse gives
+                                            // us rightmost-first which matches the name
+                                            // binding order below.
+                                            let #n = values.pop().expect("PDA same-cat value");
+                                        }
+                                    })
+                                    .collect();
+                                let borrow_rebinds: Vec<TokenStream> = cross_kinds
                                 .iter()
                                 .filter_map(|(n, k)| match k {
                                     CrossKind::Borrow(_) => Some(quote! {
@@ -868,71 +852,77 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                     CrossKind::OptionalNative(_) => None,
                                 })
                                 .collect();
-                            pda_reduce_arms.push(quote! {
-                                #frame_pat => {
-                                    #(#pops)*
-                                    #(#borrow_rebinds)*
-                                    match #safe_closure_call {
-                                        Some(__v) => values.push(__v),
-                                        None => return None,
+                                pda_reduce_arms.push(quote! {
+                                    #frame_pat => {
+                                        #(#pops)*
+                                        #(#borrow_rebinds)*
+                                        match #safe_closure_call {
+                                            Some(__v) => values.push(__v),
+                                            None => return None,
+                                        }
                                     }
-                                }
-                            });
-                        }
-                        None => {
-                            // Silent recursive fallback is no longer permitted:
-                            // the classifier refusing a rule would push us back
-                            // onto the stack-consuming `match self { … }` path,
-                            // which is exactly what the WFST-architecture PDA
-                            // refactor ruled out. If this fires, the classifier
-                            // needs a new case (report upstream with the rule
-                            // syntax that triggered it).
-                            let msg = format!(
-                                "mettail: cannot emit stack-safe `try_eval` frame for \
+                                });
+                            },
+                            None => {
+                                // Silent recursive fallback is no longer permitted:
+                                // the classifier refusing a rule would push us back
+                                // onto the stack-consuming `match self { … }` path,
+                                // which is exactly what the WFST-architecture PDA
+                                // refactor ruled out. If this fires, the classifier
+                                // needs a new case (report upstream with the rule
+                                // syntax that triggered it).
+                                let msg = format!(
+                                    "mettail: cannot emit stack-safe `try_eval` frame for \
                                  rule `{}::{}` — `classify_hol_rule_for_pda` returned \
                                  `None`. Silent recursive fallback is not permitted. \
                                  Report this as a macro bug, including the rule's \
                                  syntax.",
-                                category, rule.label,
-                            );
-                            return quote::quote_spanned!(rule.label.span()=> compile_error!(#msg););
+                                    category, rule.label,
+                                );
+                                return quote::quote_spanned!(rule.label.span()=> compile_error!(#msg););
+                            },
                         }
                     }
                 }
-            }
-            // Handle rules with recursive self-reference and Var (like Assign . Int ::= Var "=" Int)
-            // These evaluate to the value of the recursive argument
-            else {
-                // Find non-terminals in the rule
-                let non_terminals: Vec<_> = rule
-                    .items
-                    .iter()
-                    .filter_map(|item| match item {
-                        GrammarItem::NonTerminal { ident, kind } => Some((ident.to_string(), *kind)),
-                        _ => None,
-                    })
-                    .collect();
+                // Handle rules with recursive self-reference and Var (like Assign . Int ::= Var "=" Int)
+                // These evaluate to the value of the recursive argument
+                else {
+                    // Find non-terminals in the rule
+                    let non_terminals: Vec<_> = rule
+                        .items
+                        .iter()
+                        .filter_map(|item| match item {
+                            GrammarItem::NonTerminal { ident, kind } => {
+                                Some((ident.to_string(), *kind))
+                            },
+                            _ => None,
+                        })
+                        .collect();
 
-                // Check if this has Var and a recursive reference
-                let has_var = non_terminals.iter().any(|(_, kind)| *kind == NonTerminalKind::Var);
-                let has_recursive = non_terminals.iter().any(|(name, _)| *name == category.to_string());
+                    // Check if this has Var and a recursive reference
+                    let has_var = non_terminals
+                        .iter()
+                        .any(|(_, kind)| *kind == NonTerminalKind::Var);
+                    let has_recursive = non_terminals
+                        .iter()
+                        .any(|(name, _)| *name == category.to_string());
 
-                if has_var && has_recursive {
-                    match_arms.push(quote! {
-                        #category::#label(_, expr) => expr.as_ref().eval(),
-                    });
-                    try_eval_arms.push(quote! {
-                        #category::#label(_, expr) => expr.as_ref().try_eval(),
-                    });
-                    // PDA: forward to child via Visit frame (no Reduce needed).
-                    pda_visit_arms.push(quote! {
-                        #category::#label(_, expr) => {
-                            work.push(__EvalFrame::Visit(expr.as_ref()));
-                        }
-                    });
+                    if has_var && has_recursive {
+                        match_arms.push(quote! {
+                            #category::#label(_, expr) => expr.as_ref().eval(),
+                        });
+                        try_eval_arms.push(quote! {
+                            #category::#label(_, expr) => expr.as_ref().try_eval(),
+                        });
+                        // PDA: forward to child via Visit frame (no Reduce needed).
+                        pda_visit_arms.push(quote! {
+                            #category::#label(_, expr) => {
+                                work.push(__EvalFrame::Visit(expr.as_ref()));
+                            }
+                        });
+                    }
                 }
             }
-        }
         } // end: `else` of `if is_collection_for_eval`
 
         if !match_arms.is_empty() {

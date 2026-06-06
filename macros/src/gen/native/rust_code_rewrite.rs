@@ -54,7 +54,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::visit_mut::{self, VisitMut};
-use syn::{BinOp, Expr, ExprBinary, ExprMethodCall, ExprUnary, UnOp};
+use syn::{BinOp, Expr, ExprMethodCall, ExprUnary, UnOp};
 
 /// Rewrite a `syn::Expr` so panicking arithmetic becomes `?`-propagated
 /// `SafeArith` calls.
@@ -91,7 +91,9 @@ pub fn wrap_in_option_closure(rewritten: &Expr) -> TokenStream {
             // not require the trait import — it wins regardless.
             #[allow(unused_imports)]
             use ::mettail_runtime::lift::LiftPlain as _;
-            ::mettail_runtime::lift::Lift(#rewritten).lift()
+            #[allow(unused_braces, unused_parens)]
+            let __mettail_lifted = ::mettail_runtime::lift::Lift(#rewritten).lift();
+            __mettail_lifted
         })()
     }
 }
@@ -157,25 +159,25 @@ impl VisitMut for Safeifier {
                         <_ as ::mettail_runtime::SafeArith>::#method(#lhs, #rhs)?
                     };
                 }
-            }
+            },
             Expr::Unary(ExprUnary { op: UnOp::Neg(_), expr: inner, .. }) => {
                 let e = inner;
                 *node = syn::parse_quote! {
                     <_ as ::mettail_runtime::SafeArith>::safe_neg(#e)?
                 };
-            }
+            },
             Expr::Unary(ExprUnary { op: UnOp::Not(_), expr: inner, .. }) => {
                 let e = inner;
                 *node = syn::parse_quote! {
                     <_ as ::mettail_runtime::SafeArith>::safe_not(#e)?
                 };
-            }
+            },
             Expr::MethodCall(mc) => {
                 if let Some(replacement) = rewrite_method_call(mc) {
                     *node = replacement;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 }
@@ -254,32 +256,32 @@ fn rewrite_method_call(mc: &ExprMethodCall) -> Option<Expr> {
                 return Some(syn::parse_quote! {
                     <_ as ::mettail_runtime::SafeArith>::safe_pow(#recv, (#exp) as i32)?
                 });
-            }
+            },
             // `.powf(x)` — float exponent. SafeFloat-only.
             "powf" => {
                 let exp = args.iter().next().unwrap();
                 return Some(syn::parse_quote! {
                     <_ as ::mettail_runtime::SafeFloat>::safe_powf(#recv, #exp)?
                 });
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
     // Zero-arg unary methods (SafeFloat transcendentals).
     if args.is_empty() {
         let safe_method = match method_name.as_str() {
-            "sqrt"  => Some("safe_sqrt"),
-            "ln"    => Some("safe_ln"),
-            "log2"  => Some("safe_log2"),
+            "sqrt" => Some("safe_sqrt"),
+            "ln" => Some("safe_ln"),
+            "log2" => Some("safe_log2"),
             "log10" => Some("safe_log10"),
-            "exp"   => Some("safe_exp"),
-            "sin"   => Some("safe_sin"),
-            "cos"   => Some("safe_cos"),
-            "tan"   => Some("safe_tan"),
-            "asin"  => Some("safe_asin"),
-            "acos"  => Some("safe_acos"),
-            "atan"  => Some("safe_atan"),
+            "exp" => Some("safe_exp"),
+            "sin" => Some("safe_sin"),
+            "cos" => Some("safe_cos"),
+            "tan" => Some("safe_tan"),
+            "asin" => Some("safe_asin"),
+            "acos" => Some("safe_acos"),
+            "atan" => Some("safe_atan"),
             _ => None,
         };
         if let Some(name) = safe_method {
@@ -291,7 +293,11 @@ fn rewrite_method_call(mc: &ExprMethodCall) -> Option<Expr> {
 
         // `.product::<T>()` / `.sum::<T>()` — iterator folds.
         if method_name == "product" || method_name == "sum" {
-            let safe = if method_name == "product" { "safe_product" } else { "safe_sum" };
+            let safe = if method_name == "product" {
+                "safe_product"
+            } else {
+                "safe_sum"
+            };
             let ident = syn::Ident::new(safe, proc_macro2::Span::call_site());
             // The turbofish (`::<T>`) is in `mc.turbofish`. If present, we forward it
             // so the caller gets the same explicit element type they asked for.
@@ -416,11 +422,9 @@ mod tests {
     #[test]
     fn leaves_comparison_operators_alone() {
         let out = safeify_str("a == b");
-        assert!(!out.contains("safe_"),
-            "== should not be rewritten: {}", out);
+        assert!(!out.contains("safe_"), "== should not be rewritten: {}", out);
         let out = safeify_str("a && b");
-        assert!(!out.contains("safe_"),
-            "&& should not be rewritten: {}", out);
+        assert!(!out.contains("safe_"), "&& should not be rewritten: {}", out);
     }
 
     #[test]
@@ -456,7 +460,6 @@ mod tests {
     fn addition_inside_method_args_rewrites() {
         // `foo(a + b)` — the `a + b` inside the call should be rewritten.
         let out = safeify_str("foo(a + b)");
-        assert!(out.contains("safe_add"),
-            "expected nested safe_add: {}", out);
+        assert!(out.contains("safe_add"), "expected nested safe_add: {}", out);
     }
 }

@@ -351,7 +351,11 @@ where
         self.inner.close_term(state, on_free)
     }
 
-    fn open_term(&mut self, state: moniker::ScopeState, on_bound: &impl moniker::OnBoundFn<String>) {
+    fn open_term(
+        &mut self,
+        state: moniker::ScopeState,
+        on_bound: &impl moniker::OnBoundFn<String>,
+    ) {
         self.inner.open_term(state, on_bound)
     }
 
@@ -494,10 +498,7 @@ mod tests {
         clear_var_cache();
         let v1 = get_or_create_var("alpha");
         let v2 = get_or_create_var("beta");
-        assert_ne!(
-            v1.unique_id, v2.unique_id,
-            "different names must yield different unique_ids"
-        );
+        assert_ne!(v1.unique_id, v2.unique_id, "different names must yield different unique_ids");
     }
 
     // =========================================================================
@@ -510,10 +511,7 @@ mod tests {
         let uid1 = v1.unique_id;
         clear_var_cache();
         let v2 = get_or_create_var("gamma");
-        assert_ne!(
-            uid1, v2.unique_id,
-            "after clear, same name must produce a fresh unique_id"
-        );
+        assert_ne!(uid1, v2.unique_id, "after clear, same name must produce a fresh unique_id");
     }
 
     // =========================================================================
@@ -575,14 +573,8 @@ mod tests {
             pretty_name: Some("x".to_string()),
         }));
 
-        assert!(
-            free_var < bound_var,
-            "OrdVar(Free) must be less than OrdVar(Bound)"
-        );
-        assert!(
-            bound_var > free_var,
-            "OrdVar(Bound) must be greater than OrdVar(Free)"
-        );
+        assert!(free_var < bound_var, "OrdVar(Free) must be less than OrdVar(Bound)");
+        assert!(bound_var > free_var, "OrdVar(Bound) must be greater than OrdVar(Free)");
     }
 
     // =========================================================================
@@ -641,11 +633,7 @@ mod tests {
             h.finish()
         };
 
-        assert_eq!(
-            hash_of(&scope1),
-            hash_of(&scope2),
-            "equal scopes must have equal hashes"
-        );
+        assert_eq!(hash_of(&scope1), hash_of(&scope2), "equal scopes must have equal hashes");
     }
 
     // =========================================================================
@@ -677,33 +665,15 @@ mod tests {
         // is Equal and the ordering depends entirely on body comparison.
         let v = FreeVar::fresh_named("t");
 
-        let scope_a = Scope::<Binder<String>, OrdVar>::new::<String>(
-            Binder(v.clone()),
-            body_a,
-        );
-        let scope_b = Scope::<Binder<String>, OrdVar>::new::<String>(
-            Binder(v.clone()),
-            body_b,
-        );
-        let scope_c = Scope::<Binder<String>, OrdVar>::new::<String>(
-            Binder(v.clone()),
-            body_c,
-        );
+        let scope_a = Scope::<Binder<String>, OrdVar>::new::<String>(Binder(v.clone()), body_a);
+        let scope_b = Scope::<Binder<String>, OrdVar>::new::<String>(Binder(v.clone()), body_b);
+        let scope_c = Scope::<Binder<String>, OrdVar>::new::<String>(Binder(v.clone()), body_c);
 
         // Verify a < b, b < c
-        assert!(
-            scope_a < scope_b,
-            "scope_a must be less than scope_b"
-        );
-        assert!(
-            scope_b < scope_c,
-            "scope_b must be less than scope_c"
-        );
+        assert!(scope_a < scope_b, "scope_a must be less than scope_b");
+        assert!(scope_b < scope_c, "scope_b must be less than scope_c");
         // Transitivity: a < c
-        assert!(
-            scope_a < scope_c,
-            "transitivity: scope_a must be less than scope_c"
-        );
+        assert!(scope_a < scope_c, "transitivity: scope_a must be less than scope_c");
     }
 
     // =========================================================================
@@ -729,11 +699,7 @@ mod tests {
         let before = bcg05_epoch();
         bump_bcg05_epoch();
         let after = bcg05_epoch();
-        assert_eq!(
-            after,
-            before.wrapping_add(1),
-            "bump_bcg05_epoch must increment by exactly 1"
-        );
+        assert_eq!(after, before.wrapping_add(1), "bump_bcg05_epoch must increment by exactly 1");
     }
 
     // =========================================================================
@@ -746,11 +712,7 @@ mod tests {
         bump_bcg05_epoch();
         bump_bcg05_epoch();
         let e3 = bcg05_epoch();
-        assert_eq!(
-            e3,
-            e1.wrapping_add(2),
-            "two bumps must advance epoch by 2"
-        );
+        assert_eq!(e3, e1.wrapping_add(2), "two bumps must advance epoch by 2");
     }
 
     // =========================================================================
@@ -777,16 +739,9 @@ mod tests {
 
         // term_eq populates the cache
         let _eq = scope1.term_eq(&scope2);
-        assert!(
-            term_eq_cache_size() > 0,
-            "cache must have at least one entry after term_eq"
-        );
+        assert!(term_eq_cache_size() > 0, "cache must have at least one entry after term_eq");
 
         clear_term_eq_cache();
-        assert_eq!(
-            term_eq_cache_size(),
-            0,
-            "cache should be empty after clearing"
-        );
+        assert_eq!(term_eq_cache_size(), 0, "cache should be empty after clearing");
     }
 }

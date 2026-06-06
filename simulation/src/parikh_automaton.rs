@@ -161,8 +161,16 @@ impl<const D: usize> ParikhAutomaton<D> {
 
     /// Add a transition.
     pub fn add_transition(&mut self, transition: ParikhTransition<D>) {
-        assert!(transition.from < self.states.len(), "Source state {} does not exist", transition.from);
-        assert!(transition.to < self.states.len(), "Destination state {} does not exist", transition.to);
+        assert!(
+            transition.from < self.states.len(),
+            "Source state {} does not exist",
+            transition.from
+        );
+        assert!(
+            transition.to < self.states.len(),
+            "Destination state {} does not exist",
+            transition.to
+        );
         self.transitions_by_source
             .entry(transition.from)
             .or_insert_with(Vec::new)
@@ -191,14 +199,19 @@ impl<const D: usize> ParikhAutomaton<D> {
     ///
     /// Returns all states reachable via epsilon transitions, with accumulated
     /// weights. Uses BFS to avoid stack overflow on long epsilon chains.
-    fn epsilon_closure(&self, start: &[(StateId, ParikhWeight<D>)]) -> Vec<(StateId, ParikhWeight<D>)> {
+    fn epsilon_closure(
+        &self,
+        start: &[(StateId, ParikhWeight<D>)],
+    ) -> Vec<(StateId, ParikhWeight<D>)> {
         use mettail_prattail::automata::semiring::Semiring;
 
         let mut result: HashMap<StateId, ParikhWeight<D>> = HashMap::new();
-        let mut queue: VecDeque<(StateId, ParikhWeight<D>)> = VecDeque::with_capacity(start.len() * 2);
+        let mut queue: VecDeque<(StateId, ParikhWeight<D>)> =
+            VecDeque::with_capacity(start.len() * 2);
 
         for &(s, ref w) in start {
-            result.entry(s)
+            result
+                .entry(s)
                 .and_modify(|existing| *existing = existing.plus(w))
                 .or_insert_with(|| w.clone());
             queue.push_back((s, w.clone()));
@@ -215,7 +228,7 @@ impl<const D: usize> ParikhAutomaton<D> {
                             // (for the max-based plus, check if any component increased)
                             let combined = e.get().plus(&new_weight);
                             combined != *e.get()
-                        }
+                        },
                         std::collections::hash_map::Entry::Vacant(_) => true,
                     };
                     if should_enqueue {
@@ -267,7 +280,8 @@ impl<const D: usize> ParikhAutomaton<D> {
             }
         }
 
-        configs.into_iter()
+        configs
+            .into_iter()
             .filter(|(s, _)| self.accepting_states.contains(s))
             .map(|(_, w)| w)
             .collect()
@@ -296,9 +310,7 @@ impl<const D: usize> ParikhAutomaton<D> {
         let n2 = other.num_states();
 
         // Map (s1, s2) → product_state_id
-        let pair_to_id = |s1: StateId, s2: StateId| -> StateId {
-            s1 * n2 + s2
-        };
+        let pair_to_id = |s1: StateId, s2: StateId| -> StateId { s1 * n2 + s2 };
 
         // Create all product states
         let mut product = ParikhAutomaton {
@@ -311,12 +323,12 @@ impl<const D: usize> ParikhAutomaton<D> {
         for s1 in &self.states {
             for s2 in &other.states {
                 let id = pair_to_id(s1.id, s2.id);
-                product.states.push(ParikhState::new(
-                    id,
-                    format!("({},{})", s1.name, s2.name),
-                ));
+                product
+                    .states
+                    .push(ParikhState::new(id, format!("({},{})", s1.name, s2.name)));
 
-                if self.accepting_states.contains(&s1.id) && other.accepting_states.contains(&s2.id) {
+                if self.accepting_states.contains(&s1.id) && other.accepting_states.contains(&s2.id)
+                {
                     product.accepting_states.insert(id);
                 }
             }
@@ -333,7 +345,12 @@ impl<const D: usize> ParikhAutomaton<D> {
                                 let from = pair_to_id(s1, s2);
                                 let to = pair_to_id(t1.to, t2.to);
                                 let weight = t1.weight.times(&t2.weight);
-                                product.add_transition(ParikhTransition::new(from, to, Some(sym), weight));
+                                product.add_transition(ParikhTransition::new(
+                                    from,
+                                    to,
+                                    Some(sym),
+                                    weight,
+                                ));
                             }
                         }
                     }
@@ -348,7 +365,11 @@ impl<const D: usize> ParikhAutomaton<D> {
                     for s2 in 0..n2 {
                         let from = pair_to_id(s1, s2);
                         let to = pair_to_id(t1.to, s2);
-                        product.add_transition(ParikhTransition::epsilon(from, to, t1.weight.clone()));
+                        product.add_transition(ParikhTransition::epsilon(
+                            from,
+                            to,
+                            t1.weight.clone(),
+                        ));
                     }
                 }
             }
@@ -359,7 +380,11 @@ impl<const D: usize> ParikhAutomaton<D> {
                     for s1 in 0..n1 {
                         let from = pair_to_id(s1, s2);
                         let to = pair_to_id(s1, t2.to);
-                        product.add_transition(ParikhTransition::epsilon(from, to, t2.weight.clone()));
+                        product.add_transition(ParikhTransition::epsilon(
+                            from,
+                            to,
+                            t2.weight.clone(),
+                        ));
                     }
                 }
             }
@@ -376,7 +401,11 @@ impl<const D: usize> ParikhAutomaton<D> {
     /// set projection.
     ///
     /// Returns a set of Parikh vectors, one per distinct accepting run.
-    pub fn reachable_parikh_vectors(&self, max_input_len: usize, alphabet: &[u8]) -> HashSet<ParikhWeight<D>> {
+    pub fn reachable_parikh_vectors(
+        &self,
+        max_input_len: usize,
+        alphabet: &[u8],
+    ) -> HashSet<ParikhWeight<D>> {
         let mut result = HashSet::new();
 
         // BFS over all input words up to max_input_len
@@ -411,7 +440,9 @@ impl<const D: usize> fmt::Display for ParikhAutomaton<D> {
         writeln!(f, "  Initial: q{}", self.initial_state)?;
         write!(f, "  Accepting: {{")?;
         for (i, s) in self.accepting_states.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "q{}", s)?;
         }
         writeln!(f, "}}")
@@ -486,7 +517,7 @@ impl<const D: usize> LinearSet<D> {
                             if prev != r {
                                 return false;
                             }
-                        }
+                        },
                     }
                 }
             }
@@ -521,10 +552,7 @@ impl<const D: usize> LinearSet<D> {
         }
 
         let mut stack: Vec<Frame<D>> = Vec::with_capacity(64);
-        stack.push(Frame {
-            period_idx: 0,
-            remaining: *diff,
-        });
+        stack.push(Frame { period_idx: 0, remaining: *diff });
 
         while let Some(frame) = stack.pop() {
             if frame.period_idx >= periods.len() {
@@ -693,9 +721,7 @@ impl<const D: usize> fmt::Display for SemilinearSet<D> {
 /// This implementation handles small automata correctly. For large automata,
 /// more sophisticated algorithms (e.g., based on linear algebra over ℕ)
 /// would be needed.
-pub fn project_semilinear<const D: usize>(
-    automaton: &ParikhAutomaton<D>,
-) -> SemilinearSet<D> {
+pub fn project_semilinear<const D: usize>(automaton: &ParikhAutomaton<D>) -> SemilinearSet<D> {
     use mettail_prattail::automata::semiring::Semiring;
 
     let n = automaton.num_states();

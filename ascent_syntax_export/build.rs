@@ -6,7 +6,7 @@
 //!
 //! Patches applied when regenerating:
 //! 1. Make types public (pub(crate) → pub)
-//! 2. Add a proc_macro stub for non-proc-macro context
+//! 2. Add a proc_macro shim for non-proc-macro context
 //! 3. Fix module imports (crate:: → super::)
 //! 4. Replace closure-based derive with manual Parse impl
 
@@ -52,10 +52,10 @@ fn patch_ascent_syntax(src_dir: &Path, out_dir: &Path) {
     // Remove #![deny(warnings)] since we're modifying the code
     patched = patched.replace("#![deny(warnings)]", "#![allow(warnings)]");
 
-    // Remove the extern crate proc_macro line (we'll provide our own stub)
+    // Remove the extern crate proc_macro line (we'll provide our own shim)
     patched = patched.replace(
         "extern crate proc_macro;",
-        "// extern crate proc_macro; // Removed - using stub",
+        "// extern crate proc_macro; // Removed - using shim",
     );
 
     // Add quote macro imports at the top of the file (after allow warnings)
@@ -134,9 +134,9 @@ fn patch_syn_utils(src_dir: &Path, out_dir: &Path) {
     // Fix imports
     patched = patched.replace("use crate::utils::", "use super::utils::");
 
-    // Add proc_macro stub and quote imports at the beginning (after the warning suppression)
-    let proc_macro_stub = r#"
-// Stub module for non-proc-macro context
+    // Add proc_macro shim and quote imports at the beginning (after the warning suppression)
+    let proc_macro_shim = r#"
+// Shim module for non-proc-macro context
 // The real proc_macro crate is only available in proc-macro crates
 mod proc_macro {
     pub struct TokenStream;
@@ -152,9 +152,9 @@ use quote::quote;
 
     // Insert after the first line (after #![allow(warnings)])
     if let Some(pos) = patched.find('\n') {
-        patched.insert_str(pos + 1, proc_macro_stub);
+        patched.insert_str(pos + 1, proc_macro_shim);
     } else {
-        patched = format!("{}\n{}", proc_macro_stub, patched);
+        patched = format!("{}\n{}", proc_macro_shim, patched);
     }
 
     fs::write(out_dir.join("syn_utils.rs"), patched).expect("Failed to write patched syn_utils.rs");

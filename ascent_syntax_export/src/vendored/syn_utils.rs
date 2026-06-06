@@ -28,7 +28,6 @@ use syn::{Block, Expr, ExprMacro, Pat, Path, Stmt};
 
 use super::utils::{collect_set, into_set};
 
-// TODO maybe remove?
 #[allow(unused)]
 pub fn block_get_vars(block: &Block) -> Vec<Ident> {
     let mut bound_vars = HashSet::new();

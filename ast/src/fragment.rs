@@ -82,7 +82,13 @@ impl Parse for FragmentDef {
             Vec::new()
         };
 
-        Ok(FragmentDef { name, types, token_defs, mode_defs, terms })
+        Ok(FragmentDef {
+            name,
+            types,
+            token_defs,
+            mode_defs,
+            terms,
+        })
     }
 }
 
@@ -154,10 +160,7 @@ pub fn validate_fragment(frag: &FragmentDef) -> Result<(), String> {
     for rule in &frag.terms {
         let label = rule.label.to_string();
         if !seen_labels.insert(label.clone()) {
-            return Err(format!(
-                "Fragment '{}': duplicate rule label '{}'",
-                frag.name, label
-            ));
+            return Err(format!("Fragment '{}': duplicate rule label '{}'", frag.name, label));
         }
     }
 

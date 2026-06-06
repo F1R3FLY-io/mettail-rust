@@ -12,15 +12,14 @@
 
 #![allow(clippy::cmp_owned)]
 
+use crate::gen::native::has_native_type;
+use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     language::LanguageDef,
-    types::{CollectionType, TypeExpr},
+    types::TypeExpr,
 };
-use crate::gen::native::has_native_type;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
-use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_prattail::binding_power::{
     analyze_binding_powers, compute_prefix_bp, InfixRuleInfo, MixfixPart as BpMixfixPart,
 };
@@ -163,15 +162,10 @@ fn build_bp_lookup(language: &LanguageDef) -> BpLookup {
     // Add unary prefix operators (Stage 3.27d-pre standardized helper)
     for rule in &spec.rules {
         if rule.is_unary_prefix {
-            let prefix_bp = compute_prefix_bp(
-                &rule.category,
-                rule.prefix_precedence,
-                &bp_table,
-            );
-            lookup.prefix.insert(
-                rule.label.clone(),
-                DisplayPrefixBpInfo { prefix_bp },
-            );
+            let prefix_bp = compute_prefix_bp(&rule.category, rule.prefix_precedence, &bp_table);
+            lookup
+                .prefix
+                .insert(rule.label.clone(), DisplayPrefixBpInfo { prefix_bp });
         }
     }
 
@@ -506,13 +500,23 @@ fn generate_engine_category_arm(
 // =============================================================================
 
 /// Generate the match arm for a single grammar rule inside the iterative engine.
-fn generate_engine_rule_arm(rule: &GrammarRule, language: &LanguageDef, bp_lookup: &BpLookup) -> TokenStream {
+fn generate_engine_rule_arm(
+    rule: &GrammarRule,
+    language: &LanguageDef,
+    bp_lookup: &BpLookup,
+) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
 
     // New syntax_pattern rules
     if let (Some(syntax_pattern), Some(term_context)) = (&rule.syntax_pattern, &rule.term_context) {
-        return generate_engine_syntax_pattern_arm(rule, syntax_pattern, term_context, language, bp_lookup);
+        return generate_engine_syntax_pattern_arm(
+            rule,
+            syntax_pattern,
+            term_context,
+            language,
+            bp_lookup,
+        );
     }
 
     // Old-style binder rules
@@ -548,7 +552,9 @@ fn generate_engine_rule_arm(rule: &GrammarRule, language: &LanguageDef, bp_looku
 
         // Check if any field is Var
         let has_var = fields.iter().any(|(_, nt_opt)| {
-            nt_opt.as_ref().is_some_and(|nt| NonTerminalKind::classify(&nt.to_string()) == NonTerminalKind::Var)
+            nt_opt.as_ref().is_some_and(|nt| {
+                NonTerminalKind::classify(&nt.to_string()) == NonTerminalKind::Var
+            })
         });
 
         if has_var {
@@ -646,7 +652,11 @@ fn generate_engine_regular_arm(
     // For postfix: single NT gets left_bp
     // For mixfix: first NT gets left_bp, middle NTs get 0, last NT gets right_bp
     // For non-operator: all NTs get 0
-    let nt_count = rule.items.iter().filter(|i| matches!(i, GrammarItem::NonTerminal { .. })).count();
+    let nt_count = rule
+        .items
+        .iter()
+        .filter(|i| matches!(i, GrammarItem::NonTerminal { .. }))
+        .count();
 
     let mut forward_ops: Vec<TokenStream> = Vec::new();
     let mut field_iter = fields.iter().zip(field_names.iter());
@@ -881,7 +891,8 @@ fn generate_engine_binder_arm(rule: &GrammarRule, _language: &LanguageDef) -> To
             GrammarItem::NonTerminal { ident: nt, .. } => {
                 // Regular field — non-binder context resets precedence
                 if let Some(field_name_str) = regular_field_iter.next() {
-                    let field_name = syn::Ident::new(field_name_str, proc_macro2::Span::call_site());
+                    let field_name =
+                        syn::Ident::new(field_name_str, proc_macro2::Span::call_site());
                     let nt_str = nt.to_string();
                     let task_variant = format_ident!("Display{}", nt_str);
                     forward_ops.push(quote! {
@@ -1242,12 +1253,10 @@ fn generate_engine_syntax_pattern_arm(
                 // optional group like `*opt("else" e)` placed after a Param
                 // emits `<param><else>` with no separator → re-lex glomming
                 // into Ident("<value>else").
-                let prev_outer_is_param = i > 0
-                    && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
-                let next_outer_is_param = matches!(
-                    syntax_pattern.get(i + 1),
-                    Some(SyntaxExpr::Param(_))
-                );
+                let prev_outer_is_param =
+                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+                let next_outer_is_param =
+                    matches!(syntax_pattern.get(i + 1), Some(SyntaxExpr::Param(_)));
                 let op_code = generate_engine_pattern_op(
                     op,
                     &abstraction_binder,
@@ -1281,10 +1290,6 @@ fn generate_engine_syntax_pattern_arm(
         0
     };
 
-    {
-        use std::io::Write;
-    }
-
     if has_abstraction {
         field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
 
@@ -1298,6 +1303,7 @@ fn generate_engine_syntax_pattern_arm(
                         .collect();
                     // For multi-binder, binder_name is the joined list (used by some ops)
                     let binder_name = binder_names.join(",");
+                    let _ = &binder_name;
                     #(#forward_ops)*
                 }
             }
@@ -1307,6 +1313,7 @@ fn generate_engine_syntax_pattern_arm(
                 #category::#label(#(#field_idents),*) => {
                     let inner = scope.inner();
                     let binder_name = inner.unsafe_pattern.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
+                    let _ = binder_name;
                     #(#forward_ops)*
                 }
             }
@@ -1494,45 +1501,48 @@ fn generate_engine_pattern_op(
             // Op(Sep) — its `collection` param is the gating signal
             // (Option<Vec<T>> / Option<HashBag<T>> / etc.). The first
             // inner Param OR Sep-collection-param wins.
-            let gating_ident: Option<syn::Ident> = inner.iter().find_map(|expr| {
-                match expr {
-                    SyntaxExpr::Param(id) => Some(syn::Ident::new(
-                        &id.to_string(), proc_macro2::Span::call_site(),
-                    )),
-                    SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) => {
-                        Some(syn::Ident::new(
-                            &collection.to_string(), proc_macro2::Span::call_site(),
-                        ))
-                    }
-                    _ => None,
-                }
+            let gating_ident: Option<syn::Ident> = inner.iter().find_map(|expr| match expr {
+                SyntaxExpr::Param(id) => {
+                    Some(syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site()))
+                },
+                SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) => {
+                    Some(syn::Ident::new(&collection.to_string(), proc_macro2::Span::call_site()))
+                },
+                _ => None,
             });
-            let inner_bindings: Vec<TokenStream> = inner.iter().filter_map(|expr| {
-                match expr {
-                    SyntaxExpr::Param(id) => {
-                        let id_ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
-                        let inner_var = quote::format_ident!("__opt_{}", id);
-                        Some(quote! {
-                            let #inner_var: &_ = #id_ident.as_ref()
-                                .map(|__b| __b.as_ref())
-                                .expect("Opt-Group: inner display ran with None");
-                        })
+            let inner_bindings: Vec<TokenStream> = inner
+                .iter()
+                .filter_map(|expr| {
+                    match expr {
+                        SyntaxExpr::Param(id) => {
+                            let id_ident =
+                                syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
+                            let inner_var = quote::format_ident!("__opt_{}", id);
+                            Some(quote! {
+                                let #inner_var: &_ = #id_ident.as_ref()
+                                    .map(|__b| __b.as_ref())
+                                    .expect("Opt-Group: inner display ran with None");
+                            })
+                        },
+                        // Phase 4 #3 (2026-05-12): bind the Sep collection param
+                        // to a reference of the inner Vec/HashBag/etc. The field
+                        // type is `Option<Container<T>>` (no Box), so as_ref()
+                        // gives &Container<T> directly.
+                        SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) => {
+                            let id_ident = syn::Ident::new(
+                                &collection.to_string(),
+                                proc_macro2::Span::call_site(),
+                            );
+                            let inner_var = quote::format_ident!("__opt_{}", collection);
+                            Some(quote! {
+                                let #inner_var = #id_ident.as_ref()
+                                    .expect("Opt-Group: inner display ran with None");
+                            })
+                        },
+                        _ => None,
                     }
-                    // Phase 4 #3 (2026-05-12): bind the Sep collection param
-                    // to a reference of the inner Vec/HashBag/etc. The field
-                    // type is `Option<Container<T>>` (no Box), so as_ref()
-                    // gives &Container<T> directly.
-                    SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) => {
-                        let id_ident = syn::Ident::new(&collection.to_string(), proc_macro2::Span::call_site());
-                        let inner_var = quote::format_ident!("__opt_{}", collection);
-                        Some(quote! {
-                            let #inner_var = #id_ident.as_ref()
-                                .expect("Opt-Group: inner display ran with None");
-                        })
-                    }
-                    _ => None,
-                }
-            }).collect();
+                })
+                .collect();
             // Stage 3.3 (2026-04-30): mirror the outer SyntaxExpr::Literal
             // spacing heuristic for inner positions, plus inject leading /
             // trailing spaces at inner edges when the OUTER neighbour is a
@@ -1564,11 +1574,10 @@ fn generate_engine_pattern_op(
                 .iter()
                 .enumerate()
                 .map(|(j, expr)| {
-                    let inner_prev_is_param = j > 0
-                        && matches!(inner.get(j - 1), Some(SyntaxExpr::Param(_)));
-                    let inner_next_is_param = inner
-                        .get(j + 1)
-                        .map(|e| matches!(e, SyntaxExpr::Param(_)));
+                    let inner_prev_is_param =
+                        j > 0 && matches!(inner.get(j - 1), Some(SyntaxExpr::Param(_)));
+                    let inner_next_is_param =
+                        inner.get(j + 1).map(|e| matches!(e, SyntaxExpr::Param(_)));
                     let is_first = j == 0;
                     let is_last = j + 1 == inner.len();
                     match expr {
@@ -1576,8 +1585,8 @@ fn generate_engine_pattern_op(
                             let is_word = !s.is_empty()
                                 && s.chars().all(|c| c.is_alphanumeric() || c == '_')
                                 && !s.chars().next().unwrap().is_numeric();
-                            let inner_3case_force = inner_prev_is_param
-                                && inner_next_is_param.unwrap_or(false);
+                            let inner_3case_force =
+                                inner_prev_is_param && inner_next_is_param.unwrap_or(false);
                             let need_prefix = (inner_prev_is_param && is_word)
                                 || (is_first && prev_outer_is_param && is_word)
                                 || inner_3case_force;
@@ -1607,11 +1616,7 @@ fn generate_engine_pattern_op(
                                 #trailing
                             }
                         },
-                        SyntaxExpr::Op(PatternOp::Sep {
-                            collection,
-                            separator,
-                            source: None,
-                        }) => {
+                        SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
                             // Phase 4 #3 (2026-05-12): Sep inside *opt.
                             // Iterate `__opt_<coll_name>` joining elements
                             // with the separator. The container's coll_kind
@@ -1651,13 +1656,15 @@ fn generate_engine_pattern_op(
                                     }
                                     parts.sort();
                                 },
-                                Some(mettail_ast::types::CollectionType::HashBag) | None => quote! {
-                                    for (item, count) in #inner_var.iter() {
-                                        for _ in 0..count {
-                                            parts.push(item.to_string());
+                                Some(mettail_ast::types::CollectionType::HashBag) | None => {
+                                    quote! {
+                                        for (item, count) in #inner_var.iter() {
+                                            for _ in 0..count {
+                                                parts.push(item.to_string());
+                                            }
                                         }
+                                        parts.sort();
                                     }
-                                    parts.sort();
                                 },
                             };
                             quote! {
@@ -1858,12 +1865,9 @@ fn generate_engine_auto_literal_arm(
             match collection_kind {
                 Some(mettail_ast::language::CollectionCategory::List(d))
                 | Some(mettail_ast::language::CollectionCategory::Bag(d))
-                | Some(mettail_ast::language::CollectionCategory::Map(d)) => (
-                    d.open.clone(),
-                    d.close.clone(),
-                    d.sep.clone(),
-                    d.key_val_sep.clone(),
-                ),
+                | Some(mettail_ast::language::CollectionCategory::Map(d)) => {
+                    (d.open.clone(), d.close.clone(), d.sep.clone(), d.key_val_sep.clone())
+                },
                 None => ("".to_string(), "".to_string(), ", ".to_string(), None),
             };
         // Extract the element category (e.g. Vec<Proc> → Proc). Every
@@ -1878,12 +1882,8 @@ fn generate_engine_auto_literal_arm(
         // element extraction), since HashMap's "element" concept is
         // key+value pair.
         let value_ident = extract_map_value_ident(native_type);
-        let elem_display_task = elem_ident
-            .as_ref()
-            .map(|c| format_ident!("Display{}", c));
-        let value_display_task = value_ident
-            .as_ref()
-            .map(|c| format_ident!("Display{}", c));
+        let elem_display_task = elem_ident.as_ref().map(|c| format_ident!("Display{}", c));
+        let value_display_task = value_ident.as_ref().map(|c| format_ident!("Display{}", c));
 
         match nt {
             crate::gen::native::NativeType::VecCollection => {
@@ -1919,11 +1919,13 @@ fn generate_engine_auto_literal_arm(
                         stack.push(DisplayTask::WriteString(#open.to_string()));
                     }
                 }
-            }
+            },
             crate::gen::native::NativeType::HashMapCollection
             | crate::gen::native::NativeType::HashMapLitCollection => {
                 let kv = kv_sep.unwrap_or_else(|| ":".to_string());
-                let (Some(key_task), Some(val_task)) = (elem_display_task.clone(), value_display_task.clone()) else {
+                let (Some(key_task), Some(val_task)) =
+                    (elem_display_task.clone(), value_display_task.clone())
+                else {
                     return quote! {
                         #category::#literal_label(v) => {
                             use std::fmt::Write as _;
@@ -1961,7 +1963,7 @@ fn generate_engine_auto_literal_arm(
                         stack.push(DisplayTask::WriteString(#open.to_string()));
                     }
                 }
-            }
+            },
             crate::gen::native::NativeType::HashBagCollection => {
                 let Some(elem_task) = elem_display_task.clone() else {
                     return quote! {
@@ -2008,7 +2010,7 @@ fn generate_engine_auto_literal_arm(
                         stack.push(DisplayTask::WriteString(#open.to_string()));
                     }
                 }
-            }
+            },
             crate::gen::native::NativeType::HashSetCollection => {
                 let Some(elem_task) = elem_display_task.clone() else {
                     return quote! {
@@ -2041,7 +2043,7 @@ fn generate_engine_auto_literal_arm(
                         stack.push(DisplayTask::WriteString(#open.to_string()));
                     }
                 }
-            }
+            },
             _ => quote! {
                 // Fallback for any other collection native type — use Display impl.
                 #category::#literal_label(v) => {

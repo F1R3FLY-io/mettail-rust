@@ -5,67 +5,6 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
-	// And: ... ...
-	{
-		type: "bool_and",
-		tooltip: "And: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Or: ... ...
-	{
-		type: "bool_or",
-		tooltip: "Or: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Not: ...
-	{
-		type: "bool_not",
-		tooltip: "Not: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
 	// Add Int: ... ...
 	{
 		type: "int_add_int",
@@ -130,6 +69,67 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// And: ... ...
+	{
+		type: "bool_and",
+		tooltip: "And: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Or: ... ...
+	{
+		type: "bool_or",
+		tooltip: "Or: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Not: ...
+	{
+		type: "bool_not",
+		tooltip: "Not: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
 	},
 
 	// Neg: ...

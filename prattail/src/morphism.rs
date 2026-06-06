@@ -100,11 +100,7 @@ impl Operation {
     }
 
     /// Create an operation with arguments.
-    pub fn new(
-        name: impl Into<String>,
-        args: Vec<String>,
-        result: impl Into<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, args: Vec<String>, result: impl Into<String>) -> Self {
         Operation {
             name: name.into(),
             arg_sorts: args,
@@ -123,13 +119,7 @@ impl fmt::Display for Operation {
         if self.arg_sorts.is_empty() {
             write!(f, "{}: {}", self.name, self.result_sort)
         } else {
-            write!(
-                f,
-                "{}: {} -> {}",
-                self.name,
-                self.arg_sorts.join(" x "),
-                self.result_sort,
-            )
+            write!(f, "{}: {} -> {}", self.name, self.arg_sorts.join(" x "), self.result_sort,)
         }
     }
 }
@@ -164,7 +154,7 @@ impl fmt::Display for TranslationCase {
             TranslationCase::Direct { target_op } => write!(f, "-> {}", target_op),
             TranslationCase::Compound { description, .. } => {
                 write!(f, "-> [{}]", description)
-            }
+            },
             TranslationCase::Identity => write!(f, "-> (identity)"),
         }
     }
@@ -223,12 +213,8 @@ impl TheoryMorphism {
 
     /// Add a direct operation mapping.
     pub fn map_operation(&mut self, source: impl Into<String>, target: impl Into<String>) {
-        self.operation_map.insert(
-            source.into(),
-            TranslationCase::Direct {
-                target_op: target.into(),
-            },
-        );
+        self.operation_map
+            .insert(source.into(), TranslationCase::Direct { target_op: target.into() });
     }
 
     /// Add an identity operation mapping.
@@ -255,7 +241,9 @@ impl TheoryMorphism {
 
     /// Check whether all source sorts are mapped.
     pub fn is_sort_complete(&self) -> bool {
-        self.source_sorts.iter().all(|s| self.sort_map.contains_key(&s.name))
+        self.source_sorts
+            .iter()
+            .all(|s| self.sort_map.contains_key(&s.name))
     }
 
     /// Check whether all source operations are mapped.
@@ -326,7 +314,7 @@ pub fn construct_morphism(
                     "Source sort '{}' has no mapping in the sort map",
                     src_sort.name,
                 ));
-            }
+            },
             Some(tgt_name) => {
                 if !target_sort_names.contains(tgt_name.as_str()) {
                     return Err(format!(
@@ -334,7 +322,7 @@ pub fn construct_morphism(
                         src_sort.name, tgt_name, tgt_name,
                     ));
                 }
-            }
+            },
         }
     }
 
@@ -346,7 +334,7 @@ pub fn construct_morphism(
                     "Source operation '{}' has no mapping in the operation map",
                     src_op.name,
                 ));
-            }
+            },
             Some(translation) => {
                 // (3) Arity preservation: for Direct mappings, check that the
                 // target operation has the same number of argument sorts.
@@ -357,7 +345,7 @@ pub fn construct_morphism(
                                 "Operation map maps '{}' to '{}', but '{}' is not a target operation",
                                 src_op.name, target_op, target_op,
                             ));
-                        }
+                        },
                         Some(tgt_op) => {
                             if src_op.arity() != tgt_op.arity() {
                                 return Err(format!(
@@ -365,10 +353,10 @@ pub fn construct_morphism(
                                     src_op.name, src_op.arity(), tgt_op.name, tgt_op.arity(),
                                 ));
                             }
-                        }
+                        },
                     }
                 }
-            }
+            },
         }
     }
 
@@ -410,10 +398,7 @@ pub fn construct_morphism(
 /// the target theory.
 ///
 /// Returns `true` if every translated axiom pair is syntactically equal.
-pub fn verify_preservation(
-    morphism: &TheoryMorphism,
-    source_axioms: &[String],
-) -> bool {
+pub fn verify_preservation(morphism: &TheoryMorphism, source_axioms: &[String]) -> bool {
     for axiom in source_axioms {
         // Split on " = " to get lhs and rhs of the equation.
         let parts: Vec<&str> = axiom.splitn(2, " = ").collect();
@@ -464,10 +449,7 @@ pub fn verify_preservation(
 ///
 /// Variables (lowercase identifiers not in the operation map) are passed
 /// through unchanged.
-pub fn translate_term(
-    morphism: &TheoryMorphism,
-    term: &str,
-) -> Result<String, String> {
+pub fn translate_term(morphism: &TheoryMorphism, term: &str) -> Result<String, String> {
     let term = term.trim();
     if term.is_empty() {
         return Err("Empty term".to_string());
@@ -501,23 +483,23 @@ pub fn translate_term(
                 } else {
                     Ok(format!("{}({})", target_op, translated_args.join(", ")))
                 }
-            }
+            },
             Some(TranslationCase::Identity) => {
                 if translated_args.is_empty() {
                     Ok(format!("{}()", op_name))
                 } else {
                     Ok(format!("{}({})", op_name, translated_args.join(", ")))
                 }
-            }
+            },
             Some(TranslationCase::Compound { template, .. }) => {
                 // Substitute $1, $2, etc. with the translated arguments.
                 let mut result = template.clone();
                 for (i, arg) in translated_args.iter().enumerate() {
-                    let placeholder = format!("${}", i + 1);
-                    result = result.replace(&placeholder, arg);
+                    let marker = format!("${}", i + 1);
+                    result = result.replace(&marker, arg);
                 }
                 Ok(result)
-            }
+            },
             None => {
                 // Not in the operation map — pass through as-is (e.g., a
                 // variable or an operation from the target theory).
@@ -526,7 +508,7 @@ pub fn translate_term(
                 } else {
                     Ok(format!("{}({})", op_name, translated_args.join(", ")))
                 }
-            }
+            },
         }
     } else {
         // Bare identifier (constant or variable).
@@ -538,7 +520,7 @@ pub fn translate_term(
             None => {
                 // Variable or unmapped constant — pass through unchanged.
                 Ok(term.to_string())
-            }
+            },
         }
     }
 }
@@ -554,12 +536,12 @@ fn split_args(s: &str) -> Vec<String> {
             '(' => depth += 1,
             ')' => {
                 depth = depth.saturating_sub(1);
-            }
+            },
             ',' if depth == 0 => {
                 args.push(s[start..i].trim().to_string());
                 start = i + 1;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -641,10 +623,7 @@ impl fmt::Display for MorphismGap {
 /// # Returns
 ///
 /// A (possibly empty) vector of [`MorphismGap`]s, one per detected gap.
-pub fn detect_gaps(
-    morphism: &TheoryMorphism,
-    axioms: Option<&[String]>,
-) -> Vec<MorphismGap> {
+pub fn detect_gaps(morphism: &TheoryMorphism, axioms: Option<&[String]>) -> Vec<MorphismGap> {
     let mut gaps = Vec::new();
 
     // (1) Missing sort mappings.
@@ -699,7 +678,7 @@ pub fn detect_gaps(
             match (translated_lhs, translated_rhs) {
                 (Ok(tl), Ok(tr)) if tl == tr => {
                     // Axiom is preserved — no gap.
-                }
+                },
                 (Ok(tl), Ok(tr)) => {
                     gaps.push(MorphismGap {
                         kind: GapKind::FailedPreservation,
@@ -709,17 +688,14 @@ pub fn detect_gaps(
                             axiom, tl, tr,
                         ),
                     });
-                }
+                },
                 (Err(e), _) | (_, Err(e)) => {
                     gaps.push(MorphismGap {
                         kind: GapKind::FailedPreservation,
                         source_name: axiom.clone(),
-                        description: format!(
-                            "Axiom '{}' cannot be translated: {}",
-                            axiom, e,
-                        ),
+                        description: format!("Axiom '{}' cannot be translated: {}", axiom, e,),
                     });
-                }
+                },
             }
         }
     }
@@ -733,7 +709,7 @@ pub fn detect_gaps(
 ///
 /// * **MissingSort** — suggest adding a sort mapping.  If the target theory
 ///   contains a sort with the same name it is proposed as the target;
-///   otherwise the suggestion uses a placeholder.
+///   otherwise the suggestion uses a descriptive target name.
 /// * **MissingOperation** — suggest adding an operation mapping.  Candidate
 ///   target operations are selected by matching arity; when no arity-
 ///   compatible candidate exists a `Description` action is emitted instead.
@@ -741,10 +717,7 @@ pub fn detect_gaps(
 ///   target theory as a new axiom.
 ///
 /// Every suggestion uses [`RepairKind::CompleteMorphism`].
-pub fn suggest_morphism_completion(
-    gaps: &[MorphismGap],
-    morphism: &TheoryMorphism,
-) -> RepairSet {
+pub fn suggest_morphism_completion(gaps: &[MorphismGap], morphism: &TheoryMorphism) -> RepairSet {
     let mut repairs = RepairSet::new();
 
     for gap in gaps {
@@ -783,15 +756,11 @@ pub fn suggest_morphism_completion(
                 };
 
                 repairs.add(
-                    RepairSuggestion::new(
-                        RepairKind::CompleteMorphism,
-                        description,
-                        action,
-                    )
-                    .with_confidence(confidence)
-                    .with_edit_cost(1),
+                    RepairSuggestion::new(RepairKind::CompleteMorphism, description, action)
+                        .with_confidence(confidence)
+                        .with_edit_cost(1),
                 );
-            }
+            },
 
             GapKind::MissingOperation => {
                 // Find the source operation to know its arity.
@@ -852,7 +821,7 @@ pub fn suggest_morphism_completion(
                         .with_alternatives(alt_count),
                     );
                 }
-            }
+            },
 
             GapKind::FailedPreservation => {
                 // Attempt to translate both sides so the suggestion can
@@ -872,10 +841,7 @@ pub fn suggest_morphism_completion(
                                 "Add equation '{} = {}' to target theory '{}'",
                                 tl, tr, morphism.target_theory,
                             ),
-                            RepairAction::AddEquation {
-                                lhs: tl,
-                                rhs: tr,
-                            },
+                            RepairAction::AddEquation { lhs: tl, rhs: tr },
                         )
                         .with_confidence(0.7)
                         .with_edit_cost(2),
@@ -897,7 +863,7 @@ pub fn suggest_morphism_completion(
                         .with_edit_cost(3),
                     );
                 }
-            }
+            },
         }
     }
 
@@ -951,15 +917,8 @@ pub fn check_from_bundle(
                 }
             })
             .collect();
-        let op = Operation::new(
-            format!("{}::{}", variant, rule_name),
-            arg_sorts,
-            variant.clone(),
-        );
-        cat_operations
-            .entry(variant.clone())
-            .or_default()
-            .push(op);
+        let op = Operation::new(format!("{}::{}", variant, rule_name), arg_sorts, variant.clone());
+        cat_operations.entry(variant.clone()).or_default().push(op);
     }
 
     let mut all_gaps = Vec::new();
@@ -1031,8 +990,7 @@ pub fn check_from_bundle(
                 if op.arity() == 0 {
                     format!("{} = {}", op.name, op.name)
                 } else {
-                    let args: Vec<String> =
-                        (0..op.arity()).map(|i| format!("x{}", i)).collect();
+                    let args: Vec<String> = (0..op.arity()).map(|i| format!("x{}", i)).collect();
                     let arg_str = args.join(", ");
                     format!("{}({}) = {}({})", op.name, arg_str, op.name, arg_str)
                 }
@@ -1082,19 +1040,13 @@ mod tests {
         let constant = Operation::constant("Zero", "Nat");
         assert_eq!(constant.to_string(), "Zero: Nat");
 
-        let binary = Operation::new(
-            "Add",
-            vec!["Nat".to_string(), "Nat".to_string()],
-            "Nat",
-        );
+        let binary = Operation::new("Add", vec!["Nat".to_string(), "Nat".to_string()], "Nat");
         assert_eq!(binary.to_string(), "Add: Nat x Nat -> Nat");
     }
 
     #[test]
     fn translation_case_display() {
-        let direct = TranslationCase::Direct {
-            target_op: "CoreAdd".to_string(),
-        };
+        let direct = TranslationCase::Direct { target_op: "CoreAdd".to_string() };
         assert_eq!(direct.to_string(), "-> CoreAdd");
 
         let identity = TranslationCase::Identity;
@@ -1173,13 +1125,9 @@ mod tests {
     fn construct_morphism_arity_mismatch() {
         let source_sorts = vec![Sort::new("Nat")];
         let target_sorts = vec![Sort::new("Int")];
-        let source_ops = vec![
-            Operation::new("Add", vec!["Nat".into(), "Nat".into()], "Nat"),
-        ];
+        let source_ops = vec![Operation::new("Add", vec!["Nat".into(), "Nat".into()], "Nat")];
         // Target Add has arity 1, not 2.
-        let target_ops = vec![
-            Operation::new("IntAdd", vec!["Int".into()], "Int"),
-        ];
+        let target_ops = vec![Operation::new("IntAdd", vec!["Int".into()], "Int")];
 
         let mut sort_map = HashMap::new();
         sort_map.insert("Nat".into(), "Int".into());
@@ -1284,8 +1232,14 @@ mod tests {
         assert_eq!(gaps.len(), 2, "Expected 2 gaps, got {:?}", gaps);
 
         // One MissingSort (Bool) and one MissingOperation (Add).
-        let sort_gaps: Vec<_> = gaps.iter().filter(|g| g.kind == GapKind::MissingSort).collect();
-        let op_gaps: Vec<_> = gaps.iter().filter(|g| g.kind == GapKind::MissingOperation).collect();
+        let sort_gaps: Vec<_> = gaps
+            .iter()
+            .filter(|g| g.kind == GapKind::MissingSort)
+            .collect();
+        let op_gaps: Vec<_> = gaps
+            .iter()
+            .filter(|g| g.kind == GapKind::MissingOperation)
+            .collect();
         assert_eq!(sort_gaps.len(), 1);
         assert_eq!(sort_gaps[0].source_name, "Bool");
         assert_eq!(op_gaps.len(), 1);
@@ -1299,8 +1253,8 @@ mod tests {
         m.map_operation("B", "Y");
 
         let axioms = vec![
-            "A = A".to_string(),   // X = X — preserved
-            "A = B".to_string(),   // X = Y — NOT preserved
+            "A = A".to_string(), // X = X — preserved
+            "A = B".to_string(), // X = Y — NOT preserved
         ];
         let gaps = detect_gaps(&m, Some(&axioms));
         assert_eq!(gaps.len(), 1, "Expected 1 gap, got {:?}", gaps);
@@ -1405,7 +1359,7 @@ mod tests {
                 // which remains as Add(IntZero, IntZero) because Add is
                 // unmapped — it passes through unchanged.
                 assert_eq!(rhs, "Add(IntZero, IntZero)");
-            }
+            },
             other => panic!("Expected AddEquation, got {:?}", other),
         }
     }

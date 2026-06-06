@@ -125,10 +125,7 @@ impl SimulationCoverage {
             *self.rule_firings.entry(rule.clone()).or_insert(0) += count;
         }
         for (ctor, count) in &other.constructor_hits {
-            *self
-                .constructor_hits
-                .entry(ctor.clone())
-                .or_insert(0) += count;
+            *self.constructor_hits.entry(ctor.clone()).or_insert(0) += count;
         }
         self.total_steps += other.total_steps;
     }
@@ -558,11 +555,7 @@ mod tests {
                     to_id: 2,
                     rule_name: Some("fold_SubInt".to_string()),
                 },
-                Rewrite {
-                    from_id: 1,
-                    to_id: 3,
-                    rule_name: None,
-                },
+                Rewrite { from_id: 1, to_id: 3, rule_name: None },
             ],
             equivalences: vec![],
             custom_relations: std::collections::HashMap::new(),
@@ -592,9 +585,6 @@ mod tests {
         assert_eq!(extract_constructor_name("-7"), "-7");
         assert_eq!(extract_constructor_name(""), "");
         assert_eq!(extract_constructor_name("   "), "");
-        assert_eq!(
-            extract_constructor_name("(PPar {PZero, PZero})"),
-            "PPar"
-        );
+        assert_eq!(extract_constructor_name("(PPar {PZero, PZero})"), "PPar");
     }
 }

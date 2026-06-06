@@ -280,12 +280,7 @@ impl fmt::Display for EvalFrame {
                 write!(f, "LetBody(let {} = □ in {})", var_name, body_display)
             },
             Self::Parallel { remaining, completed } => {
-                write!(
-                    f,
-                    "Parallel(done={}, remaining={})",
-                    completed.len(),
-                    remaining.len()
-                )
+                write!(f, "Parallel(done={}, remaining={})", completed.len(), remaining.len())
             },
             Self::RewriteCont { rule_name } => {
                 write!(f, "RewriteCont({})", rule_name)
@@ -676,10 +671,7 @@ impl CekEvaluator {
     /// - `initial_term`: The term to evaluate.
     /// - `step_limit`: Maximum number of evaluation steps before forced termination.
     pub fn with_step_limit(initial_term: String, step_limit: usize) -> Self {
-        Self {
-            step_limit,
-            ..Self::new(initial_term)
-        }
+        Self { step_limit, ..Self::new(initial_term) }
     }
 
     /// Create a new evaluator with a pre-populated environment.
@@ -900,18 +892,13 @@ impl CekEvaluator {
     ///
     /// Used after Ascent fixpoint completes to cache derived relations
     /// for evaluator consultation during the `Reducing` phase.
-    pub fn store_relation(
-        &mut self,
-        name: String,
-        tuples: Vec<(String, String)>,
-    ) -> StoreAddr {
+    pub fn store_relation(&mut self, name: String, tuples: Vec<(String, String)>) -> StoreAddr {
         let id = self
             .local_store
             .alloc_with(StoreValue::Relation { name: name.clone(), tuples });
         let addr = StoreAddr::Local(id);
         // Store under a well-known key: __rel_<name>
-        self.environment
-            .insert(format!("__rel_{}", name), addr);
+        self.environment.insert(format!("__rel_{}", name), addr);
         addr
     }
 
@@ -946,8 +933,7 @@ impl CekEvaluator {
             active: true,
         });
         let addr = StoreAddr::Local(id);
-        self.environment
-            .insert(format!("__rule_{}", name), addr);
+        self.environment.insert(format!("__rule_{}", name), addr);
         addr
     }
 
@@ -963,12 +949,7 @@ impl CekEvaluator {
                     .and_then(|val| val.as_rewrite_rule())
                     .filter(|(_, _, _, _, active)| *active)
                     .map(|(name, lhs, rhs, priority, _)| {
-                        (
-                            name.to_string(),
-                            lhs.to_string(),
-                            rhs.to_string(),
-                            priority,
-                        )
+                        (name.to_string(), lhs.to_string(), rhs.to_string(), priority)
                     })
             })
             .collect();
@@ -985,11 +966,9 @@ impl CekEvaluator {
         members: Vec<String>,
         cost_leader: String,
     ) -> StoreAddr {
-        let id = self.local_store.alloc_with(StoreValue::EClass {
-            class_id,
-            members,
-            cost_leader,
-        });
+        let id = self
+            .local_store
+            .alloc_with(StoreValue::EClass { class_id, members, cost_leader });
         StoreAddr::Local(id)
     }
 
@@ -1079,10 +1058,7 @@ impl CekEvaluator {
         // Enforce step limit
         if self.trace.steps >= self.step_limit {
             self.state = EvalState::Error {
-                message: format!(
-                    "step limit exceeded ({} steps)",
-                    self.step_limit
-                ),
+                message: format!("step limit exceeded ({} steps)", self.step_limit),
             };
             return StepResult::Error {
                 message: format!("step limit exceeded ({} steps)", self.step_limit),
@@ -1094,9 +1070,7 @@ impl CekEvaluator {
             return match &self.state {
                 EvalState::Accepted => StepResult::Accepted,
                 EvalState::Aborted { .. } => StepResult::Aborted,
-                EvalState::Error { message } => StepResult::Error {
-                    message: message.clone(),
-                },
+                EvalState::Error { message } => StepResult::Error { message: message.clone() },
                 _ => unreachable!(),
             };
         }
@@ -1151,9 +1125,7 @@ impl CekEvaluator {
         // Check observer control
         let control = observer.on_eval_event(&event);
         if control == CekControl::Abort {
-            self.state = EvalState::Aborted {
-                reason: "observer abort".to_string(),
-            };
+            self.state = EvalState::Aborted { reason: "observer abort".to_string() };
             return StepResult::Aborted;
         }
 
@@ -1173,16 +1145,13 @@ impl CekEvaluator {
                     match frame {
                         EvalFrame::BinOp { operator, lhs_display } => {
                             // Reconstruct binary expression
-                            self.control = format!(
-                                "({} {} {})",
-                                lhs_display, operator, self.control
-                            );
+                            self.control =
+                                format!("({} {} {})", lhs_display, operator, self.control);
                             self.state = EvalState::Reducing;
                         },
                         EvalFrame::UnaryOp { operator } => {
                             // Reconstruct unary expression
-                            self.control =
-                                format!("({} {})", operator, self.control);
+                            self.control = format!("({} {})", operator, self.control);
                             self.state = EvalState::Reducing;
                         },
                         EvalFrame::MatchScrutinee { .. } => {
@@ -1201,18 +1170,13 @@ impl CekEvaluator {
                             self.control = "void".to_string();
                             self.state = EvalState::Reducing;
                         },
-                        EvalFrame::Parallel {
-                            mut remaining,
-                            mut completed,
-                        } => {
+                        EvalFrame::Parallel { mut remaining, mut completed } => {
                             completed.push(self.control.clone());
                             if let Some(next) = remaining.pop() {
                                 // More subterms to evaluate
                                 self.control = next;
-                                self.continuation.push(EvalFrame::Parallel {
-                                    remaining,
-                                    completed,
-                                });
+                                self.continuation
+                                    .push(EvalFrame::Parallel { remaining, completed });
                                 self.state = EvalState::Reducing;
                             } else {
                                 // All subterms evaluated — reconstruct parallel term
@@ -1259,19 +1223,13 @@ impl CekEvaluator {
     /// # Arguments
     ///
     /// - `observer`: The evaluation observer to notify at each step.
-    pub fn run_to_completion(
-        &mut self,
-        observer: &mut dyn EvalObserver,
-    ) -> Result<String, String> {
+    pub fn run_to_completion(&mut self, observer: &mut dyn EvalObserver) -> Result<String, String> {
         loop {
             match self.step(observer) {
                 StepResult::Continue => continue,
                 StepResult::Accepted => return Ok(self.control.clone()),
                 StepResult::Aborted => {
-                    return Err(format!(
-                        "evaluation aborted at step {}",
-                        self.trace.steps
-                    ));
+                    return Err(format!("evaluation aborted at step {}", self.trace.steps));
                 },
                 StepResult::Error { message } => return Err(message),
             }
@@ -1368,10 +1326,7 @@ impl CekEvaluator {
     ///
     /// Called by external rewrite rule engines when a rule fires.
     /// The caller is responsible for updating the control term afterward.
-    pub fn emit_apply(
-        &mut self,
-        observer: &mut dyn EvalObserver,
-    ) -> CekControl {
+    pub fn emit_apply(&mut self, observer: &mut dyn EvalObserver) -> CekControl {
         let event = EvalStepEvent {
             rule: EvalTransitionRule::Apply,
             term_display: &self.control,
@@ -1427,7 +1382,6 @@ impl CekEvaluator {
         }
         StepResult::Continue
     }
-
 }
 
 impl fmt::Debug for CekEvaluator {
@@ -1500,10 +1454,7 @@ impl TracingEvalObserver {
     /// This enables full replay of the evaluation trace but uses more
     /// memory. Use for debugging; prefer `new()` for profiling.
     pub fn with_event_recording() -> Self {
-        Self {
-            record_events: true,
-            ..Self::default()
-        }
+        Self { record_events: true, ..Self::default() }
     }
 
     /// The accumulated trace statistics.
@@ -1561,10 +1512,7 @@ pub struct AbortAfterObserver {
 impl AbortAfterObserver {
     /// Create an observer that aborts after `n` steps.
     pub fn new(abort_after: usize) -> Self {
-        Self {
-            abort_after,
-            step_count: 0,
-        }
+        Self { abort_after, step_count: 0 }
     }
 
     /// The current step count.
@@ -1636,18 +1584,9 @@ mod tests {
             .variant_name(),
             "BinOp"
         );
+        assert_eq!(EvalFrame::UnaryOp { operator: "-".to_string() }.variant_name(), "UnaryOp");
         assert_eq!(
-            EvalFrame::UnaryOp {
-                operator: "-".to_string(),
-            }
-            .variant_name(),
-            "UnaryOp"
-        );
-        assert_eq!(
-            EvalFrame::MatchScrutinee {
-                arms_display: "...".to_string(),
-            }
-            .variant_name(),
+            EvalFrame::MatchScrutinee { arms_display: "...".to_string() }.variant_name(),
             "MatchScrutinee"
         );
         assert_eq!(
@@ -1659,18 +1598,11 @@ mod tests {
             "LetBody"
         );
         assert_eq!(
-            EvalFrame::Parallel {
-                remaining: vec![],
-                completed: vec![],
-            }
-            .variant_name(),
+            EvalFrame::Parallel { remaining: vec![], completed: vec![] }.variant_name(),
             "Parallel"
         );
         assert_eq!(
-            EvalFrame::RewriteCont {
-                rule_name: "beta".to_string(),
-            }
-            .variant_name(),
+            EvalFrame::RewriteCont { rule_name: "beta".to_string() }.variant_name(),
             "RewriteCont"
         );
     }
@@ -1780,20 +1712,8 @@ mod tests {
         assert_eq!(EvalState::Descending.to_string(), "Descending");
         assert_eq!(EvalState::Ascending.to_string(), "Ascending");
         assert_eq!(EvalState::Accepted.to_string(), "Accepted");
-        assert_eq!(
-            EvalState::Aborted {
-                reason: "test".to_string()
-            }
-            .to_string(),
-            "Aborted(test)"
-        );
-        assert_eq!(
-            EvalState::Error {
-                message: "oops".to_string()
-            }
-            .to_string(),
-            "Error(oops)"
-        );
+        assert_eq!(EvalState::Aborted { reason: "test".to_string() }.to_string(), "Aborted(test)");
+        assert_eq!(EvalState::Error { message: "oops".to_string() }.to_string(), "Error(oops)");
     }
 
     // ── CekEvaluator construction tests ──────────────────────────────────
@@ -1837,10 +1757,7 @@ mod tests {
         assert_eq!(eval.lookup("x"), Some("42"));
 
         // Re-bind (returns old value)
-        assert_eq!(
-            eval.bind("x".to_string(), "99".to_string()),
-            Some("42".to_string())
-        );
+        assert_eq!(eval.bind("x".to_string(), "99".to_string()), Some("42".to_string()));
         assert_eq!(eval.lookup("x"), Some("99"));
 
         // Unbind
@@ -1977,9 +1894,7 @@ mod tests {
         // Run up to the step limit
         let result = eval.run_to_completion(&mut obs);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("step limit exceeded"));
+        assert!(result.unwrap_err().contains("step limit exceeded"));
     }
 
     #[test]
@@ -1990,9 +1905,7 @@ mod tests {
         let result = eval.run_to_completion(&mut obs);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("aborted"));
-        assert_eq!(*eval.state(), EvalState::Aborted {
-            reason: "observer abort".to_string(),
-        });
+        assert_eq!(*eval.state(), EvalState::Aborted { reason: "observer abort".to_string() });
     }
 
     // ── Ascend integration tests ─────────────────────────────────────────
@@ -2017,9 +1930,7 @@ mod tests {
     fn test_evaluator_ascend_unary_frame() {
         let mut eval = CekEvaluator::new("5".to_string());
         eval.set_state(EvalState::Ascending);
-        eval.push_frame(EvalFrame::UnaryOp {
-            operator: "-".to_string(),
-        });
+        eval.push_frame(EvalFrame::UnaryOp { operator: "-".to_string() });
 
         let mut obs = NullEvalObserver;
         let r = eval.step(&mut obs);
@@ -2137,9 +2048,7 @@ mod tests {
         let mut eval = CekEvaluator::new("old".to_string());
         eval.bind("x".to_string(), "1".to_string());
         eval.memo_insert("cached".to_string(), "result".to_string());
-        eval.push_frame(EvalFrame::UnaryOp {
-            operator: "-".to_string(),
-        });
+        eval.push_frame(EvalFrame::UnaryOp { operator: "-".to_string() });
 
         eval.reset_with_term("new".to_string());
         assert_eq!(eval.control(), "new");
@@ -2269,9 +2178,7 @@ mod tests {
     #[test]
     fn test_evaluator_step_after_error_is_idempotent() {
         let mut eval = CekEvaluator::new("x".to_string());
-        eval.set_state(EvalState::Error {
-            message: "test error".to_string(),
-        });
+        eval.set_state(EvalState::Error { message: "test error".to_string() });
 
         let mut obs = NullEvalObserver;
         let r = eval.step(&mut obs);

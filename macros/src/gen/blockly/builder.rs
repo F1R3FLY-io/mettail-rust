@@ -219,7 +219,7 @@ fn generate_message_and_args(items: &[GrammarItem]) -> (String, Vec<BlockArg>) {
                     continue;
                 }
 
-                // Add placeholder and create argument
+                // Add an input slot and create the corresponding argument.
                 if !message.is_empty() {
                     message.push(' ');
                 }

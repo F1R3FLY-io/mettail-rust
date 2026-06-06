@@ -79,10 +79,7 @@ struct EncodingEnv {
 
 impl EncodingEnv {
     fn new() -> Self {
-        EncodingEnv {
-            var_slots: HashMap::new(),
-            next_slot: 0,
-        }
+        EncodingEnv { var_slots: HashMap::new(), next_slot: 0 }
     }
 
     /// Resolve a variable. Returns `(is_new, slot_index)`.
@@ -112,10 +109,10 @@ impl EncodingEnv {
         match prev {
             Some(old_slot) => {
                 self.var_slots.insert(name.to_string(), old_slot);
-            }
+            },
             None => {
                 self.var_slots.remove(name);
-            }
+            },
         }
         self.next_slot -= 1;
     }
@@ -127,15 +124,13 @@ impl EncodingEnv {
 fn estimate_size(pat: &Pattern) -> usize {
     match pat {
         Pattern::Term(t) => estimate_size_term(t),
-        Pattern::Collection {
-            elements, rest, ..
-        } => 2 + elements.iter().map(estimate_size).sum::<usize>() + if rest.is_some() { 2 } else { 1 },
-        Pattern::Map {
-            collection,
-            params,
-            body,
-            ..
-        } => 2 + params.len() + estimate_size(collection) + estimate_size(body),
+        Pattern::Collection { elements, rest, .. } => {
+            2 + elements.iter().map(estimate_size).sum::<usize>()
+                + if rest.is_some() { 2 } else { 1 }
+        },
+        Pattern::Map { collection, params, body, .. } => {
+            2 + params.len() + estimate_size(collection) + estimate_size(body)
+        },
         Pattern::Zip { first, second } => 1 + estimate_size(first) + estimate_size(second),
     }
 }
@@ -144,24 +139,16 @@ fn estimate_size_term(t: &PatternTerm) -> usize {
     match t {
         PatternTerm::Var(_) => 1,
         PatternTerm::Apply { constructor, args } => {
-            1 + 1
-                + constructor.to_string().len()
-                + args.iter().map(estimate_size).sum::<usize>()
-        }
+            1 + 1 + constructor.to_string().len() + args.iter().map(estimate_size).sum::<usize>()
+        },
         PatternTerm::Lambda { body, .. } => 2 + estimate_size(body),
-        PatternTerm::MultiLambda { binders, body, .. } => {
-            2 + binders.len() + estimate_size(body)
-        }
-        PatternTerm::Subst {
-            term, replacement, ..
-        } => 2 + estimate_size(term) + estimate_size(replacement),
-        PatternTerm::MultiSubst {
-            scope,
-            replacements,
-        } => {
-            2 + estimate_size(scope)
-                + replacements.iter().map(estimate_size).sum::<usize>()
-        }
+        PatternTerm::MultiLambda { binders, body, .. } => 2 + binders.len() + estimate_size(body),
+        PatternTerm::Subst { term, replacement, .. } => {
+            2 + estimate_size(term) + estimate_size(replacement)
+        },
+        PatternTerm::MultiSubst { scope, replacements } => {
+            2 + estimate_size(scope) + replacements.iter().map(estimate_size).sum::<usize>()
+        },
     }
 }
 
@@ -181,17 +168,12 @@ pub fn pattern_to_debruijn_bytes(pat: &Pattern) -> Vec<u8> {
 fn encode_pattern(pat: &Pattern, env: &mut EncodingEnv, buf: &mut Vec<u8>) {
     match pat {
         Pattern::Term(t) => encode_term(t, env, buf),
-        Pattern::Collection {
-            coll_type,
-            elements,
-            rest,
-        } => encode_collection(coll_type.as_ref(), elements, rest.as_ref(), env, buf),
-        Pattern::Map {
-            collection,
-            params,
-            body,
-            ..
-        } => encode_map(collection, params, body, env, buf),
+        Pattern::Collection { coll_type, elements, rest } => {
+            encode_collection(coll_type.as_ref(), elements, rest.as_ref(), env, buf)
+        },
+        Pattern::Map { collection, params, body, .. } => {
+            encode_map(collection, params, body, env, buf)
+        },
         Pattern::Zip { first, second } => encode_zip(first, second, env, buf),
     }
 }
@@ -206,7 +188,7 @@ fn encode_term(t: &PatternTerm, env: &mut EncodingEnv, buf: &mut Vec<u8>) {
             } else {
                 buf.push(VAR_REF_BASE | (slot & 0x3F));
             }
-        }
+        },
         PatternTerm::Apply { constructor, args } => {
             let arity = args.len().min(0x3F);
             buf.push(arity as u8);
@@ -220,7 +202,7 @@ fn encode_term(t: &PatternTerm, env: &mut EncodingEnv, buf: &mut Vec<u8>) {
             for arg in args {
                 encode_pattern(arg, env, buf);
             }
-        }
+        },
         PatternTerm::Lambda { binder, body } => {
             buf.push(TAG_LAMBDA);
             let name = binder.to_string();
@@ -228,12 +210,11 @@ fn encode_term(t: &PatternTerm, env: &mut EncodingEnv, buf: &mut Vec<u8>) {
             buf.push(slot);
             encode_pattern(body, env, buf);
             env.restore_binder(&name, prev);
-        }
+        },
         PatternTerm::MultiLambda { binders, body, .. } => {
             buf.push(TAG_MULTI_LAMBDA);
             buf.push(binders.len() as u8);
-            let mut saved: Vec<(String, Option<u8>)> =
-                Vec::with_capacity(binders.len());
+            let mut saved: Vec<(String, Option<u8>)> = Vec::with_capacity(binders.len());
             for b in binders {
                 let name = b.to_string();
                 let (slot, prev) = env.introduce_binder(&name);
@@ -244,30 +225,23 @@ fn encode_term(t: &PatternTerm, env: &mut EncodingEnv, buf: &mut Vec<u8>) {
             for (name, prev) in saved.into_iter().rev() {
                 env.restore_binder(&name, prev);
             }
-        }
-        PatternTerm::Subst {
-            term,
-            var,
-            replacement,
-        } => {
+        },
+        PatternTerm::Subst { term, var, replacement } => {
             buf.push(TAG_SUBST);
             let name = var.to_string();
             let (_is_new, slot) = env.resolve_var(&name);
             buf.push(slot);
             encode_pattern(term, env, buf);
             encode_pattern(replacement, env, buf);
-        }
-        PatternTerm::MultiSubst {
-            scope,
-            replacements,
-        } => {
+        },
+        PatternTerm::MultiSubst { scope, replacements } => {
             buf.push(TAG_MULTI_SUBST);
             buf.push(replacements.len() as u8);
             encode_pattern(scope, env, buf);
             for r in replacements {
                 encode_pattern(r, env, buf);
             }
-        }
+        },
     }
 }
 
@@ -297,7 +271,7 @@ fn encode_collection(
             encode_pattern(elem, env, buf);
         }
     } else {
-        // Encode each element into a temporary buffer, sort, then emit
+        // Encode each element into a scratch buffer, sort, then emit.
         let mut encoded_elems: Vec<Vec<u8>> = Vec::with_capacity(elements.len());
         for elem in elements {
             let mut elem_buf = Vec::with_capacity(estimate_size(elem));
@@ -358,12 +332,7 @@ fn encode_map(
     }
 }
 
-fn encode_zip(
-    first: &Pattern,
-    second: &Pattern,
-    env: &mut EncodingEnv,
-    buf: &mut Vec<u8>,
-) {
+fn encode_zip(first: &Pattern, second: &Pattern, env: &mut EncodingEnv, buf: &mut Vec<u8>) {
     buf.push(TAG_ZIP);
     encode_pattern(first, env, buf);
     encode_pattern(second, env, buf);
@@ -421,20 +390,14 @@ mod tests {
     fn test_different_constructors() {
         let p1 = apply("Add", vec![var("x"), var("y")]);
         let p2 = apply("Mul", vec![var("x"), var("y")]);
-        assert_ne!(
-            pattern_to_debruijn_bytes(&p1),
-            pattern_to_debruijn_bytes(&p2),
-        );
+        assert_ne!(pattern_to_debruijn_bytes(&p1), pattern_to_debruijn_bytes(&p2),);
     }
 
     #[test]
     fn test_different_arity() {
         let p1 = apply("F", vec![var("x")]);
         let p2 = apply("F", vec![var("x"), var("y")]);
-        assert_ne!(
-            pattern_to_debruijn_bytes(&p1),
-            pattern_to_debruijn_bytes(&p2),
-        );
+        assert_ne!(pattern_to_debruijn_bytes(&p1), pattern_to_debruijn_bytes(&p2),);
     }
 
     #[test]
@@ -442,10 +405,7 @@ mod tests {
         // \x.x and \y.y should be alpha-equivalent
         let p1 = lambda("x", var("x"));
         let p2 = lambda("y", var("y"));
-        assert_eq!(
-            pattern_to_debruijn_bytes(&p1),
-            pattern_to_debruijn_bytes(&p2),
-        );
+        assert_eq!(pattern_to_debruijn_bytes(&p1), pattern_to_debruijn_bytes(&p2),);
     }
 
     #[test]
@@ -453,10 +413,7 @@ mod tests {
         // \x.x vs \x.y (free var y vs bound var x)
         let p1 = lambda("x", var("x"));
         let p2 = lambda("x", var("y"));
-        assert_ne!(
-            pattern_to_debruijn_bytes(&p1),
-            pattern_to_debruijn_bytes(&p2),
-        );
+        assert_ne!(pattern_to_debruijn_bytes(&p1), pattern_to_debruijn_bytes(&p2),);
     }
 
     #[test]
@@ -464,10 +421,7 @@ mod tests {
         // (Add x (Lit y)) alpha-equiv to (Add a (Lit b))
         let p1 = apply("Add", vec![var("x"), apply("Lit", vec![var("y")])]);
         let p2 = apply("Add", vec![var("a"), apply("Lit", vec![var("b")])]);
-        assert_eq!(
-            pattern_to_debruijn_bytes(&p1),
-            pattern_to_debruijn_bytes(&p2),
-        );
+        assert_eq!(pattern_to_debruijn_bytes(&p1), pattern_to_debruijn_bytes(&p2),);
     }
 
     #[test]
@@ -486,10 +440,7 @@ mod tests {
             elements: vec![var("y"), var("x")],
             rest: None,
         };
-        assert_eq!(
-            pattern_to_debruijn_bytes(&p1),
-            pattern_to_debruijn_bytes(&p2),
-        );
+        assert_eq!(pattern_to_debruijn_bytes(&p1), pattern_to_debruijn_bytes(&p2),);
     }
 
     #[test]

@@ -24,33 +24,21 @@ fn if_true_with_else_returns_then_branch() {
     let term = parse_int("if true then 1 else 2").expect("parse should succeed");
     // Action returns t when cond is true → 1.
     let evaluated: i32 = term.eval();
-    assert_eq!(
-        evaluated, 1,
-        "if true then 1 else 2 should evaluate to 1, got {}",
-        evaluated
-    );
+    assert_eq!(evaluated, 1, "if true then 1 else 2 should evaluate to 1, got {}", evaluated);
 }
 
 #[test]
 fn if_true_without_else_returns_then_branch() {
     let term = parse_int("if true then 1").expect("parse should succeed");
     let evaluated: i32 = term.eval();
-    assert_eq!(
-        evaluated, 1,
-        "if true then 1 should evaluate to 1, got {}",
-        evaluated
-    );
+    assert_eq!(evaluated, 1, "if true then 1 should evaluate to 1, got {}", evaluated);
 }
 
 #[test]
 fn if_false_with_else_returns_else_branch() {
     let term = parse_int("if false then 1 else 2").expect("parse should succeed");
     let evaluated: i32 = term.eval();
-    assert_eq!(
-        evaluated, 2,
-        "if false then 1 else 2 should evaluate to 2, got {}",
-        evaluated
-    );
+    assert_eq!(evaluated, 2, "if false then 1 else 2 should evaluate to 2, got {}", evaluated);
 }
 
 #[test]
@@ -82,7 +70,7 @@ fn ast_shape_present_carries_some_inner_int() {
                 Int::NumLit(n) => assert_eq!(*n, 99, "inner Int should be 99"),
                 other => panic!("expected IntLit(99), got {:?}", other),
             }
-        }
+        },
         other => panic!("expected IfElse variant, got {:?}", other),
     }
 }
@@ -96,7 +84,7 @@ fn ast_shape_absent_carries_none() {
                 maybe_e.is_none(),
                 "IfElse without else clause should have None third field, got Some(_)"
             );
-        }
+        },
         other => panic!("expected IfElse variant, got {:?}", other),
     }
 }
@@ -135,18 +123,21 @@ fn nested_ifelse_inner_else_dangling() {
     // Right-associative dangling-else: the `else` binds to the INNER IfElse.
     // Outer A = IfElse(false, B, None); Inner B = IfElse(false, 1, 2).
     let input = "if false then if false then 1 else 2";
-    let term = parse_int(input).unwrap_or_else(|e| {
-        panic!("nested-IfElse with dangling else should parse: {:?}", e)
-    });
+    let term = parse_int(input)
+        .unwrap_or_else(|e| panic!("nested-IfElse with dangling else should parse: {:?}", e));
     // Display→Parse roundtrip: re-displaying must produce a re-parseable
     // string equivalent under canonicalization.
     let displayed = format!("{}", term);
     let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
         panic!("re-parsing Display output should succeed: {:?}\nDisplay: {:?}", e, displayed)
     });
-    assert_eq!(format!("{}", reparsed), displayed,
+    assert_eq!(
+        format!("{}", reparsed),
+        displayed,
         "Display must be idempotent; first={:?}, second={:?}",
-        displayed, format!("{}", reparsed));
+        displayed,
+        format!("{}", reparsed)
+    );
 }
 
 #[test]
@@ -157,13 +148,11 @@ fn nested_ifelse_both_have_else() {
     //   Tree:   A = IfElse(false, B, 3)
     //           B = IfElse(false, 1, 2)
     let input = "if false then if false then 1 else 2 else 3";
-    let term = parse_int(input).unwrap_or_else(|e| {
-        panic!("doubly-elsed nested IfElse should parse: {:?}", e)
-    });
+    let term = parse_int(input)
+        .unwrap_or_else(|e| panic!("doubly-elsed nested IfElse should parse: {:?}", e));
     let displayed = format!("{}", term);
-    let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
-        panic!("re-parsing should succeed: {:?}\nDisplay: {:?}", e, displayed)
-    });
+    let reparsed = parse_int(&displayed)
+        .unwrap_or_else(|e| panic!("re-parsing should succeed: {:?}\nDisplay: {:?}", e, displayed));
     assert_eq!(format!("{}", reparsed), displayed);
 }
 
@@ -194,8 +183,10 @@ fn display_int_abuts_else_keyword_separated() {
     );
     // And: re-parse must succeed.
     let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
-        panic!("Display→Parse roundtrip for direct construction failed: {:?}\nDisplay: {:?}",
-            e, displayed)
+        panic!(
+            "Display→Parse roundtrip for direct construction failed: {:?}\nDisplay: {:?}",
+            e, displayed
+        )
     });
     assert_eq!(format!("{}", reparsed), displayed);
 }
@@ -235,8 +226,8 @@ fn display_int_no_else_no_trailing_whitespace() {
 /// is absent. AST = `IfElse(_, IfElse(_, IfElse(_, _, None), None), None)`.
 #[test]
 fn three_deep_nested_ifelse_no_elses() {
-    let term = parse_int("if false then if false then if false then 1")
-        .expect("parse should succeed");
+    let term =
+        parse_int("if false then if false then if false then 1").expect("parse should succeed");
     match &term {
         Int::IfElse(_, t1, e1) => {
             assert!(e1.is_none(), "outermost else should be None");
@@ -247,13 +238,13 @@ fn three_deep_nested_ifelse_no_elses() {
                         Int::IfElse(_, t3, e3) => {
                             assert!(e3.is_none(), "innermost else should be None");
                             assert!(matches!(t3.as_ref(), Int::NumLit(1)));
-                        }
+                        },
                         _ => panic!("innermost not IfElse: {:?}", t2),
                     }
-                }
+                },
                 _ => panic!("middle not IfElse: {:?}", t1),
             }
-        }
+        },
         _ => panic!("not IfElse: {:?}", term),
     }
 }
@@ -273,17 +264,14 @@ fn three_deep_nested_ifelse_innermost_else_only() {
                     match t2.as_ref() {
                         Int::IfElse(_, _, e3) => {
                             assert!(e3.is_some(), "innermost else should be Some(2)");
-                            assert!(matches!(
-                                e3.as_ref().unwrap().as_ref(),
-                                Int::NumLit(2)
-                            ));
-                        }
+                            assert!(matches!(e3.as_ref().unwrap().as_ref(), Int::NumLit(2)));
+                        },
                         _ => panic!("innermost not IfElse: {:?}", t2),
                     }
-                }
+                },
                 _ => panic!("middle not IfElse: {:?}", t1),
             }
-        }
+        },
         _ => panic!("not IfElse: {:?}", term),
     }
 }
@@ -293,33 +281,26 @@ fn three_deep_nested_ifelse_innermost_else_only() {
 /// AST = `IfElse(_, IfElse(_, IfElse(_, 1, Some(2)), Some(3)), None)`.
 #[test]
 fn three_deep_nested_ifelse_innermost_and_middle_elses() {
-    let term =
-        parse_int("if false then if false then if false then 1 else 2 else 3")
-            .expect("parse should succeed");
+    let term = parse_int("if false then if false then if false then 1 else 2 else 3")
+        .expect("parse should succeed");
     match &term {
         Int::IfElse(_, t1, e1) => {
             assert!(e1.is_none(), "outermost else should be None");
             match t1.as_ref() {
                 Int::IfElse(_, t2, e2) => {
                     assert!(e2.is_some(), "middle else should be Some(3)");
-                    assert!(matches!(
-                        e2.as_ref().unwrap().as_ref(),
-                        Int::NumLit(3)
-                    ));
+                    assert!(matches!(e2.as_ref().unwrap().as_ref(), Int::NumLit(3)));
                     match t2.as_ref() {
                         Int::IfElse(_, _, e3) => {
                             assert!(e3.is_some(), "innermost else should be Some(2)");
-                            assert!(matches!(
-                                e3.as_ref().unwrap().as_ref(),
-                                Int::NumLit(2)
-                            ));
-                        }
+                            assert!(matches!(e3.as_ref().unwrap().as_ref(), Int::NumLit(2)));
+                        },
                         _ => panic!("innermost not IfElse: {:?}", t2),
                     }
-                }
+                },
                 _ => panic!("middle not IfElse: {:?}", t1),
             }
-        }
+        },
         _ => panic!("not IfElse: {:?}", term),
     }
 }
@@ -329,37 +310,27 @@ fn three_deep_nested_ifelse_innermost_and_middle_elses() {
 /// AST = `IfElse(_, IfElse(_, IfElse(_, 1, Some(2)), Some(3)), Some(4))`.
 #[test]
 fn three_deep_nested_ifelse_all_three_elses() {
-    let term =
-        parse_int("if false then if false then if false then 1 else 2 else 3 else 4")
-            .expect("parse should succeed");
+    let term = parse_int("if false then if false then if false then 1 else 2 else 3 else 4")
+        .expect("parse should succeed");
     match &term {
         Int::IfElse(_, t1, e1) => {
             assert!(e1.is_some(), "outermost else should be Some(4)");
-            assert!(matches!(
-                e1.as_ref().unwrap().as_ref(),
-                Int::NumLit(4)
-            ));
+            assert!(matches!(e1.as_ref().unwrap().as_ref(), Int::NumLit(4)));
             match t1.as_ref() {
                 Int::IfElse(_, t2, e2) => {
                     assert!(e2.is_some(), "middle else should be Some(3)");
-                    assert!(matches!(
-                        e2.as_ref().unwrap().as_ref(),
-                        Int::NumLit(3)
-                    ));
+                    assert!(matches!(e2.as_ref().unwrap().as_ref(), Int::NumLit(3)));
                     match t2.as_ref() {
                         Int::IfElse(_, _, e3) => {
                             assert!(e3.is_some(), "innermost else should be Some(2)");
-                            assert!(matches!(
-                                e3.as_ref().unwrap().as_ref(),
-                                Int::NumLit(2)
-                            ));
-                        }
+                            assert!(matches!(e3.as_ref().unwrap().as_ref(), Int::NumLit(2)));
+                        },
                         _ => panic!("innermost not IfElse: {:?}", t2),
                     }
-                }
+                },
                 _ => panic!("middle not IfElse: {:?}", t1),
             }
-        }
+        },
         _ => panic!("not IfElse: {:?}", term),
     }
 }
@@ -376,12 +347,11 @@ fn three_deep_nested_ifelse_display_roundtrip() {
         "if false then if false then if false then 1 else 2 else 3 else 4",
     ];
     for input in &inputs {
-        let term = parse_int(input)
-            .unwrap_or_else(|e| panic!("parse failed for {:?}: {:?}", input, e));
+        let term =
+            parse_int(input).unwrap_or_else(|e| panic!("parse failed for {:?}: {:?}", input, e));
         let displayed = format!("{}", term);
-        let reparsed = parse_int(&displayed).unwrap_or_else(|e| {
-            panic!("re-parse failed for {:?}: {:?}", displayed, e)
-        });
+        let reparsed = parse_int(&displayed)
+            .unwrap_or_else(|e| panic!("re-parse failed for {:?}: {:?}", displayed, e));
         let redisplayed = format!("{}", reparsed);
         assert_eq!(
             displayed, redisplayed,

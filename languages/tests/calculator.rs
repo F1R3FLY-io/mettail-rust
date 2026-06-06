@@ -886,7 +886,7 @@ fn test_unambiguous_float_literal() {
 }
 
 /// `infer_var_types` should find variable `x` in `x + 1` for multi-type Calculator
-/// (previously stubbed to return empty Vec for multi-type languages).
+/// (regression guard: multi-type languages must not return an empty Vec).
 #[test]
 fn test_calculator_infer_var_types() {
     mettail_runtime::clear_var_cache();
@@ -898,7 +898,7 @@ fn test_calculator_infer_var_types() {
 }
 
 /// `infer_var_type` should find variable `x` by name for multi-type Calculator
-/// (previously stubbed to return None for multi-type languages).
+/// (regression guard: multi-type languages must not return None).
 #[test]
 fn test_calculator_infer_var_type() {
     mettail_runtime::clear_var_cache();
@@ -1559,11 +1559,18 @@ fn test_ambiguous_dispatch_gteq_env() {
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
     let val = lang.parse_term_for_env("3").expect("parse 3");
-    lang.add_to_env(env.as_mut(), "x", val.as_ref()).expect("add x");
+    lang.add_to_env(env.as_mut(), "x", val.as_ref())
+        .expect("add x");
     let term = lang.parse_term_for_env("x >= 1").expect("parse x >= 1");
-    let substituted = lang.substitute_env(term.as_ref(), env.as_ref()).expect("sub");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("sub");
     let results = lang.run_ascent(substituted.as_ref()).expect("ascent");
-    let displays: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    let displays: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
     assert!(
         displays.contains(&"true".to_string()),
         "expected \"true\" for x >= 1 with x=3, got: {:?}",
@@ -1578,11 +1585,18 @@ fn test_ambiguous_dispatch_gt_env() {
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
     let val = lang.parse_term_for_env("0").expect("parse 0");
-    lang.add_to_env(env.as_mut(), "x", val.as_ref()).expect("add x");
+    lang.add_to_env(env.as_mut(), "x", val.as_ref())
+        .expect("add x");
     let term = lang.parse_term_for_env("x > 1").expect("parse x > 1");
-    let substituted = lang.substitute_env(term.as_ref(), env.as_ref()).expect("sub");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("sub");
     let results = lang.run_ascent(substituted.as_ref()).expect("ascent");
-    let displays: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    let displays: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
     assert!(
         displays.contains(&"false".to_string()),
         "expected \"false\" for x > 1 with x=0, got: {:?}",
@@ -1664,15 +1678,30 @@ fn debug_complex_cast() {
     // Simplified version of simulation failure
     mettail_runtime::clear_var_cache();
     let r = Int::parse("int(-0.5 ^ y)");
-    println!("int(-0.5 ^ y) -> {:?}", r.as_ref().map(|p| format!("{}", p)).map_err(|e| &e[..100.min(e.len())]));
+    println!(
+        "int(-0.5 ^ y) -> {:?}",
+        r.as_ref()
+            .map(|p| format!("{}", p))
+            .map_err(|e| &e[..100.min(e.len())])
+    );
 
     mettail_runtime::clear_var_cache();
     let r2 = Int::parse("int(-0.5)");
-    println!("int(-0.5) -> {:?}", r2.as_ref().map(|p| format!("{}", p)).map_err(|e| &e[..100.min(e.len())]));
+    println!(
+        "int(-0.5) -> {:?}",
+        r2.as_ref()
+            .map(|p| format!("{}", p))
+            .map_err(|e| &e[..100.min(e.len())])
+    );
 
     mettail_runtime::clear_var_cache();
     let r3 = Int::parse("int(0.5 ^ 2.0)");
-    println!("int(0.5 ^ 2.0) -> {:?}", r3.as_ref().map(|p| format!("{}", p)).map_err(|e| &e[..100.min(e.len())]));
+    println!(
+        "int(0.5 ^ 2.0) -> {:?}",
+        r3.as_ref()
+            .map(|p| format!("{}", p))
+            .map_err(|e| &e[..100.min(e.len())])
+    );
 }
 
 #[test]
@@ -1699,13 +1728,8 @@ fn debug_simulation_failures() {
 #[test]
 fn debug_bool_parse_comparison() {
     use mettail_languages::calculator::Bool;
-    
-    let cases = vec![
-        "b >= true",
-        "x >= y", 
-        "true >= false",
-        "b == true",
-    ];
+
+    let cases = vec!["b >= true", "x >= y", "true >= false", "b == true"];
     for input in &cases {
         mettail_runtime::clear_var_cache();
         match Bool::parse(input) {
@@ -1741,14 +1765,70 @@ fn debug_ne_operator() {
     use mettail_languages::calculator::{Bool, Int};
 
     let cases: Vec<(&str, Box<dyn Fn(&str) -> Result<String, String>>)> = vec![
-        ("b != true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
-        ("b != false", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
-        ("int(b != true)", Box::new(|s| Int::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
-        ("int(y != 0.5)", Box::new(|s| Int::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
-        ("int(y != -0.5)", Box::new(|s| Int::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
-        ("b < true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
-        ("b > true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
-        ("b <= true", Box::new(|s| Bool::parse(s).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(80)].to_string()))),
+        (
+            "b != true",
+            Box::new(|s| {
+                Bool::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
+        (
+            "b != false",
+            Box::new(|s| {
+                Bool::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
+        (
+            "int(b != true)",
+            Box::new(|s| {
+                Int::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
+        (
+            "int(y != 0.5)",
+            Box::new(|s| {
+                Int::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
+        (
+            "int(y != -0.5)",
+            Box::new(|s| {
+                Int::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
+        (
+            "b < true",
+            Box::new(|s| {
+                Bool::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
+        (
+            "b > true",
+            Box::new(|s| {
+                Bool::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
+        (
+            "b <= true",
+            Box::new(|s| {
+                Bool::parse(s)
+                    .map(|p| format!("{}", p))
+                    .map_err(|e| e[..e.len().min(80)].to_string())
+            }),
+        ),
     ];
     for (input, parse_fn) in &cases {
         mettail_runtime::clear_var_cache();
@@ -1765,7 +1845,7 @@ fn debug_chained_comparisons() {
 
     let cases: Vec<(&str, &str)> = vec![
         ("y != 0.5", "Bool"),
-        ("y != 0.5 > y", "Bool"),  // chained: (y != 0.5) > y or y != (0.5 > y)?
+        ("y != 0.5 > y", "Bool"), // chained: (y != 0.5) > y or y != (0.5 > y)?
         ("int(y != 0.5)", "Int"),
         ("int(y != 0.5 > y)", "Int"),
         ("int(y != 0.5 > y != 0.5)", "Int"),
@@ -1773,9 +1853,13 @@ fn debug_chained_comparisons() {
     for (input, cat) in &cases {
         mettail_runtime::clear_var_cache();
         let result = if *cat == "Bool" {
-            Bool::parse(input).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(100)].to_string())
+            Bool::parse(input)
+                .map(|p| format!("{}", p))
+                .map_err(|e| e[..e.len().min(100)].to_string())
         } else {
-            Int::parse(input).map(|p| format!("{}", p)).map_err(|e| e[..e.len().min(100)].to_string())
+            Int::parse(input)
+                .map(|p| format!("{}", p))
+                .map_err(|e| e[..e.len().min(100)].to_string())
         };
         match result {
             Ok(p) => println!("{} -> OK: {}", input, p),
@@ -1790,9 +1874,16 @@ fn debug_display_chained_comparison() {
 
     // Construct GtBool(NeBool(BVar(x), BoolLit(true)), BVar(y))
     mettail_runtime::clear_var_cache();
-    let x = mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("x")));
-    let y_var = mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var("y")));
-    let inner = Bool::NeBool(std::sync::Arc::new(Bool::BVar(x.clone())), std::sync::Arc::new(Bool::BoolLit(true)));
+    let x = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("x"),
+    ));
+    let y_var = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("y"),
+    ));
+    let inner = Bool::NeBool(
+        std::sync::Arc::new(Bool::BVar(x.clone())),
+        std::sync::Arc::new(Bool::BoolLit(true)),
+    );
     let outer = Bool::GtBool(std::sync::Arc::new(inner), std::sync::Arc::new(Bool::BVar(y_var)));
     let displayed = format!("{}", outer);
     println!("GtBool(NeBool(x, true), y) displays as: '{}'", displayed);
@@ -1809,11 +1900,7 @@ fn debug_display_chained_comparison() {
 fn debug_int_chained_comparison() {
     use mettail_languages::calculator::Int;
 
-    let cases = vec![
-        "int(x != true > y)",
-        "int(x != 0.5 > y)",
-        "int(y != 0.5 > y != 0.5)",
-    ];
+    let cases = vec!["int(x != true > y)", "int(x != 0.5 > y)", "int(y != 0.5 > y != 0.5)"];
     for input in &cases {
         mettail_runtime::clear_var_cache();
         match Int::parse(input) {
@@ -1877,9 +1964,11 @@ fn test_bool_display_roundtrip_deep_lt_vars() {
     mettail_runtime::clear_var_cache();
 
     // Same tree but with variables instead of literals
-    let a = || Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
-        mettail_runtime::get_or_create_var("a".to_string())
-    )));
+    let a = || {
+        Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+            mettail_runtime::get_or_create_var("a".to_string()),
+        )))
+    };
     let l1 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
     let l2 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
     let l3 = Bool::LtBool(std::sync::Arc::new(a()), std::sync::Arc::new(a()));
@@ -1954,11 +2043,7 @@ fn parse_int_cross_cat_comparison_ne() {
     use mettail_languages::calculator::Int;
     mettail_runtime::clear_var_cache();
     // int(-N != b) requires Bool to dispatch Token::Minus to Int source
-    for input in &[
-        "int(-1 != 0)",
-        "int(-1 != b)",
-        "int(-543610622 != b)",
-    ] {
+    for input in &["int(-1 != 0)", "int(-1 != b)", "int(-543610622 != b)"] {
         let result = Int::parse(input);
         assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
     }
@@ -1968,10 +2053,7 @@ fn parse_int_cross_cat_comparison_ne() {
 fn parse_int_cross_cat_comparison_lt() {
     use mettail_languages::calculator::Int;
     mettail_runtime::clear_var_cache();
-    for input in &[
-        "int(-1 < 0)",
-        "int(-1924974980 < x)",
-    ] {
+    for input in &["int(-1 < 0)", "int(-1924974980 < x)"] {
         let result = Int::parse(input);
         assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
     }
@@ -1995,10 +2077,7 @@ fn parse_int_cross_cat_comparison_le() {
 fn parse_int_cross_cat_comparison_ge() {
     use mettail_languages::calculator::Int;
     mettail_runtime::clear_var_cache();
-    for input in &[
-        "int(-1 >= 0)",
-        "int(-715541275 >= a)",
-    ] {
+    for input in &["int(-1 >= 0)", "int(-715541275 >= a)"] {
         let result = Int::parse(input);
         assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
     }
@@ -2031,8 +2110,8 @@ fn parse_int_cross_cat_in_expression() {
     mettail_runtime::clear_var_cache();
     // Cross-category comparison as operand of Int operators
     for input in &[
-        "int(-1 != 0)!",          // postfix on cross-cat result
-        "-1 ^ int(-1 != 0)",      // cross-cat in RHS of power
+        "int(-1 != 0)!",     // postfix on cross-cat result
+        "-1 ^ int(-1 != 0)", // cross-cat in RHS of power
     ] {
         let result = Int::parse(input);
         assert!(result.is_ok(), "Failed to parse '{}': {:?}", input, result.err());
@@ -2055,20 +2134,20 @@ fn trace_cross_cat_parse_steps() {
         ("Bool", "c == -1 <= -2"),
         ("Bool", "c > a"),
         ("Bool", r#"c > a ++ """#),
-        ("Int",  "int(c == -1)"),
-        ("Int",  "int(c == -1 <= -2)"),
-        ("Int",  "int(c > a)"),
-        ("Int",  r#"int(c > a ++ "")"#),
-        ("Int",  "int(-1 != 0)"),
-        ("Int",  "int(-a > c % x)"),
+        ("Int", "int(c == -1)"),
+        ("Int", "int(c == -1 <= -2)"),
+        ("Int", "int(c > a)"),
+        ("Int", r#"int(c > a ++ "")"#),
+        ("Int", "int(-1 != 0)"),
+        ("Int", "int(-a > c % x)"),
         ("Bool", r#"z != "lv" >= (false >= true)"#),
-        ("Int",  r#"int(z != "lv" >= (false >= true))"#),
+        ("Int", r#"int(z != "lv" >= (false >= true))"#),
     ];
     for (cat, input) in cases {
         mettail_runtime::clear_var_cache();
         let result = match *cat {
             "Bool" => Bool::parse(input).map(|v| format!("{:?}", v)),
-            "Int"  => Int::parse(input).map(|v| format!("{:?}", v)),
+            "Int" => Int::parse(input).map(|v| format!("{:?}", v)),
             _ => unreachable!(),
         };
         match &result {
@@ -2085,11 +2164,11 @@ fn simulator_regression_original_6() {
     // The original 6 failures from the user's first report.
     // All involve cross-category comparison operators inside int(...) casts.
     let must_parse = &[
-        r#"int(-543610622 != b)"#,                    // int(NeInt(Neg, IVar))
+        r#"int(-543610622 != b)"#,                      // int(NeInt(Neg, IVar))
         r#"int(-928988166 <= y <= (-928988166 <= y))"#, // chained cross-cat <=
-        r#"int(-715541275 >= a)"#,                     // simplified: no postfix
-        r#"int(-1924974980 < x)"#,                     // simplified: no tilde
-        r#"int(-1364203178 != -724684863)"#,           // both operands negative
+        r#"int(-715541275 >= a)"#,                      // simplified: no postfix
+        r#"int(-1924974980 < x)"#,                      // simplified: no tilde
+        r#"int(-1364203178 != -724684863)"#,            // both operands negative
     ];
     for input in must_parse {
         mettail_runtime::clear_var_cache();
@@ -2121,7 +2200,7 @@ fn simulator_regression_cross_cat_dispatch_chaining() {
     // Failures caused by duplicate deterministic match arms in cross-cat dispatch.
     // Token::Minus shared by Int and Float FIRST sets → second arm was dead code.
     let must_parse = &[
-        r#"int(-a > c % x)"#,                          // -a as cross-cat prefix
+        r#"int(-a > c % x)"#,                           // -a as cross-cat prefix
         r#"int(-y == y!)"#,                             // -y with postfix on RHS
         r#"int(c == -301055575 <= -1136349513)"#,       // chained comparisons
         r#"int(-220439700 > 1827376848 == c != -0.5)"#, // 3 chained operators
@@ -2140,13 +2219,13 @@ fn simulator_regression_cross_cat_with_strings() {
     // Comparisons involving string operands inside int(...).
     // Fixed by longest-match dispatch (Str source consumes ++ and string literals).
     let must_parse = &[
-        r#"int(c > a ++ "")"#,                         // Str concat in comparison
-        r#"int(z >= x ++ "")"#,                         // >= with Str concat
-        r#"int(b == y ++ "")"#,                         // == with Str concat
-        r#"int(x == a ++ "")"#,                         // == with Str concat
-        r#"int(y < "edce" == y < "edce")"#,             // Str comparison chain
-        r#"int(z > 1691216401 == a < "um")"#,           // mixed Int/Str comparisons
-        r#"int(a >= "opnxjvm" < a >= "opnxjvm")"#,     // Str >= chain
+        r#"int(c > a ++ "")"#,                     // Str concat in comparison
+        r#"int(z >= x ++ "")"#,                    // >= with Str concat
+        r#"int(b == y ++ "")"#,                    // == with Str concat
+        r#"int(x == a ++ "")"#,                    // == with Str concat
+        r#"int(y < "edce" == y < "edce")"#,        // Str comparison chain
+        r#"int(z > 1691216401 == a < "um")"#,      // mixed Int/Str comparisons
+        r#"int(a >= "opnxjvm" < a >= "opnxjvm")"#, // Str >= chain
     ];
     for input in must_parse {
         mettail_runtime::clear_var_cache();
@@ -2161,9 +2240,9 @@ fn simulator_regression_cross_cat_with_parens() {
     // Cross-category expressions with parenthesized sub-expressions.
     // Fixed by chain detection + implicit cast synthesis.
     let must_parse = &[
-        r#"int((c > y) < c != 0.5)"#,                  // parenthesized LHS
-        r#"int((1077498015 == x) > b != "")"#,          // parenthesized EqInt
-        r#"int((-0.5 < 0.5) <= b != "hh")"#,           // Float comparison in parens
+        r#"int((c > y) < c != 0.5)"#,          // parenthesized LHS
+        r#"int((1077498015 == x) > b != "")"#, // parenthesized EqInt
+        r#"int((-0.5 < 0.5) <= b != "hh")"#,   // Float comparison in parens
     ];
     for input in must_parse {
         mettail_runtime::clear_var_cache();
@@ -2265,10 +2344,7 @@ fn simulator_regression_nested_casts() {
     use mettail_languages::calculator::Int;
     // Nested cast expressions. Fixed by implicit cast synthesis enabling
     // cross-category dispatch to chain through nested NFA alternatives.
-    let must_parse = &[
-        r#"int(str(-1633226738 <= a))"#,
-        r#"int(str(-1 <= a))"#,
-    ];
+    let must_parse = &[r#"int(str(-1633226738 <= a))"#, r#"int(str(-1 <= a))"#];
     for input in must_parse {
         mettail_runtime::clear_var_cache();
         let result = Int::parse(input);
@@ -2282,7 +2358,7 @@ fn simulator_regression_cross_cat_with_floats() {
     // Cross-category expressions with float literals.
     // Fixed by chain detection + implicit cast synthesis (FloatToBool for 0.5).
     let must_parse = &[
-        r#"int(y <= z < b <= 0.5)"#,                   // Float in comparison chain
+        r#"int(y <= z < b <= 0.5)"#, // Float in comparison chain
     ];
     for input in must_parse {
         mettail_runtime::clear_var_cache();
@@ -2310,8 +2386,7 @@ fn test_try_eval_deep_addint_10000() {
     }
     let v = term.try_eval();
     // Sum of 0..=10000 = 50_005_000 (within i32 range).
-    assert_eq!(v, Some(50_005_000),
-        "deep AddInt chain should evaluate without stack overflow");
+    assert_eq!(v, Some(50_005_000), "deep AddInt chain should evaluate without stack overflow");
 }
 
 #[test]
@@ -2323,8 +2398,7 @@ fn test_try_eval_deep_neg_10000() {
         term = Int::Neg(std::sync::Arc::new(term));
     }
     let v = term.try_eval();
-    assert_eq!(v, Some(1),
-        "deep Neg chain should evaluate without stack overflow");
+    assert_eq!(v, Some(1), "deep Neg chain should evaluate without stack overflow");
 }
 
 #[test]
@@ -2346,17 +2420,16 @@ fn test_try_eval_deep_mixed_ops_1000() {
     let mut term = Int::NumLit(1);
     for i in 0..1000 {
         term = match i % 3 {
-            0 => Int::AddInt(std::sync::Arc::new(term), std::sync::Arc::new(Int::NumLit(1))),  // +1
-            1 => Int::MulInt(std::sync::Arc::new(term), std::sync::Arc::new(Int::NumLit(1))),  // × 1 (identity)
-            _ => Int::Neg(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(term)))),           // double-neg (identity)
+            0 => Int::AddInt(std::sync::Arc::new(term), std::sync::Arc::new(Int::NumLit(1))), // +1
+            1 => Int::MulInt(std::sync::Arc::new(term), std::sync::Arc::new(Int::NumLit(1))), // × 1 (identity)
+            _ => Int::Neg(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(term)))), // double-neg (identity)
         };
     }
     let v = term.try_eval();
     // `i % 3 == 0` for i in 0..1000 happens 334 times (0, 3, 6, ..., 999).
     // Only the Add branch changes the value; Muls and double-Negs are identity.
     // Start = 1, +334 increments of 1 → 335.
-    assert_eq!(v, Some(335),
-        "deep mixed-op chain: 1 initial + 334 increments");
+    assert_eq!(v, Some(335), "deep mixed-op chain: 1 initial + 334 increments");
 }
 
 /// Sig-B Blocker-3 M7.3 (2026-06-01, pgmcp experiment #9): TERMINATION +
@@ -2465,14 +2538,12 @@ fn sigb_b3_span_anchored_baseline_passes_remain_green() {
 #[test]
 fn sigb_b3_span_anchored_ambiguity_preservation() {
     use mettail_languages::calculator::Int;
-    let targets = &[
-        r#"int(y != true > x < "qua")"#,
-        r#"int(y and b == y < "x")"#,
-    ];
+    let targets = &[r#"int(y != true > x < "qua")"#, r#"int(y and b == y < "x")"#];
     for input in targets {
         mettail_runtime::clear_var_cache();
-        let alts = Int::parse_via_wpda_all(input)
-            .unwrap_or_else(|e| panic!("span-anchored ambiguity: '{}' must yield >=1 alt; got {:?}", input, e));
+        let alts = Int::parse_via_wpda_all(input).unwrap_or_else(|e| {
+            panic!("span-anchored ambiguity: '{}' must yield >=1 alt; got {:?}", input, e)
+        });
         assert!(
             !alts.is_empty(),
             "span-anchored ambiguity: '{}' surfaced ZERO derivations (the drain dropped a sound parse)",
@@ -2485,14 +2556,18 @@ fn sigb_b3_span_anchored_ambiguity_preservation() {
         for (i, t) in alts.iter().enumerate() {
             let displayed = format!("{}", t);
             let strip = |s: &str| -> String {
-                s.chars().filter(|c| !c.is_whitespace() && *c != '(' && *c != ')').collect()
+                s.chars()
+                    .filter(|c| !c.is_whitespace() && *c != '(' && *c != ')')
+                    .collect()
             };
             assert_eq!(
                 strip(&displayed),
                 strip(input),
                 "span-anchored ambiguity: '{}' alt #{} re-displays as '{}' \
                  (non-paren token sequence != input — a fabricated terminal)",
-                input, i, displayed
+                input,
+                i,
+                displayed
             );
         }
     }

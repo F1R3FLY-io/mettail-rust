@@ -473,11 +473,11 @@ pub struct TerminalPattern {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::minimize::minimize_dfa;
     use super::nfa::{build_nfa, BuiltinNeeds};
     use super::partition::compute_equivalence_classes;
     use super::subset::subset_construction;
+    use super::*;
     use crate::LiteralPatterns;
     use proptest::prelude::*;
 
@@ -519,12 +519,7 @@ mod tests {
 
     /// Build an NFA that accepts either of two literal byte strings (alternation).
     /// Each branch gets its own accept token.
-    fn nfa_for_alternation(
-        a: &[u8],
-        kind_a: TokenKind,
-        b: &[u8],
-        kind_b: TokenKind,
-    ) -> Nfa {
+    fn nfa_for_alternation(a: &[u8], kind_a: TokenKind, b: &[u8], kind_b: TokenKind) -> Nfa {
         let mut nfa = Nfa::new();
         let start = nfa.start;
 
@@ -661,9 +656,8 @@ mod tests {
         );
         let (dfa, min_dfa, part) = full_pipeline(&nfa);
 
-        let test_inputs: &[&[u8]] = &[
-            b"foo", b"bar", b"fo", b"ba", b"foobar", b"baz", b"f", b"", b"x",
-        ];
+        let test_inputs: &[&[u8]] =
+            &[b"foo", b"bar", b"fo", b"ba", b"foobar", b"baz", b"f", b"", b"x"];
         for input in test_inputs {
             assert_eq!(
                 dfa_accepts(&dfa, &part, input),

@@ -80,18 +80,12 @@ impl Term {
 
     /// Create a constant (nullary function) term.
     pub fn constant(symbol: impl Into<String>) -> Self {
-        Term::App {
-            symbol: symbol.into(),
-            args: Vec::new(),
-        }
+        Term::App { symbol: symbol.into(), args: Vec::new() }
     }
 
     /// Create a function application term.
     pub fn app(symbol: impl Into<String>, args: Vec<Term>) -> Self {
-        Term::App {
-            symbol: symbol.into(),
-            args,
-        }
+        Term::App { symbol: symbol.into(), args }
     }
 
     /// Check whether this term is a variable.
@@ -113,7 +107,7 @@ impl Term {
                 for arg in args {
                     arg.collect_variables(acc);
                 }
-            }
+            },
         }
     }
 
@@ -126,7 +120,7 @@ impl Term {
                 } else {
                     self.clone()
                 }
-            }
+            },
             Term::App { symbol, args } => Term::App {
                 symbol: symbol.clone(),
                 args: args.iter().map(|a| a.apply_substitution(subst)).collect(),
@@ -149,7 +143,7 @@ impl fmt::Display for Term {
                     write!(f, "{}", arg)?;
                 }
                 write!(f, ")")
-            }
+            },
         }
     }
 }
@@ -168,20 +162,12 @@ pub struct RewriteRule {
 impl RewriteRule {
     /// Create a new rewrite rule.
     pub fn new(lhs: Term, rhs: Term) -> Self {
-        RewriteRule {
-            lhs,
-            rhs,
-            label: None,
-        }
+        RewriteRule { lhs, rhs, label: None }
     }
 
     /// Create a labeled rewrite rule.
     pub fn labeled(label: impl Into<String>, lhs: Term, rhs: Term) -> Self {
-        RewriteRule {
-            lhs,
-            rhs,
-            label: Some(label.into()),
-        }
+        RewriteRule { lhs, rhs, label: Some(label.into()) }
     }
 }
 
@@ -252,20 +238,13 @@ impl fmt::Display for JoinabilityResult {
         match self {
             JoinabilityResult::Joinable { common_reduct } => {
                 write!(f, "Joinable (common reduct: {})", common_reduct)
-            }
-            JoinabilityResult::NotJoinable {
-                normal_form1,
-                normal_form2,
-            } => {
-                write!(
-                    f,
-                    "Not joinable ({} ≠ {})",
-                    normal_form1, normal_form2,
-                )
-            }
+            },
+            JoinabilityResult::NotJoinable { normal_form1, normal_form2 } => {
+                write!(f, "Not joinable ({} ≠ {})", normal_form1, normal_form2,)
+            },
             JoinabilityResult::Unknown { reason } => {
                 write!(f, "Unknown ({})", reason)
-            }
+            },
         }
     }
 }
@@ -322,7 +301,7 @@ fn subterm_at<'a>(term: &'a Term, pos: &[usize]) -> Option<&'a Term> {
             } else {
                 None
             }
-        }
+        },
     }
 }
 
@@ -344,11 +323,8 @@ fn replace_at(term: &Term, pos: &[usize], replacement: &Term) -> Option<Term> {
             let inner = replace_at(&args[idx], &pos[1..], replacement)?;
             let mut new_args = args.clone();
             new_args[idx] = inner;
-            Some(Term::App {
-                symbol: symbol.clone(),
-                args: new_args,
-            })
-        }
+            Some(Term::App { symbol: symbol.clone(), args: new_args })
+        },
     }
 }
 
@@ -361,15 +337,11 @@ fn non_var_positions(term: &Term) -> Vec<Position> {
     positions
 }
 
-fn collect_non_var_positions(
-    term: &Term,
-    current: &mut Vec<usize>,
-    acc: &mut Vec<Position>,
-) {
+fn collect_non_var_positions(term: &Term, current: &mut Vec<usize>, acc: &mut Vec<Position>) {
     match term {
         Term::Var(_) => {
             // Variables are excluded — we only want non-variable subterms.
-        }
+        },
         Term::App { args, .. } => {
             acc.push(current.clone());
             for (i, arg) in args.iter().enumerate() {
@@ -377,7 +349,7 @@ fn collect_non_var_positions(
                 collect_non_var_positions(arg, current, acc);
                 current.pop();
             }
-        }
+        },
     }
 }
 
@@ -445,7 +417,7 @@ fn unify(s: &Term, t: &Term) -> Option<HashMap<String, Term>> {
                 };
                 subst = compose_substitutions(&subst, &singleton);
                 subst.insert(x, t);
-            }
+            },
             (t, Term::Var(x)) => {
                 if occurs(&x, &t) {
                     return None;
@@ -457,24 +429,15 @@ fn unify(s: &Term, t: &Term) -> Option<HashMap<String, Term>> {
                 };
                 subst = compose_substitutions(&subst, &singleton);
                 subst.insert(x, t);
-            }
-            (
-                Term::App {
-                    symbol: f,
-                    args: f_args,
-                },
-                Term::App {
-                    symbol: g,
-                    args: g_args,
-                },
-            ) => {
+            },
+            (Term::App { symbol: f, args: f_args }, Term::App { symbol: g, args: g_args }) => {
                 if f != g || f_args.len() != g_args.len() {
                     return None;
                 }
                 for (a, b) in f_args.into_iter().zip(g_args.into_iter()) {
                     worklist.push_back((a, b));
                 }
-            }
+            },
         }
     }
 
@@ -507,14 +470,11 @@ fn rewrite_once(term: &Term, rules: &[RewriteRule]) -> Option<Term> {
                 if let Some(reduct) = rewrite_once(arg, rules) {
                     let mut new_args = args.clone();
                     new_args[i] = reduct;
-                    return Some(Term::App {
-                        symbol: symbol.clone(),
-                        args: new_args,
-                    });
+                    return Some(Term::App { symbol: symbol.clone(), args: new_args });
                 }
             }
             None
-        }
+        },
     }
 }
 
@@ -530,11 +490,7 @@ fn match_term(pattern: &Term, term: &Term) -> Option<HashMap<String, Term>> {
     }
 }
 
-fn match_term_inner(
-    pattern: &Term,
-    term: &Term,
-    subst: &mut HashMap<String, Term>,
-) -> bool {
+fn match_term_inner(pattern: &Term, term: &Term, subst: &mut HashMap<String, Term>) -> bool {
     match pattern {
         Term::Var(name) => {
             if let Some(existing) = subst.get(name) {
@@ -543,16 +499,10 @@ fn match_term_inner(
                 subst.insert(name.clone(), term.clone());
                 true
             }
-        }
-        Term::App {
-            symbol: f,
-            args: f_args,
-        } => match term {
+        },
+        Term::App { symbol: f, args: f_args } => match term {
             Term::Var(_) => false,
-            Term::App {
-                symbol: g,
-                args: g_args,
-            } => {
+            Term::App { symbol: g, args: g_args } => {
                 if f != g || f_args.len() != g_args.len() {
                     return false;
                 }
@@ -562,7 +512,7 @@ fn match_term_inner(
                     }
                 }
                 true
-            }
+            },
         },
     }
 }
@@ -585,7 +535,7 @@ fn normalize(term: &Term, rules: &[RewriteRule], max_steps: usize) -> (Term, boo
                     return (current, false);
                 }
                 current = next;
-            }
+            },
         }
     }
     (current, false)
@@ -690,17 +640,12 @@ pub fn check_joinability(
     let (nf2, reached2) = normalize(&pair.term2, rules, max_steps);
 
     if nf1 == nf2 {
-        return JoinabilityResult::Joinable {
-            common_reduct: nf1,
-        };
+        return JoinabilityResult::Joinable { common_reduct: nf1 };
     }
 
     if reached1 && reached2 {
         // Both reached normal forms but they differ — not joinable.
-        JoinabilityResult::NotJoinable {
-            normal_form1: nf1,
-            normal_form2: nf2,
-        }
+        JoinabilityResult::NotJoinable { normal_form1: nf1, normal_form2: nf2 }
     } else {
         // At least one side did not reach a normal form within the step limit.
         JoinabilityResult::Unknown {
@@ -775,19 +720,14 @@ pub fn check_confluence(rules: &[RewriteRule], max_steps: usize) -> ConfluenceAn
 fn structural_similarity(t1: &Term, t2: &Term) -> f64 {
     match (t1, t2) {
         (Term::Var(a), Term::Var(b)) => {
-            if a == b { 1.0 } else { 0.5 }
-        }
+            if a == b {
+                1.0
+            } else {
+                0.5
+            }
+        },
         (Term::Var(_), Term::App { .. }) | (Term::App { .. }, Term::Var(_)) => 0.25,
-        (
-            Term::App {
-                symbol: f,
-                args: f_args,
-            },
-            Term::App {
-                symbol: g,
-                args: g_args,
-            },
-        ) => {
+        (Term::App { symbol: f, args: f_args }, Term::App { symbol: g, args: g_args }) => {
             if f != g {
                 // Different root symbols — minimal similarity.
                 // Still check if any subterms share structure.
@@ -812,7 +752,7 @@ fn structural_similarity(t1: &Term, t2: &Term) -> f64 {
             let avg_arg_sim = arg_sim / f_args.len() as f64;
             // Root symbol match contributes 0.5, argument similarity 0.5.
             0.5 + 0.5 * avg_arg_sim
-        }
+        },
     }
 }
 
@@ -862,16 +802,15 @@ pub fn suggest_confluence_repairs(result: &ConfluenceAnalysis) -> RepairSet {
 
     for (i, jr) in result.joinability_results.iter().enumerate() {
         let (t1, t2, confidence_scale) = match jr {
-            JoinabilityResult::NotJoinable {
-                normal_form1,
-                normal_form2,
-            } => (normal_form1, normal_form2, 1.0),
+            JoinabilityResult::NotJoinable { normal_form1, normal_form2 } => {
+                (normal_form1, normal_form2, 1.0)
+            },
             JoinabilityResult::Unknown { .. } => {
                 // For unknown pairs, use the original critical pair terms with
                 // reduced confidence since we cannot confirm non-joinability.
                 let cp = &result.critical_pairs[i];
                 (&cp.term1, &cp.term2, 0.5)
-            }
+            },
             JoinabilityResult::Joinable { .. } => continue,
         };
 
@@ -886,19 +825,13 @@ pub fn suggest_confluence_repairs(result: &ConfluenceAnalysis) -> RepairSet {
         // Suggestion 1: Add an equation t1 = t2.
         let eq_description = format!(
             "Add equation {} = {} to restore confluence (critical pair from rules {}, {})",
-            t1,
-            t2,
-            result.critical_pairs[i].rule1_index,
-            result.critical_pairs[i].rule2_index,
+            t1, t2, result.critical_pairs[i].rule1_index, result.critical_pairs[i].rule2_index,
         );
         repairs.add(
             RepairSuggestion::new(
                 RepairKind::FixConfluence,
                 eq_description,
-                RepairAction::AddEquation {
-                    lhs: t1.to_string(),
-                    rhs: t2.to_string(),
-                },
+                RepairAction::AddEquation { lhs: t1.to_string(), rhs: t2.to_string() },
             )
             .with_confidence(confidence)
             .with_edit_cost(1)
@@ -1055,28 +988,28 @@ pub fn syntax_to_rewrite_rules(
                 crate::SyntaxItemSpec::Terminal(t) => Term::constant(t.as_str()),
                 crate::SyntaxItemSpec::NonTerminal { category: c, .. } => {
                     Term::var(format!("{}_{}", c, idx))
-                }
+                },
                 crate::SyntaxItemSpec::IdentCapture { param_name } => {
                     Term::var(format!("{}_{}", param_name, idx))
-                }
+                },
                 crate::SyntaxItemSpec::Binder { param_name, .. } => {
                     Term::var(format!("{}_{}", param_name, idx))
-                }
+                },
                 crate::SyntaxItemSpec::Collection { param_name, .. } => {
                     Term::var(format!("{}_{}", param_name, idx))
-                }
+                },
                 crate::SyntaxItemSpec::Sep { .. } => Term::var(format!("sep_{}", idx)),
                 crate::SyntaxItemSpec::Map { .. } => Term::var(format!("map_{}", idx)),
                 crate::SyntaxItemSpec::Zip { left_name, .. } => {
                     Term::var(format!("{}_{}", left_name, idx))
-                }
+                },
                 crate::SyntaxItemSpec::BinderCollection { param_name, .. } => {
                     Term::var(format!("{}_{}", param_name, idx))
-                }
+                },
                 crate::SyntaxItemSpec::Optional { .. } => Term::var(format!("opt_{}", idx)),
                 crate::SyntaxItemSpec::GuardExpression { param_name } => {
                     Term::var(format!("{}_{}", param_name, idx))
-                }
+                },
             })
             .collect();
 
@@ -1115,10 +1048,7 @@ mod tests {
 
     #[test]
     fn term_display() {
-        let t = Term::app(
-            "f",
-            vec![Term::var("x"), Term::constant("a")],
-        );
+        let t = Term::app("f", vec![Term::var("x"), Term::constant("a")]);
         assert_eq!(t.to_string(), "f(x, a)");
     }
 
@@ -1126,10 +1056,7 @@ mod tests {
     fn term_variables() {
         let t = Term::app(
             "g",
-            vec![
-                Term::var("x"),
-                Term::app("h", vec![Term::var("y"), Term::var("x")]),
-            ],
+            vec![Term::var("x"), Term::app("h", vec![Term::var("y"), Term::var("x")])],
         );
         let vars = t.variables();
         assert_eq!(vars, vec!["x", "y", "x"]);
@@ -1236,22 +1163,19 @@ mod tests {
             ),
             // R1: f(i(x), x) → e
             RewriteRule::new(
-                Term::app("f", vec![
-                    Term::app("i", vec![Term::var("x")]),
-                    Term::var("x"),
-                ]),
+                Term::app("f", vec![Term::app("i", vec![Term::var("x")]), Term::var("x")]),
                 Term::constant("e"),
             ),
             // R2: f(f(x,y),z) → f(x,f(y,z))
             RewriteRule::new(
-                Term::app("f", vec![
-                    Term::app("f", vec![Term::var("x"), Term::var("y")]),
-                    Term::var("z"),
-                ]),
-                Term::app("f", vec![
-                    Term::var("x"),
-                    Term::app("f", vec![Term::var("y"), Term::var("z")]),
-                ]),
+                Term::app(
+                    "f",
+                    vec![Term::app("f", vec![Term::var("x"), Term::var("y")]), Term::var("z")],
+                ),
+                Term::app(
+                    "f",
+                    vec![Term::var("x"), Term::app("f", vec![Term::var("y"), Term::var("z")])],
+                ),
             ),
         ];
 
@@ -1281,10 +1205,7 @@ mod tests {
             RewriteRule::new(Term::constant("c"), Term::constant("d")),
         ];
         let pairs = detect_critical_pairs(&rules);
-        assert!(
-            pairs.is_empty(),
-            "disjoint constant rules should produce zero critical pairs"
-        );
+        assert!(pairs.is_empty(), "disjoint constant rules should produce zero critical pairs");
     }
 
     /// Confluent TRS: f(f(x)) → f(x).
@@ -1292,12 +1213,10 @@ mod tests {
     /// which join to f(x') after one step.
     #[test]
     fn confluent_idempotent_rule() {
-        let rules = vec![
-            RewriteRule::new(
-                Term::app("f", vec![Term::app("f", vec![Term::var("x")])]),
-                Term::app("f", vec![Term::var("x")]),
-            ),
-        ];
+        let rules = vec![RewriteRule::new(
+            Term::app("f", vec![Term::app("f", vec![Term::var("x")])]),
+            Term::app("f", vec![Term::var("x")]),
+        )];
         let analysis = check_confluence(&rules, 100);
         assert!(
             analysis.is_confluent,
@@ -1314,20 +1233,11 @@ mod tests {
     #[test]
     fn non_confluent_ambiguous_rules() {
         let rules = vec![
-            RewriteRule::new(
-                Term::app("f", vec![Term::var("x")]),
-                Term::constant("a"),
-            ),
-            RewriteRule::new(
-                Term::app("f", vec![Term::var("x")]),
-                Term::constant("b"),
-            ),
+            RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::constant("a")),
+            RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::constant("b")),
         ];
         let analysis = check_confluence(&rules, 100);
-        assert!(
-            !analysis.is_confluent,
-            "f(x)→a and f(x)→b should be non-confluent"
-        );
+        assert!(!analysis.is_confluent, "f(x)→a and f(x)→b should be non-confluent");
         assert!(
             analysis.non_joinable_count > 0,
             "should have at least one non-joinable critical pair"
@@ -1340,14 +1250,8 @@ mod tests {
         // Rules: g(a) → b, g(a) → c, b → d, c → d.
         // Critical pair ⟨b, c⟩ should join at d.
         let rules = vec![
-            RewriteRule::new(
-                Term::app("g", vec![Term::constant("a")]),
-                Term::constant("b"),
-            ),
-            RewriteRule::new(
-                Term::app("g", vec![Term::constant("a")]),
-                Term::constant("c"),
-            ),
+            RewriteRule::new(Term::app("g", vec![Term::constant("a")]), Term::constant("b")),
+            RewriteRule::new(Term::app("g", vec![Term::constant("a")]), Term::constant("c")),
             RewriteRule::new(Term::constant("b"), Term::constant("d")),
             RewriteRule::new(Term::constant("c"), Term::constant("d")),
         ];
@@ -1359,12 +1263,7 @@ mod tests {
             overlap_position: vec![],
         };
         let result = check_joinability(&cp, &rules, 100);
-        assert_eq!(
-            result,
-            JoinabilityResult::Joinable {
-                common_reduct: Term::constant("d"),
-            }
-        );
+        assert_eq!(result, JoinabilityResult::Joinable { common_reduct: Term::constant("d") });
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -1377,14 +1276,8 @@ mod tests {
     fn suggest_confluence_repairs_non_confluent() {
         // f(x) → a and f(x) → b  →  critical pair ⟨a, b⟩, not joinable.
         let rules = vec![
-            RewriteRule::new(
-                Term::app("f", vec![Term::var("x")]),
-                Term::constant("a"),
-            ),
-            RewriteRule::new(
-                Term::app("f", vec![Term::var("x")]),
-                Term::constant("b"),
-            ),
+            RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::constant("a")),
+            RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::constant("b")),
         ];
         let analysis = check_confluence(&rules, 100);
         assert!(!analysis.is_confluent);
@@ -1398,12 +1291,14 @@ mod tests {
         );
 
         // Check that we get both an equation and a rewrite suggestion.
-        let has_equation = repairs.suggestions.iter().any(|s| {
-            matches!(s.action, RepairAction::AddEquation { .. })
-        });
-        let has_rewrite = repairs.suggestions.iter().any(|s| {
-            matches!(s.action, RepairAction::AddRewrite { .. })
-        });
+        let has_equation = repairs
+            .suggestions
+            .iter()
+            .any(|s| matches!(s.action, RepairAction::AddEquation { .. }));
+        let has_rewrite = repairs
+            .suggestions
+            .iter()
+            .any(|s| matches!(s.action, RepairAction::AddRewrite { .. }));
         assert!(has_equation, "should have an AddEquation suggestion");
         assert!(has_rewrite, "should have an AddRewrite suggestion");
 
@@ -1412,10 +1307,10 @@ mod tests {
             match &s.action {
                 RepairAction::AddEquation { .. } => {
                     assert_eq!(s.edit_cost, 1);
-                }
+                },
                 RepairAction::AddRewrite { .. } => {
                     assert_eq!(s.edit_cost, 2);
-                }
+                },
                 _ => panic!("unexpected repair action: {:?}", s.action),
             }
             assert!(s.confidence > 0.0 && s.confidence <= 1.0);
@@ -1426,12 +1321,10 @@ mod tests {
     /// A confluent TRS yields zero repair suggestions.
     #[test]
     fn suggest_confluence_repairs_confluent_yields_empty() {
-        let rules = vec![
-            RewriteRule::new(
-                Term::app("f", vec![Term::app("f", vec![Term::var("x")])]),
-                Term::app("f", vec![Term::var("x")]),
-            ),
-        ];
+        let rules = vec![RewriteRule::new(
+            Term::app("f", vec![Term::app("f", vec![Term::var("x")])]),
+            Term::app("f", vec![Term::var("x")]),
+        )];
         let analysis = check_confluence(&rules, 100);
         assert!(analysis.is_confluent);
 
@@ -1491,7 +1384,8 @@ mod tests {
         assert!(
             conf_similar > conf_dissimilar,
             "higher structural similarity should yield higher confidence: {} vs {}",
-            conf_similar, conf_dissimilar,
+            conf_similar,
+            conf_dissimilar,
         );
     }
 
@@ -1520,8 +1414,16 @@ mod tests {
         }
 
         // Guards have edit_cost = 2, restrictions have edit_cost = 3.
-        let guard_count = repairs.suggestions.iter().filter(|s| s.edit_cost == 2).count();
-        let restrict_count = repairs.suggestions.iter().filter(|s| s.edit_cost == 3).count();
+        let guard_count = repairs
+            .suggestions
+            .iter()
+            .filter(|s| s.edit_cost == 2)
+            .count();
+        let restrict_count = repairs
+            .suggestions
+            .iter()
+            .filter(|s| s.edit_cost == 3)
+            .count();
         assert_eq!(guard_count, 3, "expected 3 guard suggestions");
         assert_eq!(restrict_count, 3, "expected 3 restriction suggestions");
     }
@@ -1540,9 +1442,8 @@ mod tests {
     #[test]
     fn suggest_confluence_repairs_orientation() {
         // Build a non-confluent analysis where one normal form is larger.
-        let big_term = Term::app("f", vec![
-            Term::app("g", vec![Term::constant("a"), Term::constant("b")]),
-        ]);
+        let big_term =
+            Term::app("f", vec![Term::app("g", vec![Term::constant("a"), Term::constant("b")])]);
         let small_term = Term::constant("c");
 
         let analysis = ConfluenceAnalysis {
@@ -1574,7 +1475,7 @@ mod tests {
                 // The bigger term (f(g(a, b))) should be the LHS.
                 assert_eq!(lhs, &big_term.to_string());
                 assert_eq!(rhs, &small_term.to_string());
-            }
+            },
             _ => unreachable!(),
         }
     }

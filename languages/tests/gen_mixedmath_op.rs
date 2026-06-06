@@ -15,20 +15,18 @@ use mettail_runtime::BehavioralPred;
 //   BoolLit              weight: 0.0000
 //   Grouping             weight: 0.0000
 //   IntLit               weight: 0.0000
-//   Neg                  weight: 0.0000
-//   Not                  weight: 0.0000
 //   VarBool              weight: 2.0000
 //   VarInt               weight: 2.0000
 // Category weights:
-//   Bool                 weight: 0.5000
-//   Int                  weight: 0.5000
+//   Bool                 weight: 0.6667
+//   Int                  weight: 0.6667
 //
 
 // ─────────────────────────────────────────────────────────
 // WPDS path coverage plan
 // ─────────────────────────────────────────────────────────
-//   Bool                 budget:  20  (category weight: 0.5000)
-//   Int                  budget:  20  (category weight: 0.5000)
+//   Int                  budget:  20  (category weight: 0.6667)
+//   Bool                 budget:  20  (category weight: 0.6667)
 //
 
 // ═══════════════════════════════════════════════════════════
@@ -98,6 +96,136 @@ fn eval_mixedmath_neg_0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_not_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_not_true() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_or_false_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_or_false_true() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_or_true_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_or_true_true() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_and_false_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_and_false_true() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_and_true_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn eval_mixedmath_and_true_true() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -880,136 +1008,6 @@ fn eval_mixedmath_addint_0_0() {
         "{} should evaluate to 0, got {:?}", input_str, nfs);
 }
 
-#[test]
-fn eval_mixedmath_not_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_not_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_or_false_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_or_false_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_or_true_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_or_true_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_and_false_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_and_false_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_and_true_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "false"),
-        "{} should evaluate to false, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn eval_mixedmath_and_true_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "true"),
-        "{} should evaluate to true, got {:?}", input_str, nfs);
-}
-
 // ═══════════════════════════════════════════════════════════
 // Phase 2a: Nested expression tests (depth-2 compositions)
 // ═══════════════════════════════════════════════════════════
@@ -1129,6 +1127,344 @@ fn nested_mixedmath_neg_addint_0_0_in_slot0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_not_or_false_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_not_or_true_false_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_not_or_true_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_not_and_false_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_not_and_true_false_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_not_and_true_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_not_false_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_not_true_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_and_false_true_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_and_true_false_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_and_true_true_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_not_false_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_not_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_and_false_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_and_true_false_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_or_and_true_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_not_false_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_not_true_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_or_false_true_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_or_true_false_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_or_true_true_in_slot1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_not_false_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_not_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "false"),
+        "{} should evaluate to false, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_or_false_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_or_true_false_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
+}
+
+#[test]
+fn nested_mixedmath_and_or_true_true_in_slot0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)))), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(nfs.iter().any(|d| d == "true"),
+        "{} should evaluate to true, got {:?}", input_str, nfs);
 }
 
 #[test]
@@ -1324,344 +1660,6 @@ fn nested_mixedmath_mulint_subint_0_0_in_slot0() {
     let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
     assert!(nfs.iter().any(|d| d == "0"),
         "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_addint_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_addint_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_mulint_addint_0_0_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_neg_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "3"),
-        "{} should evaluate to 3, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_neg_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "2"),
-        "{} should evaluate to 2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_neg_0_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_0_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_0_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_neg_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-3"),
-        "{} should evaluate to -3, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_neg_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-2"),
-        "{} should evaluate to -2, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_neg_0_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_mulint_0_0_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_2_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_1_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_subint_addint_0_0_in_slot0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)))), std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_addint_neg_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "-1"),
-        "{} should evaluate to -1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_addint_neg_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "0"),
-        "{} should evaluate to 0, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_addint_neg_0_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_addint_mulint_0_2_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(2i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
-}
-
-#[test]
-fn nested_mixedmath_addint_mulint_0_1_in_slot1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(1i32)), std::sync::Arc::new(Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(1i32)))));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
-    assert!(nfs.iter().any(|d| d == "1"),
-        "{} should evaluate to 1, got {:?}", input_str, nfs);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1939,9 +1937,9 @@ fn cross_cat_mixedmath_composite_neg_booltoint_smoke() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wfst_mixedmath_dispatch_not_eval() {
+fn wfst_mixedmath_dispatch_addint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1951,9 +1949,21 @@ fn wfst_mixedmath_dispatch_not_eval() {
 }
 
 #[test]
-fn wfst_mixedmath_dispatch_neg_eval() {
+fn wfst_mixedmath_dispatch_subint_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
+    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_mixedmath_dispatch_mulint_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1987,9 +1997,9 @@ fn wfst_mixedmath_dispatch_or_eval() {
 }
 
 #[test]
-fn wfst_mixedmath_dispatch_addint_eval() {
+fn wfst_mixedmath_dispatch_not_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -1999,21 +2009,9 @@ fn wfst_mixedmath_dispatch_addint_eval() {
 }
 
 #[test]
-fn wfst_mixedmath_dispatch_subint_eval() {
+fn wfst_mixedmath_dispatch_neg_eval() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::SubInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_mixedmath_dispatch_mulint_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2146,186 +2144,6 @@ fn assoc_mixedmath_mulint_left() {
 // ═══════════════════════════════════════════════════════════
 // Phase 5a: WPDS-guided path coverage tests
 // ═══════════════════════════════════════════════════════════
-
-#[test]
-fn wpda_mixedmath_not_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_not_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_and_true_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_and_true_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_and_false_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_and_false_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_or_true_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_or_true_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_or_false_true() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_or_false_false() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_neg_0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_neg_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_neg_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_neg_3() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(3i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_mixedmath_neg_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = MixedMathLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
 
 #[test]
 fn wpda_mixedmath_addint_0_0() {
@@ -2507,75 +2325,189 @@ fn wpda_mixedmath_addint_2_5() {
         "{} should evaluate to at least one normal form", input_str);
 }
 
-// ═══════════════════════════════════════════════════════════
-// Phase 5b: Type preservation tests
-// ═══════════════════════════════════════════════════════════
+#[test]
+fn wpda_mixedmath_addint_3_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
 
 #[test]
-fn type_pres_mixedmath_and_true_true() {
+fn wpda_mixedmath_addint_3_1() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Bool
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_addint_3_2() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(2i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_addint_3_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_addint_3_5() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::AddInt(std::sync::Arc::new(Int::NumLit(3i32)), std::sync::Arc::new(Int::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_and_true_true() {
+    mettail_runtime::clear_var_cache();
     let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
-    }
-}
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
 }
 
 #[test]
-fn type_pres_mixedmath_or_true_true() {
+fn wpda_mixedmath_and_true_false() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Bool
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_and_false_true() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_and_false_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_or_true_true() {
+    mettail_runtime::clear_var_cache();
     let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
-    }
-}
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
 }
 
 #[test]
-fn type_pres_mixedmath_not_true() {
+fn wpda_mixedmath_or_true_false() {
     mettail_runtime::clear_var_cache();
-    { // Type preservation test for category Bool
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_or_false_true() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_or_false_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(false)), std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_mixedmath_not_true() {
+    mettail_runtime::clear_var_cache();
     let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
     let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    let nfs = results.normal_forms();
-    assert!(!nfs.is_empty(),
-        "type preservation: {} should produce at least one normal form", input_str);
-    // Verify each normal form can be displayed and re-parsed (type preservation)
-    for nf in &nfs {
-        let nf_display = &nf.display;
-        let re_parsed = lang.parse_term(nf_display);
-        assert!(re_parsed.is_ok(),
-            "type preservation: normal form '{}' should be parseable in same category", nf_display);
-    }
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
 }
+
+#[test]
+fn wpda_mixedmath_not_false() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(false)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
 }
+
+// ═══════════════════════════════════════════════════════════
+// Phase 5b: Type preservation tests
+// ═══════════════════════════════════════════════════════════
 
 #[test]
 fn type_pres_mixedmath_addint_0_0() {
@@ -2626,6 +2558,72 @@ fn type_pres_mixedmath_mulint_0_0() {
     mettail_runtime::clear_var_cache();
     { // Type preservation test for category Int
     let input_term = Int::MulInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs = results.normal_forms();
+    assert!(!nfs.is_empty(),
+        "type preservation: {} should produce at least one normal form", input_str);
+    // Verify each normal form can be displayed and re-parsed (type preservation)
+    for nf in &nfs {
+        let nf_display = &nf.display;
+        let re_parsed = lang.parse_term(nf_display);
+        assert!(re_parsed.is_ok(),
+            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    }
+}
+}
+
+#[test]
+fn type_pres_mixedmath_and_true_true() {
+    mettail_runtime::clear_var_cache();
+    { // Type preservation test for category Bool
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs = results.normal_forms();
+    assert!(!nfs.is_empty(),
+        "type preservation: {} should produce at least one normal form", input_str);
+    // Verify each normal form can be displayed and re-parsed (type preservation)
+    for nf in &nfs {
+        let nf_display = &nf.display;
+        let re_parsed = lang.parse_term(nf_display);
+        assert!(re_parsed.is_ok(),
+            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    }
+}
+}
+
+#[test]
+fn type_pres_mixedmath_or_true_true() {
+    mettail_runtime::clear_var_cache();
+    { // Type preservation test for category Bool
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = MixedMathLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    let nfs = results.normal_forms();
+    assert!(!nfs.is_empty(),
+        "type preservation: {} should produce at least one normal form", input_str);
+    // Verify each normal form can be displayed and re-parsed (type preservation)
+    for nf in &nfs {
+        let nf_display = &nf.display;
+        let re_parsed = lang.parse_term(nf_display);
+        assert!(re_parsed.is_ok(),
+            "type preservation: normal form '{}' should be parseable in same category", nf_display);
+    }
+}
+}
+
+#[test]
+fn type_pres_mixedmath_not_true() {
+    mettail_runtime::clear_var_cache();
+    { // Type preservation test for category Bool
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
     let input_str = format!("{}", input_term);
     let lang = MixedMathLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

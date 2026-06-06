@@ -1,5 +1,4 @@
-//! Test exec for empty collections - minimal repro for TrailingTokens/LParen bug
-//! Also tests non-empty collections.
+//! Regression coverage for empty and non-empty collection parsing.
 use mettail_languages::calculator::{self as calc};
 use mettail_runtime::Language;
 

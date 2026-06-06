@@ -21,12 +21,10 @@ fn wpds_parse_procint_from_int_literal() {
     let mut pos = 0usize;
     let result = parse_Proc_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
-        Ok(Proc::ProcInt(boxed_int)) => {
-            match boxed_int.as_ref() {
-                Int::NumLit(42) => {}
-                other => panic!("expected Int::NumLit(42), got {:?}", other),
-            }
-        }
+        Ok(Proc::ProcInt(boxed_int)) => match boxed_int.as_ref() {
+            Int::NumLit(42) => {},
+            other => panic!("expected Int::NumLit(42), got {:?}", other),
+        },
         other => panic!("expected Proc::ProcInt(Int::NumLit(42)), got {:?}", other),
     }
     assert_eq!(pos, 1);
@@ -48,7 +46,7 @@ fn wpds_parse_eqint_cross_cat_infix() {
         Ok(Bool::EqInt(a, b)) => {
             assert!(matches!(a.as_ref(), Int::NumLit(1)));
             assert!(matches!(b.as_ref(), Int::NumLit(2)));
-        }
+        },
         other => panic!("expected Bool::EqInt(NumLit(1), NumLit(2)), got {:?}", other),
     }
     assert_eq!(pos, 3);

@@ -18,10 +18,10 @@ use std::time::Duration;
 use mettail_prattail::automata::codegen::generate_lexer_code;
 use mettail_prattail::automata::minimize::minimize_dfa;
 use mettail_prattail::automata::nfa::build_nfa;
-use mettail_prattail::LiteralPatterns;
 use mettail_prattail::automata::partition::compute_equivalence_classes;
 use mettail_prattail::automata::subset::subset_construction;
 use mettail_prattail::lexer::{extract_terminals, generate_lexer};
+use mettail_prattail::LiteralPatterns;
 
 use bench_specs::{complex_spec, medium_spec, minimal_spec, prepare, small_spec, synthetic_spec};
 
@@ -87,7 +87,13 @@ fn bench_build_nfa(c: &mut Criterion) {
     for (name, spec) in &specs {
         let prepared = prepare(spec);
         group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
-            b.iter(|| build_nfa(&prepared.lexer_input.terminals, &prepared.lexer_input.needs, &LiteralPatterns::default()));
+            b.iter(|| {
+                build_nfa(
+                    &prepared.lexer_input.terminals,
+                    &prepared.lexer_input.needs,
+                    &LiteralPatterns::default(),
+                )
+            });
         });
     }
 

@@ -179,7 +179,6 @@ pub enum StoreValue {
     Void,
 
     // ── CESK-8: Ascent Datalog bridge ───────────────────────────────────
-
     /// An Ascent-derived relation stored in the CESK store.
     ///
     /// After Ascent fixpoint completes, key relations (`rw_*`, `eq_*`, `fold_*`)
@@ -194,7 +193,6 @@ pub enum StoreValue {
     },
 
     // ── CESK-9: Type system constraint store ────────────────────────────
-
     /// A refinement type constraint stored alongside a variable's value.
     ///
     /// When a refinement-typed variable is bound, the constraint is stored
@@ -211,7 +209,6 @@ pub enum StoreValue {
     },
 
     // ── CESK-10: Meta-level rewriting ───────────────────────────────────
-
     /// A first-class rewrite rule stored in the CESK store.
     ///
     /// Makes rewrite rules first-class store values, enabling MeTTa-style
@@ -231,7 +228,6 @@ pub enum StoreValue {
     },
 
     // ── CESK-11: E-graph bridge ─────────────────────────────────────────
-
     /// An e-graph equivalence class exposed to the evaluator.
     ///
     /// After equality saturation completes, e-classes are exported to the
@@ -321,11 +317,9 @@ impl StoreValue {
     /// Extract the constraint components, or `None`.
     pub fn as_constraint(&self) -> Option<(&str, &str, &[String])> {
         match self {
-            StoreValue::Constraint {
-                domain,
-                predicate,
-                bindings,
-            } => Some((domain, predicate, bindings)),
+            StoreValue::Constraint { domain, predicate, bindings } => {
+                Some((domain, predicate, bindings))
+            },
             _ => None,
         }
     }
@@ -359,11 +353,9 @@ impl StoreValue {
     /// Extract the e-class components, or `None`.
     pub fn as_eclass(&self) -> Option<(u64, &[String], &str)> {
         match self {
-            StoreValue::EClass {
-                class_id,
-                members,
-                cost_leader,
-            } => Some((*class_id, members, cost_leader)),
+            StoreValue::EClass { class_id, members, cost_leader } => {
+                Some((*class_id, members, cost_leader))
+            },
             _ => None,
         }
     }
@@ -375,32 +367,19 @@ impl fmt::Display for StoreValue {
             StoreValue::Simple(s) => write!(f, "{}", s),
             StoreValue::Closure { body, env_snapshot } => {
                 write!(f, "<closure({} bindings) {}>", env_snapshot.len(), body)
-            }
+            },
             StoreValue::ChannelRef(ch_id) => write!(f, "<channel-ref {}>", ch_id),
             StoreValue::Void => write!(f, "void"),
             StoreValue::Relation { name, tuples } => {
                 write!(f, "<relation {} ({} tuples)>", name, tuples.len())
-            }
-            StoreValue::Constraint {
-                domain, predicate, ..
-            } => write!(f, "<constraint {}:{}>", domain, predicate),
-            StoreValue::RewriteRule {
-                name,
-                active,
-                priority,
-                ..
-            } => write!(
-                f,
-                "<rule {} p={} {}>",
-                name,
-                priority,
-                if *active { "on" } else { "off" }
-            ),
-            StoreValue::EClass {
-                class_id,
-                members,
-                cost_leader,
-            } => write!(
+            },
+            StoreValue::Constraint { domain, predicate, .. } => {
+                write!(f, "<constraint {}:{}>", domain, predicate)
+            },
+            StoreValue::RewriteRule { name, active, priority, .. } => {
+                write!(f, "<rule {} p={} {}>", name, priority, if *active { "on" } else { "off" })
+            },
+            StoreValue::EClass { class_id, members, cost_leader } => write!(
                 f,
                 "<eclass #{} ({} members, leader={})>",
                 class_id,
@@ -443,10 +422,7 @@ pub struct LocalCeskStore {
 impl LocalCeskStore {
     /// Create an empty local store.
     pub fn new() -> Self {
-        Self {
-            cells: HashMap::new(),
-            next_addr: 0,
-        }
+        Self { cells: HashMap::new(), next_addr: 0 }
     }
 
     /// Create a local store with pre-allocated capacity.
@@ -755,10 +731,7 @@ pub struct PersistentLocalStore {
 impl PersistentLocalStore {
     /// Create an empty persistent local store.
     pub fn new() -> Self {
-        Self {
-            cells: im::HashMap::new(),
-            next_addr: 0,
-        }
+        Self { cells: im::HashMap::new(), next_addr: 0 }
     }
 
     /// Allocate a fresh address without storing a value.
@@ -873,16 +846,16 @@ impl PersistentLocalStore {
                         roots.push(*id);
                     }
                 }
-            }
+            },
             // These variants don't contain store address references
             StoreValue::Simple(_)
             | StoreValue::Void
             | StoreValue::Relation { .. }
             | StoreValue::Constraint { .. }
             | StoreValue::RewriteRule { .. }
-            | StoreValue::EClass { .. } => {}
+            | StoreValue::EClass { .. } => {},
             // ChannelRef is already in global store (no nested addrs)
-            StoreValue::ChannelRef(_) => {}
+            StoreValue::ChannelRef(_) => {},
         }
     }
 }
@@ -963,11 +936,7 @@ pub struct GcSnapshot {
 impl GcSnapshot {
     /// Create a new GC snapshot.
     pub fn new(roots: Vec<u64>, store_cells: HashMap<u64, StoreValue>, epoch: u64) -> Self {
-        Self {
-            roots,
-            store_cells,
-            epoch,
-        }
+        Self { roots, store_cells, epoch }
     }
 
     /// Number of roots in this snapshot.
@@ -1160,7 +1129,10 @@ impl KCfaAlloc {
 
 impl AllocStrategy for KCfaAlloc {
     fn tick(&self, config: &CeskConfig) {
-        let mut ctx = self.context.lock().expect("KCfaAlloc context lock poisoned");
+        let mut ctx = self
+            .context
+            .lock()
+            .expect("KCfaAlloc context lock poisoned");
         if ctx.len() >= self.k {
             ctx.remove(0);
         }
@@ -1171,7 +1143,10 @@ impl AllocStrategy for KCfaAlloc {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         var.hash(&mut hasher);
-        let ctx = self.context.lock().expect("KCfaAlloc context lock poisoned");
+        let ctx = self
+            .context
+            .lock()
+            .expect("KCfaAlloc context lock poisoned");
         for expr in ctx.iter() {
             expr.hash(&mut hasher);
         }
@@ -1530,8 +1505,7 @@ mod tests {
                     thread::spawn(move || {
                         let mut addrs = Vec::new();
                         for _ in 0..100 {
-                            let addr =
-                                store.alloc_with(StoreValue::Simple("val".to_string()));
+                            let addr = store.alloc_with(StoreValue::Simple("val".to_string()));
                             addrs.push(addr);
                         }
                         addrs

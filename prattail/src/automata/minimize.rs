@@ -282,11 +282,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     // triples `(accept, weight, alt_accepts)` coincide. A BTreeMap with
     // a composite key runs once, outside the refinement loop, so the
     // `alt_accepts` Vec clone into the key is amortized over n, not n².
-    type PartitionKey<'a> = (
-        Option<&'a super::TokenKind>,
-        u64,
-        Vec<(&'a super::TokenKind, u64)>,
-    );
+    type PartitionKey<'a> = (Option<&'a super::TokenKind>, u64, Vec<(&'a super::TokenKind, u64)>);
     let mut accept_groups: BTreeMap<PartitionKey<'_>, Vec<u32>> = BTreeMap::new();
     for (i, state) in dfa.states.iter().enumerate() {
         let weight_bits = state.weight.value().to_bits();
@@ -387,8 +383,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     // One new state per final state block, with the representative's
     // accept/weight/alt_accepts. The start block gets new id 0.
     let final_block_count = state_partition.set_count;
-    let mut block_to_new: Vec<StateId> =
-        vec![DEAD_STATE; final_block_count as usize];
+    let mut block_to_new: Vec<StateId> = vec![DEAD_STATE; final_block_count as usize];
 
     let start_block = state_partition.set_of[dfa.start as usize];
     let mut new_dfa = Dfa::new(num_classes);
@@ -514,11 +509,11 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
 mod tests {
     use super::*;
     use crate::automata::nfa::{build_nfa, BuiltinNeeds};
-    use crate::LiteralPatterns;
     use crate::automata::partition::compute_equivalence_classes;
     use crate::automata::subset::subset_construction;
     use crate::automata::TerminalPattern;
     use crate::automata::TokenKind;
+    use crate::LiteralPatterns;
 
     #[test]
     fn test_minimize_simple() {
@@ -713,10 +708,7 @@ mod tests {
         let dfa_state = &min_dfa.states[state as usize];
 
         // Primary still Fixed("error")
-        assert_eq!(
-            dfa_state.accept,
-            Some(TokenKind::Fixed("error".to_string())),
-        );
+        assert_eq!(dfa_state.accept, Some(TokenKind::Fixed("error".to_string())),);
 
         // alt_accepts preserved with both kinds
         assert!(
@@ -734,13 +726,11 @@ mod tests {
         // After "if" → ambiguous (keyword + ident). After "in" → ambiguous (keyword + ident).
         // After "ix" → unambiguous (just ident). Minimization must NOT merge "if" and "ix"
         // states since they differ in alt_accepts.
-        let terminals = vec![
-            TerminalPattern {
-                text: "if".to_string(),
-                kind: TokenKind::Fixed("if".to_string()),
-                is_keyword: true,
-            },
-        ];
+        let terminals = vec![TerminalPattern {
+            text: "if".to_string(),
+            kind: TokenKind::Fixed("if".to_string()),
+            is_keyword: true,
+        }];
         let needs = BuiltinNeeds {
             ident: true,
             integer: false,
@@ -800,9 +790,9 @@ mod tests {
         use std::time::Instant;
 
         let ops = [
-            "+", "-", "*", "/", "%", "<=", ">=", "==", "!=", "<", ">", "=", "->", "=>",
-            "(", ")", "[", "]", "{", "}", ",", ";", ":", "?", "!", "&", "|", "^", "~",
-            "<<", ">>", "&&", "||", "++", "--", "+=", "-=", "*=", "/=", "%=",
+            "+", "-", "*", "/", "%", "<=", ">=", "==", "!=", "<", ">", "=", "->", "=>", "(", ")",
+            "[", "]", "{", "}", ",", ";", ":", "?", "!", "&", "|", "^", "~", "<<", ">>", "&&",
+            "||", "++", "--", "+=", "-=", "*=", "/=", "%=",
         ];
         let mut terminals: Vec<TerminalPattern> = ops
             .iter()
@@ -813,8 +803,8 @@ mod tests {
             })
             .collect();
         for kw in &[
-            "if", "then", "else", "while", "do", "true", "false", "let", "in", "fun",
-            "return", "match", "case", "of",
+            "if", "then", "else", "while", "do", "true", "false", "let", "in", "fun", "return",
+            "match", "case", "of",
         ] {
             terminals.push(TerminalPattern {
                 text: kw.to_string(),
@@ -856,9 +846,6 @@ mod tests {
             "  reduction     : {:.1}%",
             (1.0 - post_states as f64 / pre_states as f64) * 100.0
         );
-        eprintln!(
-            "  avg time ({}x): {:.1} µs per minimize_dfa call",
-            runs, per_run_us
-        );
+        eprintln!("  avg time ({}x): {:.1} µs per minimize_dfa call", runs, per_run_us);
     }
 }

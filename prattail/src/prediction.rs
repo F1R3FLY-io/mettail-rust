@@ -43,14 +43,24 @@ impl FirstSet {
 
     pub fn intersection(&self, other: &FirstSet) -> FirstSet {
         FirstSet {
-            tokens: self.tokens.iter().filter(|t| other.tokens.contains(t.as_str())).cloned().collect(),
+            tokens: self
+                .tokens
+                .iter()
+                .filter(|t| other.tokens.contains(t.as_str()))
+                .cloned()
+                .collect(),
             nullable: self.nullable && other.nullable,
         }
     }
 
     pub fn difference(&self, other: &FirstSet) -> FirstSet {
         FirstSet {
-            tokens: self.tokens.iter().filter(|t| !other.tokens.contains(t.as_str())).cloned().collect(),
+            tokens: self
+                .tokens
+                .iter()
+                .filter(|t| !other.tokens.contains(t.as_str()))
+                .cloned()
+                .collect(),
             nullable: self.nullable && !other.nullable,
         }
     }
@@ -141,7 +151,7 @@ impl DispatchAction {
             DispatchAction::Direct { rule_label, .. } => rule_label.clone(),
             DispatchAction::Lookahead { fallback, .. } => {
                 fallback.clone().unwrap_or_else(|| "Lookahead".to_string())
-            }
+            },
             DispatchAction::CrossCategory { rule_label, .. } => rule_label.clone(),
             DispatchAction::Cast { wrapper_label, .. } => wrapper_label.clone(),
             DispatchAction::Grouping { .. } => "Grouping".to_string(),
@@ -415,7 +425,11 @@ fn propagate_follow_from_items(
                 // Propagate through the body (which may be Zip(Map(...)) or Map(...))
                 let body_slice = std::slice::from_ref(body.as_ref());
                 changed |= propagate_follow_through_items(
-                    body_slice, rule_category, first_sets, follow_sets, &body_tail,
+                    body_slice,
+                    rule_category,
+                    first_sets,
+                    follow_sets,
+                    &body_tail,
                 );
             },
             crate::SyntaxItemSpec::Map { body_items } => {
@@ -441,7 +455,11 @@ fn propagate_follow_from_items(
                 let body_slice = std::slice::from_ref(body.as_ref());
                 let (suffix_first, suffix_nullable) = first_of_suffix(suffix, first_sets);
                 changed |= propagate_follow_through_items(
-                    body_slice, rule_category, first_sets, follow_sets, &suffix_first,
+                    body_slice,
+                    rule_category,
+                    first_sets,
+                    follow_sets,
+                    &suffix_first,
                 );
                 if suffix_nullable {
                     // If suffix is nullable, body NTs also inherit rule FOLLOW
@@ -505,7 +523,11 @@ fn propagate_follow_through_items(
         } else if let crate::SyntaxItemSpec::Map { body_items } = &items[j] {
             // Recurse into Map body_items with the same tail
             changed |= propagate_follow_through_items(
-                body_items, rule_category, first_sets, follow_sets, tail,
+                body_items,
+                rule_category,
+                first_sets,
+                follow_sets,
+                tail,
             );
         } else if let crate::SyntaxItemSpec::Zip { body, .. } = &items[j] {
             // Recurse into Zip body
@@ -575,7 +597,8 @@ fn first_of_suffix(
             },
             crate::SyntaxItemSpec::Sep { body, .. } => {
                 // FIRST = FIRST of body; Sep is nullable (0 iterations)
-                let (body_first, _) = first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
+                let (body_first, _) =
+                    first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
                 result.union(&body_first);
             },
             crate::SyntaxItemSpec::Map { body_items } => {
@@ -587,7 +610,8 @@ fn first_of_suffix(
             },
             crate::SyntaxItemSpec::Zip { body, .. } => {
                 // FIRST = FIRST of body; Zip delegates to body
-                let (body_first, _) = first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
+                let (body_first, _) =
+                    first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
                 result.union(&body_first);
             },
             crate::SyntaxItemSpec::Optional { inner } => {
@@ -674,10 +698,8 @@ pub fn first_of_rd_suffix(
                 // Collections can be empty, nullable — continue
             },
             RDSyntaxItem::Sep { body, .. } => {
-                let (body_first, _) = first_of_rd_suffix(
-                    std::slice::from_ref(body.as_ref()),
-                    first_sets,
-                );
+                let (body_first, _) =
+                    first_of_rd_suffix(std::slice::from_ref(body.as_ref()), first_sets);
                 result.union(&body_first);
                 // Sep is nullable (0 iterations) — continue
             },
@@ -690,10 +712,8 @@ pub fn first_of_rd_suffix(
                 }
             },
             RDSyntaxItem::Zip { body, .. } => {
-                let (body_first, _) = first_of_rd_suffix(
-                    std::slice::from_ref(body.as_ref()),
-                    first_sets,
-                );
+                let (body_first, _) =
+                    first_of_rd_suffix(std::slice::from_ref(body.as_ref()), first_sets);
                 result.union(&body_first);
                 // Zip delegates to body; body itself may be nullable
             },
@@ -908,9 +928,8 @@ fn collect_follow_referenced_categories(items: &[crate::SyntaxItemSpec]) -> Hash
                 referenced.insert(category.clone());
             },
             crate::SyntaxItemSpec::Sep { body, .. } => {
-                let inner = collect_follow_referenced_categories(
-                    std::slice::from_ref(body.as_ref()),
-                );
+                let inner =
+                    collect_follow_referenced_categories(std::slice::from_ref(body.as_ref()));
                 referenced.extend(inner);
             },
             crate::SyntaxItemSpec::Map { body_items } => {
@@ -920,9 +939,8 @@ fn collect_follow_referenced_categories(items: &[crate::SyntaxItemSpec]) -> Hash
             crate::SyntaxItemSpec::Zip { body, left_category, right_category, .. } => {
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
-                let inner = collect_follow_referenced_categories(
-                    std::slice::from_ref(body.as_ref()),
-                );
+                let inner =
+                    collect_follow_referenced_categories(std::slice::from_ref(body.as_ref()));
                 referenced.extend(inner);
             },
             crate::SyntaxItemSpec::Optional { inner } => {
@@ -1734,12 +1752,7 @@ fn collect_referenced_categories(
             crate::SyntaxItemSpec::Map { body_items } => {
                 collect_referenced_categories(body_items, referenced);
             },
-            crate::SyntaxItemSpec::Zip {
-                left_category,
-                right_category,
-                body,
-                ..
-            } => {
+            crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
                 collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
@@ -1798,23 +1811,17 @@ pub fn build_dispatch_action_tables(
             if rd_rule.category != *cat {
                 continue;
             }
-            // Skip infix-like, collection-first, and nonterminal-first rules
-            if rd_rule.prefix_bp.is_some() {
-                // Unary prefix — still Direct, just with a different parse_fn
-                if let Some(crate::grammar::ir::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
-                    let variant = terminal_to_variant_name(t);
-                    entries
-                        .entry(variant)
-                        .or_insert_with(|| DispatchAction::Direct {
-                            rule_label: rd_rule.label.clone(),
-                            parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
-                        });
-                }
+            // Skip rules handled outside the trie-backed prefix dispatcher.
+            // Unary prefix rules are parsed by the Pratt binding-power path;
+            // collection rules are parsed by collection-specific machinery.
+            if rd_rule.is_collection || rd_rule.prefix_bp.is_some() {
                 continue;
             }
 
-            let starts_with_terminal =
-                matches!(rd_rule.items.first(), Some(crate::grammar::ir::RDSyntaxItem::Terminal(_)));
+            let starts_with_terminal = matches!(
+                rd_rule.items.first(),
+                Some(crate::grammar::ir::RDSyntaxItem::Terminal(_))
+            );
             if !starts_with_terminal {
                 continue;
             }
@@ -2009,7 +2016,7 @@ pub fn generate_sync_predicate(
     use std::fmt::Write;
     write!(
         buf,
-        "fn is_sync_{cat}<'a>(token: &Token<'a>) -> bool {{ \
+        "#[allow(dead_code, non_snake_case)] fn is_sync_{cat}<'a>(token: &Token<'a>) -> bool {{ \
             matches!(token, {pats}) \
         }}",
         cat = category,
@@ -2020,7 +2027,8 @@ pub fn generate_sync_predicate(
 
 /// Convert a token name (from FIRST/FOLLOW sets) to a match pattern string.
 fn token_to_match_pattern(token: &str) -> String {
-    crate::automata::TokenFamily::from_name(token).match_pattern()
+    crate::automata::TokenFamily::from_name(token)
+        .match_pattern()
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("Token::{}", token))
 }
@@ -2038,7 +2046,8 @@ pub fn generate_first_set_check(first_set: &FirstSet, token_var: &str) -> TokenS
                 let family = TokenFamily::from_name(t);
                 if family.has_payload() {
                     // Parse the known pattern string into a token stream
-                    let pat: proc_macro2::TokenStream = family.match_pattern()
+                    let pat: proc_macro2::TokenStream = family
+                        .match_pattern()
                         .expect("has_payload implies match_pattern is Some")
                         .parse()
                         .expect("static pattern string is valid tokens");
@@ -2092,7 +2101,10 @@ pub struct ComposedEntry {
 /// weight-accurate results. When `None`, falls back to FIRST-set filtering
 /// with rule specificity weights.
 pub fn compute_composed_dispatch(
-    ambiguous_states: &[(super::automata::StateId, Vec<(super::automata::TokenKind, super::automata::semiring::TropicalWeight)>)],
+    ambiguous_states: &[(
+        super::automata::StateId,
+        Vec<(super::automata::TokenKind, super::automata::semiring::TropicalWeight)>,
+    )],
     categories: &[String],
     first_sets: &HashMap<String, FirstSet>,
     variant_map: &super::automata::codegen::TokenVariantMap,
@@ -2143,7 +2155,7 @@ pub fn compute_composed_dispatch(
                         continue;
                     }
                     /* PredictionWfst exists but had no actions for this token;
-                       fall through to rule_infos fallback below. */
+                    fall through to rule_infos fallback below. */
                 }
 
                 // Fallback: no PredictionWfst or no actions — use FIRST-set-aware
@@ -2187,7 +2199,8 @@ pub fn compute_composed_dispatch(
                 // Emit codegen-time ambiguity warning using counting semiring:
                 // CountingWeight tracks derivation count per (category, token).
                 // count > 1 indicates ambiguity requiring tropical resolution.
-                let derivation_count = crate::automata::semiring::CountingWeight::new(entries.len() as u64);
+                let derivation_count =
+                    crate::automata::semiring::CountingWeight::new(entries.len() as u64);
                 if derivation_count.count() > 1 {
                     let alts_desc: Vec<String> = entries
                         .iter()
@@ -2311,9 +2324,9 @@ fn token_kind_to_variant_name(kind: &super::automata::TokenKind) -> String {
         | super::automata::TokenKind::RationalLit(cat)
         | super::automata::TokenKind::FixedPointLit(cat) => cat.clone(),
         super::automata::TokenKind::BooleanLit => "Boolean".to_string(),
-        super::automata::TokenKind::LexError(_) => unreachable!(
-            "LexError TokenKind in FIRST-set computation — runtime-only variant"
-        ),
+        super::automata::TokenKind::LexError(_) => {
+            unreachable!("LexError TokenKind in FIRST-set computation — runtime-only variant")
+        },
     }
 }
 
@@ -2336,10 +2349,10 @@ pub fn resolve_dispatch_winners(
             match winners.get(&key) {
                 Some((_existing_label, existing_weight)) if *existing_weight <= entry.weight => {
                     /* existing winner has equal or better weight; keep it */
-                }
+                },
                 _ => {
                     winners.insert(key, (entry.rule_label.clone(), entry.weight));
-                }
+                },
             }
         }
     }
@@ -2369,8 +2382,10 @@ pub fn build_complete_weight_map(
         for entry in entries {
             let key = (category.clone(), entry.token_variant_name.clone());
             match weight_map.get(&key) {
-                Some(&existing) if existing <= entry.weight => { /* keep better */ }
-                _ => { weight_map.insert(key, entry.weight); }
+                Some(&existing) if existing <= entry.weight => { /* keep better */ },
+                _ => {
+                    weight_map.insert(key, entry.weight);
+                },
             }
         }
     }
@@ -2396,7 +2411,8 @@ pub fn build_complete_weight_map(
                 weight_map.insert(key, 2.0);
             } else {
                 // Use the best specificity weight (lowest = most specific)
-                let best = matching.iter()
+                let best = matching
+                    .iter()
                     .map(|(_, specificity)| specificity_weight(*specificity))
                     .fold(f64::INFINITY, f64::min);
                 weight_map.insert(key, best);
@@ -2408,13 +2424,108 @@ pub fn build_complete_weight_map(
 }
 
 #[cfg(test)]
+mod dispatch_action_table_tests {
+    use super::*;
+    use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
+
+    fn rd_rule(
+        label: &str,
+        category: &str,
+        items: Vec<RDSyntaxItem>,
+        is_collection: bool,
+        prefix_bp: Option<u8>,
+    ) -> RDRuleInfo {
+        RDRuleInfo {
+            label: label.to_string(),
+            category: category.to_string(),
+            items,
+            has_binder: false,
+            has_multi_binder: false,
+            is_collection,
+            collection_type: None,
+            separator: None,
+            prefix_bp,
+            eval_mode: None,
+        }
+    }
+
+    #[test]
+    fn build_dispatch_tables_exclude_non_trie_direct_rules() {
+        let categories = vec!["Expr".to_string()];
+        let rd_rules = vec![
+            rd_rule("JustIf", "Expr", vec![RDSyntaxItem::Terminal("if".to_string())], false, None),
+            rd_rule(
+                "Neg",
+                "Expr",
+                vec![
+                    RDSyntaxItem::Terminal("-".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        param_name: "x".to_string(),
+                        category: "Expr".to_string(),
+                    },
+                ],
+                false,
+                Some(9),
+            ),
+            rd_rule(
+                "ListLit",
+                "Expr",
+                vec![RDSyntaxItem::Terminal("list".to_string())],
+                true,
+                None,
+            ),
+        ];
+
+        let tables = build_dispatch_action_tables(
+            &categories,
+            &HashMap::new(),
+            &HashMap::new(),
+            &rd_rules,
+            &[],
+            &[],
+            &HashMap::new(),
+        );
+        let expr = tables.get("Expr").expect("Expr table");
+
+        assert!(expr.contains_key("KwIf"), "ordinary terminal-first RD rule should be included");
+        assert!(!expr.contains_key("Minus"), "prefix-BP rule should not be in trie WFST");
+        assert!(!expr.contains_key("KwList"), "collection rule should not be in trie WFST");
+    }
+
+    #[test]
+    fn build_dispatch_tables_keep_category_named_native_literals() {
+        let categories = vec!["Fixed".to_string()];
+        let native_types = HashMap::from([(
+            "Fixed".to_string(),
+            Some("mettail_runtime::CanonicalFixedPoint".to_string()),
+        )]);
+
+        let tables = build_dispatch_action_tables(
+            &categories,
+            &HashMap::new(),
+            &HashMap::new(),
+            &[],
+            &[],
+            &[],
+            &native_types,
+        );
+        let fixed = tables.get("Fixed").expect("Fixed table");
+
+        assert!(
+            matches!(
+                fixed.get("Fixed"),
+                Some(DispatchAction::Direct { rule_label, parse_fn })
+                    if rule_label == "FixedLit" && parse_fn == "parse_fixed_literal"
+            ),
+            "category-named native literal dispatch should remain available"
+        );
+    }
+}
+
+#[cfg(test)]
 mod composed_dispatch_tests {
     use super::*;
-    use crate::automata::{
-        codegen::TokenVariantMap,
-        semiring::TropicalWeight,
-        TokenKind,
-    };
+    use crate::automata::{codegen::TokenVariantMap, semiring::TropicalWeight, TokenKind};
 
     fn make_variant_map() -> TokenVariantMap {
         TokenVariantMap::from_token_kinds(&[
@@ -2431,9 +2542,7 @@ mod composed_dispatch_tests {
             RuleInfo {
                 label: "CompareProc".to_string(),
                 category: "Proc".to_string(),
-                first_items: vec![
-                    FirstItem::Terminal("error".to_string()),
-                ],
+                first_items: vec![FirstItem::Terminal("error".to_string())],
                 is_infix: false,
                 is_var: false,
                 is_literal: false,
@@ -2492,21 +2601,19 @@ mod composed_dispatch_tests {
         let categories = vec!["Proc".to_string(), "Int".to_string()];
 
         // Ambiguous state 7: "error" matches both Fixed("error") and Ident
-        let ambiguous_states = vec![
-            (
-                7u32,
-                vec![
-                    (
-                        TokenKind::Fixed("error".to_string()),
-                        TropicalWeight::new(0.0), // high priority
-                    ),
-                    (
-                        TokenKind::Ident,
-                        TropicalWeight::new(9.0), // low priority
-                    ),
-                ],
-            ),
-        ];
+        let ambiguous_states = vec![(
+            7u32,
+            vec![
+                (
+                    TokenKind::Fixed("error".to_string()),
+                    TropicalWeight::new(0.0), // high priority
+                ),
+                (
+                    TokenKind::Ident,
+                    TropicalWeight::new(9.0), // low priority
+                ),
+            ],
+        )];
 
         let (table, _w05) = compute_composed_dispatch(
             &ambiguous_states,
@@ -2539,10 +2646,7 @@ mod composed_dispatch_tests {
 
         // (Int, 7): only Ident is in Int's FIRST set
         let int_entries = &table[&("Int".to_string(), 7)];
-        assert!(
-            !int_entries.is_empty(),
-            "Int should have entries for Ident"
-        );
+        assert!(!int_entries.is_empty(), "Int should have entries for Ident");
         // All entries should use Ident token
         for entry in int_entries {
             assert_eq!(entry.token_variant_name, "Ident");
@@ -2686,9 +2790,7 @@ mod composed_dispatch_tests {
         let proc_entries = &table[&("Proc".to_string(), 5)];
 
         // The CrossInt rule should match Integer via NonTerminal("Int")'s FIRST set
-        let cross_int = proc_entries
-            .iter()
-            .find(|e| e.rule_label == "CrossInt");
+        let cross_int = proc_entries.iter().find(|e| e.rule_label == "CrossInt");
         assert!(
             cross_int.is_some(),
             "CrossInt should be matched for Integer token via NT FIRST set; got entries: {:?}",
@@ -2711,7 +2813,7 @@ mod composed_dispatch_tests {
     #[test]
     fn test_composed_dispatch_with_prediction_wfsts() {
         use crate::token_id::TokenIdMap;
-        use crate::wfst::{PredictionWfstBuilder, PredictionWfst};
+        use crate::wfst::{PredictionWfst, PredictionWfstBuilder};
 
         let variant_map = make_variant_map();
         let rule_infos = make_rule_infos();
@@ -2730,9 +2832,11 @@ mod composed_dispatch_tests {
         let categories = vec!["Proc".to_string(), "Int".to_string()];
 
         // Build a PredictionWfst for "Proc" that assigns specific weights
-        let token_map = TokenIdMap::from_names(
-            vec!["KwError".to_string(), "Ident".to_string(), "Integer".to_string()],
-        );
+        let token_map = TokenIdMap::from_names(vec![
+            "KwError".to_string(),
+            "Ident".to_string(),
+            "Integer".to_string(),
+        ]);
         let mut proc_builder = PredictionWfstBuilder::new("Proc", token_map.clone());
         proc_builder.add_action(
             "KwError",
@@ -2759,14 +2863,8 @@ mod composed_dispatch_tests {
         let ambiguous_states = vec![(
             7u32,
             vec![
-                (
-                    TokenKind::Fixed("error".to_string()),
-                    TropicalWeight::new(0.0),
-                ),
-                (
-                    TokenKind::Ident,
-                    TropicalWeight::new(9.0),
-                ),
+                (TokenKind::Fixed("error".to_string()), TropicalWeight::new(0.0)),
+                (TokenKind::Ident, TropicalWeight::new(9.0)),
             ],
         )];
 
@@ -2813,10 +2911,7 @@ mod composed_dispatch_tests {
 
         // (Int, 7): no PredictionWfst for Int, so should fall back to specificity
         let int_entries = &table[&("Int".to_string(), 7)];
-        assert!(
-            !int_entries.is_empty(),
-            "Int should have fallback entries for Ident; got empty",
-        );
+        assert!(!int_entries.is_empty(), "Int should have fallback entries for Ident; got empty",);
         // Int entries should NOT have WFST weight 10.0 — they use specificity fallback
         for entry in int_entries {
             assert_eq!(entry.token_variant_name, "Ident");
@@ -2837,7 +2932,10 @@ mod incremental_first_follow_tests {
         RuleInfo {
             label: label.to_string(),
             category: category.to_string(),
-            first_items: first_nts.iter().map(|nt| FirstItem::NonTerminal(nt.to_string())).collect(),
+            first_items: first_nts
+                .iter()
+                .map(|nt| FirstItem::NonTerminal(nt.to_string()))
+                .collect(),
             is_infix: false,
             is_var: false,
             is_literal: false,
@@ -2869,9 +2967,7 @@ mod incremental_first_follow_tests {
         //   B -> A          (B depends on A)
         //   C -> B          (C depends on B)
         //   D -> "y"       (D independent)
-        let categories = vec![
-            "A".to_string(), "B".to_string(), "C".to_string(), "D".to_string(),
-        ];
+        let categories = vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string()];
         let rules = vec![
             rule_term("ARule", "A", "x"),
             rule_nt("BRule", "B", &["A"]),
@@ -2907,9 +3003,7 @@ mod incremental_first_follow_tests {
         // Grammar rules with syntax items:
         //   Rule in category A:  A -> B "+" C
         //   Rule in category D:  D -> "y"
-        let categories = vec![
-            "A".to_string(), "B".to_string(), "C".to_string(), "D".to_string(),
-        ];
+        let categories = vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string()];
         let inputs = vec![
             FollowSetInput {
                 category: "A".to_string(),
@@ -2927,9 +3021,7 @@ mod incremental_first_follow_tests {
             },
             FollowSetInput {
                 category: "D".to_string(),
-                syntax: vec![
-                    crate::SyntaxItemSpec::Terminal("y".to_string()),
-                ],
+                syntax: vec![crate::SyntaxItemSpec::Terminal("y".to_string())],
             },
         ];
 
@@ -2952,7 +3044,9 @@ mod incremental_first_follow_tests {
     fn incremental_first_sets_match_baseline() {
         // Chain grammar: A -> "x", B -> A, C -> B, D -> "y", E -> C | D
         let categories: Vec<String> = vec!["A", "B", "C", "D", "E"]
-            .into_iter().map(String::from).collect();
+            .into_iter()
+            .map(String::from)
+            .collect();
         let rules = vec![
             rule_term("ARule", "A", "x"),
             rule_nt("BRule", "B", &["A"]),
@@ -2985,10 +3079,7 @@ mod incremental_first_follow_tests {
         // Grammar: A -> B "+", B -> "x"
         // FOLLOW(B) should include {Plus} from the rule in A.
         let categories: Vec<String> = vec!["A", "B"].into_iter().map(String::from).collect();
-        let rules = vec![
-            rule_nt("ARule", "A", &["B"]),
-            rule_term("BRule", "B", "x"),
-        ];
+        let rules = vec![rule_nt("ARule", "A", &["B"]), rule_term("BRule", "B", "x")];
         let first_sets = compute_first_sets(&rules, &categories);
 
         let inputs = vec![
@@ -3004,18 +3095,13 @@ mod incremental_first_follow_tests {
             },
             FollowSetInput {
                 category: "B".to_string(),
-                syntax: vec![
-                    crate::SyntaxItemSpec::Terminal("x".to_string()),
-                ],
+                syntax: vec![crate::SyntaxItemSpec::Terminal("x".to_string())],
             },
         ];
 
-        let baseline = compute_follow_sets_from_inputs(
-            &inputs, &categories, &first_sets, "A",
-        );
-        let (incremental, stats) = compute_follow_sets_incremental(
-            &inputs, &categories, &first_sets, "A",
-        );
+        let baseline = compute_follow_sets_from_inputs(&inputs, &categories, &first_sets, "A");
+        let (incremental, stats) =
+            compute_follow_sets_incremental(&inputs, &categories, &first_sets, "A");
 
         for cat in &categories {
             let b_tokens = &baseline[cat].tokens;
@@ -3037,7 +3123,9 @@ mod incremental_first_follow_tests {
         // 4 independent categories, each with a terminal rule.
         // After the first iteration, none should be dirty.
         let categories: Vec<String> = vec!["A", "B", "C", "D"]
-            .into_iter().map(String::from).collect();
+            .into_iter()
+            .map(String::from)
+            .collect();
         let rules = vec![
             rule_term("ARule", "A", "a"),
             rule_term("BRule", "B", "b"),
@@ -3049,8 +3137,7 @@ mod incremental_first_follow_tests {
 
         // All FIRST sets should have exactly 1 token
         for cat in &categories {
-            assert_eq!(first_sets[cat].tokens.len(), 1,
-                "FIRST({}) should have 1 token", cat);
+            assert_eq!(first_sets[cat].tokens.len(), 1, "FIRST({}) should have 1 token", cat);
         }
 
         // Should converge in 2 iterations: first adds all tokens, second finds no changes
@@ -3067,8 +3154,7 @@ mod incremental_first_follow_tests {
         // Iteration 1: all dirty. A gets {KwX}, B gets {KwX} from A, C gets {KwX} from B.
         // All converge in iteration 1 if lucky (B reads A's newly-updated set).
         // But propagation may require 2 iterations depending on visit order.
-        let categories: Vec<String> = vec!["A", "B", "C"]
-            .into_iter().map(String::from).collect();
+        let categories: Vec<String> = vec!["A", "B", "C"].into_iter().map(String::from).collect();
         let rules = vec![
             rule_term("ARule", "A", "x"),
             rule_nt("BRule", "B", &["A"]),
@@ -3082,7 +3168,8 @@ mod incremental_first_follow_tests {
         for cat in &categories {
             assert_eq!(
                 baseline[cat].tokens, incremental[cat].tokens,
-                "FIRST({}) should match baseline", cat,
+                "FIRST({}) should match baseline",
+                cat,
             );
         }
 
@@ -3090,9 +3177,11 @@ mod incremental_first_follow_tests {
         // less than or equal to total_categories * iterations (the baseline approach).
         // With incremental, after iteration 1, only categories downstream of changes
         // are revisited.
-        assert!(stats.iterations <= 3,
+        assert!(
+            stats.iterations <= 3,
             "chain of 3 should converge in at most 3 iterations; got {}",
-            stats.iterations);
+            stats.iterations
+        );
     }
 
     #[test]
@@ -3103,7 +3192,9 @@ mod incremental_first_follow_tests {
         // Iteration 2 only needs to revisit C and D (dependents of A and B).
         // But since C and D also converge, nothing more is needed.
         let categories: Vec<String> = vec!["A", "B", "C", "D", "E"]
-            .into_iter().map(String::from).collect();
+            .into_iter()
+            .map(String::from)
+            .collect();
         let rules = vec![
             rule_term("ARule", "A", "x"),
             rule_term("BRule", "B", "y"),
@@ -3125,7 +3216,11 @@ mod incremental_first_follow_tests {
         // So next_dirty = {C, D} (because A and B changed, and C depends on A, D depends on B).
         //
         // Iteration 2: visits C and D. No new tokens. No changes. Loop ends.
-        assert_eq!(stats.iterations, 2, "should converge in 2 iterations; got {}", stats.iterations);
+        assert_eq!(
+            stats.iterations, 2,
+            "should converge in 2 iterations; got {}",
+            stats.iterations
+        );
         // Visits: 5 (iter1) + 2 (iter2) = 7. Baseline would do 5 * 2 = 10.
         assert_eq!(stats.total_visits, 7, "should have 7 total visits; got {}", stats.total_visits);
         assert!(stats.reduced_work(), "incremental should have reduced work");
@@ -3203,10 +3298,14 @@ mod first_set_tests {
     #[test]
     fn test_first_set_intersection() {
         let mut a = FirstSet::new();
-        for tok in &["A", "B", "C"] { a.insert(tok); }
+        for tok in &["A", "B", "C"] {
+            a.insert(tok);
+        }
 
         let mut b = FirstSet::new();
-        for tok in &["B", "C", "D"] { b.insert(tok); }
+        for tok in &["B", "C", "D"] {
+            b.insert(tok);
+        }
 
         let result = a.intersection(&b);
         assert_eq!(result.len(), 2, "intersection of {{A,B,C}} and {{B,C,D}} should have 2 tokens");
@@ -3240,7 +3339,9 @@ mod first_set_tests {
     #[test]
     fn test_first_set_difference() {
         let mut a = FirstSet::new();
-        for tok in &["A", "B", "C"] { a.insert(tok); }
+        for tok in &["A", "B", "C"] {
+            a.insert(tok);
+        }
 
         let mut b = FirstSet::new();
         b.insert("B");
@@ -3279,8 +3380,11 @@ mod first_set_tests {
         fs.insert("Mango");
 
         let sorted = fs.sorted_tokens();
-        assert_eq!(sorted, vec!["Alpha", "Mango", "Zebra"],
-            "sorted_tokens should return alphabetically sorted list");
+        assert_eq!(
+            sorted,
+            vec!["Alpha", "Mango", "Zebra"],
+            "sorted_tokens should return alphabetically sorted list"
+        );
     }
 
     #[test]
@@ -3424,10 +3528,7 @@ pub fn compute_context_sensitive_first_sets(
 
             // Only store if the refined set is actually smaller (more precise)
             if refined.tokens.len() < base_first.tokens.len() {
-                cs_first.insert(
-                    (callee_cat.clone(), caller_cat.clone()),
-                    refined,
-                );
+                cs_first.insert((callee_cat.clone(), caller_cat.clone()), refined);
             }
         }
     }

@@ -27,7 +27,6 @@ use mettail_runtime::BehavioralPred;
 //   - BigInt::NegBigInt
 //   - BigInt::SubBigInt
 //   - BigInt::UInt32ToBigInt
-//   - BigIntToBigRat
 //   - BigRat::AddBigRat
 //   - BigRat::BigIntToBigRat
 //   - BigRat::BigratCast
@@ -84,9 +83,6 @@ use mettail_runtime::BehavioralPred;
 //   - Bool::ProcToBool
 //   - Bool::StrToBool
 //   - Bool::Xor
-//   - BoolToBigInt
-//   - BoolToBigRat
-//   - BoolToUInt32
 //   - Fixed::AddFixed
 //   - Fixed::BitAndFixed
 //   - Fixed::BitNotFixed
@@ -97,7 +93,6 @@ use mettail_runtime::BehavioralPred;
 //   - Fixed::MulFixed
 //   - Fixed::NegFixed
 //   - Fixed::SubFixed
-//   - FixedToBigRat
 //   - Float::AddFloat
 //   - Float::BoolToFloat
 //   - Float::CosFloat
@@ -113,7 +108,6 @@ use mettail_runtime::BehavioralPred;
 //   - Float::SinFloat
 //   - Float::StrToFloat
 //   - Float::SubFloat
-//   - FloatToBigRat
 //   - Int::AddInt
 //   - Int::BitAndInt
 //   - Int::BitNotInt
@@ -136,8 +130,6 @@ use mettail_runtime::BehavioralPred;
 //   - Int::StrToInt
 //   - Int::SubInt
 //   - Int::Tern
-//   - IntToBigInt
-//   - IntToBigRat
 //   - List::ConcatList
 //   - List::DeleteList
 //   - List::KeysMap
@@ -160,15 +152,6 @@ use mettail_runtime::BehavioralPred;
 //   - Proc::ProcMap
 //   - Proc::ProcStr
 //   - Proc::ProcUInt32
-//   - ProcBag
-//   - ProcBigInt
-//   - ProcBigRat
-//   - ProcBool
-//   - ProcInt
-//   - ProcList
-//   - ProcMap
-//   - ProcStr
-//   - ProcUInt32
 //   - Str::AddStr
 //   - Str::BoolToStr
 //   - Str::Concat
@@ -183,19 +166,11 @@ use mettail_runtime::BehavioralPred;
 //   - UInt32::BoolToUInt32
 //   - UInt32::CastErrUInt32
 //   - UInt32::UIntBin
-//   - UInt32ToBigInt
-//   - UInt32ToBigRat
 // Constructor weights (lower = more frequent):
-//   BagLit               weight: 0.0000
 //   BigIntLit            weight: 0.0000
 //   BigRatLit            weight: 0.0000
 //   BigintCast           weight: 0.0000
 //   BigratCast           weight: 0.0000
-//   BitNotBigInt         weight: 0.0000
-//   BitNotBigRat         weight: 0.0000
-//   BitNotFixed          weight: 0.0000
-//   BitNotInt            weight: 0.0000
-//   BitNotUInt32         weight: 0.0000
 //   BoolLit              weight: 0.0000
 //   BoolToStr            weight: 0.0000
 //   CastErrBigInt        weight: 0.0000
@@ -206,18 +181,24 @@ use mettail_runtime::BehavioralPred;
 //   ConcatList           weight: 0.0000
 //   CosFloat             weight: 0.0000
 //   CountBag             weight: 0.0000
-//   ... and 221 more
+//   DeleteList           weight: 0.0000
+//   DeleteMap            weight: 0.0000
+//   DiffBag              weight: 0.0000
+//   ElemList             weight: 0.0000
+//   EqFixed              weight: 0.0000
+//   EqFloat              weight: 0.0000
+//   ... and 207 more
 // Category weights:
-//   Bool                 weight: 0.0179
-//   Int                  weight: 0.1667
-//   Float                weight: 0.2000
-//   BigRat               weight: 0.2778
-//   Fixed                weight: 0.2857
-//   List                 weight: 0.2857
-//   BigInt               weight: 0.3125
-//   Bag                  weight: 0.3333
-//   Map                  weight: 0.3333
-//   UInt32               weight: 0.3333
+//   Bool                 weight: 0.0185
+//   Int                  weight: 0.2000
+//   Float                weight: 0.2222
+//   List                 weight: 0.3333
+//   BigRat               weight: 0.3571
+//   Bag                  weight: 0.4000
+//   Fixed                weight: 0.4000
+//   Map                  weight: 0.4000
+//   UInt32               weight: 0.4000
+//   BigInt               weight: 0.4167
 //   Proc                 weight: 0.5000
 //   Str                  weight: 0.5000
 //
@@ -226,17 +207,17 @@ use mettail_runtime::BehavioralPred;
 // WPDS path coverage plan
 // ─────────────────────────────────────────────────────────
 //   Proc                 budget:   1  (category weight: 0.5000)
-//   Int                  budget:   3  (category weight: 0.1667)
-//   UInt32               budget:   1  (category weight: 0.3333)
-//   BigInt               budget:   1  (category weight: 0.3125)
-//   BigRat               budget:   2  (category weight: 0.2778)
-//   Fixed                budget:   1  (category weight: 0.2857)
-//   Float                budget:   2  (category weight: 0.2000)
-//   Bool                 budget:  24  (category weight: 0.0179)
+//   Int                  budget:   2  (category weight: 0.2000)
+//   UInt32               budget:   1  (category weight: 0.4000)
+//   BigInt               budget:   1  (category weight: 0.4167)
+//   BigRat               budget:   1  (category weight: 0.3571)
+//   Fixed                budget:   1  (category weight: 0.4000)
+//   Float                budget:   2  (category weight: 0.2222)
+//   Bool                 budget:  25  (category weight: 0.0185)
 //   Str                  budget:   1  (category weight: 0.5000)
-//   List                 budget:   1  (category weight: 0.2857)
-//   Bag                  budget:   1  (category weight: 0.3333)
-//   Map                  budget:   1  (category weight: 0.3333)
+//   List                 budget:   1  (category weight: 0.3333)
+//   Bag                  budget:   1  (category weight: 0.4000)
+//   Map                  budget:   1  (category weight: 0.4000)
 //
 
 // ═══════════════════════════════════════════════════════════
@@ -14735,30 +14716,6 @@ fn wfst_calculator_dispatch_fraction_eval() {
 }
 
 #[test]
-fn wfst_calculator_dispatch_negbigrat_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_bitnotbigrat_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
 fn wfst_calculator_dispatch_eqint_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqInt(std::sync::Arc::new(Int::NumLit(0i32)), std::sync::Arc::new(Int::NumLit(0i32)));
@@ -14807,93 +14764,9 @@ fn wfst_calculator_dispatch_eqfixed_eval() {
 }
 
 #[test]
-fn wfst_calculator_dispatch_not_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
 fn wfst_calculator_dispatch_len_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::new())));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_bitnotuint32_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_negbigint_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_bitnotbigint_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = BigInt::BitNotBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_bitnotint_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::BitNotInt(std::sync::Arc::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_neg_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::Neg(std::sync::Arc::new(Int::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_negfloat_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -14942,30 +14815,6 @@ fn wfst_calculator_dispatch_expfloat_eval() {
 fn wfst_calculator_dispatch_lnfloat_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Float::LnFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_negfixed_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_calculator_dispatch_bitnotfixed_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Fixed::BitNotFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15131,6 +14980,18 @@ fn wfst_calculator_dispatch_divbigrat_eval() {
 }
 
 #[test]
+fn wfst_calculator_dispatch_negbigrat_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::NegBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
 fn wfst_calculator_dispatch_bitandbigrat_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = BigRat::BitAndBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
@@ -15146,6 +15007,18 @@ fn wfst_calculator_dispatch_bitandbigrat_eval() {
 fn wfst_calculator_dispatch_bitorbigrat_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = BigRat::BitOrBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())), std::sync::Arc::new(BigRat::RatLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_bitnotbigrat_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = BigRat::BitNotBigRat(std::sync::Arc::new(BigRat::RatLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -15434,6 +15307,114 @@ fn wfst_calculator_dispatch_gtfixed_eval() {
 fn wfst_calculator_dispatch_ltfixed_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::LtFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_lteqfixed_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::LtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_gteqfixed_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::GtEqFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_nefixed_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::NeFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_not_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Not(std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_and_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::And(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_or_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Or(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_xor_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::Xor(std::sync::Arc::new(Bool::BoolLit(true)), std::sync::Arc::new(Bool::BoolLit(true)));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_concat_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Str::Concat(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_calculator_dispatch_addstr_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Str::AddStr(std::sync::Arc::new(Str::StringLit(String::new())), std::sync::Arc::new(Str::StringLit(String::new())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16007,9 +15988,9 @@ fn wpda_calculator_len_a() {
 }
 
 #[test]
-fn wpda_calculator_len_hello() {
+fn wpda_calculator_adduint32_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::Len(std::sync::Arc::new(Str::StringLit(String::from("hello"))));
+    let input_term = UInt32::AddUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)), std::sync::Arc::new(UInt32::NumLit(0u32)));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16019,21 +16000,9 @@ fn wpda_calculator_len_hello() {
 }
 
 #[test]
-fn wpda_calculator_bitnotuint32_0() {
+fn wpda_calculator_addbigint_default_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = UInt32::BitNotUInt32(std::sync::Arc::new(UInt32::NumLit(0u32)));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_calculator_negbigint_default() {
-    mettail_runtime::clear_var_cache();
-    let input_term = BigInt::NegBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())));
+    let input_term = BigInt::AddBigInt(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::NumLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16055,9 +16024,9 @@ fn wpda_calculator_fraction_default_default() {
 }
 
 #[test]
-fn wpda_calculator_fraction_default_casterrbigint() {
+fn wpda_calculator_addfixed_default_default() {
     mettail_runtime::clear_var_cache();
-    let input_term = BigRat::Fraction(std::sync::Arc::new(BigInt::NumLit(Default::default())), std::sync::Arc::new(BigInt::CastErrBigInt));
+    let input_term = Fixed::AddFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())), std::sync::Arc::new(Fixed::FixedLit(Default::default())));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16067,9 +16036,9 @@ fn wpda_calculator_fraction_default_casterrbigint() {
 }
 
 #[test]
-fn wpda_calculator_negfixed_default() {
+fn wpda_calculator_sinfloat_0_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Fixed::NegFixed(std::sync::Arc::new(Fixed::FixedLit(Default::default())));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16079,21 +16048,9 @@ fn wpda_calculator_negfixed_default() {
 }
 
 #[test]
-fn wpda_calculator_negfloat_0_0() {
+fn wpda_calculator_sinfloat_1_0() {
     mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))));
-    let input_str = format!("{}", input_term);
-    let lang = CalculatorLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_calculator_negfloat_1_0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Float::NegFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
+    let input_term = Float::SinFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(1.0f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -16382,6 +16339,18 @@ fn wpda_calculator_eqfloat_0_0_0_5() {
 fn wpda_calculator_eqfloat_0_0_2_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.0f64))));
+    let input_str = format!("{}", input_term);
+    let lang = CalculatorLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_calculator_eqfloat_0_0_2_5() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Bool::EqFloat(std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(0.0f64))), std::sync::Arc::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(2.5f64))));
     let input_str = format!("{}", input_term);
     let lang = CalculatorLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -17542,5 +17511,5 @@ fn type_pres_calculator_bitnotuint32_0() {
 }
 }
 
-// Total operational semantics tests: 1331 (P1=868, P2a=50, P2b=24, P3a=200, P3b=0, P4a=60, P4b=40, P5a=39, P5b=50)
+// Total operational semantics tests: 1330 (P1=868, P2a=50, P2b=24, P3a=200, P3b=0, P4a=60, P4b=40, P5a=38, P5b=50)
 

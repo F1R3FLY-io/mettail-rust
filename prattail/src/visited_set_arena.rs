@@ -238,8 +238,7 @@ impl<T: Copy + Ord + Eq + Hash, const LRU_K: usize> VisitedSetArena<T, LRU_K> {
     /// for read-only inspection at non-hot sites.
     pub fn materialize(&self, stack: VisitedSetStackId) -> FxHashSet<T> {
         let n = self.len(stack);
-        let mut set: FxHashSet<T> =
-            FxHashSet::with_capacity_and_hasher(n, Default::default());
+        let mut set: FxHashSet<T> = FxHashSet::with_capacity_and_hasher(n, Default::default());
         let mut cur = stack;
         while cur != VISITED_SET_ROOT {
             let node = self.nodes[cur.0 as usize];
@@ -293,11 +292,7 @@ impl<T: Copy + Ord + Eq + Hash, const LRU_K: usize> VisitedSetArena<T, LRU_K> {
         self.lru_map.len()
     }
 
-    fn intern_push_node(
-        &mut self,
-        parent: VisitedSetStackId,
-        elem: T,
-    ) -> VisitedSetStackId {
+    fn intern_push_node(&mut self, parent: VisitedSetStackId, elem: T) -> VisitedSetStackId {
         if let Some(&existing) = self.dedup.get(&(parent, elem)) {
             return existing;
         }
@@ -307,14 +302,10 @@ impl<T: Copy + Ord + Eq + Hash, const LRU_K: usize> VisitedSetArena<T, LRU_K> {
             self.nodes[parent.0 as usize].len
         };
         let id = VisitedSetStackId(
-            u32::try_from(self.nodes.len())
-                .expect("VisitedSetArena: node count exceeds u32::MAX"),
+            u32::try_from(self.nodes.len()).expect("VisitedSetArena: node count exceeds u32::MAX"),
         );
-        self.nodes.push(ChainNode {
-            parent,
-            elem,
-            len: parent_len + 1,
-        });
+        self.nodes
+            .push(ChainNode { parent, elem, len: parent_len + 1 });
         self.dedup.insert((parent, elem), id);
         id
     }
@@ -437,15 +428,17 @@ mod tests {
     }
 
     #[test]
-    fn lru_eviction_at_K_plus_1() {
+    fn lru_eviction_at_k_plus_1() {
         let mut arena: SmallLRU = VisitedSetArena::new();
         // Construct K+1 = 5 distinct sets and contains() each once.
-        let stacks: Vec<_> = (10..15).map(|i| {
-            let s = arena.insert(VISITED_SET_ROOT, i);
-            // Force materialize-and-cache.
-            arena.contains(s, i);
-            s
-        }).collect();
+        let stacks: Vec<_> = (10..15)
+            .map(|i| {
+                let s = arena.insert(VISITED_SET_ROOT, i);
+                // Force materialize-and-cache.
+                arena.contains(s, i);
+                s
+            })
+            .collect();
         // After 5 misses, the cache holds at most K=4 entries. Oldest
         // stack should be evicted.
         assert!(arena.lru_size() <= 4);
@@ -461,11 +454,13 @@ mod tests {
     #[test]
     fn lru_miss_rebuilds_correctly_after_eviction() {
         let mut arena: SmallLRU = VisitedSetArena::new();
-        let stacks: Vec<_> = (10..20).map(|i| {
-            let s = arena.insert(VISITED_SET_ROOT, i);
-            arena.contains(s, i);
-            s
-        }).collect();
+        let stacks: Vec<_> = (10..20)
+            .map(|i| {
+                let s = arena.insert(VISITED_SET_ROOT, i);
+                arena.contains(s, i);
+                s
+            })
+            .collect();
         // Oldest stack (stacks[0]) is evicted; contains() should
         // re-materialize correctly.
         assert!(arena.contains(stacks[0], 10));

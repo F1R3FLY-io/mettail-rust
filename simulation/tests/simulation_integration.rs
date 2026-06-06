@@ -46,15 +46,12 @@ fn test_run_to_normal_form() {
     match &trace.outcome {
         TraceOutcome::NormalForm { term, .. } => {
             assert_eq!(term, "3", "Expected normal form '3', got '{}'", term);
-        }
+        },
         other => panic!("Expected NormalForm outcome, got: {:?}", other),
     }
 
     // Verify trace has at least a parse step.
-    assert!(
-        !trace.steps.is_empty(),
-        "Trace should have at least one step"
-    );
+    assert!(!trace.steps.is_empty(), "Trace should have at least one step");
     assert_eq!(trace.language, "Calculator");
 
     // Verify morphology was collected.
@@ -80,7 +77,7 @@ fn test_run_to_normal_form_nested() {
     match &trace.outcome {
         TraceOutcome::NormalForm { term, .. } => {
             assert_eq!(term, "15", "Expected normal form '15', got '{}'", term);
-        }
+        },
         other => panic!("Expected NormalForm outcome, got: {:?}", other),
     }
 }
@@ -110,7 +107,8 @@ fn test_campaign_all_pass() {
 
     assert_eq!(results.total_cases, 50, "Should run 50 cases");
     assert_eq!(
-        results.failed, 0,
+        results.failed,
+        0,
         "All cases should pass. Failures: {:?}",
         results
             .failures
@@ -121,10 +119,7 @@ fn test_campaign_all_pass() {
     assert_eq!(results.passed, 50, "All 50 cases should pass");
 
     // Verify coverage was tracked.
-    assert!(
-        !results.coverage.rules_fired.is_empty(),
-        "At least one rule should have fired"
-    );
+    assert!(!results.coverage.rules_fired.is_empty(), "At least one rule should have fired");
 }
 
 // =============================================================================
@@ -153,21 +148,19 @@ fn test_invariant_bounded_size() {
                 "Error should mention BoundedSize invariant, got: {}",
                 failure.error
             );
-        }
+        },
         Ok(trace) => {
             // The parse step should have triggered the violation
             // since "1 + 2" has 3 tokens.
             match &trace.outcome {
                 TraceOutcome::InvariantViolation { invariant, .. } => {
                     assert!(invariant.contains("BoundedSize"));
-                }
+                },
                 _ => {
-                    panic!(
-                        "Expected BoundedSize violation for '1 + 2', but simulation passed"
-                    );
-                }
+                    panic!("Expected BoundedSize violation for '1 + 2', but simulation passed");
+                },
             }
-        }
+        },
     }
 }
 
@@ -217,14 +210,8 @@ fn test_morphology_tracking() {
 
     assert_eq!(summary.total_steps, 4);
     assert!(summary.min_nodes >= 1, "Minimum nodes should be >= 1");
-    assert!(
-        summary.max_nodes >= 1,
-        "Maximum nodes should be >= 1 (for compound expr)"
-    );
-    assert!(
-        summary.distinct_shapes >= 2,
-        "Should have multiple distinct shapes"
-    );
+    assert!(summary.max_nodes >= 1, "Maximum nodes should be >= 1 (for compound expr)");
+    assert!(summary.distinct_shapes >= 2, "Should have multiple distinct shapes");
 }
 
 #[test]
@@ -241,10 +228,7 @@ fn test_morphology_from_simulation() {
         .expect("should succeed");
 
     let morphology = trace.morphology.expect("morphology should be present");
-    assert!(
-        morphology.total_steps >= 1,
-        "Should have at least 1 step recorded"
-    );
+    assert!(morphology.total_steps >= 1, "Should have at least 1 step recorded");
     assert!(morphology.min_nodes >= 1);
 }
 
@@ -261,9 +245,7 @@ fn test_jsonl_output() {
     let config = SimulationConfig {
         max_steps: 100,
         track_morphology: true,
-        trace_output: TraceOutputFormat::Jsonl {
-            path: path.clone(),
-        },
+        trace_output: TraceOutputFormat::Jsonl { path: path.clone() },
         ..SimulationConfig::default()
     };
     let runner = calc_runner(config);
@@ -281,24 +263,16 @@ fn test_jsonl_output() {
     // Verify key fields match.
     assert_eq!(recovered.seed, original_trace.seed);
     assert_eq!(recovered.language, "Calculator");
-    assert_eq!(
-        recovered.steps.len(),
-        original_trace.steps.len(),
-        "Step count should match"
-    );
+    assert_eq!(recovered.steps.len(), original_trace.steps.len(), "Step count should match");
 
     // Verify outcome.
     match (&original_trace.outcome, &recovered.outcome) {
         (
-            TraceOutcome::NormalForm {
-                term: orig_term, ..
-            },
-            TraceOutcome::NormalForm {
-                term: rec_term, ..
-            },
+            TraceOutcome::NormalForm { term: orig_term, .. },
+            TraceOutcome::NormalForm { term: rec_term, .. },
         ) => {
             assert_eq!(orig_term, rec_term, "Normal form terms should match");
-        }
+        },
         _ => panic!(
             "Outcome mismatch: original={:?}, recovered={:?}",
             original_trace.outcome, recovered.outcome
@@ -306,10 +280,7 @@ fn test_jsonl_output() {
     }
 
     // Verify morphology roundtrip.
-    assert!(
-        recovered.morphology.is_some(),
-        "Morphology should be present"
-    );
+    assert!(recovered.morphology.is_some(), "Morphology should be present");
 
     // Verify each step entry has proper fields.
     for (orig, rec) in original_trace.steps.iter().zip(recovered.steps.iter()) {
@@ -331,9 +302,7 @@ fn test_jsonl_multi_step_trace() {
     let config = SimulationConfig {
         max_steps: 100,
         track_morphology: true,
-        trace_output: TraceOutputFormat::Jsonl {
-            path: path.clone(),
-        },
+        trace_output: TraceOutputFormat::Jsonl { path: path.clone() },
         ..SimulationConfig::default()
     };
     let runner = calc_runner(config);
@@ -345,7 +314,7 @@ fn test_jsonl_multi_step_trace() {
     match &trace.outcome {
         TraceOutcome::NormalForm { term, .. } => {
             assert_eq!(term, "15");
-        }
+        },
         other => panic!("Expected NormalForm, got: {:?}", other),
     }
 
@@ -381,10 +350,7 @@ fn test_campaign_collects_failures() {
 
     // All cases should fail because "N + M" has 3 tokens > 1.
     assert_eq!(results.total_cases, 10);
-    assert_eq!(
-        results.failed, 10,
-        "All cases should fail with BoundedSize=1"
-    );
+    assert_eq!(results.failed, 10, "All cases should fail with BoundedSize=1");
 
     // Verify all failures have proper error messages.
     for failure in &results.failures {
@@ -424,10 +390,7 @@ fn test_rule_coverage_tracking() {
 
     // With addition expressions, at least AddInt-related rules should fire.
     let total_firings: usize = results.coverage.rules_fired.values().sum();
-    assert!(
-        total_firings > 0,
-        "At least some rules should have fired"
-    );
+    assert!(total_firings > 0, "At least some rules should have fired");
 }
 
 // =============================================================================
@@ -477,8 +440,7 @@ fn test_coverage_guided_basic() {
             (0i32..50, 0i32..50).prop_map(|(a, b)| format!("{} + {}", a, b)),
             (0i32..50, 0i32..50).prop_map(|(a, b)| format!("{} - {}", a, b)),
             (0i32..20, 0i32..20).prop_map(|(a, b)| format!("{} * {}", a, b)),
-            (0i32..50, 0i32..50, 0i32..50)
-                .prop_map(|(a, b, c)| format!("({} + {}) * {}", a, b, c)),
+            (0i32..50, 0i32..50, 0i32..50).prop_map(|(a, b, c)| format!("({} + {}) * {}", a, b, c)),
         ]
     };
 
@@ -514,11 +476,7 @@ fn test_coverage_guided_basic() {
     // Verify that coverage is non-zero (some rules should have fired).
     let total_rules = lang.metadata().rewrites().len();
     let final_pct = results.final_coverage.coverage_pct(total_rules);
-    assert!(
-        final_pct > 0.0,
-        "Final coverage should be > 0%, got {:.1}%",
-        final_pct,
-    );
+    assert!(final_pct > 0.0, "Final coverage should be > 0%, got {:.1}%", final_pct,);
 
     // Verify coverage is monotonically non-decreasing across iterations.
     for window in results.coverage_history.windows(2) {
@@ -534,7 +492,9 @@ fn test_coverage_guided_basic() {
     // as a single iteration.
     if results.iterations > 1 && results.coverage_history.len() >= 2 {
         let first_iter_coverage = results.coverage_history[0];
-        let last_iter_coverage = *results.coverage_history.last()
+        let last_iter_coverage = *results
+            .coverage_history
+            .last()
             .expect("coverage_history should have at least one entry");
         assert!(
             last_iter_coverage >= first_iter_coverage - f64::EPSILON,
@@ -558,8 +518,7 @@ fn test_coverage_guided_plateau() {
 
     // Only addition: this will fire AddInt rules but nothing else.
     // Coverage should plateau quickly.
-    let add_only_factory =
-        || (0i32..100, 0i32..100).prop_map(|(a, b)| format!("{} + {}", a, b));
+    let add_only_factory = || (0i32..100, 0i32..100).prop_map(|(a, b)| format!("{} + {}", a, b));
 
     let campaign = CoverageGuidedCampaign::new(lang)
         .max_iterations(10)
@@ -605,8 +564,5 @@ fn test_coverage_guided_plateau() {
     // Verify some coverage was achieved.
     let total_rules = lang.metadata().rewrites().len();
     let final_pct = results.final_coverage.coverage_pct(total_rules);
-    assert!(
-        final_pct > 0.0,
-        "Even with add-only strategy, some rules should fire",
-    );
+    assert!(final_pct > 0.0, "Even with add-only strategy, some rules should fire",);
 }

@@ -49,13 +49,13 @@ pub fn parse_predicate_via_token_source(
         match kind {
             Some(TokenKind::Fixed(ref s)) if matches!(s.as_str(), "(" | "[" | "{") => {
                 depth += 1;
-            }
+            },
             Some(TokenKind::Fixed(ref s)) if matches!(s.as_str(), ")" | "]" | "}") => {
                 if depth > 0 {
                     depth -= 1;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
         pieces.push(text);
         pos += 1;
@@ -108,14 +108,10 @@ mod tests {
         let (pred, new_pos) =
             parse_predicate_via_token_source(&src, 0).expect("parse should succeed");
         match pred {
-            BehavioralPred::RelationQuery {
-                relation_name,
-                args,
-                ..
-            } => {
+            BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "halts");
                 assert_eq!(args.len(), 1);
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
         assert_eq!(new_pos, 4);

@@ -14,8 +14,8 @@
 //! The outer driver alternates `B2_DISABLE=1` (control) / unset (treatment)
 //! runs to interleave and average out system drift.
 
-use std::time::Instant;
 use mettail_languages::calculator::Int;
+use std::time::Instant;
 
 fn right_assoc_chain(depth: usize) -> String {
     let mut s = String::with_capacity(depth * 4);

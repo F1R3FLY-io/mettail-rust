@@ -21,8 +21,8 @@
 
 use proptest::prelude::*;
 
-use crate::pipeline::CategoryInfo;
 use crate::grammar::ir::CollectionKind;
+use crate::pipeline::CategoryInfo;
 use crate::SyntaxItemSpec;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -69,11 +69,7 @@ pub fn arb_category_name() -> impl Strategy<Value = String> {
 
 /// Generate a separator token for `Collection` / `Sep` / `BinderCollection`.
 fn arb_separator() -> impl Strategy<Value = String> {
-    prop_oneof![
-        Just(",".to_string()),
-        Just(";".to_string()),
-        Just("|".to_string()),
-    ]
+    prop_oneof![Just(",".to_string()), Just(";".to_string()), Just("|".to_string()),]
 }
 
 /// Generate a param name for captures, binders, and nonterminals.
@@ -325,9 +321,7 @@ pub fn arb_grammar(
         // Step 2: for each category, generate `rules_per_cat` rules.
         let rule_strategies: Vec<_> = cat_names
             .iter()
-            .map(|name| {
-                arb_rules_for_category(name.clone(), cat_names_inner.clone(), rpc.clone())
-            })
+            .map(|name| arb_rules_for_category(name.clone(), cat_names_inner.clone(), rpc.clone()))
             .collect();
 
         // Combine all per-category rule vectors.

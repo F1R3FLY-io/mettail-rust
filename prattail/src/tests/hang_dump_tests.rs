@@ -140,9 +140,7 @@ fn publish_then_take_overrides_trigger_and_preserves_fields() {
     let original = sample_snapshot();
     crate::hang_dump::test_force_snapshot(original);
 
-    let taken = crate::hang_dump::test_take_snapshot(
-        HangTrigger::Watchdog { idle_secs: 7 },
-    );
+    let taken = crate::hang_dump::test_take_snapshot(HangTrigger::Watchdog { idle_secs: 7 });
     let snap = taken.expect("test_take_snapshot returned None after force_snapshot");
 
     // Preserved fields.
@@ -190,10 +188,8 @@ fn publish_then_take_overrides_trigger_and_preserves_fields() {
 fn walker_publishes_snapshot_during_run_to_end_of_input() {
     use crate::automata::lex_weight::LexicographicWeight;
     use crate::gss::{WpdaGss, WpdaGssNode};
-    use crate::wpda_runtime::{
-        SliceTokenSource, StackSymbolV2, WpdaState, WpdaTokenSource,
-    };
-    use crate::wpda_walker::{WpdaStepAction, WpdaEngine, WpdaWalker};
+    use crate::wpda_runtime::{SliceTokenSource, StackSymbolV2, WpdaState, WpdaTokenSource};
+    use crate::wpda_walker::{WpdaEngine, WpdaStepAction, WpdaWalker};
     use std::cell::RefCell;
 
     // Local minimal ScriptedEngine — pop the next action from a Vec
@@ -243,11 +239,10 @@ fn walker_publishes_snapshot_during_run_to_end_of_input() {
     // at all is the wiring-acceptance test — pre-Sub-commit-1,
     // `run_to_end_of_input` did NOT call `publish_to_hang_dump_slot`
     // and the slot would remain empty (test_clear_slot cleared it).
-    let snap = crate::hang_dump::test_take_snapshot(HangTrigger::Sigusr1)
-        .expect(
-            "snapshot slot empty after run_to_end_of_input — \
+    let snap = crate::hang_dump::test_take_snapshot(HangTrigger::Sigusr1).expect(
+        "snapshot slot empty after run_to_end_of_input — \
              publish_to_hang_dump_slot wiring is broken",
-        );
+    );
     assert!(
         snap.cursor_count >= 1,
         "cursor_count should be >= 1 (singleton at least); got {}",

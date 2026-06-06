@@ -395,12 +395,7 @@ fn validate_category_refs(
                 validate_category_refs(body_items, rule_label, valid_categories, errors);
             },
 
-            SyntaxItemSpec::Zip {
-                left_category,
-                right_category,
-                body,
-                ..
-            } => {
+            SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
                 if !valid_categories.contains(left_category) {
                     errors.push(CompositionError::InvalidCategoryReference {
                         rule_label: rule_label.to_string(),
@@ -776,8 +771,13 @@ pub fn compose_with_wfst(
                         severity: crate::lint::LintSeverity::Warning,
                         category: None,
                         rule: None,
-                        message: format!("composition verification [{}]: {}", result.property, violation),
-                        hint: Some("review the composed grammar for property violations".to_string()),
+                        message: format!(
+                            "composition verification [{}]: {}",
+                            result.property, violation
+                        ),
+                        hint: Some(
+                            "review the composed grammar for property violations".to_string(),
+                        ),
                         grammar_name: None,
                         source_location: None,
                     });
@@ -970,8 +970,8 @@ impl ComposedLexerParser {
         wfst_accepting_actions: impl Fn(u32) -> Vec<String>,
         num_classes: u8,
     ) -> Self {
-        use std::collections::{HashMap, VecDeque};
         use crate::automata::semiring::{Semiring, TropicalWeight};
+        use std::collections::{HashMap, VecDeque};
 
         let start = ComposedState { lexer_state: 0, wfst_state: 0 };
         let mut state_map: HashMap<ComposedState, usize> = HashMap::new();
@@ -1000,7 +1000,10 @@ impl ComposedLexerParser {
 
                 if accepts.is_empty() {
                     // Non-accepting: just advance the lexer, WFST stays in same state.
-                    let target = ComposedState { lexer_state: next_lex, wfst_state: cs.wfst_state };
+                    let target = ComposedState {
+                        lexer_state: next_lex,
+                        wfst_state: cs.wfst_state,
+                    };
                     let target_idx = *state_map.entry(target).or_insert_with(|| {
                         let idx = states.len();
                         states.push(target);
@@ -1608,15 +1611,15 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                    literal_patterns: LiteralPatterns::default(),
+                literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
                 custom_tokens: Vec::new(),
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
-            refinement_types: Vec::new(),
-            guard_config: None,
+                refinement_types: Vec::new(),
+                guard_config: None,
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1650,15 +1653,15 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                    literal_patterns: LiteralPatterns::default(),
+                literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
                 custom_tokens: Vec::new(),
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
-            refinement_types: Vec::new(),
-            guard_config: None,
+                refinement_types: Vec::new(),
+                guard_config: None,
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1705,15 +1708,15 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                    literal_patterns: LiteralPatterns::default(),
+                literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
                 custom_tokens: Vec::new(),
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
-            refinement_types: Vec::new(),
-            guard_config: None,
+                refinement_types: Vec::new(),
+                guard_config: None,
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1745,15 +1748,15 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                    literal_patterns: LiteralPatterns::default(),
+                literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
                 custom_tokens: Vec::new(),
                 modes: Vec::new(),
                 sync: None,
                 tree_invariants: Vec::new(),
-            refinement_types: Vec::new(),
-            guard_config: None,
+                refinement_types: Vec::new(),
+                guard_config: None,
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1969,10 +1972,14 @@ mod tests {
     fn test_a6_compose_single_token() {
         let composed = ComposedLexerParser::compose(
             "Expr",
-            2,  // lexer states: 0, 1
-            2,  // wfst states: 0, 1
+            2, // lexer states: 0, 1
+            2, // wfst states: 0, 1
             |state, class| {
-                if state == 0 && class == 0 { 1 } else { u32::MAX }
+                if state == 0 && class == 0 {
+                    1
+                } else {
+                    u32::MAX
+                }
             },
             |state| {
                 if state == 1 {
@@ -1995,34 +2002,53 @@ mod tests {
                     vec![]
                 }
             },
-            1,  // 1 byte class
+            1, // 1 byte class
         );
 
         assert_eq!(composed.category, "Expr");
         // States: (0,0) → (1,0) non-accepting internal step? No — state 1 is accepting,
         // so it goes (0,0) →(class 0)→ (0,1) with output "tok_a"
         // (0,1) is WFST-accepting with action "Act"
-        assert!(composed.num_states() >= 2, "expected at least 2 states, got {}", composed.num_states());
+        assert!(
+            composed.num_states() >= 2,
+            "expected at least 2 states, got {}",
+            composed.num_states()
+        );
         assert!(composed.num_transitions() >= 1, "expected at least 1 transition");
 
         // The accepting state should have WFST state 1
-        let accepting_wfst_states: Vec<u32> = composed.accepting.iter().map(|(s, _)| s.wfst_state).collect();
-        assert!(accepting_wfst_states.contains(&1), "expected WFST state 1 in accepting: {:?}", accepting_wfst_states);
+        let accepting_wfst_states: Vec<u32> = composed
+            .accepting
+            .iter()
+            .map(|(s, _)| s.wfst_state)
+            .collect();
+        assert!(
+            accepting_wfst_states.contains(&1),
+            "expected WFST state 1 in accepting: {:?}",
+            accepting_wfst_states
+        );
 
         // Check the action label
-        let actions: Vec<&str> = composed.accepting.iter()
+        let actions: Vec<&str> = composed
+            .accepting
+            .iter()
             .filter(|(s, _)| s.wfst_state == 1)
             .flat_map(|(_, a)| a.iter().map(|s| s.as_str()))
             .collect();
         assert!(actions.contains(&"Act"), "expected 'Act' in actions: {:?}", actions);
 
         // Check the transition weight: lex_weight(0.0) + wfst_weight(1.5) = 1.5
-        let token_transitions: Vec<&ComposedTransition> = composed.transitions.iter()
+        let token_transitions: Vec<&ComposedTransition> = composed
+            .transitions
+            .iter()
             .flat_map(|ts| ts.iter())
             .filter(|t| t.output_token.is_some())
             .collect();
         assert_eq!(token_transitions.len(), 1);
-        assert_eq!(token_transitions[0].weight, crate::automata::semiring::TropicalWeight::new(1.5));
+        assert_eq!(
+            token_transitions[0].weight,
+            crate::automata::semiring::TropicalWeight::new(1.5)
+        );
     }
 
     /// Two-step lexer: state 0 →(class 0)→ state 1 →(class 1)→ state 2 (accepts "kw").
@@ -2031,8 +2057,8 @@ mod tests {
     fn test_a6_compose_multi_step_lexer() {
         let composed = ComposedLexerParser::compose(
             "Stmt",
-            3,  // lexer states: 0, 1, 2
-            2,  // wfst states: 0, 1
+            3, // lexer states: 0, 1, 2
+            2, // wfst states: 0, 1
             |state, class| match (state, class) {
                 (0, 0) => 1,
                 (1, 1) => 2,
@@ -2059,29 +2085,44 @@ mod tests {
                     vec![]
                 }
             },
-            2,  // 2 byte classes
+            2, // 2 byte classes
         );
 
         // States: (0,0) →(class 0)→ (1,0) non-accepting →(class 1)→ (0,1) accepting
-        assert!(composed.num_states() >= 3, "expected at least 3 states, got {}", composed.num_states());
+        assert!(
+            composed.num_states() >= 3,
+            "expected at least 3 states, got {}",
+            composed.num_states()
+        );
 
         // Non-accepting transitions should carry weight TropicalWeight::one() (0.0)
-        let internal_transitions: Vec<&ComposedTransition> = composed.transitions.iter()
+        let internal_transitions: Vec<&ComposedTransition> = composed
+            .transitions
+            .iter()
             .flat_map(|ts| ts.iter())
             .filter(|t| t.output_token.is_none())
             .collect();
         for t in &internal_transitions {
-            assert_eq!(t.weight, crate::automata::semiring::TropicalWeight::new(0.0),
-                "internal transitions should have weight 0.0, got {:?}", t.weight);
+            assert_eq!(
+                t.weight,
+                crate::automata::semiring::TropicalWeight::new(0.0),
+                "internal transitions should have weight 0.0, got {:?}",
+                t.weight
+            );
         }
 
         // The accepting transition should carry combined weight: 0.5 + 2.0 = 2.5
-        let token_transitions: Vec<&ComposedTransition> = composed.transitions.iter()
+        let token_transitions: Vec<&ComposedTransition> = composed
+            .transitions
+            .iter()
             .flat_map(|ts| ts.iter())
             .filter(|t| t.output_token.as_deref() == Some("kw"))
             .collect();
         assert_eq!(token_transitions.len(), 1);
-        assert_eq!(token_transitions[0].weight, crate::automata::semiring::TropicalWeight::new(2.5));
+        assert_eq!(
+            token_transitions[0].weight,
+            crate::automata::semiring::TropicalWeight::new(2.5)
+        );
     }
 
     /// Ambiguous lexer: state 1 accepts both "id" (weight 1.0) and "kw" (weight 0.0).
@@ -2093,7 +2134,11 @@ mod tests {
             2,
             3,
             |state, class| {
-                if state == 0 && class == 0 { 1 } else { u32::MAX }
+                if state == 0 && class == 0 {
+                    1
+                } else {
+                    u32::MAX
+                }
             },
             |state| {
                 if state == 1 {
@@ -2116,18 +2161,31 @@ mod tests {
         );
 
         // Should produce two transitions from (0,0): one for "kw" and one for "id"
-        let token_transitions: Vec<&ComposedTransition> = composed.transitions.iter()
+        let token_transitions: Vec<&ComposedTransition> = composed
+            .transitions
+            .iter()
             .flat_map(|ts| ts.iter())
             .filter(|t| t.output_token.is_some())
             .collect();
-        assert_eq!(token_transitions.len(), 2, "expected 2 token transitions, got {}", token_transitions.len());
+        assert_eq!(
+            token_transitions.len(),
+            2,
+            "expected 2 token transitions, got {}",
+            token_transitions.len()
+        );
 
         // "kw" path: lex(0.0) + wfst(0.0) = 0.0
-        let kw_trans = token_transitions.iter().find(|t| t.output_token.as_deref() == Some("kw")).expect("kw transition");
+        let kw_trans = token_transitions
+            .iter()
+            .find(|t| t.output_token.as_deref() == Some("kw"))
+            .expect("kw transition");
         assert_eq!(kw_trans.weight, crate::automata::semiring::TropicalWeight::new(0.0));
 
         // "id" path: lex(1.0) + wfst(0.5) = 1.5
-        let id_trans = token_transitions.iter().find(|t| t.output_token.as_deref() == Some("id")).expect("id transition");
+        let id_trans = token_transitions
+            .iter()
+            .find(|t| t.output_token.as_deref() == Some("id"))
+            .expect("id transition");
         assert_eq!(id_trans.weight, crate::automata::semiring::TropicalWeight::new(1.5));
     }
 
@@ -2139,7 +2197,11 @@ mod tests {
             2,
             1,
             |state, class| {
-                if state == 0 && class == 0 { 1 } else { u32::MAX }
+                if state == 0 && class == 0 {
+                    1
+                } else {
+                    u32::MAX
+                }
             },
             |state| {
                 if state == 1 {
@@ -2154,7 +2216,9 @@ mod tests {
         );
 
         // No token transitions because WFST has no transition for "tok"
-        let token_transitions: usize = composed.transitions.iter()
+        let token_transitions: usize = composed
+            .transitions
+            .iter()
             .flat_map(|ts| ts.iter())
             .filter(|t| t.output_token.is_some())
             .count();
@@ -2170,18 +2234,30 @@ mod tests {
             3,
             2,
             |state, class| match (state, class) {
-                (0, 0) => 1,    // class 0 → state 1 (accepting)
+                (0, 0) => 1,        // class 0 → state 1 (accepting)
                 (0, 1) => u32::MAX, // class 1 → dead
                 _ => u32::MAX,
             },
             |state| {
-                if state == 1 { vec![("t".to_string(), 0.0)] } else { vec![] }
+                if state == 1 {
+                    vec![("t".to_string(), 0.0)]
+                } else {
+                    vec![]
+                }
             },
             |state, token| {
-                if state == 0 && token == "t" { vec![(1, 0.0)] } else { vec![] }
+                if state == 0 && token == "t" {
+                    vec![(1, 0.0)]
+                } else {
+                    vec![]
+                }
             },
             |state| {
-                if state == 1 { vec!["A".to_string()] } else { vec![] }
+                if state == 1 {
+                    vec!["A".to_string()]
+                } else {
+                    vec![]
+                }
             },
             2,
         );
@@ -2199,19 +2275,35 @@ mod tests {
     fn test_a6_expansion_factor() {
         let composed = ComposedLexerParser::compose(
             "X",
-            4,  // 4 lexer states
-            3,  // 3 WFST states → max 12 composed states
+            4, // 4 lexer states
+            3, // 3 WFST states → max 12 composed states
             |state, class| {
-                if state == 0 && class == 0 { 1 } else { u32::MAX }
+                if state == 0 && class == 0 {
+                    1
+                } else {
+                    u32::MAX
+                }
             },
             |state| {
-                if state == 1 { vec![("t".to_string(), 0.0)] } else { vec![] }
+                if state == 1 {
+                    vec![("t".to_string(), 0.0)]
+                } else {
+                    vec![]
+                }
             },
             |state, token| {
-                if state == 0 && token == "t" { vec![(1, 0.0)] } else { vec![] }
+                if state == 0 && token == "t" {
+                    vec![(1, 0.0)]
+                } else {
+                    vec![]
+                }
             },
             |state| {
-                if state == 1 { vec!["Act".to_string()] } else { vec![] }
+                if state == 1 {
+                    vec!["Act".to_string()]
+                } else {
+                    vec![]
+                }
             },
             1,
         );
@@ -2229,11 +2321,30 @@ mod tests {
     fn test_a6_summary_format() {
         let composed = ComposedLexerParser::compose(
             "Expr",
-            2, 2,
+            2,
+            2,
             |s, c| if s == 0 && c == 0 { 1 } else { u32::MAX },
-            |s| if s == 1 { vec![("t".to_string(), 0.0)] } else { vec![] },
-            |s, t| if s == 0 && t == "t" { vec![(1, 0.0)] } else { vec![] },
-            |s| if s == 1 { vec!["A".to_string()] } else { vec![] },
+            |s| {
+                if s == 1 {
+                    vec![("t".to_string(), 0.0)]
+                } else {
+                    vec![]
+                }
+            },
+            |s, t| {
+                if s == 0 && t == "t" {
+                    vec![(1, 0.0)]
+                } else {
+                    vec![]
+                }
+            },
+            |s| {
+                if s == 1 {
+                    vec!["A".to_string()]
+                } else {
+                    vec![]
+                }
+            },
             1,
         );
 

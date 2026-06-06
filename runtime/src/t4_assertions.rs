@@ -38,8 +38,7 @@ use std::collections::HashMap;
 /// Receives a borrow of the variable bindings collected from the rule
 /// match. Returns `true` iff the user vouches that the undecidable
 /// predicate holds for those bindings.
-pub type T4Assertion =
-    Box<dyn Fn(&HashMap<String, String>) -> bool + Send + 'static>;
+pub type T4Assertion = Box<dyn Fn(&HashMap<String, String>) -> bool + Send + 'static>;
 
 thread_local! {
     static T4_ASSERTION_TABLE: RefCell<HashMap<String, T4Assertion>> =
@@ -69,9 +68,7 @@ where
 pub fn t4_assertion_lookup(rule_label: &str) -> Option<T4AssertionHandle> {
     T4_ASSERTION_TABLE.with(|table| {
         if table.borrow().contains_key(rule_label) {
-            Some(T4AssertionHandle {
-                rule_label: rule_label.to_string(),
-            })
+            Some(T4AssertionHandle { rule_label: rule_label.to_string() })
         } else {
             None
         }

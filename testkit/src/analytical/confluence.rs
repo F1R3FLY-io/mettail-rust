@@ -112,7 +112,8 @@ fn parse_pattern_to_term(pattern: &str) -> Option<Term> {
         || trimmed.contains("*zip")
         || trimmed.contains("*map")
         || trimmed.contains("...rest")
-        || trimmed.contains("...") // collection rest patterns
+        || trimmed.contains("...")
+    // collection rest patterns
     {
         return None;
     }
@@ -167,17 +168,11 @@ fn parse_pattern_to_term(pattern: &str) -> Option<Term> {
             return None;
         }
 
-        return Some(Term::App {
-            symbol,
-            args,
-        });
+        return Some(Term::App { symbol, args });
     }
 
     // Bare identifier -- either a variable or a nullary constructor
-    if trimmed
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '_')
-    {
+    if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') {
         // Heuristic: all-uppercase or single letter = variable; otherwise = constant
         if trimmed.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
             return Some(Term::var(trimmed));
@@ -216,27 +211,27 @@ fn tokenize_pattern(input: &str) -> Vec<String> {
             '(' => {
                 depth += 1;
                 current.push(ch);
-            }
+            },
             ')' => {
                 depth -= 1;
                 current.push(ch);
-            }
+            },
             ' ' | '\t' | '\n' if depth == 0 => {
                 if !current.is_empty() {
                     tokens.push(current.clone());
                     current.clear();
                 }
-            }
+            },
             '{' | '}' | ',' if depth == 0 => {
                 // Skip collection syntax at top level
                 if !current.is_empty() {
                     tokens.push(current.clone());
                     current.clear();
                 }
-            }
+            },
             _ => {
                 current.push(ch);
-            }
+            },
         }
     }
 

@@ -1,4 +1,4 @@
-//! Stage 3.13d (2026-05-01) — Bug B regression test.
+//! Stage 3.13d (2026-05-01) regression coverage.
 //!
 //! Verifies that `run_ascent` returns no duplicate `term_id`s in
 //! `all_terms`. Pre-3.13d, `run_ascent_typed` double-seeded the input
@@ -47,7 +47,7 @@ fn no_duplicate_initial_in_relations() {
     let results = lang.run_ascent(parsed.as_ref()).expect("eval");
 
     // Find entries displaying as the original input. There must be at
-    // most one — pre-3.13d there were two (the dedup bug); post-3.13d
+    // most one — pre-3.13d there were two; post-3.13d
     // exactly one (the input's representation in its own category).
     let initial_count = results
         .all_terms

@@ -39,38 +39,57 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
         |inner| {
             prop_oneof![
                 // AddInt: left + right
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::AddInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::AddInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // SubInt: left - right
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::SubInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::SubInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // MulInt: left * right
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::MulInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::MulInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // DivInt: left / right
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::DivInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::DivInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // ModInt: left % right
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::ModInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::ModInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // Neg: -operand
-                inner.clone().prop_map(|a| { Int::Neg(std::sync::Arc::new(a)) }),
+                inner
+                    .clone()
+                    .prop_map(|a| { Int::Neg(std::sync::Arc::new(a)) }),
                 // PowInt: base ^ exponent
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::PowInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::PowInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // Fact: operand!
-                inner.clone().prop_map(|a| { Int::Fact(std::sync::Arc::new(a)) }),
+                inner
+                    .clone()
+                    .prop_map(|a| { Int::Fact(std::sync::Arc::new(a)) }),
                 // Tern: cond ? then : else
-                (inner.clone(), inner.clone(), inner.clone())
-                    .prop_map(|(c, t, e)| { Int::Tern(std::sync::Arc::new(c), std::sync::Arc::new(t), std::sync::Arc::new(e)) }),
+                (inner.clone(), inner.clone(), inner.clone()).prop_map(|(c, t, e)| {
+                    Int::Tern(
+                        std::sync::Arc::new(c),
+                        std::sync::Arc::new(t),
+                        std::sync::Arc::new(e),
+                    )
+                }),
                 // BitAndInt: a & b
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::BitAndInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::BitAndInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // BitOrInt: a | b
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| { Int::BitOrInt(std::sync::Arc::new(a), std::sync::Arc::new(b)) }),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::BitOrInt(std::sync::Arc::new(a), std::sync::Arc::new(b))
+                }),
                 // BitNotInt: ~a
-                inner.clone().prop_map(|a| { Int::BitNotInt(std::sync::Arc::new(a)) }),
+                inner
+                    .clone()
+                    .prop_map(|a| { Int::BitNotInt(std::sync::Arc::new(a)) }),
             ]
         },
     )
@@ -156,7 +175,8 @@ fn roundtrip_simple_binary_ops() {
 
     for (op_name, constructor) in &ops {
         mettail_runtime::clear_var_cache();
-        let term = constructor(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2)));
+        let term =
+            constructor(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2)));
         let displayed = format!("{}", term);
         mettail_runtime::clear_var_cache();
         let parsed = Int::parse(&displayed);
@@ -215,8 +235,11 @@ fn roundtrip_unary_ops() {
 #[test]
 fn roundtrip_ternary() {
     mettail_runtime::clear_var_cache();
-    let term =
-        Int::Tern(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(42)), std::sync::Arc::new(Int::NumLit(0)));
+    let term = Int::Tern(
+        std::sync::Arc::new(Int::NumLit(1)),
+        std::sync::Arc::new(Int::NumLit(42)),
+        std::sync::Arc::new(Int::NumLit(0)),
+    );
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);
@@ -233,7 +256,10 @@ fn roundtrip_nested_expressions() {
     // (1 + 2) - 3
     mettail_runtime::clear_var_cache();
     let term = Int::SubInt(
-        std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2)))),
+        std::sync::Arc::new(Int::AddInt(
+            std::sync::Arc::new(Int::NumLit(1)),
+            std::sync::Arc::new(Int::NumLit(2)),
+        )),
         std::sync::Arc::new(Int::NumLit(3)),
     );
     let displayed = format!("{}", term);
@@ -248,7 +274,10 @@ fn roundtrip_nested_expressions() {
 
     // -(3 + 4)
     mettail_runtime::clear_var_cache();
-    let term = Int::Neg(std::sync::Arc::new(Int::AddInt(std::sync::Arc::new(Int::NumLit(3)), std::sync::Arc::new(Int::NumLit(4)))));
+    let term = Int::Neg(std::sync::Arc::new(Int::AddInt(
+        std::sync::Arc::new(Int::NumLit(3)),
+        std::sync::Arc::new(Int::NumLit(4)),
+    )));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);

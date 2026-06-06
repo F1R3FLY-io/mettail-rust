@@ -111,8 +111,6 @@ pub fn generate_tristate_type() -> TokenStream {
 /// - Per-guard evaluation functions (one per `GuardBody` constructor)
 /// - Guard tier classification metadata
 pub fn generate_guard_codegen(language: &LanguageDef) -> TokenStream {
-    use mettail_ast::grammar::TermParam;
-
     // Phase 3D correction (2026-04-08): this function no longer emits
     // per-guard evaluation wrapper functions. Under the corrected
     // design, behavioral predicates are evaluated via direct Ascent
@@ -174,12 +172,12 @@ pub(crate) fn classify_guard_tier(pred: &BehavioralPred) -> GuardTier {
                     _ => GuardTier::T4Assert,
                 }
             }
-        }
+        },
         BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
             let ta = classify_guard_tier(a);
             let tb = classify_guard_tier(b);
             max_tier(ta, tb)
-        }
+        },
         BehavioralPred::Not(inner) => classify_guard_tier(inner),
         BehavioralPred::Top => GuardTier::T1Static,
     }
@@ -229,21 +227,29 @@ fn is_complement(a: &BehavioralPred, b: &BehavioralPred) -> bool {
 fn pred_structurally_equal(a: &BehavioralPred, b: &BehavioralPred) -> bool {
     match (a, b) {
         (
-            BehavioralPred::RelationQuery { relation_name: rn1, args: a1, negated: n1 },
-            BehavioralPred::RelationQuery { relation_name: rn2, args: a2, negated: n2 },
+            BehavioralPred::RelationQuery {
+                relation_name: rn1,
+                args: a1,
+                negated: n1,
+            },
+            BehavioralPred::RelationQuery {
+                relation_name: rn2,
+                args: a2,
+                negated: n2,
+            },
         ) => {
             rn1 == rn2
                 && n1 == n2
                 && a1.len() == a2.len()
                 && a1.iter().zip(a2.iter()).all(|(x, y)| pred_arg_equal(x, y))
-        }
+        },
         (BehavioralPred::Not(x), BehavioralPred::Not(y)) => pred_structurally_equal(x, y),
         (BehavioralPred::And(a1, b1), BehavioralPred::And(a2, b2)) => {
             pred_structurally_equal(a1, a2) && pred_structurally_equal(b1, b2)
-        }
+        },
         (BehavioralPred::Or(a1, b1), BehavioralPred::Or(a2, b2)) => {
             pred_structurally_equal(a1, a2) && pred_structurally_equal(b1, b2)
-        }
+        },
         _ => false,
     }
 }
@@ -288,240 +294,6 @@ pub(crate) fn evaluate_static_guard(pred: &BehavioralPred) -> Option<bool> {
 }
 
 // =============================================================================
-// Per-Tier Guard Function Generation
-// =============================================================================
-
-/// Generate a guard evaluation function for a specific guard.
-fn generate_guard_function(
-    idx: usize,
-    rule_label: &syn::Ident,
-    _guard_name: &syn::Ident,
-    pred: &BehavioralPred,
-    tier: GuardTier,
-    _language: &LanguageDef,
-) -> TokenStream {
-    let fn_name = format_ident!("__guard_{}", idx);
-    let label_str = rule_label.to_string();
-
-    match tier {
-        GuardTier::T1Static => {
-            // T1: Guard statically eliminated — generate a constant function.
-            let static_result = evaluate_static_guard(pred).unwrap_or(true);
-            if static_result {
-                quote! {
-                    /// T1 guard for rule — statically evaluated to `true`.
-                    /// The guard check is elided from the Comm rule body.
-                    #[allow(dead_code)]
-                    #[inline(always)]
-                    fn #fn_name(
-                        _relation_query: &dyn Fn(&str, &[String]) -> bool,
-                        _domain_enumerate: &dyn Fn(&str) -> Vec<Vec<String>>,
-                        _env: &::std::collections::HashMap<String, String>,
-                    ) -> bool {
-                        // T1: Guard statically evaluated to true — eliminated.
-                        true
-                    }
-                }
-            } else {
-                // T1 always-false: the guard is a contradiction.
-                // SYM01 lint should be emitted upstream.
-                quote! {
-                    /// T1 guard for rule — statically evaluated to `false` (dead guard).
-                    /// SYM01: This receive will never fire.
-                    #[allow(dead_code)]
-                    #[inline(always)]
-                    fn #fn_name(
-                        _relation_query: &dyn Fn(&str, &[String]) -> bool,
-                        _domain_enumerate: &dyn Fn(&str) -> Vec<Vec<String>>,
-                        _env: &::std::collections::HashMap<String, String>,
-                    ) -> bool {
-                        // T1: Guard statically evaluated to false — dead receive (SYM01).
-                        false
-                    }
-                }
-            }
-        }
-
-        GuardTier::T2Decidable => {
-            // T2: Decidable guard — generate standalone evaluation function.
-            // The primary evaluation path is inlined in the Ascent Comm rule
-            // as a direct join clause; this standalone function serves testing
-            // and external callers.
-            let formula_expr = pred.to_quantified_formula();
-            quote! {
-                /// T2 guard evaluation for rule.
-                ///
-                /// Decidable at runtime via finite-state evaluation.
-                /// The primary evaluation path is inlined in the Ascent Comm rule
-                /// as a direct relation join; this standalone function serves
-                /// testing and external callers.
-                #[allow(dead_code)]
-                fn #fn_name(
-                    relation_query: &dyn Fn(&str, &[String]) -> bool,
-                    domain_enumerate: &dyn Fn(&str) -> Vec<Vec<String>>,
-                    env: &::std::collections::HashMap<String, String>,
-                ) -> bool {
-                    let formula = #formula_expr;
-                    mettail_prattail::logict::evaluate_quantified(
-                        &formula,
-                        env,
-                        relation_query,
-                        domain_enumerate,
-                        1000,
-                    )
-                }
-            }
-        }
-
-        GuardTier::T3Bounded => {
-            // Phase 7B (predicated types): T3 semi-decidable codegen
-            // routes through `evaluate_quantified_with_theory` which
-            // returns a `TriState` directly. This replaces the prior
-            // brittle `domain_size < effective_limit` heuristic that
-            // tried to guess exhaustion from a comparison against a
-            // fake `__any__` domain — that domain didn't exist in any
-            // language, so the heuristic always reported `Unknown` for
-            // T3 predicates that didn't fire. The new path uses the
-            // `had_unknown` tracking inside the theory-guided evaluator,
-            // which is the spec-correct definition of "could not
-            // determine within the budget".
-            //
-            // For Phase 7B, we use the trivial `PropTheory`-style
-            // bottom theory (no domain knowledge) since the per-rule
-            // theory dispatch is a Phase 6B follow-up that needs the
-            // language's `theories { }` block lowered to runtime.
-            // The TriState semantics are correct regardless of which
-            // theory is plugged in — `Unknown` here means "evaluate
-            // exhausted without a definitive answer", not "no theory
-            // configured".
-            let formula_expr = pred.to_quantified_formula();
-            let depth_limit = extract_bound(pred).unwrap_or(1000);
-            let depth_limit_lit = depth_limit;
-            quote! {
-                /// T3 bounded guard evaluation for rule.
-                ///
-                /// Phase 7B (predicated types): semi-decidable
-                /// evaluation via the theory-guided three-valued
-                /// LogicT path. Returns `TriState::Unknown` iff the
-                /// search exhausts without producing a definitive
-                /// True/False, NOT iff the bound was simply hit. The
-                /// `Unknown → False` collapse is the caller's
-                /// responsibility (the spec mandates "safe-fail" at
-                /// the Comm rule body, not in this helper).
-                #[allow(dead_code)]
-                fn #fn_name(
-                    relation_query: &dyn Fn(&str, &[String]) -> bool,
-                    domain_enumerate: &dyn Fn(&str) -> Vec<Vec<String>>,
-                    env: &::std::collections::HashMap<String, String>,
-                    depth_limit: usize,
-                ) -> TriState {
-                    let formula = #formula_expr;
-                    let effective_limit =
-                        if depth_limit > 0 { depth_limit } else { #depth_limit_lit };
-
-                    // Build the trivial bottom theory inline. This
-                    // is a no-op constraint theory that propagates
-                    // every constraint successfully — the relation
-                    // query and domain enumeration callbacks do all
-                    // the real work. Phase 6B will replace this with
-                    // a per-rule theory chosen from the language's
-                    // `guards { theories { ... } }` block.
-                    #[derive(Clone, Debug)]
-                    struct __BottomTheory;
-                    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-                    struct __BottomConstraint;
-                    #[derive(Clone, Debug)]
-                    struct __BottomAssign;
-                    #[derive(Clone, Debug)]
-                    struct __BottomStore;
-                    impl mettail_prattail::logict::ConstraintTheory for __BottomTheory {
-                        type Constraint = __BottomConstraint;
-                        type Assignment = __BottomAssign;
-                        type Store = __BottomStore;
-                        fn empty_store(&self) -> Self::Store { __BottomStore }
-                        fn propagate(&self, _: &Self::Store, _: &Self::Constraint) -> Option<Self::Store> { Some(__BottomStore) }
-                        fn is_consistent(&self, _: &Self::Store) -> bool { true }
-                        fn witness(&self, _: &Self::Store) -> Option<Self::Assignment> { Some(__BottomAssign) }
-                        fn label(&self, _: &Self::Store) -> mettail_prattail::logict::LogicStream<Self::Constraint> {
-                            mettail_prattail::logict::LogicStream::empty()
-                        }
-                        fn evaluate(&self, _: &Self::Constraint, _: &Self::Assignment) -> bool { true }
-                    }
-
-                    mettail_prattail::logict::evaluate_quantified_with_theory(
-                        &formula,
-                        &__BottomTheory,
-                        relation_query,
-                        domain_enumerate,
-                        env,
-                        effective_limit,
-                    )
-                }
-            }
-        }
-
-        GuardTier::T4Assert => {
-            // Phase 7C (predicated types): T4 undecidable guards now
-            // dispatch through a runtime-registered assertion table
-            // instead of unconditionally returning true. The user
-            // registers a closure under the rule's label via
-            // `mettail_runtime::register_t4_assertion(rule_label, |env| ...)`.
-            // If no assertion is registered, the guard collapses to
-            // `false` (safe-fail), NOT `true` — the prior behavior of
-            // returning `true` was unsound. The MSO01 lint is still
-            // emitted at compile time so the user is forewarned that
-            // the guard requires manual assertion.
-            //
-            // The `cert: "path/to/proof.v"` directive is parsed at
-            // language-spec time (Phase 11 follow-up) and validated
-            // at startup; if the cert hash mismatches, the registered
-            // assertion is removed and the guard falls back to safe-
-            // fail.
-            let label_str_lit = label_str;
-            quote! {
-                /// T4 undecidable guard assertion dispatcher.
-                ///
-                /// **Warning**: This guard's predicate is undecidable
-                /// (MSO01). It dispatches through the runtime
-                /// `T4_ASSERTION_TABLE` keyed by rule label. If no
-                /// assertion has been registered, the guard
-                /// safely-fails by returning `false` — the spec's
-                /// safe default for undecidable predicates.
-                #[allow(dead_code)]
-                fn #fn_name(
-                    relation_query: &dyn Fn(&str, &[String]) -> bool,
-                    domain_enumerate: &dyn Fn(&str) -> Vec<Vec<String>>,
-                    env: &::std::collections::HashMap<String, String>,
-                ) -> bool {
-                    // Phase 7C: dispatch to user-registered assertion
-                    // for this rule label. Safe-fail to `false` when
-                    // none is registered. The runtime
-                    // `t4_assertion_lookup` reads from a thread-local
-                    // table populated by user-side
-                    // `mettail_runtime::register_t4_assertion`.
-                    let _ = (relation_query, domain_enumerate);
-                    mettail_runtime::t4_assertion_lookup(#label_str_lit)
-                        .map(|h| h.call(env))
-                        .unwrap_or(false)
-                }
-            }
-        }
-    }
-}
-
-/// Extract the bound from a quantified predicate, if present.
-fn extract_bound(pred: &BehavioralPred) -> Option<usize> {
-    match pred {
-        BehavioralPred::Quantified { bound, .. } => *bound,
-        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
-            extract_bound(a).or_else(|| extract_bound(b))
-        }
-        BehavioralPred::Not(inner) => extract_bound(inner),
-        _ => None,
-    }
-}
-
-// =============================================================================
 // Guard Compilation to Ascent Clauses (T2)
 // =============================================================================
 
@@ -531,12 +303,14 @@ fn extract_bound(pred: &BehavioralPred) -> Option<usize> {
 /// Returns `true` for:
 /// - Simple `RelationQuery` (positive or negated)
 /// - `And` of compilable sub-guards
-/// - `Not` of compilable sub-guard
+/// - `Not` of a simple relation query
 pub fn can_compile_to_ascent_join(pred: &BehavioralPred) -> bool {
     match pred {
         BehavioralPred::RelationQuery { .. } => true,
         BehavioralPred::And(a, b) => can_compile_to_ascent_join(a) && can_compile_to_ascent_join(b),
-        BehavioralPred::Not(inner) => can_compile_to_ascent_join(inner),
+        BehavioralPred::Not(inner) => {
+            matches!(inner.as_ref(), BehavioralPred::RelationQuery { .. })
+        },
         _ => false,
     }
 }
@@ -556,7 +330,7 @@ pub fn resolve_pred_arg(
                 .get(&var_name)
                 .map(|b| b.expression.clone())
                 .unwrap_or_else(|| quote! { #v })
-        }
+        },
         PredArg::Constant(c) => quote! { #c },
     }
 }
@@ -606,25 +380,19 @@ pub fn generate_sfa_transition_table(
     // Each transition (from, to, predicate_repr) becomes a match arm.
     let transition_arms: Vec<TokenStream> = transitions
         .iter()
-        .map(|(from, to, pred_repr)| {
+        .map(|(from, to, _pred_repr)| {
             let from_lit = *from;
             let to_lit = *to;
-            // The predicate_repr is a string representation of the guard predicate.
-            // For IntervalAlgebra: "x >= 0 && x < 100"
-            // For KatBooleanAlgebra: "true" / "false"
-            // We embed it as a comment; the actual predicate evaluation happens
-            // via minterm partitioning at SFA construction time, so each transition
-            // corresponds to one minterm (a Boolean combination of atomic predicates).
-            let pred_comment = format!("guard: {}", pred_repr);
+            // Predicate evaluation happens via minterm partitioning at SFA
+            // construction time, so each transition corresponds to one minterm.
             quote! {
-                // #pred_comment
                 (#from_lit, true) => #to_lit
             }
         })
         .collect();
 
     if transition_arms.is_empty() {
-        // No transitions: generate a stub that always rejects
+        // No transitions: generate an empty evaluator.
         quote! {
             /// SFA transition table guard evaluation (empty — no transitions).
             #[allow(dead_code)]
@@ -662,10 +430,7 @@ pub fn generate_sfa_transition_table(
 /// stores/tests values against registers. Used for guards with data equality
 /// (`x == y`) or freshness (`fresh(x)`) constraints.
 #[allow(dead_code)]
-pub fn generate_register_automaton(
-    guard_idx: usize,
-    num_registers: usize,
-) -> TokenStream {
+pub fn generate_register_automaton(guard_idx: usize, num_registers: usize) -> TokenStream {
     let fn_name = format_ident!("__guard_reg_{}", guard_idx);
     let k = num_registers;
 
@@ -716,10 +481,7 @@ pub fn generate_register_automaton(
 /// to the universal/existential pattern directly. The cost-benefit framework
 /// can gate between this and the full AWA path once implemented.
 #[allow(dead_code)]
-pub fn generate_awa_evaluation(
-    guard_idx: usize,
-    is_universal: bool,
-) -> TokenStream {
+pub fn generate_awa_evaluation(guard_idx: usize, is_universal: bool) -> TokenStream {
     let fn_name = format_ident!("__guard_awa_{}", guard_idx);
 
     quote! {
@@ -743,13 +505,12 @@ pub fn generate_awa_evaluation(
 
 /// Selectivity metadata for a guard, used for ordering guards on the same channel.
 #[derive(Debug, Clone)]
+#[cfg(test)]
 pub struct GuardSelectivity {
     /// Index of the guard in the language definition.
     pub guard_idx: usize,
     /// Estimated selectivity: 0.0 = rejects all, 1.0 = accepts all.
     pub estimated_selectivity: f64,
-    /// Decidability tier.
-    pub tier: GuardTier,
     /// Estimated evaluation cost (lower = cheaper).
     pub evaluation_cost: u32,
 }
@@ -781,11 +542,7 @@ pub fn estimate_selectivity_with_config(
     guard_config: Option<&mettail_ast::language::GuardConfig>,
 ) -> f64 {
     match pred {
-        BehavioralPred::RelationQuery {
-            relation_name,
-            negated,
-            ..
-        } => {
+        BehavioralPred::RelationQuery { relation_name, negated, .. } => {
             // Annotation override (precedence 1) — only applies to leaf
             // predicate identity, not the negation.
             if let Some(gc) = guard_config {
@@ -800,39 +557,49 @@ pub fn estimate_selectivity_with_config(
                 }
             }
             // Heuristic default (precedence 2)
-            if *negated { 0.1 } else { 0.5 }
-        }
+            if *negated {
+                0.1
+            } else {
+                0.5
+            }
+        },
         // Conjunction: product of sub-selectivities (more selective)
         BehavioralPred::And(a, b) => {
             estimate_selectivity_with_config(a, guard_config)
                 * estimate_selectivity_with_config(b, guard_config)
-        }
+        },
         // Disjunction: 1 - product of (1 - sub-selectivities) (less selective)
         BehavioralPred::Or(a, b) => {
             let sa = estimate_selectivity_with_config(a, guard_config);
             let sb = estimate_selectivity_with_config(b, guard_config);
             1.0 - (1.0 - sa) * (1.0 - sb)
-        }
+        },
         // Universal quantifier: very selective (hard to satisfy)
-        BehavioralPred::Quantified { quantifier: mettail_ast::language::Quantifier::ForAll, bound, .. } => {
+        BehavioralPred::Quantified {
+            quantifier: mettail_ast::language::Quantifier::ForAll,
+            bound,
+            ..
+        } => {
             if let Some(k) = bound {
                 0.05 / (*k as f64).sqrt().max(1.0)
             } else {
                 0.05
             }
-        }
+        },
         // Existential: moderate
-        BehavioralPred::Quantified { quantifier: mettail_ast::language::Quantifier::Exists, bound, .. } => {
+        BehavioralPred::Quantified {
+            quantifier: mettail_ast::language::Quantifier::Exists,
+            bound,
+            ..
+        } => {
             if let Some(k) = bound {
                 0.3 / (*k as f64).sqrt().max(1.0)
             } else {
                 0.5
             }
-        }
+        },
         // AC-match: depends on element count (moderate)
-        BehavioralPred::AcMatch { elements, .. } => {
-            0.3 / (elements.len() as f64).max(1.0)
-        }
+        BehavioralPred::AcMatch { elements, .. } => 0.3 / (elements.len() as f64).max(1.0),
         // Negation: complement
         BehavioralPred::Not(inner) => 1.0 - estimate_selectivity_with_config(inner, guard_config),
         // Implication: ~same as Or(Not(a), b)
@@ -840,17 +607,10 @@ pub fn estimate_selectivity_with_config(
             let sa = estimate_selectivity_with_config(a, guard_config);
             let sb = estimate_selectivity_with_config(b, guard_config);
             1.0 - sa * (1.0 - sb)
-        }
+        },
         // Top is always true — maximally UN-selective (admits everything).
         BehavioralPred::Top => 1.0,
     }
-}
-
-/// Estimate the evaluation cost of a behavioral predicate.
-///
-/// Lower cost = cheaper. Used as a tiebreaker when guards have equal selectivity.
-pub fn estimate_guard_cost(pred: &BehavioralPred) -> u32 {
-    estimate_guard_cost_with_config(pred, None)
 }
 
 /// Cost estimation that consults the optional `GuardConfig` for per-predicate
@@ -859,7 +619,8 @@ pub fn estimate_guard_cost(pred: &BehavioralPred) -> u32 {
 /// Override precedence:
 /// 1. Explicit annotation (`builtin_predicates[name].annotations.cost`)
 /// 2. Heuristic default (the existing rules below)
-pub fn estimate_guard_cost_with_config(
+#[cfg(test)]
+fn estimate_guard_cost_with_config(
     pred: &BehavioralPred,
     guard_config: Option<&mettail_ast::language::GuardConfig>,
 ) -> u32 {
@@ -876,16 +637,16 @@ pub fn estimate_guard_cost_with_config(
                 }
             }
             2
-        }
+        },
         BehavioralPred::AcMatch { elements, .. } => 10 + 5 * elements.len() as u32,
         BehavioralPred::Quantified { bound, body, .. } => {
             let base = bound.map(|k| k as u32).unwrap_or(100);
             base + estimate_guard_cost_with_config(body, guard_config)
-        }
+        },
         BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
             estimate_guard_cost_with_config(a, guard_config)
                 + estimate_guard_cost_with_config(b, guard_config)
-        }
+        },
         BehavioralPred::Not(inner) => estimate_guard_cost_with_config(inner, guard_config) + 1,
         // Top is free — no runtime cost.
         BehavioralPred::Top => 0,
@@ -897,7 +658,8 @@ pub fn estimate_guard_cost_with_config(
 /// When multiple guards protect the same channel, evaluating the most selective
 /// guard first provides the best short-circuit behavior (rejects most inputs
 /// earliest, saving evaluation of subsequent guards).
-pub fn order_guards_by_selectivity(guards: &mut [GuardSelectivity]) {
+#[cfg(test)]
+fn order_guards_by_selectivity(guards: &mut [GuardSelectivity]) {
     guards.sort_by(|a, b| {
         // Primary: most selective first (lowest selectivity value)
         a.estimated_selectivity
@@ -965,10 +727,20 @@ pub fn analyze_guard_set(guards: &[(usize, &BehavioralPred)]) -> GuardSetAnalysi
             // relation with the same args but different negation, they're complements
             // (no overlap). If same negation, they overlap exactly.
             if let (
-                BehavioralPred::RelationQuery { relation_name: rn1, args: a1, negated: n1 },
-                BehavioralPred::RelationQuery { relation_name: rn2, args: a2, negated: n2 },
-            ) = (pred_i, pred_j) {
-                if rn1 == rn2 && a1.len() == a2.len()
+                BehavioralPred::RelationQuery {
+                    relation_name: rn1,
+                    args: a1,
+                    negated: n1,
+                },
+                BehavioralPred::RelationQuery {
+                    relation_name: rn2,
+                    args: a2,
+                    negated: n2,
+                },
+            ) = (pred_i, pred_j)
+            {
+                if rn1 == rn2
+                    && a1.len() == a2.len()
                     && a1.iter().zip(a2.iter()).all(|(x, y)| pred_arg_equal(x, y))
                 {
                     if n1 == n2 {
@@ -1100,6 +872,14 @@ mod tests {
     }
 
     #[test]
+    fn cannot_compile_negated_conjunction_as_single_join() {
+        let a = make_rel_query("positive", false);
+        let b = make_rel_query("even", false);
+        let pred = BehavioralPred::Not(Box::new(BehavioralPred::And(Box::new(a), Box::new(b))));
+        assert!(!can_compile_to_ascent_join(&pred));
+    }
+
+    #[test]
     fn cannot_compile_quantified() {
         let body = make_rel_query("safe", false);
         let pred = BehavioralPred::Quantified {
@@ -1142,9 +922,21 @@ mod tests {
     #[test]
     fn guard_ordering() {
         let mut guards = vec![
-            GuardSelectivity { guard_idx: 0, estimated_selectivity: 0.5, tier: GuardTier::T2Decidable, evaluation_cost: 2 },
-            GuardSelectivity { guard_idx: 1, estimated_selectivity: 0.1, tier: GuardTier::T2Decidable, evaluation_cost: 2 },
-            GuardSelectivity { guard_idx: 2, estimated_selectivity: 0.5, tier: GuardTier::T2Decidable, evaluation_cost: 10 },
+            GuardSelectivity {
+                guard_idx: 0,
+                estimated_selectivity: 0.5,
+                evaluation_cost: 2,
+            },
+            GuardSelectivity {
+                guard_idx: 1,
+                estimated_selectivity: 0.1,
+                evaluation_cost: 2,
+            },
+            GuardSelectivity {
+                guard_idx: 2,
+                estimated_selectivity: 0.5,
+                evaluation_cost: 10,
+            },
         ];
         order_guards_by_selectivity(&mut guards);
         assert_eq!(guards[0].guard_idx, 1, "most selective first");
@@ -1189,8 +981,8 @@ mod tests {
     fn guard_codegen_selectivity_uses_annotation() {
         use mettail_ast::language::LanguageDef;
         use proc_macro2::Span;
-        use syn::Ident;
         use syn::parse2;
+        use syn::Ident;
 
         let lang: LanguageDef = parse2(quote::quote! {
             name: TestLang,
@@ -1228,8 +1020,8 @@ mod tests {
     fn guard_codegen_cost_uses_annotation() {
         use mettail_ast::language::LanguageDef;
         use proc_macro2::Span;
-        use syn::Ident;
         use syn::parse2;
+        use syn::Ident;
 
         let lang: LanguageDef = parse2(quote::quote! {
             name: TestLang,

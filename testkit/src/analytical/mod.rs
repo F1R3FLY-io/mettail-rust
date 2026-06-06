@@ -5,13 +5,13 @@
 
 // Tier 1: TRS analysis (confluence, termination, e-graph, morphism)
 pub mod confluence;
-pub mod termination;
 pub mod egraph_tests;
 pub mod morphism_tests;
+pub mod termination;
 
 // Tier 2: Semantic analysis (CESK, CEGAR, green threads)
-pub mod cesk_coverage;
 pub mod cegar_tests;
+pub mod cesk_coverage;
 pub mod green_thread_tests;
 
 // Predicated type guard analysis

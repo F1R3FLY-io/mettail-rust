@@ -27,8 +27,8 @@ use crate::binding_power::{
 // Stage 10.5 (2026-05-04): trampoline emitter imports DELETED. The legacy
 // modules (pratt, recursive, dispatch, trampoline) are being phased out;
 // data-type imports re-routed directly through `crate::grammar::ir::*`.
-use crate::grammar::ir::{CastRule, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
 use crate::automata::codegen::{LexerAmbiguityInfo, TokenVariantMap};
+use crate::grammar::ir::{CastRule, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
 use crate::lexer::{extract_terminals, generate_lexer_as_string_hybrid, GrammarRuleInfo, TypeInfo};
 // Stage 10.5b conclusion (2026-05-05): pratt::write_parser_helpers /
 // write_recovery_helpers DELETED. They emitted runtime helpers
@@ -36,14 +36,13 @@ use crate::lexer::{extract_terminals, generate_lexer_as_string_hybrid, GrammarRu
 // were consumed only by trampoline-emitted RD handlers, all gone.
 // Walker (parse_<Cat>_via_wpda) has its own error handling via
 // WpdaParseError + RecoveryAttempt and doesn't need these helpers.
+use crate::lint::DiagnosticId;
 use crate::prediction::{
     analyze_cross_category_overlaps, compute_first_sets, compute_first_sets_incremental,
-    compute_follow_sets_from_inputs, compute_follow_sets_incremental,
-    generate_sync_predicate, FirstItem, FirstSet, FollowSetInput,
-    RuleInfo,
+    compute_follow_sets_from_inputs, compute_follow_sets_incremental, generate_sync_predicate,
+    FirstItem, FirstSet, FollowSetInput, RuleInfo,
 };
 use crate::wfst::PredictionWfst;
-use crate::lint::DiagnosticId;
 use crate::{LanguageSpec, LiteralPatterns, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -78,7 +77,6 @@ impl InterCategoryGraph {
         }
         visited
     }
-
 }
 
 /// Recursively collect cross-category edge pairs from a `SyntaxItemSpec`.
@@ -100,29 +98,29 @@ fn collect_syntax_refs(
                     pairs.push((src_idx, target_idx));
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Binder { category: ref b_cat, .. } => {
             if b_cat != rule_cat {
                 if let Some(&src_idx) = cat_to_idx.get(b_cat) {
                     pairs.push((src_idx, target_idx));
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Collection { element_category: ref e_cat, .. } => {
             if e_cat != rule_cat {
                 if let Some(&src_idx) = cat_to_idx.get(e_cat) {
                     pairs.push((src_idx, target_idx));
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Sep { body, .. } => {
             collect_syntax_refs(body, rule_cat, cat_to_idx, target_idx, pairs);
-        }
+        },
         crate::SyntaxItemSpec::Map { body_items } => {
             for sub in body_items {
                 collect_syntax_refs(sub, rule_cat, cat_to_idx, target_idx, pairs);
             }
-        }
+        },
         crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             for ref_cat in [left_category.as_str(), right_category.as_str()] {
                 if ref_cat != rule_cat {
@@ -132,14 +130,14 @@ fn collect_syntax_refs(
                 }
             }
             collect_syntax_refs(body, rule_cat, cat_to_idx, target_idx, pairs);
-        }
+        },
         crate::SyntaxItemSpec::Optional { inner } => {
             for sub in inner {
                 collect_syntax_refs(sub, rule_cat, cat_to_idx, target_idx, pairs);
             }
-        }
+        },
         // Terminal, IdentCapture, BinderCollection — no cross-category refs
-        _ => {}
+        _ => {},
     }
 }
 
@@ -166,10 +164,7 @@ pub(crate) fn build_inter_category_graph(
         .collect();
     let num_nodes = categories.len();
 
-    let root_idx = categories
-        .iter()
-        .position(|c| c.is_primary)
-        .unwrap_or(0);
+    let root_idx = categories.iter().position(|c| c.is_primary).unwrap_or(0);
 
     let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); num_nodes];
 
@@ -220,22 +215,13 @@ pub(crate) fn build_inter_category_graph(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeadRuleWarning {
     /// Literal rule in a category with no `native_type`.
-    LiteralNoNativeType {
-        rule_label: String,
-        category: String,
-    },
+    LiteralNoNativeType { rule_label: String, category: String },
     /// Infix/var rule whose entire category is unreachable (no prefix rule
     /// can start a parse in that category).
-    UnreachableCategory {
-        rule_label: String,
-        category: String,
-    },
+    UnreachableCategory { rule_label: String, category: String },
     /// Prefix/cast/cross-category rule that no FIRST-set token dispatches to
     /// via the prediction WFST.
-    WfstUnreachable {
-        rule_label: String,
-        category: String,
-    },
+    WfstUnreachable { rule_label: String, category: String },
     /// A4: Inter-category dead path detected by forward-backward analysis.
     /// The rule's category is not reachable from the root category via the
     /// inter-category dispatch graph, or cannot reach back to the root.
@@ -306,6 +292,7 @@ impl fmt::Display for DeadRuleWarning {
 ///
 /// Returns a list of warnings (one per dead rule). The caller decides whether
 /// to `eprintln!` them or collect them for testing.
+#[cfg(test)]
 pub(crate) fn detect_dead_rules(
     rule_infos: &[RuleInfo],
     categories: &[CategoryInfo],
@@ -314,6 +301,28 @@ pub(crate) fn detect_dead_rules(
     semantic_dependency_groups: &[HashSet<String>],
     nfa_spillover_categories: &HashSet<String>,
     rd_rules: &[crate::grammar::ir::RDRuleInfo],
+) -> Vec<DeadRuleWarning> {
+    detect_dead_rules_with_ignored(
+        rule_infos,
+        categories,
+        first_sets,
+        prediction_wfsts,
+        semantic_dependency_groups,
+        nfa_spillover_categories,
+        rd_rules,
+        &HashSet::new(),
+    )
+}
+
+fn detect_dead_rules_with_ignored(
+    rule_infos: &[RuleInfo],
+    categories: &[CategoryInfo],
+    first_sets: &HashMap<String, FirstSet>,
+    prediction_wfsts: &HashMap<String, PredictionWfst>,
+    semantic_dependency_groups: &[HashSet<String>],
+    nfa_spillover_categories: &HashSet<String>,
+    rd_rules: &[crate::grammar::ir::RDRuleInfo],
+    ignored_rule_labels: &HashSet<String>,
 ) -> Vec<DeadRuleWarning> {
     let mut warnings = Vec::new();
 
@@ -343,9 +352,7 @@ pub(crate) fn detect_dead_rules(
                         }
                     });
                     if let Some(src) = source {
-                        if reachable.contains(&src)
-                            && reachable.insert(rule.category.clone())
-                        {
+                        if reachable.contains(&src) && reachable.insert(rule.category.clone()) {
                             changed = true;
                         }
                     }
@@ -368,21 +375,16 @@ pub(crate) fn detect_dead_rules(
                     continue;
                 }
                 // If any rule in the group is WFST-reachable, all are covered.
-                let any_reachable =
-                    prediction_wfsts
-                        .get(cat.as_str())
-                        .map_or(false, |wfst| {
-                            first_sets.get(cat.as_str()).map_or(false, |fs| {
-                                fs.tokens.iter().any(|tok| {
-                                    let preds = wfst.predict(tok);
-                                    rules.iter().any(|r| {
-                                        preds
-                                            .iter()
-                                            .any(|a| a.action.rule_label() == r.label)
-                                    })
-                                })
-                            })
-                        });
+                let any_reachable = prediction_wfsts.get(cat.as_str()).map_or(false, |wfst| {
+                    first_sets.get(cat.as_str()).map_or(false, |fs| {
+                        fs.tokens.iter().any(|tok| {
+                            let preds = wfst.predict(tok);
+                            rules
+                                .iter()
+                                .any(|r| preds.iter().any(|a| a.action.rule_label() == r.label))
+                        })
+                    })
+                });
                 if any_reachable {
                     for r in rules {
                         covered.insert(r.label.clone());
@@ -393,7 +395,20 @@ pub(crate) fn detect_dead_rules(
         covered
     };
 
+    // The prediction WFST models trie-backed prefix dispatch. It deliberately
+    // omits rules handled by separate runtime mechanisms, so absence from the
+    // WFST alone is not evidence that these labels are dead.
+    let non_wfst_dispatch_rules: HashSet<&str> = rd_rules
+        .iter()
+        .filter(|rule| rule.is_collection || rule.prefix_bp.is_some())
+        .map(|rule| rule.label.as_str())
+        .collect();
+
     for rule_info in rule_infos {
+        if ignored_rule_labels.contains(&rule_info.label) {
+            continue;
+        }
+
         // Tier 1: literal rules — dead if category has no native_type.
         // Cast rules (e.g., CastInt, CastBool, CastStr) are cross-category
         // literal injections that ARE reachable even without a native_type
@@ -444,20 +459,22 @@ pub(crate) fn detect_dead_rules(
         // Tier 3: all remaining prefix rules (including cast and cross-
         // category) — dead if no token in FIRST set dispatches to them
         // via the prediction WFST.
+        if non_wfst_dispatch_rules.contains(rule_info.label.as_str()) {
+            continue;
+        }
+
         let wfst = match prediction_wfsts.get(&rule_info.category) {
             Some(w) => w,
             None => continue,
         };
 
-        let reachable = first_sets
-            .get(&rule_info.category)
-            .map_or(false, |fs| {
-                fs.tokens.iter().any(|tok| {
-                    wfst.predict(tok)
-                        .iter()
-                        .any(|a| a.action.rule_label() == rule_info.label)
-                })
-            });
+        let reachable = first_sets.get(&rule_info.category).map_or(false, |fs| {
+            fs.tokens.iter().any(|tok| {
+                wfst.predict(tok)
+                    .iter()
+                    .any(|a| a.action.rule_label() == rule_info.label)
+            })
+        });
 
         if !reachable && !nfa_covered.contains(&rule_info.label) {
             warnings.push(DeadRuleWarning::WfstUnreachable {
@@ -489,8 +506,7 @@ pub(crate) fn detect_dead_rules(
             .filter(|l| !flagged.contains(l))
             .collect();
 
-        let semantic_live =
-            compute_semantic_live_labels(&parsing_live, semantic_dependency_groups);
+        let semantic_live = compute_semantic_live_labels(&parsing_live, semantic_dependency_groups);
 
         // Remove warnings for labels that are semantically live.
         warnings.retain(|w| {
@@ -651,7 +667,7 @@ pub(crate) fn detect_nearly_dead_paths(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
 ) -> Vec<DeadRuleWarning> {
     use crate::automata::semiring::{BooleanWeight, CountingWeight, ProductWeight, Semiring};
-    use crate::forward_backward::{forward_scores, backward_scores};
+    use crate::forward_backward::{backward_scores, forward_scores};
 
     type BoolCount = ProductWeight<BooleanWeight, CountingWeight>;
 
@@ -687,7 +703,8 @@ pub(crate) fn detect_nearly_dead_paths(
     // Compare each category's forward count to the maximum across all reachable
     // categories. A category with very few forward paths relative to the maximum
     // is nearly dead.
-    let max_count = forward.iter()
+    let max_count = forward
+        .iter()
         .filter(|w| w.left.is_reachable())
         .map(|w| w.right.count())
         .max()
@@ -770,13 +787,13 @@ pub(crate) fn detect_dead_prefixes(
             let rule_labels = match &strategy {
                 crate::decision_tree::DispatchStrategy::Singleton { rule_label } => {
                     vec![rule_label.clone()]
-                }
+                },
                 crate::decision_tree::DispatchStrategy::AmbiguousFanout { rule_labels, .. } => {
                     rule_labels.clone()
-                }
+                },
                 crate::decision_tree::DispatchStrategy::DisjointSuffix { suffix_map, .. } => {
                     suffix_map.values().cloned().collect()
-                }
+                },
                 crate::decision_tree::DispatchStrategy::NotPresent => Vec::new(),
             };
             if !rule_labels.is_empty() && rule_labels.iter().all(|l| dead_labels.contains(l)) {
@@ -816,47 +833,39 @@ pub(crate) fn detect_dead_prefixes(
 ///   that appear later in the node ordering.
 /// - **`NearlyDeadPath`** (A8): informational only — rules are technically
 ///   reachable.
-pub(crate) fn collect_dead_rule_labels(
+fn collect_dead_rule_labels_with_ignored(
     rule_infos: &[RuleInfo],
     categories: &[CategoryInfo],
     first_sets: &HashMap<String, FirstSet>,
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     semantic_dependency_groups: &[HashSet<String>],
     decision_trees: &HashMap<String, crate::decision_tree::CategoryDecisionTree>,
+    rd_rules: &[crate::grammar::ir::RDRuleInfo],
+    ignored_rule_labels: &HashSet<String>,
 ) -> HashSet<String> {
     let mut dead_labels = HashSet::new();
 
-    // Tier 1: LiteralNoNativeType — literal rules in categories without native_type.
-    // These are provably unreachable: the category can never produce a native value.
-    // Tier 2: UnreachableCategory — rules in categories with no reachable prefix rules.
-    // These are provably unreachable: no parse can ever start in the category.
-    // Tier 3 (confirmed): WfstUnreachable AND trie-unreachable — dead in both WFST
-    // and decision tree dispatch, so no alternative dispatch path exists.
-    let trie_reachable: HashMap<String, HashSet<String>> = decision_trees
-        .iter()
-        .map(|(cat, tree)| (cat.clone(), tree.reachable_rules()))
-        .collect();
+    let raw_warnings = detect_dead_rules_with_ignored(
+        rule_infos,
+        categories,
+        first_sets,
+        prediction_wfsts,
+        semantic_dependency_groups,
+        &HashSet::new(),
+        rd_rules,
+        ignored_rule_labels,
+    );
+    let confirmed_warnings =
+        filter_dead_rule_warnings_with_decision_trees(raw_warnings, decision_trees);
 
-    for w in detect_dead_rules(rule_infos, categories, first_sets, prediction_wfsts,
-                               semantic_dependency_groups, &HashSet::new(), &[]) {
+    for w in confirmed_warnings {
         match &w {
             DeadRuleWarning::LiteralNoNativeType { rule_label, .. }
-            | DeadRuleWarning::UnreachableCategory { rule_label, .. } => {
+            | DeadRuleWarning::UnreachableCategory { rule_label, .. }
+            | DeadRuleWarning::WfstUnreachable { rule_label, .. } => {
                 dead_labels.insert(rule_label.clone());
-            }
-            // 1.2b: WfstUnreachable is now promoted to confirmed-dead if the rule
-            // is also unreachable in the decision tree trie. This eliminates the
-            // false-positive risk from cross-cat/cast/NFA dispatch paths: if the
-            // trie also can't reach the rule, no dispatch path exists.
-            DeadRuleWarning::WfstUnreachable { rule_label, category, .. } => {
-                let trie_also_unreachable = trie_reachable
-                    .get(category)
-                    .map_or(false, |reachable| !reachable.contains(rule_label));
-                if trie_also_unreachable {
-                    dead_labels.insert(rule_label.clone());
-                }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -865,6 +874,26 @@ pub(crate) fn collect_dead_rule_labels(
     // NearlyDeadPath excluded: informational only, rules are technically reachable.
 
     dead_labels
+}
+
+fn filter_dead_rule_warnings_with_decision_trees(
+    warnings: Vec<DeadRuleWarning>,
+    decision_trees: &HashMap<String, crate::decision_tree::CategoryDecisionTree>,
+) -> Vec<DeadRuleWarning> {
+    let trie_reachable: HashMap<String, HashSet<String>> = decision_trees
+        .iter()
+        .map(|(cat, tree)| (cat.clone(), tree.reachable_rules()))
+        .collect();
+
+    warnings
+        .into_iter()
+        .filter(|warning| match warning {
+            DeadRuleWarning::WfstUnreachable { rule_label, category } => trie_reachable
+                .get(category)
+                .is_some_and(|reachable| !reachable.contains(rule_label)),
+            _ => true,
+        })
+        .collect()
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -921,6 +950,10 @@ pub struct ParserBundle {
     pub(crate) all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)>,
     /// Rule source locations: (label, category) → SourceLocation. Used by lint layer.
     pub(crate) rule_locations: std::collections::HashMap<(String, String), crate::SourceLocation>,
+    /// Rule labels that are not parser-root dead code even when absent from
+    /// WFST/WPDS reachability, such as synthetic injections and refinement
+    /// downcasts checked by refinement analysis.
+    pub(crate) dead_rule_ignore_labels: HashSet<String>,
     /// Dependency groups from equations/rewrites/logic for transitive liveness analysis.
     pub(crate) semantic_dependency_groups: Vec<HashSet<String>>,
     /// Custom token specs from the `tokens { ... }` block.
@@ -945,10 +978,7 @@ pub enum PipelineState {
         parser_bundle: ParserBundle,
     },
     /// Both code strings generated, ready to merge.
-    Generated {
-        lexer_code: String,
-        parser_code: String,
-    },
+    Generated { lexer_code: String, parser_code: String },
     /// Final output produced.
     Complete(TokenStream),
 }
@@ -1061,11 +1091,8 @@ pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::P
     stage!("generate_lexer_code.done");
 
     stage!("generate_parser_code.start");
-    let (parser_code, analysis) = generate_parser_code_with_analysis(
-        &parser_bundle,
-        &variant_map,
-        &ambiguity_info,
-    );
+    let (parser_code, analysis) =
+        generate_parser_code_with_analysis(&parser_bundle, &variant_map, &ambiguity_info);
     stage!("generate_parser_code.done");
 
     // Finalize: concatenate and parse into TokenStream
@@ -1241,11 +1268,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         .filter(|r| !r.is_infix && !r.is_var && !r.is_literal)
         .map(|rule| {
             let prefix_bp = if rule.is_unary_prefix {
-                Some(compute_prefix_bp(
-                    &rule.category,
-                    rule.prefix_precedence,
-                    &bp_table,
-                ))
+                Some(compute_prefix_bp(&rule.category, rule.prefix_precedence, &bp_table))
             } else {
                 None
             };
@@ -1298,7 +1321,9 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         let mut map: HashMap<String, HashSet<String>> = HashMap::new();
         for ir in &infix_rules {
             if !ir.terminal.is_empty() {
-                map.entry(ir.category.clone()).or_default().insert(ir.terminal.clone());
+                map.entry(ir.category.clone())
+                    .or_default()
+                    .insert(ir.terminal.clone());
             }
         }
         map
@@ -1343,9 +1368,18 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         .rules
         .iter()
         .filter_map(|r| {
-            r.source_location.map(|loc| ((r.label.clone(), r.category.clone()), loc))
+            r.source_location
+                .map(|loc| ((r.label.clone(), r.category.clone()), loc))
         })
         .collect();
+
+    let mut dead_rule_ignore_labels: HashSet<String> = spec
+        .rules
+        .iter()
+        .filter(|r| r.is_auto_injected)
+        .map(|r| r.label.clone())
+        .collect();
+    dead_rule_ignore_labels.extend(collect_refinement_downcast_rule_labels(spec));
 
     let parser_bundle = ParserBundle {
         grammar_name: spec.name.clone(),
@@ -1361,12 +1395,43 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         recovery_config: spec.recovery_config.clone(),
         all_syntax,
         rule_locations,
+        dead_rule_ignore_labels,
         semantic_dependency_groups: spec.semantic_dependency_groups.clone(),
         custom_tokens: spec.custom_tokens.clone(),
         refinement_types: spec.refinement_types.clone(),
     };
 
     (lexer_bundle, parser_bundle)
+}
+
+fn collect_refinement_downcast_rule_labels(spec: &LanguageSpec) -> HashSet<String> {
+    let refinement_base_by_name: HashMap<&str, &str> = spec
+        .refinement_types
+        .iter()
+        .map(|r| (r.name.as_str(), r.base_category.as_str()))
+        .collect();
+
+    spec.rules
+        .iter()
+        .filter_map(|rule| {
+            let base_category = refinement_base_by_name.get(rule.category.as_str())?;
+            if !rule.is_cast
+                || rule.cast_source_category.as_deref() != Some(*base_category)
+                || rule.syntax.len() != 1
+            {
+                return None;
+            }
+
+            match &rule.syntax[0] {
+                SyntaxItemSpec::NonTerminal { category, .. }
+                    if category.as_str() == *base_category =>
+                {
+                    Some(rule.label.clone())
+                },
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1404,17 +1469,18 @@ fn generate_lexer_code_with_map(
     // `True`/`False` keyword terminals so the custom pattern drives matching.
     if bundle.literal_patterns.boolean.is_some() {
         lexer_input.terminals.retain(|t| {
-            !matches!(
-                t.kind,
-                crate::automata::TokenKind::True | crate::automata::TokenKind::False
-            )
+            !matches!(t.kind, crate::automata::TokenKind::True | crate::automata::TokenKind::False)
         });
     }
     lexer_input.custom_tokens = bundle.custom_tokens.clone();
-    lexer_input.modes = bundle.modes.iter().map(|m| crate::lexer::LexerModeInput {
-        name: m.name.clone(),
-        custom_tokens: m.token_specs.clone(),
-    }).collect();
+    lexer_input.modes = bundle
+        .modes
+        .iter()
+        .map(|m| crate::lexer::LexerModeInput {
+            name: m.name.clone(),
+            custom_tokens: m.token_specs.clone(),
+        })
+        .collect();
     let (lexer_str, stats) = generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer);
     (lexer_str, stats.variant_map, stats.ambiguity_info)
 }
@@ -1482,7 +1548,8 @@ pub(crate) struct MathAnalysisResults {
     pub phase_count: u32,
 
     // ── Always-on analyses ──
-    pub safety_result: Option<crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
+    pub safety_result:
+        Option<crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
     pub cegar_result: Option<crate::cegar::CegarLog>,
     pub algebraic_result: Option<crate::algebraic::AlgebraicSummary>,
 
@@ -1532,34 +1599,90 @@ pub(crate) struct MathAnalysisResults {
 pub(crate) fn count_analysis_phases() -> u32 {
     #[allow(unused_mut)] // mut needed when feature flags add to count
     let mut count = 3u32; // safety, cegar, algebraic
-    { count += 2; } // confluence, termination
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; } // buchi analysis (separate from LTL)
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
-    { count += 1; }
+    {
+        count += 2;
+    } // confluence, termination
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    } // buchi analysis (separate from LTL)
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
+    {
+        count += 1;
+    }
     count
 }
 
@@ -1598,12 +1721,8 @@ fn run_math_analyses_parallel(
     #[allow(unused_mut)] // mut needed when egraph feature adds post-scope mutation
     let mut results = std::thread::scope(|s| {
         // Phase 1: TRS (no dependencies)
-        let h_confluence = s.spawn(|| {
-            crate::confluence::analyze_from_bundle(all_syntax, 100)
-        });
-        let h_termination = s.spawn(|| {
-            crate::termination::analyze_from_bundle(all_syntax)
-        });
+        let h_confluence = s.spawn(|| crate::confluence::analyze_from_bundle(all_syntax, 100));
+        let h_termination = s.spawn(|| crate::termination::analyze_from_bundle(all_syntax));
 
         // Phase 2: Automata (no dependencies)
         let h_vpa = s.spawn(|| {
@@ -1612,67 +1731,31 @@ fn run_math_analyses_parallel(
             }
             crate::vpa::analyze_from_bundle(categories, all_syntax)
         });
-        let h_wta = s.spawn(|| {
-            crate::tree_automaton::analyze_from_bundle(categories, all_syntax)
-        });
+        let h_wta = s.spawn(|| crate::tree_automaton::analyze_from_bundle(categories, all_syntax));
 
         // Phase 3: WPDS-dependent
         let h_safety = s.spawn(|| {
-            wpds_ref.and_then(|wa| {
-                crate::verify::verify_from_bundle(wa, categories, all_syntax)
-            })
+            wpds_ref.and_then(|wa| crate::verify::verify_from_bundle(wa, categories, all_syntax))
         });
-        let h_cegar = s.spawn(|| {
-            wpds_ref.and_then(|wa| {
-                crate::cegar::cegar_from_bundle(wa)
-            })
-        });
-        let h_algebraic = s.spawn(|| {
-            wpds_ref.map(|wa| {
-                crate::algebraic::analyze_from_bundle(wa)
-            })
-        });
+        let h_cegar = s.spawn(|| wpds_ref.and_then(|wa| crate::cegar::cegar_from_bundle(wa)));
+        let h_algebraic = s.spawn(|| wpds_ref.map(|wa| crate::algebraic::analyze_from_bundle(wa)));
 
-        let h_ewpds = s.spawn(|| {
-            wpds_ref.and_then(|wa| {
-                crate::ewpds::extend_from_bundle(wa, all_syntax)
-            })
-        });
-        let h_ara = s.spawn(|| {
-            wpds_ref.map(|wa| {
-                crate::ara::analyze_from_bundle(wa, all_syntax)
-            })
-        });
+        let h_ewpds =
+            s.spawn(|| wpds_ref.and_then(|wa| crate::ewpds::extend_from_bundle(wa, all_syntax)));
+        let h_ara = s.spawn(|| wpds_ref.map(|wa| crate::ara::analyze_from_bundle(wa, all_syntax)));
 
         // Phase 4: Concurrency (no dependencies)
-        let h_petri = s.spawn(|| {
-            Some(crate::petri::analyze_from_bundle(all_syntax, &petri_cats))
-        });
-        let h_nominal = s.spawn(|| {
-            Some(crate::nominal::analyze_from_bundle(all_syntax))
-        });
+        let h_petri = s.spawn(|| Some(crate::petri::analyze_from_bundle(all_syntax, &petri_cats)));
+        let h_nominal = s.spawn(|| Some(crate::nominal::analyze_from_bundle(all_syntax)));
         // Phase 5: Temporal
-        let h_ltl = s.spawn(|| {
-            wpds_ref.map(|wa| {
-                crate::ltl::check_from_bundle(wa)
-            })
-        });
-        let h_provenance = s.spawn(|| {
-            crate::provenance::track_from_bundle(all_syntax, categories)
-        });
-        let h_cra = s.spawn(|| {
-            crate::cra::analyze_from_bundle(all_syntax)
-        });
+        let h_ltl = s.spawn(|| wpds_ref.map(|wa| crate::ltl::check_from_bundle(wa)));
+        let h_provenance = s.spawn(|| crate::provenance::track_from_bundle(all_syntax, categories));
+        let h_cra = s.spawn(|| crate::cra::analyze_from_bundle(all_syntax));
 
         // Phase 6: Meta
-        let h_morphism = s.spawn(|| {
-            crate::morphism::check_from_bundle(all_syntax, categories)
-        });
-        let h_kat = s.spawn(|| {
-            wpds_ref.and_then(|wa| {
-                crate::kat::check_from_bundle(wa, all_syntax)
-            })
-        });
+        let h_morphism = s.spawn(|| crate::morphism::check_from_bundle(all_syntax, categories));
+        let h_kat =
+            s.spawn(|| wpds_ref.and_then(|wa| crate::kat::check_from_bundle(wa, all_syntax)));
 
         // Phase 7B: Advanced automata — conditional spawning via dispatch plan
         // When predicate-dispatch is disabled, all modules run unconditionally.
@@ -1775,39 +1858,83 @@ fn run_math_analyses_parallel(
         // ── Collect results ──────────────────────────────────────────────
         MathAnalysisResults {
             phase_count,
-            safety_result: h_safety.join().expect("DB03: safety verification thread panicked"),
-            cegar_result: h_cegar.join().expect("DB03: CEGAR refinement thread panicked"),
-            algebraic_result: h_algebraic.join().expect("DB03: algebraic analysis thread panicked"),
-            confluence_result: h_confluence.join().expect("DB03: confluence analysis thread panicked"),
-            termination_result: h_termination.join().expect("DB03: termination analysis thread panicked"),
+            safety_result: h_safety
+                .join()
+                .expect("DB03: safety verification thread panicked"),
+            cegar_result: h_cegar
+                .join()
+                .expect("DB03: CEGAR refinement thread panicked"),
+            algebraic_result: h_algebraic
+                .join()
+                .expect("DB03: algebraic analysis thread panicked"),
+            confluence_result: h_confluence
+                .join()
+                .expect("DB03: confluence analysis thread panicked"),
+            termination_result: h_termination
+                .join()
+                .expect("DB03: termination analysis thread panicked"),
             vpa_result: h_vpa.join().expect("DB03: VPA analysis thread panicked"),
             wta_result: h_wta.join().expect("DB03: WTA analysis thread panicked"),
-            ewpds_result: h_ewpds.join().expect("DB03: EWPDS analysis thread panicked"),
+            ewpds_result: h_ewpds
+                .join()
+                .expect("DB03: EWPDS analysis thread panicked"),
             ara_result: h_ara.join().expect("DB03: ARA analysis thread panicked"),
-            petri_result: h_petri.join().expect("DB03: Petri net analysis thread panicked"),
-            nominal_result: h_nominal.join().expect("DB03: nominal analysis thread panicked"),
-            alternating_result: h_alternating.join().expect("DB03: alternating analysis thread panicked"),
+            petri_result: h_petri
+                .join()
+                .expect("DB03: Petri net analysis thread panicked"),
+            nominal_result: h_nominal
+                .join()
+                .expect("DB03: nominal analysis thread panicked"),
+            alternating_result: h_alternating
+                .join()
+                .expect("DB03: alternating analysis thread panicked"),
             ltl_results: h_ltl.join().expect("DB03: LTL check thread panicked"),
-            provenance_result: h_provenance.join().expect("DB03: provenance tracking thread panicked"),
+            provenance_result: h_provenance
+                .join()
+                .expect("DB03: provenance tracking thread panicked"),
             cra_result: h_cra.join().expect("DB03: CRA analysis thread panicked"),
-            morphism_result: h_morphism.join().expect("DB03: morphism check thread panicked"),
+            morphism_result: h_morphism
+                .join()
+                .expect("DB03: morphism check thread panicked"),
             kat_result: h_kat.join().expect("DB03: KAT check thread panicked"),
-            symbolic_result: h_symbolic.join().expect("DB03: symbolic analysis thread panicked"),
-            buchi_result: h_buchi.join().expect("DB03: Büchi analysis thread panicked"),
+            symbolic_result: h_symbolic
+                .join()
+                .expect("DB03: symbolic analysis thread panicked"),
+            buchi_result: h_buchi
+                .join()
+                .expect("DB03: Büchi analysis thread panicked"),
             mso_result: h_mso.join().expect("DB03: MSO analysis thread panicked"),
-            probabilistic_result: h_probabilistic.join().expect("DB03: probabilistic analysis thread panicked"),
-            register_result: h_register.join().expect("DB03: register analysis thread panicked"),
-            parity_tree_result: h_parity_tree.join().expect("DB03: parity tree analysis thread panicked"),
-            multi_tape_result: h_multi_tape.join().expect("DB03: multi-tape analysis thread panicked"),
-            multiset_result: h_multiset.join().expect("DB03: multiset analysis thread panicked"),
-            two_way_result: h_two_way.join().expect("DB03: two-way transducer analysis thread panicked"),
+            probabilistic_result: h_probabilistic
+                .join()
+                .expect("DB03: probabilistic analysis thread panicked"),
+            register_result: h_register
+                .join()
+                .expect("DB03: register analysis thread panicked"),
+            parity_tree_result: h_parity_tree
+                .join()
+                .expect("DB03: parity tree analysis thread panicked"),
+            multi_tape_result: h_multi_tape
+                .join()
+                .expect("DB03: multi-tape analysis thread panicked"),
+            multiset_result: h_multiset
+                .join()
+                .expect("DB03: multiset analysis thread panicked"),
+            two_way_result: h_two_way
+                .join()
+                .expect("DB03: two-way transducer analysis thread panicked"),
             sft_result: h_sft.join().expect("DB03: SFT analysis thread panicked"),
-            // ── E-graph equality saturation (placeholder — filled below) ──
+            // ── E-graph equality saturation; populated after confluence joins ──
             egraph_result: None,
             // ── Constraint theory analyses ──
-            presburger_result: h_presburger.join().expect("DB03: Presburger analysis thread panicked"),
-            unification_result: h_unification.join().expect("DB03: Unification analysis thread panicked"),
-            lattice_result: h_lattice.join().expect("DB03: Lattice analysis thread panicked"),
+            presburger_result: h_presburger
+                .join()
+                .expect("DB03: Presburger analysis thread panicked"),
+            unification_result: h_unification
+                .join()
+                .expect("DB03: Unification analysis thread panicked"),
+            lattice_result: h_lattice
+                .join()
+                .expect("DB03: Lattice analysis thread panicked"),
             // ── Refinement type analysis ──
             refinement_analysis: refinement_analysis_result,
         }
@@ -1836,21 +1963,18 @@ fn run_math_analyses_sequential(
     eligible: bool,
 ) -> MathAnalysisResults {
     // Build dispatch plan for sequential path so dispatch gates are respected.
-    let dispatch_plan = crate::predicate_dispatch::classify_grammar(
-        &bundle.all_syntax, &bundle.categories,
-    );
+    let dispatch_plan =
+        crate::predicate_dispatch::classify_grammar(&bundle.all_syntax, &bundle.categories);
 
     /// Helper macro: returns `None` when dispatch says module is not needed.
     /// The inner `#[cfg]` gate ensures this compiles when `predicate-dispatch` is off.
     #[allow(unused_macros)]
     macro_rules! dispatch_gate {
-        ($module:ident) => {
-            {
-                if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::$module) {
-                    return None;
-                }
+        ($module:ident) => {{
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::$module) {
+                return None;
             }
-        };
+        }};
     }
 
     MathAnalysisResults {
@@ -1861,44 +1985,54 @@ fn run_math_analyses_sequential(
             wpds_analysis.and_then(|wa| {
                 crate::verify::verify_from_bundle(wa, &bundle.categories, &bundle.all_syntax)
             })
-        } else { None },
+        } else {
+            None
+        },
         cegar_result: if eligible {
-            wpds_analysis.and_then(|wa| {
-                crate::cegar::cegar_from_bundle(wa)
-            })
-        } else { None },
+            wpds_analysis.and_then(|wa| crate::cegar::cegar_from_bundle(wa))
+        } else {
+            None
+        },
         algebraic_result: if eligible {
-            wpds_analysis.map(|wa| {
-                crate::algebraic::analyze_from_bundle(wa)
-            })
-        } else { None },
+            wpds_analysis.map(|wa| crate::algebraic::analyze_from_bundle(wa))
+        } else {
+            None
+        },
 
         // Feature-gated analyses
         confluence_result: if eligible {
             crate::confluence::analyze_from_bundle(&bundle.all_syntax, 100)
-        } else { None },
+        } else {
+            None
+        },
         termination_result: if eligible {
             crate::termination::analyze_from_bundle(&bundle.all_syntax)
-        } else { None },
+        } else {
+            None
+        },
         vpa_result: if eligible {
             (|| {
                 dispatch_gate!(Vpa);
                 crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
             })()
-        } else { None },
+        } else {
+            None
+        },
         wta_result: if eligible {
             crate::tree_automaton::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
-        } else { None },
+        } else {
+            None
+        },
         ewpds_result: if eligible {
-            wpds_analysis.and_then(|wa| {
-                crate::ewpds::extend_from_bundle(wa, &bundle.all_syntax)
-            })
-        } else { None },
+            wpds_analysis.and_then(|wa| crate::ewpds::extend_from_bundle(wa, &bundle.all_syntax))
+        } else {
+            None
+        },
         ara_result: if eligible {
-            wpds_analysis.map(|wa| {
-                crate::ara::analyze_from_bundle(wa, &bundle.all_syntax)
-            })
-        } else { None },
+            wpds_analysis.map(|wa| crate::ara::analyze_from_bundle(wa, &bundle.all_syntax))
+        } else {
+            None
+        },
         petri_result: if eligible {
             let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
                 .categories
@@ -1909,98 +2043,149 @@ fn run_math_analyses_sequential(
                 })
                 .collect();
             Some(crate::petri::analyze_from_bundle(&bundle.all_syntax, &petri_cats))
-        } else { None },
+        } else {
+            None
+        },
         nominal_result: if eligible {
             Some(crate::nominal::analyze_from_bundle(&bundle.all_syntax))
-        } else { None },
+        } else {
+            None
+        },
         alternating_result: if eligible {
             (|| {
                 dispatch_gate!(Awa);
-                Some(crate::alternating::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::alternating::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         ltl_results: if eligible {
-            wpds_analysis.map(|wa| {
-                crate::ltl::check_from_bundle(wa)
-            })
-        } else { None },
+            wpds_analysis.map(|wa| crate::ltl::check_from_bundle(wa))
+        } else {
+            None
+        },
         provenance_result: if eligible {
-            crate::provenance::track_from_bundle(
-                &bundle.all_syntax, &bundle.categories,
-            )
-        } else { None },
+            crate::provenance::track_from_bundle(&bundle.all_syntax, &bundle.categories)
+        } else {
+            None
+        },
         cra_result: if eligible {
             crate::cra::analyze_from_bundle(&bundle.all_syntax)
-        } else { None },
+        } else {
+            None
+        },
         morphism_result: if eligible {
             crate::morphism::check_from_bundle(&bundle.all_syntax, &bundle.categories)
-        } else { None },
+        } else {
+            None
+        },
         kat_result: if eligible {
-            wpds_analysis.and_then(|wa| {
-                crate::kat::check_from_bundle(wa, &bundle.all_syntax)
-            })
-        } else { None },
+            wpds_analysis.and_then(|wa| crate::kat::check_from_bundle(wa, &bundle.all_syntax))
+        } else {
+            None
+        },
         symbolic_result: if eligible {
             (|| {
                 dispatch_gate!(Symbolic);
                 Some(crate::symbolic::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
-        } else { None },
+        } else {
+            None
+        },
         buchi_result: if eligible {
             (|| {
                 dispatch_gate!(Buchi);
                 Some(crate::buchi::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
-        } else { None },
+        } else {
+            None
+        },
         mso_result: if eligible {
             (|| {
                 dispatch_gate!(Mso);
-                Some(crate::weighted_mso::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::weighted_mso::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         probabilistic_result: if eligible {
             (|| {
                 dispatch_gate!(Probabilistic);
-                Some(crate::probabilistic::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::probabilistic::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         register_result: if eligible {
             (|| {
                 dispatch_gate!(Register);
-                Some(crate::register_automata::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::register_automata::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         parity_tree_result: if eligible {
             (|| {
                 dispatch_gate!(ParityTree);
-                Some(crate::parity_tree::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::parity_tree::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         multi_tape_result: if eligible {
             (|| {
                 dispatch_gate!(MultiTape);
                 Some(crate::multi_tape::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
-        } else { None },
+        } else {
+            None
+        },
         multiset_result: if eligible {
             (|| {
                 dispatch_gate!(Multiset);
-                Some(crate::multiset_automata::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::multiset_automata::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         two_way_result: if eligible {
             (|| {
                 dispatch_gate!(TwoWay);
-                Some(crate::two_way_transducer::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::two_way_transducer::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         sft_result: if eligible {
             (|| {
                 dispatch_gate!(Sft);
                 Some(crate::sft::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
             })()
-        } else { None },
-        // ── E-graph equality saturation (placeholder — filled by caller) ──
+        } else {
+            None
+        },
+        // ── E-graph equality saturation; populated by the pipeline caller ──
         egraph_result: None,
         // ── Constraint theory analyses ──
         presburger_result: if eligible {
@@ -2008,19 +2193,28 @@ fn run_math_analyses_sequential(
                 dispatch_gate!(LinearArithmetic);
                 Some(crate::presburger::analyze_from_bundle(&bundle.all_syntax))
             })()
-        } else { None },
+        } else {
+            None
+        },
         unification_result: if eligible {
             (|| {
                 dispatch_gate!(Unification);
                 Some(crate::unification::analyze_from_bundle(&bundle.all_syntax))
             })()
-        } else { None },
+        } else {
+            None
+        },
         lattice_result: if eligible {
             (|| {
                 dispatch_gate!(SubtypeLattice);
-                Some(crate::lattice_theory::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+                Some(crate::lattice_theory::analyze_from_bundle(
+                    &bundle.all_syntax,
+                    &bundle.categories,
+                ))
             })()
-        } else { None },
+        } else {
+            None
+        },
         // ── Refinement type analysis ──
         refinement_analysis: if !bundle.refinement_types.is_empty() {
             Some(analyze_refinement_types(bundle))
@@ -2045,11 +2239,17 @@ fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
     let mut result = RefinementAnalysisResult::default();
     let spec = &bundle.refinement_types;
 
-    // Collect base category names for RT06 shadow detection
-    let base_category_names: std::collections::HashSet<&str> = bundle.categories
-        .iter()
-        .map(|c| c.name.as_str())
-        .collect();
+    // Refinement declarations also introduce a same-named category so the
+    // parser can construct refined terms. RT06 should ignore that expected
+    // category and report only an independent base-category collision.
+    let mut category_name_counts: HashMap<String, usize> = HashMap::new();
+    for category in &bundle.categories {
+        *category_name_counts.entry(category.name.to_ascii_lowercase()).or_default() += 1;
+    }
+    let mut refinement_name_counts: HashMap<String, usize> = HashMap::new();
+    for rt in spec {
+        *refinement_name_counts.entry(rt.name.to_ascii_lowercase()).or_default() += 1;
+    }
 
     for rt in spec {
         // RT05: Classify decidability tier based on predicate kind
@@ -2061,9 +2261,18 @@ fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
         };
         result.decidability_tiers.push((rt.name.clone(), tier));
 
-        // RT06: Check if refinement type name shadows a base category
-        if base_category_names.contains(rt.name.as_str()) {
-            result.name_shadows.push((rt.name.clone(), rt.base_category.clone()));
+        // RT06: Check if the refinement name shadows a base category name.
+        let refinement_key = rt.name.to_ascii_lowercase();
+        let base_key = rt.base_category.to_ascii_lowercase();
+        let category_count = category_name_counts.get(&refinement_key).copied().unwrap_or(0);
+        let refinement_count = refinement_name_counts.get(&refinement_key).copied().unwrap_or(0);
+        if refinement_key == base_key || category_count > refinement_count {
+            let shadowed_name = if refinement_key == base_key {
+                rt.base_category.clone()
+            } else {
+                rt.name.clone()
+            };
+            result.name_shadows.push((rt.name.clone(), shadowed_name));
         }
 
         // RT01/RT02: Predicate analysis
@@ -2073,15 +2282,13 @@ fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
         // the corresponding features are enabled. The per-predicate analysis
         // is deferred to the feature-gated analysis modules.
         if rt.predicate_repr == "true" || rt.predicate_repr.is_empty() {
-            result.tautological.push((
-                rt.name.clone(),
-                "predicate is trivially true".to_string(),
-            ));
+            result
+                .tautological
+                .push((rt.name.clone(), "predicate is trivially true".to_string()));
         } else if rt.predicate_repr == "false" {
-            result.unsatisfiable.push((
-                rt.name.clone(),
-                "predicate is trivially false".to_string(),
-            ));
+            result
+                .unsatisfiable
+                .push((rt.name.clone(), "predicate is trivially false".to_string()));
         }
     }
 
@@ -2092,7 +2299,11 @@ fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
 
     // Merge dispatch results into the RT03/RT04 lints
     for (sub, sup) in &dispatch.subtype_pairs {
-        if !result.subtype_pairs.iter().any(|(s, p)| s == sub && p == sup) {
+        if !result
+            .subtype_pairs
+            .iter()
+            .any(|(s, p)| s == sub && p == sup)
+        {
             result.subtype_pairs.push((sub.clone(), sup.clone()));
         }
     }
@@ -2285,12 +2496,15 @@ fn generate_parser_code(
             primary_category,
         )
     } else {
-        (compute_follow_sets_from_inputs(
-            &bundle.follow_inputs,
-            &category_names,
-            &first_sets,
-            primary_category,
-        ), Default::default())
+        (
+            compute_follow_sets_from_inputs(
+                &bundle.follow_inputs,
+                &category_names,
+                &first_sets,
+                primary_category,
+            ),
+            Default::default(),
+        )
     };
 
     // ── DB01: Emit I18 diagnostic if incremental mode reduced work ────────
@@ -2298,7 +2512,9 @@ fn generate_parser_code(
         let first_baseline = first_stats.total_categories * first_stats.iterations;
         let follow_baseline = follow_stats.total_categories * follow_stats.iterations;
         pipeline_diagnostic(
-            &bundle.grammar_name, DiagnosticId::I18, "incremental-first-follow",
+            &bundle.grammar_name,
+            DiagnosticId::I18,
+            "incremental-first-follow",
             crate::lint::LintSeverity::Info,
             format!(
                 "DB01 incremental FIRST/FOLLOW: FIRST {}/{} visits ({} iters, {} cats), \
@@ -2364,9 +2580,14 @@ fn generate_parser_code(
         );
         if two_token_paths_added > 0 {
             pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::I02, "two-token-enrichment",
+                &bundle.grammar_name,
+                DiagnosticId::I02,
+                "two-token-enrichment",
                 crate::lint::LintSeverity::Info,
-                format!("{} two-token disambiguation path(s) added to prediction WFSTs", two_token_paths_added),
+                format!(
+                    "{} two-token disambiguation path(s) added to prediction WFSTs",
+                    two_token_paths_added
+                ),
                 None,
             );
         }
@@ -2380,10 +2601,8 @@ fn generate_parser_code(
             let mut total_context_labels = 0usize;
             for wfst in prediction_wfsts.values_mut() {
                 // Collect unique rule labels from all actions
-                let mut rule_labels: Vec<String> = wfst.actions
-                    .iter()
-                    .map(|a| a.action.rule_label())
-                    .collect();
+                let mut rule_labels: Vec<String> =
+                    wfst.actions.iter().map(|a| a.action.rule_label()).collect();
                 rule_labels.sort();
                 rule_labels.dedup();
                 if rule_labels.len() > 1 {
@@ -2394,9 +2613,14 @@ fn generate_parser_code(
             }
             if total_context_labels > 0 {
                 pipeline_diagnostic(
-                    &bundle.grammar_name, DiagnosticId::I03, "context-weight-labels",
+                    &bundle.grammar_name,
+                    DiagnosticId::I03,
+                    "context-weight-labels",
                     crate::lint::LintSeverity::Info,
-                    format!("{} ContextWeight bit labels assigned across prediction WFSTs", total_context_labels),
+                    format!(
+                        "{} ContextWeight bit labels assigned across prediction WFSTs",
+                        total_context_labels
+                    ),
                     None,
                 );
             }
@@ -2424,13 +2648,19 @@ fn generate_parser_code(
             let summary = cascade.run_all(&mut prediction_wfsts);
             if !summary.is_empty() {
                 pipeline_diagnostic(
-                    &bundle.grammar_name, DiagnosticId::I01, "transducer-cascade",
-                    crate::lint::LintSeverity::Info, summary, None,
+                    &bundle.grammar_name,
+                    DiagnosticId::I01,
+                    "transducer-cascade",
+                    crate::lint::LintSeverity::Info,
+                    summary,
+                    None,
                 );
             }
         } else {
             pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::I02, "cascade-skipped",
+                &bundle.grammar_name,
+                DiagnosticId::I02,
+                "cascade-skipped",
                 crate::lint::LintSeverity::Info,
                 format!("skipping transducer cascade ({} WFST states ≤ 4)", total_wfst_states),
                 None,
@@ -2444,7 +2674,7 @@ fn generate_parser_code(
                 for wfst in prediction_wfsts.values_mut() {
                     wfst.set_beam_width(Some(beam));
                 }
-            }
+            },
             crate::BeamWidthConfig::Auto => {
                 // A7: Entropy-based adaptive beam width per category.
                 // When wfst-log is enabled, compute per-category Shannon entropy and
@@ -2463,24 +2693,34 @@ fn generate_parser_code(
                             let beam = crate::automata::semiring::TropicalWeight::new(beam_value);
                             wfst.set_beam_width(Some(beam));
                             pipeline_diagnostic(
-                                &bundle.grammar_name, DiagnosticId::I03, "adaptive-beam",
+                                &bundle.grammar_name,
+                                DiagnosticId::I03,
+                                "adaptive-beam",
                                 crate::lint::LintSeverity::Info,
-                                format!("{}: entropy={:.2} bits → beam={:.2}", cat_name, entropy_bits, beam_value),
+                                format!(
+                                    "{}: entropy={:.2} bits → beam={:.2}",
+                                    cat_name, entropy_bits, beam_value
+                                ),
                                 None,
                             );
                         } else {
                             pipeline_diagnostic(
-                                &bundle.grammar_name, DiagnosticId::I03, "adaptive-beam",
+                                &bundle.grammar_name,
+                                DiagnosticId::I03,
+                                "adaptive-beam",
                                 crate::lint::LintSeverity::Info,
-                                format!("{}: entropy={:.2} bits → no beam (deterministic)", cat_name, entropy_bits),
+                                format!(
+                                    "{}: entropy={:.2} bits → no beam (deterministic)",
+                                    cat_name, entropy_bits
+                                ),
                                 None,
                             );
                         }
                     }
                 }
                 // Without wfst-log, Auto falls back to Disabled (no beam).
-            }
-            crate::BeamWidthConfig::Disabled => {}
+            },
+            crate::BeamWidthConfig::Disabled => {},
         }
 
         // NOTE: Dead-rule detection (W01) now handled by lint::run_lints() below.
@@ -2558,17 +2798,17 @@ fn generate_parser_code(
             match cat.native_type.as_deref() {
                 Some("i32" | "i64" | "u32" | "u64" | "usize" | "isize") => {
                     variants.insert("Integer".to_string());
-                }
+                },
                 Some("f32" | "f64") => {
                     variants.insert("Float".to_string());
-                }
+                },
                 Some("bool") => {
                     variants.insert("Boolean".to_string());
-                }
+                },
                 Some("String" | "&str") => {
                     variants.insert("StringLit".to_string());
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
         // Structural delimiters (always in Token enum)
@@ -2625,51 +2865,42 @@ fn generate_parser_code(
         build_complete_weight_map, compute_composed_dispatch, resolve_dispatch_winners,
     };
 
-    let (composed_resolutions, complete_weight_map, w05_diagnostics) =
-        if ambiguity_info.has_ambiguous {
-            let (composed, w05_diags) = compute_composed_dispatch(
-                &ambiguity_info.ambiguous_states,
-                &category_names,
-                &first_sets,
-                variant_map,
-                Some(&prediction_wfsts),
-                &bundle.rule_infos,
-                &bundle.grammar_name,
-            );
+    let (composed_resolutions, complete_weight_map, w05_diagnostics) = if ambiguity_info
+        .has_ambiguous
+    {
+        let (composed, w05_diags) = compute_composed_dispatch(
+            &ambiguity_info.ambiguous_states,
+            &category_names,
+            &first_sets,
+            variant_map,
+            Some(&prediction_wfsts),
+            &bundle.rule_infos,
+            &bundle.grammar_name,
+        );
 
-            // Build complete weight map covering ALL (category, token) pairs.
-            // Ambiguous tokens use composed dispatch weights; deterministic tokens
-            // use rule specificity weights. Used for dispatch arm ordering.
-            let weight_map = build_complete_weight_map(
-                &composed,
-                &first_sets,
-                &bundle.rule_infos,
-                &category_names,
-            );
+        // Build complete weight map covering ALL (category, token) pairs.
+        // Ambiguous tokens use composed dispatch weights; deterministic tokens
+        // use rule specificity weights. Used for dispatch arm ordering.
+        let weight_map =
+            build_complete_weight_map(&composed, &first_sets, &bundle.rule_infos, &category_names);
 
-            (
-                Some(resolve_dispatch_winners(&composed)),
-                Some(weight_map),
-                w05_diags,
-            )
-        } else {
-            // No ambiguous states — still build weight map for deterministic tokens
-            let weight_map = build_complete_weight_map(
-                &HashMap::new(),
-                &first_sets,
-                &bundle.rule_infos,
-                &category_names,
-            );
-            (None, Some(weight_map), Vec::new())
-        };
+        (Some(resolve_dispatch_winners(&composed)), Some(weight_map), w05_diags)
+    } else {
+        // No ambiguous states — still build weight map for deterministic tokens
+        let weight_map = build_complete_weight_map(
+            &HashMap::new(),
+            &first_sets,
+            &bundle.rule_infos,
+            &category_names,
+        );
+        (None, Some(weight_map), Vec::new())
+    };
 
     // Detect which categories have NFA-ambiguous prefix groups (multiple rules
     // sharing the same dispatch token). These categories need thread-local spillover
     // buffers and forced-prefix replay for intra-category disambiguation.
-    let mut nfa_spillover_categories = crate::rd_analysis::categories_needing_nfa_spillover(
-        &bundle.rd_rules,
-        &category_names,
-    );
+    let mut nfa_spillover_categories =
+        crate::rd_analysis::categories_needing_nfa_spillover(&bundle.rd_rules, &category_names);
 
     // ── D1 + A3: Cost-benefit optimization analysis → optimization gating ──
     // Profile the grammar and evaluate which optimizations are beneficial.
@@ -2688,25 +2919,41 @@ fn generate_parser_code(
     );
     let optimization_gates = {
         let recommended = crate::cost_benefit::recommended_optimizations(&grammar_profile);
-        let gates = crate::cost_benefit::OptimizationGates::from_env_or_recommendations(&recommended);
+        let gates =
+            crate::cost_benefit::OptimizationGates::from_env_or_recommendations(&recommended);
         if !recommended.is_empty() {
             let verbose = std::env::var("PRATTAIL_LINT_VERBOSE").is_ok();
-            let detail_lines: Vec<String> = recommended.iter().map(|c| {
-                format!("  {} (speedup={:.2}, cost={:.2}): {}", c.optimization, c.speedup.value(), c.compile_cost.value(), c.reason)
-            }).collect();
+            let detail_lines: Vec<String> = recommended
+                .iter()
+                .map(|c| {
+                    format!(
+                        "  {} (speedup={:.2}, cost={:.2}): {}",
+                        c.optimization,
+                        c.speedup.value(),
+                        c.compile_cost.value(),
+                        c.reason
+                    )
+                })
+                .collect();
             let display_lines = if !verbose && detail_lines.len() > 5 {
                 let mut truncated = detail_lines[..5].to_vec();
-                truncated.push(format!("  ... and {} more (set PRATTAIL_LINT_VERBOSE=1 to see all)", detail_lines.len() - 5));
+                truncated.push(format!(
+                    "  ... and {} more (set PRATTAIL_LINT_VERBOSE=1 to see all)",
+                    detail_lines.len() - 5
+                ));
                 truncated
             } else {
                 detail_lines
             };
             pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::I05, "cost-benefit-recommendations",
+                &bundle.grammar_name,
+                DiagnosticId::I05,
+                "cost-benefit-recommendations",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "cost-benefit analysis recommends {} optimization(s):\n{}",
-                    recommended.len(), display_lines.join("\n"),
+                    recommended.len(),
+                    display_lines.join("\n"),
                 ),
                 None,
             );
@@ -2720,24 +2967,29 @@ fn generate_parser_code(
     // these labels are additionally threaded into dispatch and trampoline
     // configs to suppress parser codegen for unreachable rules.
     // The lint layer still emits W01 warnings independently.
-    let mut all_dead_rule_labels = collect_dead_rule_labels(
+    let mut all_dead_rule_labels = collect_dead_rule_labels_with_ignored(
         &bundle.rule_infos,
         &bundle.categories,
         &first_sets,
         &prediction_wfsts,
         &bundle.semantic_dependency_groups,
-        &HashMap::new(), // DTs not yet built; trie confirmation in 2nd pass below
+        &HashMap::new(), // DTs are built after this pass; trie confirmation happens in pass 2 below
+        &bundle.rd_rules,
+        &bundle.dead_rule_ignore_labels,
     );
     let dead_rules: HashSet<String> = if optimization_gates.enhanced_dce {
         if !all_dead_rule_labels.is_empty() {
             let mut sorted: Vec<&str> = all_dead_rule_labels.iter().map(|s| s.as_str()).collect();
             sorted.sort_unstable();
             pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::I06, "enhanced-dce-active",
+                &bundle.grammar_name,
+                DiagnosticId::I06,
+                "enhanced-dce-active",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "enhanced DCE: suppressing codegen for {} dead rule(s): [{}]",
-                    all_dead_rule_labels.len(), sorted.join(", "),
+                    all_dead_rule_labels.len(),
+                    sorted.join(", "),
                 ),
                 None,
             );
@@ -2756,9 +3008,8 @@ fn generate_parser_code(
     // ── D-B02: Lazy analysis skip — decision tree ──────────────────────────
     // Skip decision tree construction for trivial grammars with fewer than 3
     // total rules (rd + cross + cast), where trie dispatch provides no benefit.
-    let total_rule_count = bundle.rd_rules.len()
-        + bundle.cross_rules.len()
-        + bundle.cast_rules.len();
+    let total_rule_count =
+        bundle.rd_rules.len() + bundle.cross_rules.len() + bundle.cast_rules.len();
 
     let decision_trees = {
         use crate::decision_tree::DecisionTreeBuilder;
@@ -2770,11 +3021,7 @@ fn generate_parser_code(
         );
 
         if total_rule_count >= 3 {
-            dt_builder.build_all(
-                &bundle.rd_rules,
-                &bundle.cross_rules,
-                &bundle.cast_rules,
-            );
+            dt_builder.build_all(&bundle.rd_rules, &bundle.cross_rules, &bundle.cast_rules);
 
             // ── Decision-tree diagnostics (D01–D09) ─────────────────────────────
             // Collect all DT diagnostics into a single Vec, then emit via the
@@ -2785,68 +3032,90 @@ fn generate_parser_code(
                 if let Some(tree) = dt_builder.get_tree(cat_name) {
                     // D05: complexity metrics
                     if tree.stats.total_states > 0 {
-                        dt_diagnostics.push(
-                            crate::decision_tree::complexity_metrics(tree, &bundle.grammar_name)
-                        );
+                        dt_diagnostics.push(crate::decision_tree::complexity_metrics(
+                            tree,
+                            &bundle.grammar_name,
+                        ));
                     }
 
                     // D01: precision ambiguity
-                    dt_diagnostics.extend(
-                        crate::decision_tree::precision_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
-                    );
+                    dt_diagnostics.extend(crate::decision_tree::precision_ambiguity_reports(
+                        tree,
+                        &token_id_map,
+                        &bundle.grammar_name,
+                    ));
 
                     // D02: unresolvable ambiguity
-                    dt_diagnostics.extend(
-                        crate::decision_tree::unresolvable_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
-                    );
+                    dt_diagnostics.extend(crate::decision_tree::unresolvable_ambiguity_reports(
+                        tree,
+                        &token_id_map,
+                        &bundle.grammar_name,
+                    ));
 
                     // D03: unreachable rules
-                    let all_labels: std::collections::HashSet<String> = bundle.rd_rules
+                    let all_labels: std::collections::HashSet<String> = bundle
+                        .rd_rules
                         .iter()
-                        .filter(|r| r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none())
-                        .filter(|r| !matches!(
-                            r.items.first(),
-                            Some(crate::grammar::ir::RDSyntaxItem::NonTerminal { .. }) |
-                            Some(crate::grammar::ir::RDSyntaxItem::IdentCapture { .. })
-                        ))
+                        .filter(|r| {
+                            r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none()
+                        })
+                        .filter(|r| {
+                            !matches!(
+                                r.items.first(),
+                                Some(crate::grammar::ir::RDSyntaxItem::NonTerminal { .. })
+                                    | Some(crate::grammar::ir::RDSyntaxItem::IdentCapture { .. })
+                            )
+                        })
                         .map(|r| r.label.clone())
                         .collect();
-                    dt_diagnostics.extend(
-                        crate::decision_tree::unreachable_rule_detection(tree, &all_labels, &bundle.grammar_name)
-                    );
+                    dt_diagnostics.extend(crate::decision_tree::unreachable_rule_detection(
+                        tree,
+                        &all_labels,
+                        &bundle.grammar_name,
+                    ));
 
                     // D04: min lookahead
                     if tree.stats.total_states > 0 {
-                        dt_diagnostics.push(
-                            crate::decision_tree::min_lookahead_report(tree, &bundle.grammar_name)
-                        );
+                        dt_diagnostics.push(crate::decision_tree::min_lookahead_report(
+                            tree,
+                            &bundle.grammar_name,
+                        ));
                     }
                 }
 
                 // D06: WFST consistency (needs both tree and wfst)
-                if let (Some(tree), Some(wfst)) = (dt_builder.get_tree(cat_name), prediction_wfsts.get(cat_name)) {
-                    dt_diagnostics.extend(
-                        crate::decision_tree::wfst_consistency_check(tree, wfst, &token_id_map, &bundle.grammar_name)
-                    );
+                if let (Some(tree), Some(wfst)) =
+                    (dt_builder.get_tree(cat_name), prediction_wfsts.get(cat_name))
+                {
+                    dt_diagnostics.extend(crate::decision_tree::wfst_consistency_check(
+                        tree,
+                        wfst,
+                        &token_id_map,
+                        &bundle.grammar_name,
+                    ));
                 }
 
                 if let Some(tree) = dt_builder.get_tree(cat_name) {
                     // D08: optimization suggestions
-                    dt_diagnostics.extend(
-                        crate::decision_tree::optimization_suggestions(tree, &bundle.grammar_name)
-                    );
+                    dt_diagnostics.extend(crate::decision_tree::optimization_suggestions(
+                        tree,
+                        &bundle.grammar_name,
+                    ));
 
                     // D09: conflict resolution guidance
-                    dt_diagnostics.extend(
-                        crate::decision_tree::conflict_resolution_guidance(tree, &bundle.grammar_name)
-                    );
+                    dt_diagnostics.extend(crate::decision_tree::conflict_resolution_guidance(
+                        tree,
+                        &bundle.grammar_name,
+                    ));
                 }
             }
 
             crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &dt_diagnostics);
         } else {
             pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::I15, "lazy-analysis-skip",
+                &bundle.grammar_name,
+                DiagnosticId::I15,
+                "lazy-analysis-skip",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "decision tree construction skipped: {} rule(s) < 3 threshold",
@@ -2909,11 +3178,14 @@ fn generate_parser_code(
                     .collect();
                 if !lines.is_empty() {
                     pipeline_diagnostic(
-                        &bundle.grammar_name, DiagnosticId::D11, "dispatch-entropy",
+                        &bundle.grammar_name,
+                        DiagnosticId::D11,
+                        "dispatch-entropy",
                         crate::lint::LintSeverity::Note,
                         format!(
                             "category {}: dispatch entropy (top bottlenecks): {}",
-                            cat_name, lines.join("; "),
+                            cat_name,
+                            lines.join("; "),
                         ),
                         None,
                     );
@@ -2930,26 +3202,32 @@ fn generate_parser_code(
         let dt_trees = decision_trees.trees();
         for (cat_name, tree) in dt_trees {
             // Build a rule→BP map from the bp_table for this category
-            let bp_map: HashMap<String, u8> = bundle.bp_table
+            let bp_map: HashMap<String, u8> = bundle
+                .bp_table
                 .operators_for_category(cat_name)
                 .iter()
                 .map(|op| (op.label.clone(), op.left_bp))
                 .collect();
             let strata = tree.bp_stratification(&bp_map);
             if strata.len() > 1 {
-                let lines: Vec<String> = strata.iter()
+                let lines: Vec<String> = strata
+                    .iter()
                     .map(|(bp, reachable, total)| {
-                        format!("BP≤{}: {}/{} rules ({:.0}%)", bp, reachable, total,
-                            *reachable as f64 / *total as f64 * 100.0)
+                        format!(
+                            "BP≤{}: {}/{} rules ({:.0}%)",
+                            bp,
+                            reachable,
+                            total,
+                            *reachable as f64 / *total as f64 * 100.0
+                        )
                     })
                     .collect();
                 pipeline_diagnostic(
-                    &bundle.grammar_name, DiagnosticId::D12, "bp-stratification",
+                    &bundle.grammar_name,
+                    DiagnosticId::D12,
+                    "bp-stratification",
                     crate::lint::LintSeverity::Note,
-                    format!(
-                        "category {}: BP stratification: {}",
-                        cat_name, lines.join(", "),
-                    ),
+                    format!("category {}: BP stratification: {}", cat_name, lines.join(", "),),
                     None,
                 );
             }
@@ -2977,13 +3255,15 @@ fn generate_parser_code(
     // WFST and the trie are added to the dead set.
     {
         let dt_trees = decision_trees.trees();
-        let confirmed = collect_dead_rule_labels(
+        let confirmed = collect_dead_rule_labels_with_ignored(
             &bundle.rule_infos,
             &bundle.categories,
             &first_sets,
             &prediction_wfsts,
             &bundle.semantic_dependency_groups,
             dt_trees,
+            &bundle.rd_rules,
+            &bundle.dead_rule_ignore_labels,
         );
         let new_dead: Vec<String> = confirmed
             .difference(&all_dead_rule_labels)
@@ -3010,9 +3290,8 @@ fn generate_parser_code(
     // trie root (depth 0) are preferred for error recovery; deep tokens are demoted.
     {
         let dt_trees = decision_trees.trees();
-        let depth_discounts = crate::decision_tree::compute_sync_depth_discounts(
-            dt_trees, &token_id_map,
-        );
+        let depth_discounts =
+            crate::decision_tree::compute_sync_depth_discounts(dt_trees, &token_id_map);
         if !depth_discounts.is_empty() {
             for rwfst in &mut recovery_wfsts {
                 let cat_name = rwfst.category().to_string();
@@ -3081,7 +3360,7 @@ fn generate_parser_code(
     // Data flow: WFST → Decision Tree → Dead Prefix → Recovery WFST
     {
         let dt_trees = decision_trees.trees();
-        let dead_warnings = detect_dead_rules(
+        let dead_warnings = detect_dead_rules_with_ignored(
             &bundle.rule_infos,
             &bundle.categories,
             &first_sets,
@@ -3089,6 +3368,7 @@ fn generate_parser_code(
             &bundle.semantic_dependency_groups,
             &nfa_spillover_categories,
             &bundle.rd_rules,
+            &bundle.dead_rule_ignore_labels,
         );
         let dead_prefixes = detect_dead_prefixes(&dead_warnings, dt_trees, &token_id_map);
         if !dead_prefixes.is_empty() {
@@ -3130,9 +3410,7 @@ fn generate_parser_code(
     // Build WPDS and run poststar if the gate is enabled and grammar has ≥2 categories.
     // P05: Time the analysis for the pipeline cost report.
     let wpds_start = std::time::Instant::now();
-    let wpds_analysis = if optimization_gates.wpds_reachability
-        && bundle.categories.len() >= 2
-    {
+    let wpds_analysis = if optimization_gates.wpds_reachability && bundle.categories.len() >= 2 {
         let wpds_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
             .categories
             .iter()
@@ -3151,7 +3429,9 @@ fn generate_parser_code(
         // ── D-B02: Lazy analysis skip — WPDS ──────────────────────────────
         if bundle.categories.len() < 2 {
             pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::I13, "lazy-analysis-skip",
+                &bundle.grammar_name,
+                DiagnosticId::I13,
+                "lazy-analysis-skip",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "WPDS analysis skipped: {} category(ies) < 2 threshold",
@@ -3194,7 +3474,9 @@ fn generate_parser_code(
     if !wpds_dead_rule_labels.is_empty() {
         eprintln!(
             "  {}INT-02{}: {} WPDS-dead rules recorded for codegen suppression",
-            "\x1b[2m", "\x1b[0m", wpds_dead_rule_labels.len(),
+            "\x1b[2m",
+            "\x1b[0m",
+            wpds_dead_rule_labels.len(),
         );
     }
 
@@ -3217,9 +3499,8 @@ fn generate_parser_code(
             let before = nfa_spillover_categories.len();
             nfa_spillover_categories.retain(|cat| {
                 // Check if any NFA group in this category still has >1 live rule
-                let groups = crate::rd_analysis::group_rd_by_dispatch_token_pub(
-                    &bundle.rd_rules, cat,
-                );
+                let groups =
+                    crate::rd_analysis::group_rd_by_dispatch_token_pub(&bundle.rd_rules, cat);
                 groups.iter().any(|(_token, rules)| {
                     let live_count = rules
                         .iter()
@@ -3252,7 +3533,9 @@ fn generate_parser_code(
 
     if !math_analysis_eligible {
         pipeline_diagnostic(
-            &bundle.grammar_name, DiagnosticId::I14, "lazy-analysis-skip",
+            &bundle.grammar_name,
+            DiagnosticId::I14,
+            "lazy-analysis-skip",
             crate::lint::LintSeverity::Info,
             format!(
                 "mathematical analyses skipped: {} category(ies) < 3 threshold",
@@ -3283,14 +3566,18 @@ fn generate_parser_code(
     // returned from `run_math_analyses_parallel` / `run_math_analyses_sequential`
     // to avoid uninitialized-variable issues with scoped thread closures.
 
-    let (math_results, parallel_phase_count) =
-        if optimization_gates.parallel_analysis && math_analysis_eligible {
-            let r = run_math_analyses_parallel(bundle, wpds_analysis.as_ref());
-            let count = r.phase_count;
-            (r, count)
-        } else {
-            (run_math_analyses_sequential(bundle, wpds_analysis.as_ref(), math_analysis_eligible), 0u32)
-        };
+    let (math_results, parallel_phase_count) = if optimization_gates.parallel_analysis
+        && math_analysis_eligible
+    {
+        let r = run_math_analyses_parallel(bundle, wpds_analysis.as_ref());
+        let count = r.phase_count;
+        (r, count)
+    } else {
+        (
+            run_math_analyses_sequential(bundle, wpds_analysis.as_ref(), math_analysis_eligible),
+            0u32,
+        )
+    };
 
     // Destructure into individual result bindings for downstream use.
     let confluence_result = math_results.confluence_result;
@@ -3331,7 +3618,9 @@ fn generate_parser_code(
     // ── DB03: I19 diagnostic — parallel analysis speedup ─────────────────
     if parallel_phase_count > 0 {
         pipeline_diagnostic(
-            &bundle.grammar_name, DiagnosticId::I19, "parallel-analysis",
+            &bundle.grammar_name,
+            DiagnosticId::I19,
+            "parallel-analysis",
             crate::lint::LintSeverity::Info,
             format!(
                 "DB03 parallel analysis: {} phases executed in parallel ({:.1}ms wall-clock)",
@@ -3418,7 +3707,7 @@ fn generate_parser_code(
         // Compute dead-rule warnings once for lint caching.
         // This replaces the duplicate detect_dead_rules() call that lint_w01
         // previously performed independently.
-        let cached_dead_rule_warnings = crate::pipeline::detect_dead_rules(
+        let raw_dead_rule_warnings = crate::pipeline::detect_dead_rules_with_ignored(
             &bundle.rule_infos,
             &bundle.categories,
             &first_sets,
@@ -3426,23 +3715,26 @@ fn generate_parser_code(
             &bundle.semantic_dependency_groups,
             &nfa_spillover_categories,
             &bundle.rd_rules,
+            &bundle.dead_rule_ignore_labels,
         );
+        let cached_dead_rule_warnings =
+            crate::pipeline::filter_dead_rule_warnings_with_decision_trees(
+                raw_dead_rule_warnings,
+                dt_trees,
+            );
 
         // Phase 7A.1 (T11/2026-05-05): predicate-dispatch diagnostics.
         // Derives DispatchDiagnostics from a fresh dispatch plan classification
         // so PD-aware lints (D-prefix codes via lint.rs:8593+) surface
         // signature/conflict/cyclic-dispatch information instead of silently
         // no-op'ing on `dispatch_diagnostics: None`.
-        let dispatch_plan_for_lints = crate::predicate_dispatch::classify_grammar(
+        let dispatch_plan_for_lints =
+            crate::predicate_dispatch::classify_grammar(&bundle.all_syntax, &bundle.categories);
+        let dispatch_diagnostics_data = crate::predicate_dispatch::compile_predicate_pipeline(
+            &dispatch_plan_for_lints,
             &bundle.all_syntax,
             &bundle.categories,
         );
-        let dispatch_diagnostics_data =
-            crate::predicate_dispatch::compile_predicate_pipeline(
-                &dispatch_plan_for_lints,
-                &bundle.all_syntax,
-                &bundle.categories,
-            );
 
         let lint_ctx = crate::lint::LintContext {
             grammar_name: &bundle.grammar_name,
@@ -3466,6 +3758,8 @@ fn generate_parser_code(
             decision_trees: dt_trees,
             token_id_map: &token_id_map,
             dead_rule_warnings: &cached_dead_rule_warnings,
+            dead_rule_ignore_labels: &bundle.dead_rule_ignore_labels,
+            refinement_types: &bundle.refinement_types,
             grammar_profile: Some(&grammar_profile),
             wpds_analysis: wpds_analysis.as_ref(),
             wpds_elapsed,
@@ -3512,10 +3806,8 @@ fn generate_parser_code(
         // DB04: Use cached lint results when the optimization gate is enabled.
         // If the grammar spec hash matches the cached hash, all lints are skipped.
         #[allow(unused_mut)]
-        let mut diagnostics = crate::lint::run_lints_cached(
-            &lint_ctx,
-            optimization_gates.cached_lints,
-        );
+        let mut diagnostics =
+            crate::lint::run_lints_cached(&lint_ctx, optimization_gates.cached_lints);
 
         // ── Repair enrichment ──
         // Scan diagnostics for specific lint codes and append repair suggestions.
@@ -3574,18 +3866,29 @@ fn generate_parser_code(
             1, // threshold: flag tokens with >1 alternative
         );
         if !ambiguity_result.ambiguous_tokens.is_empty() {
-            let mut detail_lines: Vec<String> = ambiguity_result.ambiguous_tokens.iter().map(|info| {
-                format!(
-                    "  {}::{} — {} alternative(s): [{}]{}",
-                    info.category, info.token, info.alternative_count,
-                    info.rule_labels.join(", "),
-                    if info.lookahead_candidate { " ← B1 candidate" } else { "" },
-                )
-            }).collect();
+            let mut detail_lines: Vec<String> = ambiguity_result
+                .ambiguous_tokens
+                .iter()
+                .map(|info| {
+                    format!(
+                        "  {}::{} — {} alternative(s): [{}]{}",
+                        info.category,
+                        info.token,
+                        info.alternative_count,
+                        info.rule_labels.join(", "),
+                        if info.lookahead_candidate {
+                            " ← B1 candidate"
+                        } else {
+                            ""
+                        },
+                    )
+                })
+                .collect();
             if !ambiguity_result.presized_categories.is_empty() {
                 detail_lines.push(format!(
                     "  NFA spillover pre-sizing: {}",
-                    ambiguity_result.presized_categories
+                    ambiguity_result
+                        .presized_categories
                         .iter()
                         .map(|(cat, sz)| format!("{}={}", cat, sz))
                         .collect::<Vec<_>>()
@@ -3651,16 +3954,20 @@ fn generate_parser_code(
         );
 
         // D07 diagnostic: report number of instrumented categories
-        let instrumented_cats: Vec<&str> = category_names.iter()
+        let instrumented_cats: Vec<&str> = category_names
+            .iter()
             .filter_map(|cat_name| {
-                decision_trees.get_tree(cat_name)
+                decision_trees
+                    .get_tree(cat_name)
                     .filter(|tree| tree.stats.total_states > 0)
                     .map(|_| cat_name.as_str())
             })
             .collect();
         if !instrumented_cats.is_empty() {
             pipeline_diagnostic(
-                &bundle.grammar_name, DiagnosticId::D07, "path-coverage-report",
+                &bundle.grammar_name,
+                DiagnosticId::D07,
+                "path-coverage-report",
                 crate::lint::LintSeverity::Note,
                 format!(
                     "{} categories instrumented for coverage tracking: [{}]",
@@ -3677,14 +3984,24 @@ fn generate_parser_code(
     if optimization_gates.bp_table_lookup {
         let bp03_needed = bundle.categories.iter().any(|cat| {
             let infix_count = bundle.bp_table.operators_for_category(&cat.name).len();
-            let postfix_count = bundle.bp_table.postfix_operators_for_category(&cat.name).len();
-            let mixfix_count = bundle.bp_table.mixfix_operators_for_category(&cat.name).len();
+            let postfix_count = bundle
+                .bp_table
+                .postfix_operators_for_category(&cat.name)
+                .len();
+            let mixfix_count = bundle
+                .bp_table
+                .mixfix_operators_for_category(&cat.name)
+                .len();
             // Stage 10.5b conclusion (2026-05-05): BP_TABLE_LOOKUP_THRESHOLD
             // inlined as `8` (BP03 threshold from trampoline.rs era).
             infix_count >= 8 || postfix_count >= 8 || mixfix_count >= 8
         });
         if bp03_needed {
-            crate::automata::codegen::write_token_variant_id(&mut buf, variant_map, &bundle.custom_tokens);
+            crate::automata::codegen::write_token_variant_id(
+                &mut buf,
+                variant_map,
+                &bundle.custom_tokens,
+            );
         }
     }
 
@@ -3873,10 +4190,7 @@ fn build_pipeline_analysis(
         }
 
         if cat_action_count > 0 {
-            category_weights.insert(
-                cat_name.clone(),
-                cat_total_weight / cat_action_count as f64,
-            );
+            category_weights.insert(cat_name.clone(), cat_total_weight / cat_action_count as f64);
         }
     }
 
@@ -3886,7 +4200,10 @@ fn build_pipeline_analysis(
             for (label, selectivity) in &prob.rule_selectivities {
                 if *selectivity > 0.0 {
                     let prob_weight = -selectivity.ln(); // tropical: lower = more frequent
-                    let existing = constructor_weights.get(label.as_str()).copied().unwrap_or(f64::INFINITY);
+                    let existing = constructor_weights
+                        .get(label.as_str())
+                        .copied()
+                        .unwrap_or(f64::INFINITY);
                     // Geometric mean blend: (WFST_weight + prob_weight) / 2
                     constructor_weights.insert(label.clone(), (existing + prob_weight) / 2.0);
                 }
@@ -3932,8 +4249,7 @@ fn build_pipeline_analysis(
     // Sprint 8: Detect isomorphic WFST groups using De Bruijn canonicalization.
     // mut needed when feature = "alternating" extends groups with bisimulation equivalences.
     #[allow(unused_mut)]
-    let mut isomorphic_groups =
-        group_isomorphic_wfsts(prediction_wfsts);
+    let mut isomorphic_groups = group_isomorphic_wfsts(prediction_wfsts);
 
     // ── Sprint 4 (N06-ISO): Extend isomorphic groups with bisimulation equivalences ──
     if let Some(alt) = _advanced.alternating {
@@ -4016,8 +4332,7 @@ fn build_pipeline_analysis(
     }
 
     // Build action maps after bisimulation extension so they reflect all groups.
-    let isomorphic_action_maps =
-        build_isomorphic_action_maps(prediction_wfsts, &isomorphic_groups);
+    let isomorphic_action_maps = build_isomorphic_action_maps(prediction_wfsts, &isomorphic_groups);
 
     // ── Sprint 5 (RA01-SKIP): Dead registers → skip binder alpha-equivalence ──
     let dead_binder_categories = if let Some(reg) = _advanced.register {
@@ -4079,7 +4394,10 @@ fn build_pipeline_analysis(
         for (qualified_label, &selectivity) in &prob.rule_selectivities {
             // qualified_label format is "Category::Rule"
             if let Some(cat) = qualified_label.split("::").next() {
-                cat_probs.entry(cat.to_string()).or_default().push(selectivity);
+                cat_probs
+                    .entry(cat.to_string())
+                    .or_default()
+                    .push(selectivity);
             }
         }
 
@@ -4142,9 +4460,7 @@ fn build_pipeline_analysis(
 ///
 /// Only returns groups with ≥2 members. Categories within each group are sorted
 /// alphabetically for deterministic output.
-fn group_isomorphic_wfsts(
-    prediction_wfsts: &HashMap<String, PredictionWfst>,
-) -> Vec<Vec<String>> {
+fn group_isomorphic_wfsts(prediction_wfsts: &HashMap<String, PredictionWfst>) -> Vec<Vec<String>> {
     use crate::wfst::CanonicalWfstStructure;
 
     // Compute canonical structure for each category's WFST
@@ -4398,14 +4714,18 @@ pub(crate) fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         SyntaxItemSpec::Map { body_items } => RDSyntaxItem::Map {
             body_items: body_items.iter().map(convert_syntax_item_to_rd).collect(),
         },
-        SyntaxItemSpec::Zip { left_name, right_name, left_category, right_category, body } => {
-            RDSyntaxItem::Zip {
-                left_name: left_name.clone(),
-                right_name: right_name.clone(),
-                left_category: left_category.clone(),
-                right_category: right_category.clone(),
-                body: Box::new(convert_syntax_item_to_rd(body)),
-            }
+        SyntaxItemSpec::Zip {
+            left_name,
+            right_name,
+            left_category,
+            right_category,
+            body,
+        } => RDSyntaxItem::Zip {
+            left_name: left_name.clone(),
+            right_name: right_name.clone(),
+            left_category: left_category.clone(),
+            right_category: right_category.clone(),
+            body: Box::new(convert_syntax_item_to_rd(body)),
         },
         SyntaxItemSpec::BinderCollection { param_name, separator } => {
             RDSyntaxItem::BinderCollection {
@@ -4416,8 +4736,8 @@ pub(crate) fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
             inner: inner.iter().map(convert_syntax_item_to_rd).collect(),
         },
-        SyntaxItemSpec::GuardExpression { param_name } => RDSyntaxItem::GuardExpression {
-            param_name: param_name.clone(),
+        SyntaxItemSpec::GuardExpression { param_name } => {
+            RDSyntaxItem::GuardExpression { param_name: param_name.clone() }
         },
     }
 }
@@ -4520,8 +4840,12 @@ fn emit_prediction_wfst_static(
 
         // ── Emit static arrays ──
         // Transitions
-        write!(buf, "static WFST_TRANSITIONS_{cat}: &[(u16, u32, f64)] = &[", cat = category,)
-            .unwrap();
+        write!(
+            buf,
+            "#[allow(non_upper_case_globals)] static WFST_TRANSITIONS_{cat}: &[(u16, u32, f64)] = &[",
+            cat = category,
+        )
+        .unwrap();
         for (i, (token_id, target, weight)) in transitions_flat.iter().enumerate() {
             if i > 0 {
                 buf.push(',');
@@ -4533,7 +4857,7 @@ fn emit_prediction_wfst_static(
         // State offsets
         write!(
             buf,
-            "static WFST_STATE_OFFSETS_{cat}: &[(usize, usize, bool, f64)] = &[",
+            "#[allow(non_upper_case_globals)] static WFST_STATE_OFFSETS_{cat}: &[(usize, usize, bool, f64)] = &[",
             cat = category,
         )
         .unwrap();
@@ -4541,12 +4865,18 @@ fn emit_prediction_wfst_static(
             if i > 0 {
                 buf.push(',');
             }
-            write!(buf, "({}_usize, {}_usize, {}, {})", start, count, is_final, format_f64(*fw)).unwrap();
+            write!(buf, "({}_usize, {}_usize, {}, {})", start, count, is_final, format_f64(*fw))
+                .unwrap();
         }
         buf.push_str("];");
 
         // Token names
-        write!(buf, "static WFST_TOKEN_NAMES_{cat}: &[&str] = &[", cat = category,).unwrap();
+        write!(
+            buf,
+            "#[allow(non_upper_case_globals)] static WFST_TOKEN_NAMES_{cat}: &[&str] = &[",
+            cat = category,
+        )
+        .unwrap();
         for (i, name) in token_names.iter().enumerate() {
             if i > 0 {
                 buf.push(',');
@@ -4559,19 +4889,24 @@ fn emit_prediction_wfst_static(
         match wfst.beam_width {
             Some(bw) => write!(
                 buf,
-                "static WFST_BEAM_WIDTH_{}: Option<f64> = Some({});",
-                category, format_f64(bw.value()),
+                "#[allow(non_upper_case_globals)] static WFST_BEAM_WIDTH_{}: Option<f64> = Some({});",
+                category,
+                format_f64(bw.value()),
             )
             .unwrap(),
             None => {
-                write!(buf, "static WFST_BEAM_WIDTH_{cat}: Option<f64> = None;", cat = category,)
-                    .unwrap()
+                write!(
+                    buf,
+                    "#[allow(non_upper_case_globals)] static WFST_BEAM_WIDTH_{cat}: Option<f64> = None;",
+                    cat = category,
+                )
+                .unwrap()
             },
         }
 
         // LazyLock constructor
         write!(buf,
-            "static PREDICTION_{cat}: std::sync::LazyLock<mettail_prattail::wfst::PredictionWfst> = \
+            "#[allow(non_upper_case_globals)] static PREDICTION_{cat}: std::sync::LazyLock<mettail_prattail::wfst::PredictionWfst> = \
              std::sync::LazyLock::new(|| {{ \
                 mettail_prattail::wfst::PredictionWfst::from_flat(\
                     \"{cat}\", \
@@ -4643,7 +4978,7 @@ fn emit_token_to_id_fn(
 ) {
     use std::fmt::Write;
 
-    buf.push_str("fn token_to_id(t: &Token) -> u16 { match t {");
+    buf.push_str("#[allow(dead_code)] fn token_to_id(t: &Token) -> u16 { match t {");
 
     for (name, id) in token_id_map.iter() {
         // Only emit match arms for variants that exist in the grammar's Token enum
@@ -4731,13 +5066,16 @@ fn wpds_refine_prediction_weights(
 
             // Use WPDS category weight as tiebreaker
             // Lower category weight → rule is "closer" to reachable root → lower dispatch weight
-            let cat_weight = analysis.category_weights.get(cat).copied().unwrap_or(f64::INFINITY);
+            let cat_weight = analysis
+                .category_weights
+                .get(cat)
+                .copied()
+                .unwrap_or(f64::INFINITY);
             if cat_weight.is_finite() && cat_weight > 0.0 {
                 // Apply a small tiebreaker offset based on WPDS weight
                 for (rank, &idx) in action_indices.iter().enumerate() {
                     let offset = (rank as f64) * 0.001;
-                    wfst.actions[idx].weight =
-                        TropicalWeight::new(first_weight.value() + offset);
+                    wfst.actions[idx].weight = TropicalWeight::new(first_weight.value() + offset);
                 }
                 modified = true;
             }
@@ -4772,17 +5110,13 @@ fn wpds_confirm_trie_dead_rules(
         if let Some(tree) = dt_trees.get(&unreachable.category) {
             // Check if this rule label appears in any segment of the decision tree
             let rule_in_tree = tree.segments.iter().any(|segment| {
-                segment
-                    .iter()
-                    .any(|(_path, action)| {
-                        action.rule_labels().any(|l| l == unreachable.rule_label)
-                    })
+                segment.iter().any(|(_path, action)| {
+                    action.rule_labels().any(|l| l == unreachable.rule_label)
+                })
             });
             if rule_in_tree {
-                phantom_entries.push((
-                    unreachable.rule_label.clone(),
-                    unreachable.category.clone(),
-                ));
+                phantom_entries
+                    .push((unreachable.rule_label.clone(), unreachable.category.clone()));
             }
         }
     }
@@ -4790,7 +5124,9 @@ fn wpds_confirm_trie_dead_rules(
     if !phantom_entries.is_empty() {
         eprintln!(
             "  {}COMP-07{}: {} WPDS-dead rules confirmed in decision trees (phantom entries)",
-            "\x1b[2m", "\x1b[0m", phantom_entries.len(),
+            "\x1b[2m",
+            "\x1b[0m",
+            phantom_entries.len(),
         );
     }
 
@@ -4898,11 +5234,7 @@ pub fn analyze_green_thread_safety(
                         is_multi: false,
                     })
                     .collect();
-                synthetic_syntax.push((
-                    jp.name.clone(),
-                    format!("JoinPattern_{}", jp.name),
-                    items,
-                ));
+                synthetic_syntax.push((jp.name.clone(), format!("JoinPattern_{}", jp.name), items));
             }
 
             let nominal_result = crate::nominal::analyze_from_bundle(&synthetic_syntax);
@@ -4984,7 +5316,11 @@ pub fn analyze_green_thread_safety(
                     let channel_name = &synthetic_categories[register_idx].name;
                     // Find which join patterns reference this channel.
                     for jp in &channels_spec.join_patterns {
-                        if jp.channels.iter().any(|cr| cr.channel_name == *channel_name) {
+                        if jp
+                            .channels
+                            .iter()
+                            .any(|cr| cr.channel_name == *channel_name)
+                        {
                             violation_map
                                 .entry(channel_name.clone())
                                 .or_default()
@@ -5039,10 +5375,7 @@ pub fn analyze_green_thread_safety(
                 .map(|ch| ch.channel_name.clone())
                 .collect();
             if !missing.is_empty() {
-                deadlock_markings.push((
-                    vec![jp.name.clone()],
-                    missing,
-                ));
+                deadlock_markings.push((vec![jp.name.clone()], missing));
             }
         }
 
@@ -5086,8 +5419,7 @@ pub fn analyze_green_thread_safety(
                 .channels
                 .first()
                 .expect("channels should not be empty at this point");
-            let initial_symbol =
-                crate::wpds::StackSymbol::category_entry(&primary_channel.name);
+            let initial_symbol = crate::wpds::StackSymbol::category_entry(&primary_channel.name);
 
             let mut wpds = crate::wpds::Wpds::<crate::automata::semiring::BooleanWeight> {
                 stack_symbols: Vec::new(),
@@ -5174,8 +5506,9 @@ pub fn analyze_green_thread_safety(
                 // Each additional transition from a non-final intermediate state
                 // adds 1 to the stack depth.
                 let mut max_depth: usize = 0;
-                if let Some(trans_indices) =
-                    pautomaton.transitions_by_source.get(&pautomaton.initial_state)
+                if let Some(trans_indices) = pautomaton
+                    .transitions_by_source
+                    .get(&pautomaton.initial_state)
                 {
                     for &idx in trans_indices {
                         let t = &pautomaton.transitions[idx];
@@ -5262,42 +5595,25 @@ pub fn analyze_green_thread_safety(
 
             for ch in &channels_spec.channels {
                 // Build a 3-state Buchi automaton for this channel.
-                let mut buchi =
-                    crate::buchi::WeightedBuchiAutomaton::<
-                        crate::automata::semiring::BooleanWeight,
-                    >::new();
-                let q_idle = buchi.add_state(false);     // state 0: idle
-                let q_sent = buchi.add_state(false);     // state 1: sent
-                let q_consumed = buchi.add_state(true);  // state 2: consumed (accepting)
+                let mut buchi = crate::buchi::WeightedBuchiAutomaton::<
+                    crate::automata::semiring::BooleanWeight,
+                >::new();
+                let q_idle = buchi.add_state(false); // state 0: idle
+                let q_sent = buchi.add_state(false); // state 1: sent
+                let q_consumed = buchi.add_state(true); // state 2: consumed (accepting)
                 buchi.initial_states.insert(q_idle);
 
                 // idle --send--> sent
-                buchi.add_transition(
-                    q_idle,
-                    Some(format!("send_{}", ch.name)),
-                    q_sent,
-                );
+                buchi.add_transition(q_idle, Some(format!("send_{}", ch.name)), q_sent);
 
                 // idle self-loop (no activity)
-                buchi.add_transition(
-                    q_idle,
-                    Some("idle".to_string()),
-                    q_idle,
-                );
+                buchi.add_transition(q_idle, Some("idle".to_string()), q_idle);
 
                 if consumed_channels.contains(ch.name.as_str()) {
                     // sent --recv--> consumed
-                    buchi.add_transition(
-                        q_sent,
-                        Some(format!("recv_{}", ch.name)),
-                        q_consumed,
-                    );
+                    buchi.add_transition(q_sent, Some(format!("recv_{}", ch.name)), q_consumed);
                     // consumed --send--> sent (cycle for liveness)
-                    buchi.add_transition(
-                        q_consumed,
-                        Some(format!("send_{}", ch.name)),
-                        q_sent,
-                    );
+                    buchi.add_transition(q_consumed, Some(format!("send_{}", ch.name)), q_sent);
                 }
                 // If no consumer: sent has no outgoing to consumed, so no
                 // accepting cycle exists.
@@ -5334,56 +5650,49 @@ pub fn analyze_green_thread_safety(
             }
 
             // Precondition: conjunction of "channel_X_has_data" for each channel.
-            let pre = jp.channels.iter().fold(
-                crate::kat::BooleanTest::True,
-                |acc, ch_ref| {
-                    let atom = crate::kat::BooleanTest::atom(
-                        format!("{}_has_data", ch_ref.channel_name),
-                    );
+            let pre = jp
+                .channels
+                .iter()
+                .fold(crate::kat::BooleanTest::True, |acc, ch_ref| {
+                    let atom =
+                        crate::kat::BooleanTest::atom(format!("{}_has_data", ch_ref.channel_name));
                     if matches!(acc, crate::kat::BooleanTest::True) {
                         atom
                     } else {
                         crate::kat::BooleanTest::and(acc, atom)
                     }
-                },
-            );
+                });
 
             // Program: sequential composition of recv actions.
-            let program = jp.channels.iter().fold(
-                crate::kat::KatExpr::One,
-                |acc, ch_ref| {
-                    let action = crate::kat::KatExpr::action(
-                        format!("recv_{}", ch_ref.channel_name),
-                    );
+            let program = jp
+                .channels
+                .iter()
+                .fold(crate::kat::KatExpr::One, |acc, ch_ref| {
+                    let action =
+                        crate::kat::KatExpr::action(format!("recv_{}", ch_ref.channel_name));
                     if matches!(acc, crate::kat::KatExpr::One) {
                         action
                     } else {
                         crate::kat::KatExpr::seq(acc, action)
                     }
-                },
-            );
+                });
 
             // Postcondition: conjunction of "binding_X_bound" for each channel.
-            let post = jp.channels.iter().fold(
-                crate::kat::BooleanTest::True,
-                |acc, ch_ref| {
-                    let atom = crate::kat::BooleanTest::atom(
-                        format!("{}_bound", ch_ref.binding_name),
-                    );
+            let post = jp
+                .channels
+                .iter()
+                .fold(crate::kat::BooleanTest::True, |acc, ch_ref| {
+                    let atom =
+                        crate::kat::BooleanTest::atom(format!("{}_bound", ch_ref.binding_name));
                     if matches!(acc, crate::kat::BooleanTest::True) {
                         atom
                     } else {
                         crate::kat::BooleanTest::and(acc, atom)
                     }
-                },
-            );
+                });
 
-            let triple = crate::kat::HoareTriple::named(
-                format!("join_{}", jp.name),
-                pre,
-                program,
-                post,
-            );
+            let triple =
+                crate::kat::HoareTriple::named(format!("join_{}", jp.name), pre, program, post);
 
             let valid = crate::kat::verify_hoare_triple(&triple);
             if !valid {
@@ -5459,12 +5768,285 @@ mod tests {
         }
     }
 
+    fn category_spec(
+        name: &str,
+        native_type: Option<&str>,
+        is_primary: bool,
+    ) -> crate::CategorySpec {
+        crate::CategorySpec {
+            name: name.to_string(),
+            native_type: native_type.map(str::to_string),
+            is_primary,
+            has_var: true,
+        }
+    }
+
+    fn refinement_spec(name: &str, base_category: &str) -> crate::RefinementTypeSpec {
+        crate::RefinementTypeSpec {
+            name: name.to_string(),
+            base_category: base_category.to_string(),
+            variable_name: "x".to_string(),
+            predicate_kind: crate::RefinementPredKind::Presburger,
+            predicate_repr: "x > 0".to_string(),
+        }
+    }
+
     /// Helper: create a FirstSet with given tokens.
     fn first_set(tokens: &[&str]) -> FirstSet {
         FirstSet {
             tokens: tokens.iter().map(|s| s.to_string()).collect(),
             nullable: false,
         }
+    }
+
+    #[test]
+    fn test_dead_rules_ignore_auto_injected_labels() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfst, WeightedAction, WeightedTransition, WfstState};
+
+        let mut token_map = TokenIdMap::new();
+        let kw_not = token_map.get_or_insert("KwNot");
+        let mut start = WfstState::new(0);
+        start.transitions.push(WeightedTransition {
+            from: 0,
+            input: kw_not,
+            action_idx: 0,
+            to: 1,
+            weight: TropicalWeight::new(0.0),
+        });
+        let wfst = PredictionWfst {
+            category: "Int".to_string(),
+            states: vec![start, WfstState::final_state(1, TropicalWeight::new(0.0))],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: "Neg".to_string(),
+                    parse_fn: "parse_neg".to_string(),
+                },
+                weight: TropicalWeight::new(0.0),
+            }],
+            token_map,
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+
+        let rule_infos = vec![RuleInfo {
+            label: "BoolToInt".to_string(),
+            category: "Int".to_string(),
+            first_items: vec![FirstItem::NonTerminal("Bool".to_string())],
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: true,
+        }];
+        let categories = vec![category("Int", true), category("Bool", false)];
+        let first_sets = HashMap::from([("Int".to_string(), first_set(&["KwNot"]))]);
+        let prediction_wfsts = HashMap::from([("Int".to_string(), wfst)]);
+
+        let unignored = detect_dead_rules(
+            &rule_infos,
+            &categories,
+            &first_sets,
+            &prediction_wfsts,
+            &[],
+            &HashSet::new(),
+            &[],
+        );
+        assert!(
+            unignored
+                .iter()
+                .any(|w| matches!(w, DeadRuleWarning::WfstUnreachable { rule_label, .. } if rule_label == "BoolToInt")),
+            "BoolToInt should be W01 without the synthetic ignore set: {:?}",
+            unignored
+        );
+
+        let ignored_labels = HashSet::from(["BoolToInt".to_string()]);
+        let ignored = detect_dead_rules_with_ignored(
+            &rule_infos,
+            &categories,
+            &first_sets,
+            &prediction_wfsts,
+            &[],
+            &HashSet::new(),
+            &[],
+            &ignored_labels,
+        );
+        assert!(ignored.is_empty(), "ignored synthetic labels should not warn: {:?}", ignored);
+    }
+
+    #[test]
+    fn test_dead_rule_wfst_warnings_require_trie_confirmation() {
+        use crate::automata::codegen::terminal_to_variant_name;
+        use crate::decision_tree::DecisionTreeBuilder;
+        use crate::grammar::ir::{RDRuleInfo, RDSyntaxItem};
+        use crate::token_id::TokenIdMap;
+
+        let dispatch_token = terminal_to_variant_name("live");
+        let token_map = TokenIdMap::from_names([dispatch_token]);
+        let first_sets = HashMap::from([("Expr".to_string(), first_set(&["KwLive"]))]);
+        let rd_rules = vec![RDRuleInfo {
+            label: "TrieReachable".to_string(),
+            category: "Expr".to_string(),
+            items: vec![RDSyntaxItem::Terminal("live".to_string())],
+            has_binder: false,
+            has_multi_binder: false,
+            is_collection: false,
+            collection_type: None,
+            separator: None,
+            prefix_bp: None,
+            eval_mode: None,
+        }];
+        let mut builder = DecisionTreeBuilder::new(
+            token_map,
+            first_sets,
+            vec!["Expr".to_string()],
+            HashSet::new(),
+        );
+        builder.build_all(&rd_rules, &[], &[]);
+
+        let filtered = filter_dead_rule_warnings_with_decision_trees(
+            vec![
+                DeadRuleWarning::WfstUnreachable {
+                    rule_label: "TrieReachable".to_string(),
+                    category: "Expr".to_string(),
+                },
+                DeadRuleWarning::WfstUnreachable {
+                    rule_label: "TrulyDead".to_string(),
+                    category: "Expr".to_string(),
+                },
+            ],
+            builder.trees(),
+        );
+
+        assert!(
+            !filtered.iter().any(
+                |w| matches!(w, DeadRuleWarning::WfstUnreachable { rule_label, .. } if rule_label == "TrieReachable")
+            ),
+            "trie-reachable rules should not be reported from WFST-only evidence: {:?}",
+            filtered
+        );
+        assert!(
+            filtered.iter().any(
+                |w| matches!(w, DeadRuleWarning::WfstUnreachable { rule_label, .. } if rule_label == "TrulyDead")
+            ),
+            "rules absent from both WFST and trie should remain dead: {:?}",
+            filtered
+        );
+    }
+
+    #[test]
+    fn test_refinement_downcast_labels_are_dead_rule_ignored() {
+        let mut spec = LanguageSpec::new(
+            "RefinementSmoke".to_string(),
+            vec![
+                crate::CategorySpec {
+                    name: "Int".to_string(),
+                    native_type: Some("i32".to_string()),
+                    is_primary: true,
+                    has_var: true,
+                },
+                crate::CategorySpec {
+                    name: "PosInt".to_string(),
+                    native_type: None,
+                    is_primary: false,
+                    has_var: true,
+                },
+            ],
+            vec![
+                crate::RuleSpecInput {
+                    label: "IntToPosInt".to_string(),
+                    category: "PosInt".to_string(),
+                    syntax: vec![SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "i".to_string(),
+                    }],
+                    associativity: crate::binding_power::Associativity::Left,
+                    prefix_precedence: None,
+                    has_rust_code: false,
+                    rust_code: None,
+                    eval_mode: None,
+                    source_location: None,
+                    is_auto_injected: false,
+                },
+                crate::RuleSpecInput {
+                    label: "OtherToPosInt".to_string(),
+                    category: "PosInt".to_string(),
+                    syntax: vec![SyntaxItemSpec::NonTerminal {
+                        category: "Other".to_string(),
+                        param_name: "x".to_string(),
+                    }],
+                    associativity: crate::binding_power::Associativity::Left,
+                    prefix_precedence: None,
+                    has_rust_code: false,
+                    rust_code: None,
+                    eval_mode: None,
+                    source_location: None,
+                    is_auto_injected: false,
+                },
+            ],
+        );
+        spec.refinement_types.push(crate::RefinementTypeSpec {
+            name: "PosInt".to_string(),
+            base_category: "Int".to_string(),
+            variable_name: "x".to_string(),
+            predicate_kind: crate::RefinementPredKind::Presburger,
+            predicate_repr: "x > 0".to_string(),
+        });
+
+        let ignored = collect_refinement_downcast_rule_labels(&spec);
+
+        assert!(ignored.contains("IntToPosInt"), "refinement downcast should be ignored");
+        assert!(
+            !ignored.contains("OtherToPosInt"),
+            "only declared base-category downcasts should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_refinement_analysis_ignores_own_refinement_category_for_rt06() {
+        let mut spec = LanguageSpec::new(
+            "RefinementSmoke".to_string(),
+            vec![
+                category_spec("Int", Some("i32"), true),
+                category_spec("PosInt", None, false),
+            ],
+            Vec::new(),
+        );
+        spec.refinement_types.push(refinement_spec("PosInt", "Int"));
+
+        let (_, bundle) = extract_from_spec(&spec);
+        let analysis = analyze_refinement_types(&bundle);
+
+        assert!(
+            analysis.name_shadows.is_empty(),
+            "normal refinement category should not trigger RT06: {:?}",
+            analysis.name_shadows
+        );
+    }
+
+    #[test]
+    fn test_refinement_analysis_reports_self_shadowing_rt06() {
+        let mut spec = LanguageSpec::new(
+            "ShadowSmoke".to_string(),
+            vec![
+                category_spec("Int", Some("i32"), true),
+                category_spec("Int", None, false),
+            ],
+            Vec::new(),
+        );
+        spec.refinement_types.push(refinement_spec("Int", "Int"));
+
+        let (_, bundle) = extract_from_spec(&spec);
+        let analysis = analyze_refinement_types(&bundle);
+
+        assert_eq!(
+            analysis.name_shadows,
+            vec![("Int".to_string(), "Int".to_string())],
+            "self-shadowing refinement should still trigger RT06"
+        );
     }
 
     // ── A8: ProductWeight<BooleanWeight, CountingWeight> nearly-dead detection ──
@@ -5480,7 +6062,8 @@ mod tests {
         // A8: With only one category, no inter-category analysis is possible.
         let cats = vec![category("Expr", true)];
         let rules = vec![rule("Add", "Expr")];
-        let first_sets: HashMap<String, FirstSet> = [("Expr".to_string(), first_set(&["Plus"]))].into();
+        let first_sets: HashMap<String, FirstSet> =
+            [("Expr".to_string(), first_set(&["Plus"]))].into();
         let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets, &[]);
         assert!(warnings.is_empty(), "single category should produce no warnings");
     }
@@ -5501,21 +6084,22 @@ mod tests {
         let first_sets: HashMap<String, FirstSet> = [
             ("Proc".to_string(), first_set(&["Par"])),
             ("Int".to_string(), first_set(&["Plus"])),
-        ].into();
+        ]
+        .into();
 
         let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets, &[]);
-        assert!(warnings.is_empty(), "well-connected categories should not be nearly-dead: {:?}", warnings);
+        assert!(
+            warnings.is_empty(),
+            "well-connected categories should not be nearly-dead: {:?}",
+            warnings
+        );
     }
 
     #[test]
     fn test_a8_isolated_category_not_flagged_as_nearly_dead() {
         // A8: Completely unreachable categories should NOT be flagged by detect_nearly_dead_paths
         // (they are handled by the A4 detect_inter_category_dead_paths function).
-        let cats = vec![
-            category("Proc", true),
-            category("Int", false),
-            category("Orphan", false),
-        ];
+        let cats = vec![category("Proc", true), category("Int", false), category("Orphan", false)];
         let mut r1 = rule("IntToProc", "Proc");
         r1.is_cast = true;
         r1.first_items = vec![FirstItem::NonTerminal("Int".to_string())];
@@ -5526,7 +6110,8 @@ mod tests {
             ("Proc".to_string(), first_set(&["Par"])),
             ("Int".to_string(), first_set(&["Plus"])),
             ("Orphan".to_string(), first_set(&["Bang"])),
-        ].into();
+        ]
+        .into();
 
         let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets, &[]);
         // Orphan is completely unreachable (forward = zero), so it should NOT appear
@@ -5534,7 +6119,10 @@ mod tests {
         let orphan_warnings: Vec<_> = warnings.iter().filter(|w| {
             matches!(w, DeadRuleWarning::NearlyDeadPath { category, .. } if category == "Orphan")
         }).collect();
-        assert!(orphan_warnings.is_empty(), "completely unreachable category should not be flagged as nearly-dead");
+        assert!(
+            orphan_warnings.is_empty(),
+            "completely unreachable category should not be flagged as nearly-dead"
+        );
     }
 
     #[test]
@@ -5576,17 +6164,17 @@ mod tests {
     fn test_a8_forward_backward_with_product_weight() {
         // A8: Verify forward-backward with ProductWeight produces correct counts.
         use crate::automata::semiring::{BooleanWeight, CountingWeight, ProductWeight, Semiring};
-        use crate::forward_backward::{forward_scores, backward_scores};
+        use crate::forward_backward::{backward_scores, forward_scores};
 
         type BoolCount = ProductWeight<BooleanWeight, CountingWeight>;
 
         // Diamond: 0 → 1, 0 → 2, 1 → 3, 2 → 3
         let w = BoolCount::new(BooleanWeight::one(), CountingWeight::one());
         let edges: Vec<Vec<(usize, BoolCount)>> = vec![
-            vec![(1, w), (2, w)],   // node 0 → 1, 2
-            vec![(3, w)],           // node 1 → 3
-            vec![(3, w)],           // node 2 → 3
-            vec![],                 // node 3: sink
+            vec![(1, w), (2, w)], // node 0 → 1, 2
+            vec![(3, w)],         // node 1 → 3
+            vec![(3, w)],         // node 2 → 3
+            vec![],               // node 3: sink
         ];
 
         let fwd = forward_scores::<BoolCount>(&edges, 4);
@@ -5671,18 +6259,25 @@ mod tests {
             ("Float".to_string(), first_set(&["Float"])),
             ("Bool".to_string(), first_set(&["true", "false"])),
             ("Str".to_string(), first_set(&["String"])),
-        ].into();
+        ]
+        .into();
 
         let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &[]);
         let str_warnings: Vec<_> = warnings.iter().filter(|w| {
             matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category == "Str")
         }).collect();
-        assert!(str_warnings.is_empty(),
-            "Str should not be flagged as dead (Str→Bool→Int is valid): {:?}", str_warnings);
+        assert!(
+            str_warnings.is_empty(),
+            "Str should not be flagged as dead (Str→Bool→Int is valid): {:?}",
+            str_warnings
+        );
 
         // No categories should be flagged since all are connected through Bool
-        assert!(warnings.is_empty(),
-            "no categories should be flagged in well-connected cyclic graph: {:?}", warnings);
+        assert!(
+            warnings.is_empty(),
+            "no categories should be flagged in well-connected cyclic graph: {:?}",
+            warnings
+        );
     }
 
     #[test]
@@ -5690,80 +6285,84 @@ mod tests {
         // NQuote pattern: Name has rule `"@" "(" Proc ")"` — a regular prefix rule
         // that references Proc as a NonTerminal in its syntax (not as first item).
         // Also: Proc has `"*" Name` (PDrop). So Name↔Proc are connected.
-        let cats = vec![
-            category("Proc", true),
-            category("Name", false),
-        ];
-        let rules = vec![
-            rule("PPar", "Proc"),
-            rule("PDrop", "Proc"),
-            rule("NQuote", "Name"),
-        ];
+        let cats = vec![category("Proc", true), category("Name", false)];
+        let rules = vec![rule("PPar", "Proc"), rule("PDrop", "Proc"), rule("NQuote", "Name")];
         let first_sets: HashMap<String, FirstSet> = [
             ("Proc".to_string(), first_set(&["|", "*"])),
             ("Name".to_string(), first_set(&["@"])),
-        ].into();
+        ]
+        .into();
 
         // NQuote syntax: "@" "(" Proc ")" — references Proc as NonTerminal
         // PDrop syntax: "*" Name — references Name as NonTerminal
         let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![
-            ("NQuote".to_string(), "Name".to_string(), vec![
-                SyntaxItemSpec::Terminal("@".to_string()),
-                SyntaxItemSpec::Terminal("(".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "p".to_string() },
-                SyntaxItemSpec::Terminal(")".to_string()),
-            ]),
-            ("PDrop".to_string(), "Proc".to_string(), vec![
-                SyntaxItemSpec::Terminal("*".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Name".to_string(), param_name: "n".to_string() },
-            ]),
+            (
+                "NQuote".to_string(),
+                "Name".to_string(),
+                vec![
+                    SyntaxItemSpec::Terminal("@".to_string()),
+                    SyntaxItemSpec::Terminal("(".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Proc".to_string(),
+                        param_name: "p".to_string(),
+                    },
+                    SyntaxItemSpec::Terminal(")".to_string()),
+                ],
+            ),
+            (
+                "PDrop".to_string(),
+                "Proc".to_string(),
+                vec![
+                    SyntaxItemSpec::Terminal("*".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Name".to_string(),
+                        param_name: "n".to_string(),
+                    },
+                ],
+            ),
         ];
 
         let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &all_syntax);
         let name_warnings: Vec<_> = warnings.iter().filter(|w| {
             matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category == "Name")
         }).collect();
-        assert!(name_warnings.is_empty(),
-            "Name should not be flagged as dead (connected to Proc via syntax): {:?}", name_warnings);
-        assert!(warnings.is_empty(),
-            "no categories should be flagged: {:?}", warnings);
+        assert!(
+            name_warnings.is_empty(),
+            "Name should not be flagged as dead (connected to Proc via syntax): {:?}",
+            name_warnings
+        );
+        assert!(warnings.is_empty(), "no categories should be flagged: {:?}", warnings);
     }
 
     #[test]
     fn test_a4_truly_isolated_category_flagged() {
         // Orphan category with no cross-category references at all.
-        let cats = vec![
-            category("Proc", true),
-            category("Int", false),
-            category("Orphan", false),
-        ];
+        let cats = vec![category("Proc", true), category("Int", false), category("Orphan", false)];
         let mut cast = rule("IntToProc", "Proc");
         cast.is_cast = true;
         cast.first_items = vec![FirstItem::NonTerminal("Int".to_string())];
-        let rules = vec![
-            rule("PPar", "Proc"),
-            rule("Add", "Int"),
-            cast,
-            rule("OrphanRule", "Orphan"),
-        ];
+        let rules =
+            vec![rule("PPar", "Proc"), rule("Add", "Int"), cast, rule("OrphanRule", "Orphan")];
         let first_sets: HashMap<String, FirstSet> = [
             ("Proc".to_string(), first_set(&["|"])),
             ("Int".to_string(), first_set(&["Integer"])),
             ("Orphan".to_string(), first_set(&["!"])),
-        ].into();
+        ]
+        .into();
 
         let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &[]);
         let orphan_warnings: Vec<_> = warnings.iter().filter(|w| {
             matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category == "Orphan")
         }).collect();
-        assert!(!orphan_warnings.is_empty(),
-            "Orphan should be flagged as dead (no connections to root)");
+        assert!(
+            !orphan_warnings.is_empty(),
+            "Orphan should be flagged as dead (no connections to root)"
+        );
         // Non-orphan categories should NOT be flagged
         let non_orphan: Vec<_> = warnings.iter().filter(|w| {
             matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category != "Orphan")
         }).collect();
-        assert!(non_orphan.is_empty(),
-            "only Orphan should be flagged: {:?}", non_orphan);
+        assert!(non_orphan.is_empty(), "only Orphan should be flagged: {:?}", non_orphan);
     }
 
     #[test]
@@ -5771,7 +6370,8 @@ mod tests {
         // With only one category, no inter-category analysis possible.
         let cats = vec![category("Expr", true)];
         let rules = vec![rule("Add", "Expr")];
-        let first_sets: HashMap<String, FirstSet> = [("Expr".to_string(), first_set(&["Plus"]))].into();
+        let first_sets: HashMap<String, FirstSet> =
+            [("Expr".to_string(), first_set(&["Plus"]))].into();
         let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &[]);
         assert!(warnings.is_empty(), "single category should produce no warnings");
     }
@@ -5779,22 +6379,19 @@ mod tests {
     #[test]
     fn test_a4_syntax_binder_creates_edge() {
         // A Binder referencing a different category creates an inter-category edge.
-        let cats = vec![
-            category("Proc", true),
-            category("Name", false),
-        ];
-        let rules = vec![
-            rule("PPar", "Proc"),
-            rule("NVar", "Name"),
-        ];
+        let cats = vec![category("Proc", true), category("Name", false)];
+        let rules = vec![rule("PPar", "Proc"), rule("NVar", "Name")];
         let first_sets: HashMap<String, FirstSet> = [
             ("Proc".to_string(), first_set(&["|"])),
             ("Name".to_string(), first_set(&["Ident"])),
-        ].into();
+        ]
+        .into();
 
         // Proc rule with a Binder from Name category
-        let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![
-            ("PNew".to_string(), "Proc".to_string(), vec![
+        let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![(
+            "PNew".to_string(),
+            "Proc".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("new".to_string()),
                 SyntaxItemSpec::Binder {
                     param_name: "n".to_string(),
@@ -5802,33 +6399,36 @@ mod tests {
                     is_multi: false,
                 },
                 SyntaxItemSpec::Terminal("in".to_string()),
-                SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "p".to_string() },
-            ]),
-        ];
+                SyntaxItemSpec::NonTerminal {
+                    category: "Proc".to_string(),
+                    param_name: "p".to_string(),
+                },
+            ],
+        )];
 
         let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &all_syntax);
-        assert!(warnings.is_empty(),
-            "Name should be reachable via Binder from Proc: {:?}", warnings);
+        assert!(
+            warnings.is_empty(),
+            "Name should be reachable via Binder from Proc: {:?}",
+            warnings
+        );
     }
 
     #[test]
     fn test_a4_syntax_collection_creates_edge() {
         // A Collection referencing a different category creates an inter-category edge.
-        let cats = vec![
-            category("Proc", true),
-            category("Arg", false),
-        ];
-        let rules = vec![
-            rule("PPar", "Proc"),
-            rule("ArgLit", "Arg"),
-        ];
+        let cats = vec![category("Proc", true), category("Arg", false)];
+        let rules = vec![rule("PPar", "Proc"), rule("ArgLit", "Arg")];
         let first_sets: HashMap<String, FirstSet> = [
             ("Proc".to_string(), first_set(&["|"])),
             ("Arg".to_string(), first_set(&["Integer"])),
-        ].into();
+        ]
+        .into();
 
-        let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![
-            ("PCall".to_string(), "Proc".to_string(), vec![
+        let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![(
+            "PCall".to_string(),
+            "Proc".to_string(),
+            vec![
                 SyntaxItemSpec::Terminal("call".to_string()),
                 SyntaxItemSpec::Terminal("(".to_string()),
                 SyntaxItemSpec::Collection {
@@ -5839,12 +6439,15 @@ mod tests {
                     kind: crate::grammar::ir::CollectionKind::Vec,
                 },
                 SyntaxItemSpec::Terminal(")".to_string()),
-            ]),
-        ];
+            ],
+        )];
 
         let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &all_syntax);
-        assert!(warnings.is_empty(),
-            "Arg should be reachable via Collection from Proc: {:?}", warnings);
+        assert!(
+            warnings.is_empty(),
+            "Arg should be reachable via Collection from Proc: {:?}",
+            warnings
+        );
     }
 
     // ── DB03: Parallel analysis phase execution tests ────────────────────
@@ -5854,9 +6457,11 @@ mod tests {
         // count_analysis_phases() should return at least 3 (safety, cegar,
         // algebraic) even with no feature flags enabled.
         let count = super::count_analysis_phases();
-        assert!(count >= 3,
+        assert!(
+            count >= 3,
             "count_analysis_phases should include at least 3 always-on phases, got {}",
-            count);
+            count
+        );
     }
 
     #[test]
@@ -5865,13 +6470,8 @@ mod tests {
         // None for all result fields and phase_count=0.
         let bundle = ParserBundle {
             grammar_name: "Test".to_string(),
-            categories: vec![
-                category("Proc", true),
-                category("Int", false),
-            ],
-            bp_table: crate::binding_power::BindingPowerTable {
-                operators: Vec::new(),
-            },
+            categories: vec![category("Proc", true), category("Int", false)],
+            bp_table: crate::binding_power::BindingPowerTable { operators: Vec::new() },
             rule_infos: vec![rule("Add", "Int")],
             follow_inputs: Vec::new(),
             rd_rules: Vec::new(),
@@ -5882,6 +6482,7 @@ mod tests {
             recovery_config: crate::recovery::RecoveryConfig::default(),
             all_syntax: Vec::new(),
             rule_locations: std::collections::HashMap::new(),
+            dead_rule_ignore_labels: HashSet::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
             refinement_types: Vec::new(),
@@ -5891,7 +6492,10 @@ mod tests {
         assert_eq!(results.phase_count, 0, "phase_count should be 0 for sequential path");
         assert!(results.safety_result.is_none(), "safety_result should be None when ineligible");
         assert!(results.cegar_result.is_none(), "cegar_result should be None when ineligible");
-        assert!(results.algebraic_result.is_none(), "algebraic_result should be None when ineligible");
+        assert!(
+            results.algebraic_result.is_none(),
+            "algebraic_result should be None when ineligible"
+        );
     }
 
     #[test]
@@ -5907,14 +6511,8 @@ mod tests {
                 category("Int", false),
                 category("Bool", false),
             ],
-            bp_table: crate::binding_power::BindingPowerTable {
-                operators: Vec::new(),
-            },
-            rule_infos: vec![
-                rule("PPar", "Proc"),
-                rule("Add", "Int"),
-                rule("BTrue", "Bool"),
-            ],
+            bp_table: crate::binding_power::BindingPowerTable { operators: Vec::new() },
+            rule_infos: vec![rule("PPar", "Proc"), rule("Add", "Int"), rule("BTrue", "Bool")],
             follow_inputs: Vec::new(),
             rd_rules: Vec::new(),
             cross_rules: Vec::new(),
@@ -5923,30 +6521,57 @@ mod tests {
             beam_width: crate::BeamWidthConfig::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             all_syntax: vec![
-                ("PPar".to_string(), "Proc".to_string(), vec![
-                    SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "p".to_string() },
-                    SyntaxItemSpec::Terminal("|".to_string()),
-                    SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "q".to_string() },
-                ]),
-                ("Add".to_string(), "Int".to_string(), vec![
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
-                    SyntaxItemSpec::Terminal("+".to_string()),
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
-                ]),
+                (
+                    "PPar".to_string(),
+                    "Proc".to_string(),
+                    vec![
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Proc".to_string(),
+                            param_name: "p".to_string(),
+                        },
+                        SyntaxItemSpec::Terminal("|".to_string()),
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Proc".to_string(),
+                            param_name: "q".to_string(),
+                        },
+                    ],
+                ),
+                (
+                    "Add".to_string(),
+                    "Int".to_string(),
+                    vec![
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Int".to_string(),
+                            param_name: "a".to_string(),
+                        },
+                        SyntaxItemSpec::Terminal("+".to_string()),
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Int".to_string(),
+                            param_name: "b".to_string(),
+                        },
+                    ],
+                ),
             ],
             rule_locations: std::collections::HashMap::new(),
+            dead_rule_ignore_labels: HashSet::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
             refinement_types: Vec::new(),
         };
 
         let results = super::run_math_analyses_parallel(&bundle, None);
-        assert!(results.phase_count >= 3,
-            "parallel phase_count should be >= 3, got {}", results.phase_count);
+        assert!(
+            results.phase_count >= 3,
+            "parallel phase_count should be >= 3, got {}",
+            results.phase_count
+        );
         // Without WPDS analysis, WPDS-dependent results should be None
         assert!(results.safety_result.is_none(), "safety_result should be None without WPDS");
         assert!(results.cegar_result.is_none(), "cegar_result should be None without WPDS");
-        assert!(results.algebraic_result.is_none(), "algebraic_result should be None without WPDS");
+        assert!(
+            results.algebraic_result.is_none(),
+            "algebraic_result should be None without WPDS"
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -5994,10 +6619,7 @@ mod tests {
         let sym = crate::symbolic::SymbolicAnalysis {
             num_states: 2,
             num_transitions: 2,
-            guard_satisfiability: vec![
-                ("guard_1".into(), false),
-                ("guard_2".into(), false),
-            ],
+            guard_satisfiability: vec![("guard_1".into(), false), ("guard_2".into(), false)],
             overlapping_guards: Vec::new(),
             subsumed_guards: Vec::new(),
             unsatisfiable_rule_labels: vec!["dead_guard_1".into(), "dead_guard_2".into()],
@@ -6014,9 +6636,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.dead_rule_labels.contains("dead_guard_1"),
@@ -6048,9 +6669,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.dead_rule_labels.is_empty(),
@@ -6074,17 +6694,12 @@ mod tests {
         bundle.probabilistic = Some(&prob);
 
         let categories = vec![category("Expr", true)];
-        let rule_infos = vec![
-            rule("low_1", "Expr"),
-            rule("low_2", "Expr"),
-            rule("alive", "Expr"),
-        ];
+        let rule_infos = vec![rule("low_1", "Expr"), rule("low_2", "Expr"), rule("alive", "Expr")];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.dead_rule_labels.contains("low_1"),
@@ -6116,9 +6731,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             !analysis.dead_rule_labels.contains("low_1"),
@@ -6177,13 +6791,14 @@ mod tests {
         let rule_infos = vec![rule("rule_1", "Expr")];
         let dead_rules = HashSet::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // Expected: (1.0 + (-ln(0.5))) / 2 = (1.0 + 0.6931...) / 2 = 0.8465...
         let expected = (1.0 + (-selectivity.ln())) / 2.0;
-        let actual = analysis.constructor_weights.get("rule_1")
+        let actual = analysis
+            .constructor_weights
+            .get("rule_1")
             .copied()
             .expect("rule_1 should have a constructor weight");
         assert!(
@@ -6240,13 +6855,14 @@ mod tests {
         let rule_infos = vec![rule("rule_z", "Expr")];
         let dead_rules = HashSet::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // Zero selectivity is skipped (guard: *selectivity > 0.0), so the
         // weight should remain at the original WFST value (2.0).
-        let actual = analysis.constructor_weights.get("rule_z")
+        let actual = analysis
+            .constructor_weights
+            .get("rule_z")
             .copied()
             .expect("rule_z should have a constructor weight");
         assert!(
@@ -6268,42 +6884,25 @@ mod tests {
         let mut bundle = empty_bundle();
         bundle.alternating = Some(&alt);
 
-        let categories = vec![
-            category("A", true),
-            category("B", false),
-            category("C", false),
-        ];
-        let rule_infos = vec![
-            rule("r1", "A"),
-            rule("r2", "B"),
-            rule("r3", "C"),
-        ];
+        let categories = vec![category("A", true), category("B", false), category("C", false)];
+        let rule_infos = vec![rule("r1", "A"), rule("r2", "B"), rule("r3", "C")];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // With empty prediction_wfsts (no De Bruijn groups), and no non-bisimilar
         // pairs, we expect new isomorphic groups for all 3 pairs: [A,B], [A,C], [B,C].
-        let all_grouped: HashSet<String> = analysis.isomorphic_groups
+        let all_grouped: HashSet<String> = analysis
+            .isomorphic_groups
             .iter()
             .flatten()
             .cloned()
             .collect();
-        assert!(
-            all_grouped.contains("A"),
-            "A should appear in isomorphic groups"
-        );
-        assert!(
-            all_grouped.contains("B"),
-            "B should appear in isomorphic groups"
-        );
-        assert!(
-            all_grouped.contains("C"),
-            "C should appear in isomorphic groups"
-        );
+        assert!(all_grouped.contains("A"), "A should appear in isomorphic groups");
+        assert!(all_grouped.contains("B"), "B should appear in isomorphic groups");
+        assert!(all_grouped.contains("C"), "C should appear in isomorphic groups");
         assert!(
             analysis.isomorphic_groups.len() >= 3,
             "should have at least 3 isomorphic groups (one per pair), got {}",
@@ -6326,22 +6925,13 @@ mod tests {
         let mut bundle = empty_bundle();
         bundle.alternating = Some(&alt);
 
-        let categories = vec![
-            category("A", true),
-            category("B", false),
-            category("C", false),
-        ];
-        let rule_infos = vec![
-            rule("r1", "A"),
-            rule("r2", "B"),
-            rule("r3", "C"),
-        ];
+        let categories = vec![category("A", true), category("B", false), category("C", false)];
+        let rule_infos = vec![rule("r1", "A"), rule("r2", "B"), rule("r3", "C")];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // With no prediction WFSTs there are no De Bruijn groups, and all pairs
         // are non-bisimilar, so no new isomorphic groups should be added.
@@ -6409,31 +6999,25 @@ mod tests {
         prediction_wfsts.insert("Alpha".into(), wfst_alpha);
         prediction_wfsts.insert("Beta".into(), wfst_beta);
 
-        let categories = vec![
-            category("Alpha", true),
-            category("Beta", false),
-        ];
-        let rule_infos = vec![
-            rule("r_alpha", "Alpha"),
-            rule("r_beta", "Beta"),
-        ];
+        let categories = vec![category("Alpha", true), category("Beta", false)];
+        let rule_infos = vec![rule("r_alpha", "Alpha"), rule("r_beta", "Beta")];
         let dead_rules = HashSet::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // Alpha's rule should keep its original weight (1.0).
-        let alpha_w = analysis.constructor_weights.get("r_alpha")
+        let alpha_w = analysis
+            .constructor_weights
+            .get("r_alpha")
             .copied()
             .expect("r_alpha should have a constructor weight");
-        assert!(
-            (alpha_w - 1.0).abs() < 1e-9,
-            "Alpha's weight should remain 1.0, got {alpha_w}"
-        );
+        assert!((alpha_w - 1.0).abs() < 1e-9, "Alpha's weight should remain 1.0, got {alpha_w}");
 
         // Beta's rule should be penalized by +0.5 (Beta > Alpha lexicographically).
-        let beta_w = analysis.constructor_weights.get("r_beta")
+        let beta_w = analysis
+            .constructor_weights
+            .get("r_beta")
             .copied()
             .expect("r_beta should have a constructor weight");
         assert!(
@@ -6497,22 +7081,17 @@ mod tests {
         prediction_wfsts.insert("Alpha".into(), wfst_alpha);
         prediction_wfsts.insert("Beta".into(), wfst_beta);
 
-        let categories = vec![
-            category("Alpha", true),
-            category("Beta", false),
-        ];
-        let rule_infos = vec![
-            rule("r_alpha", "Alpha"),
-            rule("r_beta", "Beta"),
-        ];
+        let categories = vec![category("Alpha", true), category("Beta", false)];
+        let rule_infos = vec![rule("r_alpha", "Alpha"), rule("r_beta", "Beta")];
         let dead_rules = HashSet::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // Both weights should remain unchanged (no bisimilar pair found).
-        let alpha_w = analysis.constructor_weights.get("r_alpha")
+        let alpha_w = analysis
+            .constructor_weights
+            .get("r_alpha")
             .copied()
             .expect("r_alpha should have a constructor weight");
         assert!(
@@ -6520,7 +7099,9 @@ mod tests {
             "Alpha's weight should remain 2.0 (non-bisimilar), got {alpha_w}"
         );
 
-        let beta_w = analysis.constructor_weights.get("r_beta")
+        let beta_w = analysis
+            .constructor_weights
+            .get("r_beta")
             .copied()
             .expect("r_beta should have a constructor weight");
         assert!(
@@ -6574,33 +7155,25 @@ mod tests {
         prediction_wfsts.insert("B".into(), make_wfst("B", "rB"));
         prediction_wfsts.insert("C".into(), make_wfst("C", "rC"));
 
-        let categories = vec![
-            category("A", true),
-            category("B", false),
-            category("C", false),
-        ];
-        let rule_infos = vec![
-            rule("rA", "A"),
-            rule("rB", "B"),
-            rule("rC", "C"),
-        ];
+        let categories = vec![category("A", true), category("B", false), category("C", false)];
+        let rule_infos = vec![rule("rA", "A"), rule("rB", "B"), rule("rC", "C")];
         let dead_rules = HashSet::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // A should keep original weight (always the lexicographically first in its pairs).
-        let wa = analysis.constructor_weights.get("rA")
+        let wa = analysis
+            .constructor_weights
+            .get("rA")
             .copied()
             .expect("rA should have a constructor weight");
-        assert!(
-            (wa - 1.0).abs() < 1e-9,
-            "A's weight should remain 1.0, got {wa}"
-        );
+        assert!((wa - 1.0).abs() < 1e-9, "A's weight should remain 1.0, got {wa}");
 
         // B should be penalized (B > A and they are bisimilar).
-        let wb = analysis.constructor_weights.get("rB")
+        let wb = analysis
+            .constructor_weights
+            .get("rB")
             .copied()
             .expect("rB should have a constructor weight");
         assert!(
@@ -6609,7 +7182,9 @@ mod tests {
         );
 
         // C should be penalized (C > A and they are bisimilar).
-        let wc = analysis.constructor_weights.get("rC")
+        let wc = analysis
+            .constructor_weights
+            .get("rC")
             .copied()
             .expect("rC should have a constructor weight");
         assert!(
@@ -6631,22 +7206,14 @@ mod tests {
         let mut bundle = empty_bundle();
         bundle.register = Some(&reg);
 
-        let categories = vec![
-            category("Alpha", true),
-            category("Beta", false),
-            category("Gamma", false),
-        ];
-        let rule_infos = vec![
-            rule("r1", "Alpha"),
-            rule("r2", "Beta"),
-            rule("r3", "Gamma"),
-        ];
+        let categories =
+            vec![category("Alpha", true), category("Beta", false), category("Gamma", false)];
+        let rule_infos = vec![rule("r1", "Alpha"), rule("r2", "Beta"), rule("r3", "Gamma")];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // Register index 0 → "Alpha", index 2 → "Gamma"
         assert!(
@@ -6676,22 +7243,13 @@ mod tests {
         let mut bundle = empty_bundle();
         bundle.register = Some(&reg);
 
-        let categories = vec![
-            category("A", true),
-            category("B", false),
-            category("C", false),
-        ];
-        let rule_infos = vec![
-            rule("r1", "A"),
-            rule("r2", "B"),
-            rule("r3", "C"),
-        ];
+        let categories = vec![category("A", true), category("B", false), category("C", false)];
+        let rule_infos = vec![rule("r1", "A"), rule("r2", "B"), rule("r3", "C")];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.dead_binder_categories.is_empty(),
@@ -6717,9 +7275,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.bracket_deterministic,
@@ -6745,9 +7302,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             !analysis.bracket_deterministic,
@@ -6773,9 +7329,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             !analysis.bracket_deterministic,
@@ -6801,12 +7356,12 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert_eq!(
-            analysis.vpa_max_nesting_bound, Some(7),
+            analysis.vpa_max_nesting_bound,
+            Some(7),
             "vpa_max_nesting_bound should be Some(7) when VPA analysis is present"
         );
     }
@@ -6821,9 +7376,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert_eq!(
             analysis.vpa_max_nesting_bound, None,
@@ -6849,9 +7403,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.bracket_mismatch_tokens.contains("|"),
@@ -6862,7 +7415,8 @@ mod tests {
             "bracket_mismatch_tokens should contain '`'"
         );
         assert_eq!(
-            analysis.bracket_mismatch_tokens.len(), 2,
+            analysis.bracket_mismatch_tokens.len(),
+            2,
             "bracket_mismatch_tokens should have exactly 2 entries"
         );
     }
@@ -6883,9 +7437,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.bracket_mismatch_tokens.is_empty(),
@@ -6903,9 +7456,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.bracket_mismatch_tokens.is_empty(),
@@ -6926,22 +7478,14 @@ mod tests {
         let mut bundle = empty_bundle();
         bundle.multi_tape = Some(&mt);
 
-        let categories = vec![
-            category("Proc", true),
-            category("Int", false),
-            category("Bool", false),
-        ];
-        let rule_infos = vec![
-            rule("r1", "Proc"),
-            rule("r2", "Int"),
-            rule("r3", "Bool"),
-        ];
+        let categories =
+            vec![category("Proc", true), category("Int", false), category("Bool", false)];
+        let rule_infos = vec![rule("r1", "Proc"), rule("r2", "Int"), rule("r3", "Bool")];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         // Tape index 1 → "Int"
         assert!(
@@ -6949,7 +7493,8 @@ mod tests {
             "Int (tape 1) should be in independent_categories"
         );
         assert_eq!(
-            analysis.independent_categories.len(), 1,
+            analysis.independent_categories.len(),
+            1,
             "only 1 independent category expected, got {:?}",
             analysis.independent_categories
         );
@@ -6968,22 +7513,14 @@ mod tests {
         let mut bundle = empty_bundle();
         bundle.multi_tape = Some(&mt);
 
-        let categories = vec![
-            category("Proc", true),
-            category("Int", false),
-            category("Bool", false),
-        ];
-        let rule_infos = vec![
-            rule("r1", "Proc"),
-            rule("r2", "Int"),
-            rule("r3", "Bool"),
-        ];
+        let categories =
+            vec![category("Proc", true), category("Int", false), category("Bool", false)];
+        let rule_infos = vec![rule("r1", "Proc"), rule("r2", "Int"), rule("r3", "Bool")];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.independent_categories.is_empty(),
@@ -7017,9 +7554,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             !analysis.guard_disambiguated_tokens.is_empty(),
@@ -7050,9 +7586,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.guard_disambiguated_tokens.is_empty(),
@@ -7069,9 +7604,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.guard_disambiguated_tokens.is_empty(),
@@ -7106,9 +7640,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.per_category_entropy.contains_key("Expr"),
@@ -7127,9 +7660,8 @@ mod tests {
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert!(
             analysis.per_category_entropy.is_empty(),
@@ -7158,17 +7690,13 @@ mod tests {
         let mut bundle = empty_bundle();
         bundle.probabilistic = Some(&prob);
 
-        let categories = vec![
-            category("Expr", true),
-            category("Stmt", false),
-        ];
+        let categories = vec![category("Expr", true), category("Stmt", false)];
         let rule_infos: Vec<RuleInfo> = vec![];
         let dead_rules = HashSet::new();
         let prediction_wfsts = HashMap::new();
 
-        let analysis = run_build_pipeline(
-            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
-        );
+        let analysis =
+            run_build_pipeline(&dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle);
 
         assert_eq!(analysis.per_category_entropy.len(), 2);
         // Uniform distribution has max entropy: ln(2) ≈ 0.693
@@ -7194,8 +7722,8 @@ mod tests {
 #[allow(dead_code, unused_imports)]
 mod proptest_tests {
     use super::*;
-    use proptest::prelude::*;
     use crate::prediction::RuleInfo;
+    use proptest::prelude::*;
     use std::collections::{HashMap, HashSet};
 
     /// Helper: create a RuleInfo with sensible defaults.
@@ -7291,10 +7819,7 @@ mod proptest_tests {
     /// letter to mimic real grammar category names.
     fn arb_category_pair() -> impl Strategy<Value = (String, String)> {
         // Generate two distinct uppercase-starting names, then sort them.
-        (
-            "[A-Z][a-z]{0,6}",
-            "[A-Z][a-z]{0,6}",
-        )
+        ("[A-Z][a-z]{0,6}", "[A-Z][a-z]{0,6}")
             .prop_filter("category names must differ", |(a, b)| a != b)
             .prop_map(|(a, b)| {
                 let mut pair = [a, b];
@@ -7306,12 +7831,11 @@ mod proptest_tests {
     /// Strategy: generate a sorted, deduplicated Vec of 2..=5 distinct category names
     /// (uppercase-starting, 1..8 chars).
     fn arb_category_names(min: usize, max: usize) -> impl Strategy<Value = Vec<String>> {
-        proptest::collection::hash_set("[A-Z][a-z]{0,6}", min..=max)
-            .prop_map(|s| {
-                let mut v: Vec<String> = s.into_iter().collect();
-                v.sort();
-                v
-            })
+        proptest::collection::hash_set("[A-Z][a-z]{0,6}", min..=max).prop_map(|s| {
+            let mut v: Vec<String> = s.into_iter().collect();
+            v.sort();
+            v
+        })
     }
 
     proptest! {
@@ -7494,10 +8018,7 @@ mod proptest_tests {
     /// the "Category::Rule" format.
     fn arb_subsumed_guards(max_pairs: usize) -> impl Strategy<Value = Vec<(String, String)>> {
         proptest::collection::vec(
-            (
-                "[A-Z][a-z]{0,4}::[A-Z][a-z]{0,4}",
-                "[A-Z][a-z]{0,4}::[A-Z][a-z]{0,4}",
-            )
+            ("[A-Z][a-z]{0,4}::[A-Z][a-z]{0,4}", "[A-Z][a-z]{0,4}::[A-Z][a-z]{0,4}")
                 .prop_filter("subsumed and subsumer must differ", |(a, b)| a != b),
             0..=max_pairs,
         )
@@ -7651,12 +8172,13 @@ mod proptest_tests {
         n: usize,
     ) -> impl Strategy<Value = HashMap<String, f64>> {
         let cat = cat.to_string();
-        proptest::collection::vec(0.01_f64..10.0, n)
-            .prop_map(move |weights| {
-                weights.into_iter().enumerate().map(|(i, w)| {
-                    (format!("{cat}::R{i}"), w)
-                }).collect()
-            })
+        proptest::collection::vec(0.01_f64..10.0, n).prop_map(move |weights| {
+            weights
+                .into_iter()
+                .enumerate()
+                .map(|(i, w)| (format!("{cat}::R{i}"), w))
+                .collect()
+        })
     }
 
     proptest! {

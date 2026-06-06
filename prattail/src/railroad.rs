@@ -161,15 +161,9 @@ fn rule_to_node(rule: &RuleSpec) -> RailroadNode {
 
         return RailroadNode::Sequence {
             children: vec![
-                RailroadNode::NonTerminal {
-                    text: rule.category.clone(),
-                },
-                RailroadNode::Terminal {
-                    text: op_text.to_string(),
-                },
-                RailroadNode::NonTerminal {
-                    text: rule.category.clone(),
-                },
+                RailroadNode::NonTerminal { text: rule.category.clone() },
+                RailroadNode::Terminal { text: op_text.to_string() },
+                RailroadNode::NonTerminal { text: rule.category.clone() },
             ],
         };
     }
@@ -180,9 +174,9 @@ fn rule_to_node(rule: &RuleSpec) -> RailroadNode {
             .syntax
             .iter()
             .find_map(|item| match item {
-                SyntaxItemSpec::Collection {
-                    element_category, ..
-                } => Some(element_category.clone()),
+                SyntaxItemSpec::Collection { element_category, .. } => {
+                    Some(element_category.clone())
+                },
                 _ => None,
             })
             .unwrap_or_else(|| rule.category.clone());
@@ -191,20 +185,12 @@ fn rule_to_node(rule: &RuleSpec) -> RailroadNode {
 
         return RailroadNode::Repeat {
             element: Box::new(RailroadNode::NonTerminal { text: element_cat }),
-            separator: separator.map(|s| {
-                Box::new(RailroadNode::Terminal {
-                    text: s.to_string(),
-                })
-            }),
+            separator: separator.map(|s| Box::new(RailroadNode::Terminal { text: s.to_string() })),
         };
     }
 
     // General rule: sequence of items
-    let children: Vec<RailroadNode> = rule
-        .syntax
-        .iter()
-        .map(syntax_item_to_node)
-        .collect();
+    let children: Vec<RailroadNode> = rule.syntax.iter().map(syntax_item_to_node).collect();
 
     if children.len() == 1 {
         children.into_iter().next().expect("single child")
@@ -216,79 +202,50 @@ fn rule_to_node(rule: &RuleSpec) -> RailroadNode {
 /// Convert a syntax item to a railroad node.
 fn syntax_item_to_node(item: &SyntaxItemSpec) -> RailroadNode {
     match item {
-        SyntaxItemSpec::Terminal(t) => RailroadNode::Terminal {
-            text: t.clone(),
+        SyntaxItemSpec::Terminal(t) => RailroadNode::Terminal { text: t.clone() },
+        SyntaxItemSpec::NonTerminal { category, .. } => {
+            RailroadNode::NonTerminal { text: category.clone() }
         },
-        SyntaxItemSpec::NonTerminal { category, .. } => RailroadNode::NonTerminal {
-            text: category.clone(),
+        SyntaxItemSpec::IdentCapture { .. } => {
+            RailroadNode::NonTerminal { text: "ident".to_string() }
         },
-        SyntaxItemSpec::IdentCapture { .. } => RailroadNode::NonTerminal {
-            text: "ident".to_string(),
+        SyntaxItemSpec::Binder { category, .. } => {
+            RailroadNode::NonTerminal { text: format!("binder:{}", category) }
         },
-        SyntaxItemSpec::Binder { category, .. } => RailroadNode::NonTerminal {
-            text: format!("binder:{}", category),
-        },
-        SyntaxItemSpec::Collection {
-            element_category,
-            separator,
-            ..
-        } => RailroadNode::Repeat {
-            element: Box::new(RailroadNode::NonTerminal {
-                text: element_category.clone(),
-            }),
-            separator: Some(Box::new(RailroadNode::Terminal {
-                text: separator.clone(),
-            })),
+        SyntaxItemSpec::Collection { element_category, separator, .. } => RailroadNode::Repeat {
+            element: Box::new(RailroadNode::NonTerminal { text: element_category.clone() }),
+            separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
         },
         SyntaxItemSpec::Optional { inner } => {
             let inner_nodes: Vec<RailroadNode> = inner.iter().map(syntax_item_to_node).collect();
             let inner_node = if inner_nodes.len() == 1 {
                 inner_nodes.into_iter().next().expect("single inner")
             } else {
-                RailroadNode::Sequence {
-                    children: inner_nodes,
-                }
+                RailroadNode::Sequence { children: inner_nodes }
             };
-            RailroadNode::Optional {
-                inner: Box::new(inner_node),
-            }
+            RailroadNode::Optional { inner: Box::new(inner_node) }
         },
         SyntaxItemSpec::Sep { body, separator, .. } => RailroadNode::Repeat {
             element: Box::new(syntax_item_to_node(body)),
-            separator: Some(Box::new(RailroadNode::Terminal {
-                text: separator.clone(),
-            })),
+            separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
         },
         SyntaxItemSpec::Map { body_items } => {
             let children: Vec<RailroadNode> = body_items.iter().map(syntax_item_to_node).collect();
             RailroadNode::Sequence { children }
         },
-        SyntaxItemSpec::Zip {
-            left_category,
-            right_category,
-            body,
-            ..
-        } => RailroadNode::Sequence {
+        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => RailroadNode::Sequence {
             children: vec![
-                RailroadNode::NonTerminal {
-                    text: left_category.clone(),
-                },
+                RailroadNode::NonTerminal { text: left_category.clone() },
                 syntax_item_to_node(body),
-                RailroadNode::NonTerminal {
-                    text: right_category.clone(),
-                },
+                RailroadNode::NonTerminal { text: right_category.clone() },
             ],
         },
         SyntaxItemSpec::BinderCollection { separator, .. } => RailroadNode::Repeat {
-            element: Box::new(RailroadNode::NonTerminal {
-                text: "ident".to_string(),
-            }),
-            separator: Some(Box::new(RailroadNode::Terminal {
-                text: separator.clone(),
-            })),
+            element: Box::new(RailroadNode::NonTerminal { text: "ident".to_string() }),
+            separator: Some(Box::new(RailroadNode::Terminal { text: separator.clone() })),
         },
-        SyntaxItemSpec::GuardExpression { param_name } => RailroadNode::NonTerminal {
-            text: format!("guard:{}", param_name),
+        SyntaxItemSpec::GuardExpression { param_name } => {
+            RailroadNode::NonTerminal { text: format!("guard:{}", param_name) }
         },
     }
 }
@@ -328,9 +285,11 @@ pub fn diagram_to_text(node: &RailroadNode) -> String {
     match node {
         RailroadNode::Terminal { text } => format!("──[ {} ]──", text),
         RailroadNode::NonTerminal { text } => format!("──⟨ {} ⟩──", text),
-        RailroadNode::Sequence { children } => {
-            children.iter().map(diagram_to_text).collect::<Vec<_>>().join("")
-        },
+        RailroadNode::Sequence { children } => children
+            .iter()
+            .map(diagram_to_text)
+            .collect::<Vec<_>>()
+            .join(""),
         RailroadNode::Choice { alternatives } => {
             let mut out = String::new();
             out.push_str("──┬──");
@@ -371,14 +330,12 @@ mod tests {
     fn make_simple_spec() -> LanguageSpec {
         LanguageSpec {
             name: "Calc".to_string(),
-            types: vec![
-                CategorySpec {
-                    name: "Expr".to_string(),
-                    native_type: Some("i32".to_string()),
-                    is_primary: true,
-                    has_var: true,
-                },
-            ],
+            types: vec![CategorySpec {
+                name: "Expr".to_string(),
+                native_type: Some("i32".to_string()),
+                is_primary: true,
+                has_var: true,
+            }],
             rules: vec![
                 RuleSpec {
                     label: "Lit".to_string(),
@@ -477,18 +434,14 @@ mod tests {
 
     #[test]
     fn test_terminal_node() {
-        let node = RailroadNode::Terminal {
-            text: "+".to_string(),
-        };
+        let node = RailroadNode::Terminal { text: "+".to_string() };
         let text = diagram_to_text(&node);
         assert!(text.contains("+"));
     }
 
     #[test]
     fn test_nonterminal_node() {
-        let node = RailroadNode::NonTerminal {
-            text: "Expr".to_string(),
-        };
+        let node = RailroadNode::NonTerminal { text: "Expr".to_string() };
         let text = diagram_to_text(&node);
         assert!(text.contains("Expr"));
     }
@@ -497,15 +450,9 @@ mod tests {
     fn test_sequence_node() {
         let node = RailroadNode::Sequence {
             children: vec![
-                RailroadNode::NonTerminal {
-                    text: "Expr".to_string(),
-                },
-                RailroadNode::Terminal {
-                    text: "+".to_string(),
-                },
-                RailroadNode::NonTerminal {
-                    text: "Expr".to_string(),
-                },
+                RailroadNode::NonTerminal { text: "Expr".to_string() },
+                RailroadNode::Terminal { text: "+".to_string() },
+                RailroadNode::NonTerminal { text: "Expr".to_string() },
             ],
         };
         let text = diagram_to_text(&node);
@@ -516,9 +463,7 @@ mod tests {
     #[test]
     fn test_optional_node() {
         let node = RailroadNode::Optional {
-            inner: Box::new(RailroadNode::Terminal {
-                text: "else".to_string(),
-            }),
+            inner: Box::new(RailroadNode::Terminal { text: "else".to_string() }),
         };
         let text = diagram_to_text(&node);
         assert!(text.contains("else"));
@@ -527,12 +472,8 @@ mod tests {
     #[test]
     fn test_repeat_node() {
         let node = RailroadNode::Repeat {
-            element: Box::new(RailroadNode::NonTerminal {
-                text: "Expr".to_string(),
-            }),
-            separator: Some(Box::new(RailroadNode::Terminal {
-                text: ",".to_string(),
-            })),
+            element: Box::new(RailroadNode::NonTerminal { text: "Expr".to_string() }),
+            separator: Some(Box::new(RailroadNode::Terminal { text: ",".to_string() })),
         };
         let text = diagram_to_text(&node);
         assert!(text.contains("Expr"));

@@ -35,11 +35,7 @@ pub fn generate_rewrite_tests(language: &LanguageDef, pipeline: &PipelineAnalysi
 
     for (i, rewrite) in language.rewrites.iter().enumerate() {
         let rule_name = rewrite.name.to_string();
-        let test_name = format!(
-            "rewrite_{}_{}",
-            lang_name_lower,
-            rule_name.to_lowercase()
-        );
+        let test_name = format!("rewrite_{}_{}", lang_name_lower, rule_name.to_lowercase());
 
         let is_dead = dead_rules.contains(&rule_name);
         let is_congruence = rewrite.is_congruence_rule();
@@ -56,7 +52,9 @@ pub fn generate_rewrite_tests(language: &LanguageDef, pipeline: &PipelineAnalysi
             out.push_str(&format!("fn {}() {{\n", test_name));
             out.push_str(&format!("    let _lang = {};\n", lang_struct));
             out.push_str("    // Congruence rules require a rewrite-triggering context to test.\n");
-            out.push_str("    // They fire when their premise (S ~> T) is satisfied by another rewrite.\n");
+            out.push_str(
+                "    // They fire when their premise (S ~> T) is satisfied by another rewrite.\n",
+            );
             out.push_str("}\n\n");
         } else {
             // Non-congruence rewrite: verify metadata presence
@@ -74,7 +72,11 @@ pub fn generate_rewrite_tests(language: &LanguageDef, pipeline: &PipelineAnalysi
                  \x20       rewrites.len()\n\
                  \x20   );\n\
                  \x20   let rw = &rewrites[{}];\n",
-                rule_name, i, i, i + 1, i
+                rule_name,
+                i,
+                i,
+                i + 1,
+                i
             ));
 
             // Verify the rewrite metadata
@@ -128,7 +130,7 @@ fn generate_exec_test(
     rewrite: &RewriteRule,
     language: &LanguageDef,
     lang_struct: &str,
-    lang_name: &str,
+    _lang_name: &str,
     is_dead: bool,
 ) -> Option<String> {
     // Find the grammar rule whose label matches the LHS constructor.
@@ -168,10 +170,7 @@ fn generate_exec_test(
     out.push_str("    let runner = SimulationRunner::new(lang_ref, config);\n");
     out.push_str("    mettail_runtime::clear_var_cache();\n");
     out.push_str("    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {\n");
-    out.push_str(&format!(
-        "        runner.run_to_normal_form(\"{}\")\n",
-        escaped_expr
-    ));
+    out.push_str(&format!("        runner.run_to_normal_form(\"{}\")\n", escaped_expr));
     out.push_str("    }));\n");
     out.push_str("    if let Ok(Ok(trace)) = result {\n");
     out.push_str("        assert!(\n");
@@ -208,5 +207,8 @@ fn find_grammar_rule_for_rewrite<'a>(
         _ => return None,
     };
 
-    language.terms.iter().find(|r| r.label.to_string() == constructor)
+    language
+        .terms
+        .iter()
+        .find(|r| r.label.to_string() == constructor)
 }

@@ -19,18 +19,8 @@ use proptest::strategy::BoxedStrategy;
 #[allow(dead_code)]
 #[derive(Clone)]
 enum AnyTerm {
-    WrapBool(Bool),
     WrapInt(Int),
-}
-
-impl AnyTerm {
-    #[allow(dead_code)]
-    fn unwrap_bool(self) -> Bool {
-        match self {
-            AnyTerm::WrapBool(v) => v,
-            _ => panic!("AnyTerm::unwrap_bool: wrong variant"),
-        }
-    }
+    WrapBool(Bool),
 }
 
 impl AnyTerm {
@@ -43,13 +33,23 @@ impl AnyTerm {
     }
 }
 
+impl AnyTerm {
+    #[allow(dead_code)]
+    fn unwrap_bool(self) -> Bool {
+        match self {
+            AnyTerm::WrapBool(v) => v,
+            _ => panic!("AnyTerm::unwrap_bool: wrong variant"),
+        }
+    }
+}
+
 /// Work item for the tape-based iterative term builder.
 #[allow(dead_code)]
 enum BuildTask {
-    /// Build a Bool term at the given depth, storing result in the given slot.
-    BuildBool { depth: u32, slot: usize },
     /// Build a Int term at the given depth, storing result in the given slot.
     BuildInt { depth: u32, slot: usize },
+    /// Build a Bool term at the given depth, storing result in the given slot.
+    BuildBool { depth: u32, slot: usize },
 }
 
 /// Helper to consume bytes from the tape.
@@ -135,39 +135,6 @@ impl<'a> TapeReader<'a> {
     }
 }
 
-/// Build a `Bool` term from an instruction tape.
-///
-/// Consumes bytes from the tape to choose constructors.
-/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
-/// At depth > 0, recursive constructors are also available.
-#[allow(dead_code, unused_variables, clippy::let_and_return)]
-fn build_bool_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bool {
-    if depth == 0 {
-        let result = AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool()));
-        return result.unwrap_bool();
-    }
-
-    let choice = (reader.next_byte() as usize) % 4;
-    let child_depth = depth - 1;
-    match choice {
-        0 => AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool())).unwrap_bool(),
-        1 => {
-            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
-            Bool::And(f0, f1)
-        },
-        2 => {
-            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
-            let f1 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
-            Bool::Or(f0, f1)
-        },
-        _ => {
-            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
-            Bool::Not(f0)
-        },
-    }
-}
-
 /// Build a `Int` term from an instruction tape.
 ///
 /// Consumes bytes from the tape to choose constructors.
@@ -210,20 +177,37 @@ fn build_int_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Int {
     }
 }
 
-/// Generate an arbitrary `Bool` term with bounded depth.
+/// Build a `Bool` term from an instruction tape.
 ///
-/// Uses a flat `Vec<u8>` tape interpreted by `build_bool_from_tape`.
-/// Proptest shrinking produces shorter tapes = simpler terms.
-#[allow(dead_code)]
-fn arb_bool(max_depth: u32) -> BoxedStrategy<Bool> {
-    // Tape size scales with depth: deeper terms need more bytes
-    let max_tape = (10 * (max_depth as usize + 1)).max(20);
-    proptest::collection::vec(any::<u8>(), 1..max_tape)
-        .prop_map(move |tape| {
-            let mut reader = TapeReader::new(&tape);
-            build_bool_from_tape(&mut reader, max_depth)
-        })
-        .boxed()
+/// Consumes bytes from the tape to choose constructors.
+/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.
+/// At depth > 0, recursive constructors are also available.
+#[allow(dead_code, unused_variables, clippy::let_and_return)]
+fn build_bool_from_tape(reader: &mut TapeReader<'_>, depth: u32) -> Bool {
+    if depth == 0 {
+        let result = AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool()));
+        return result.unwrap_bool();
+    }
+
+    let choice = (reader.next_byte() as usize) % 4;
+    let child_depth = depth - 1;
+    match choice {
+        0 => AnyTerm::WrapBool(Bool::BoolLit(reader.next_bool())).unwrap_bool(),
+        1 => {
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            Bool::And(f0, f1)
+        },
+        2 => {
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            let f1 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            Bool::Or(f0, f1)
+        },
+        _ => {
+            let f0 = std::sync::Arc::new(build_bool_from_tape(reader, child_depth));
+            Bool::Not(f0)
+        },
+    }
 }
 
 /// Generate an arbitrary `Int` term with bounded depth.
@@ -242,106 +226,24 @@ fn arb_int(max_depth: u32) -> BoxedStrategy<Int> {
         .boxed()
 }
 
+/// Generate an arbitrary `Bool` term with bounded depth.
+///
+/// Uses a flat `Vec<u8>` tape interpreted by `build_bool_from_tape`.
+/// Proptest shrinking produces shorter tapes = simpler terms.
+#[allow(dead_code)]
+fn arb_bool(max_depth: u32) -> BoxedStrategy<Bool> {
+    // Tape size scales with depth: deeper terms need more bytes
+    let max_tape = (10 * (max_depth as usize + 1)).max(20);
+    proptest::collection::vec(any::<u8>(), 1..max_tape)
+        .prop_map(move |tape| {
+            let mut reader = TapeReader::new(&tape);
+            build_bool_from_tape(&mut reader, max_depth)
+        })
+        .boxed()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
-
-    #[test]
-    fn bool_debug_does_not_panic(term in arb_bool(4)) {
-        let _ = format!("{:?}", term);
-    }
-
-    #[test]
-    fn bool_display_does_not_panic(term in arb_bool(4)) {
-        let _ = format!("{}", term);
-    }
-
-    #[test]
-    fn bool_clone_eq(term in arb_bool(4)) {
-        let cloned = term.clone();
-        prop_assert_eq!(term, cloned);
-    }
-
-    #[test]
-    fn bool_display_parse_roundtrip(term in arb_bool(3)) {
-        let displayed = format!("{}", term);
-        // Skip terms whose display is too long (parser may overflow)
-        if displayed.len() > 500 {
-            return Ok(());
-        }
-        // GRAMMAR-AWARE ROUNDTRIP CONTRACT (strengthened from
-        // silent-skip): the literal-build codegen now projects
-        // tape values onto the language's admitted literal
-        // domain (see rust_code_rewrite + automaton_walk::classify).
-        // Any parse failure here is a real regression — the
-        // generator emitted something the grammar does not admit.
-        // Canonical-form idempotence:
-        //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
-        //   the generator emits.
-        let parsed = Bool::parse(&displayed)
-            .unwrap_or_else(|e| panic!(
-                "arb_bool produced unparseable surface term {:?}: {:?}",
-                displayed, e));
-        let canonical = format!("{}", parsed);
-        if canonical.len() > 500 { return Ok(()); }
-        let reparsed = Bool::parse(&canonical).unwrap_or_else(|e| panic!(
-            "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
-            canonical, e));
-        let recanonical = format!("{}", reparsed);
-        prop_assert_eq!(canonical, recanonical,
-            "Display should be idempotent after canonicalization: \
-             display(parse(display(parse(display(t))))) == display(parse(display(t)))");
-    }
-
-    #[test]
-    fn bool_strong_roundtrip(term in arb_bool(1)) {
-        mettail_runtime::clear_var_cache();
-        let displayed = format!("{}", term);
-        // Skip terms whose display is too long (parser may overflow)
-        if displayed.len() > 500 {
-            return Ok(());
-        }
-        mettail_runtime::clear_var_cache();
-        if let Ok(parsed) = Bool::parse(&displayed) {
-            // Verify display-level equality (same as test 4)
-            let parsed_display = format!("{}", parsed);
-            prop_assert_eq!(&displayed, &parsed_display,
-                "Strong roundtrip: display(term) != display(parse(display(term)))");
-            // Additionally verify that re-parsing the parsed display is consistent
-            mettail_runtime::clear_var_cache();
-            if let Ok(reparsed) = Bool::parse(&parsed_display) {
-                let reparsed_display = format!("{}", reparsed);
-                prop_assert_eq!(&parsed_display, &reparsed_display,
-                    "Strong roundtrip: display not stable after double parse");
-            }
-        }
-    }
-
-    #[test]
-    fn bool_parse_determinism(term in arb_bool(2)) {
-        mettail_runtime::clear_var_cache();
-        let displayed = format!("{}", term);
-        // Skip terms whose display is too long (parser may overflow)
-        if displayed.len() > 500 {
-            return Ok(());
-        }
-        mettail_runtime::clear_var_cache();
-        let p1 = Bool::parse(&displayed);
-        mettail_runtime::clear_var_cache();
-        let p2 = Bool::parse(&displayed);
-        match (p1, p2) {
-            (Ok(t1), Ok(t2)) => {
-                let d1 = format!("{}", t1);
-                let d2 = format!("{}", t2);
-                prop_assert_eq!(d1, d2,
-                    "Parse determinism failed: two parses of the same string differ");
-            }
-            (Err(_), Err(_)) => { /* Both failed — consistent */ }
-            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
-                prop_assert!(false,
-                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
-            }
-        }
-    }
 
     #[test]
     fn int_debug_does_not_panic(term in arb_int(4)) {
@@ -441,6 +343,104 @@ proptest! {
         }
     }
 
+    #[test]
+    fn bool_debug_does_not_panic(term in arb_bool(4)) {
+        let _ = format!("{:?}", term);
+    }
+
+    #[test]
+    fn bool_display_does_not_panic(term in arb_bool(4)) {
+        let _ = format!("{}", term);
+    }
+
+    #[test]
+    fn bool_clone_eq(term in arb_bool(4)) {
+        let cloned = term.clone();
+        prop_assert_eq!(term, cloned);
+    }
+
+    #[test]
+    fn bool_display_parse_roundtrip(term in arb_bool(3)) {
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        // GRAMMAR-AWARE ROUNDTRIP CONTRACT (strengthened from
+        // silent-skip): the literal-build codegen now projects
+        // tape values onto the language's admitted literal
+        // domain (see rust_code_rewrite + automaton_walk::classify).
+        // Any parse failure here is a real regression — the
+        // generator emitted something the grammar does not admit.
+        // Canonical-form idempotence:
+        //   Parse(Display(Parse(s))) ≡ Parse(s) for any s that
+        //   the generator emits.
+        let parsed = Bool::parse(&displayed)
+            .unwrap_or_else(|e| panic!(
+                "arb_bool produced unparseable surface term {:?}: {:?}",
+                displayed, e));
+        let canonical = format!("{}", parsed);
+        if canonical.len() > 500 { return Ok(()); }
+        let reparsed = Bool::parse(&canonical).unwrap_or_else(|e| panic!(
+            "Parse(Display(Parse(s))) should succeed for canonical form {:?}: {:?}",
+            canonical, e));
+        let recanonical = format!("{}", reparsed);
+        prop_assert_eq!(canonical, recanonical,
+            "Display should be idempotent after canonicalization: \
+             display(parse(display(parse(display(t))))) == display(parse(display(t)))");
+    }
+
+    #[test]
+    fn bool_strong_roundtrip(term in arb_bool(1)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        if let Ok(parsed) = Bool::parse(&displayed) {
+            // Verify display-level equality (same as test 4)
+            let parsed_display = format!("{}", parsed);
+            prop_assert_eq!(&displayed, &parsed_display,
+                "Strong roundtrip: display(term) != display(parse(display(term)))");
+            // Additionally verify that re-parsing the parsed display is consistent
+            mettail_runtime::clear_var_cache();
+            if let Ok(reparsed) = Bool::parse(&parsed_display) {
+                let reparsed_display = format!("{}", reparsed);
+                prop_assert_eq!(&parsed_display, &reparsed_display,
+                    "Strong roundtrip: display not stable after double parse");
+            }
+        }
+    }
+
+    #[test]
+    fn bool_parse_determinism(term in arb_bool(2)) {
+        mettail_runtime::clear_var_cache();
+        let displayed = format!("{}", term);
+        // Skip terms whose display is too long (parser may overflow)
+        if displayed.len() > 500 {
+            return Ok(());
+        }
+        mettail_runtime::clear_var_cache();
+        let p1 = Bool::parse(&displayed);
+        mettail_runtime::clear_var_cache();
+        let p2 = Bool::parse(&displayed);
+        match (p1, p2) {
+            (Ok(t1), Ok(t2)) => {
+                let d1 = format!("{}", t1);
+                let d2 = format!("{}", t2);
+                prop_assert_eq!(d1, d2,
+                    "Parse determinism failed: two parses of the same string differ");
+            }
+            (Err(_), Err(_)) => { /* Both failed — consistent */ }
+            (Ok(_), Err(e)) | (Err(e), Ok(_)) => {
+                prop_assert!(false,
+                    "Parse determinism failed: one parse succeeded, other failed: {}", e);
+            }
+        }
+    }
+
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -461,7 +461,7 @@ fn sim_mixedmath_normal_form_reachability() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["true and true", "true or true", "not true", "1 + 1", "1 - 1", "1 * 1", "- 1", "true", "1"];
+    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
 
     let mut tested = 0usize;
     let mut reached_nf = 0usize;
@@ -513,7 +513,7 @@ fn sim_mixedmath_roundtrip_under_rewrite() {
     let runner = SimulationRunner::new(lang_ref, config);
 
     // Test a set of concrete expressions for rewrite roundtrip.
-    let test_inputs: Vec<&str> = vec!["true and true", "true or true", "not true", "1 + 1", "1 - 1", "1 * 1", "- 1", "true", "1"];
+    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -575,7 +575,7 @@ fn sim_mixedmath_morphology_bounded() {
     };
     let runner = SimulationRunner::new(lang_ref, config);
 
-    let test_inputs: Vec<&str> = vec!["true and true", "true or true", "not true", "1 + 1", "1 - 1", "1 * 1", "- 1", "true", "1"];
+    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
 
     for input in &test_inputs {
         mettail_runtime::clear_var_cache();
@@ -610,7 +610,7 @@ fn sim_mixedmath_eval_determinism() {
     let lang = MixedMathLanguage;
     let lang_ref: &dyn mettail_runtime::Language = &lang;
 
-    let test_inputs: Vec<&str> = vec!["true and true", "true or true", "not true", "1 + 1", "1 - 1", "1 * 1", "- 1", "true", "1"];
+    let test_inputs: Vec<&str> = vec!["1 + 1", "1 - 1", "1 * 1", "true and true", "true or true", "not true", "- 1", "1", "true"];
 
     for input in &test_inputs {
         let config1 = SimulationConfig {
@@ -666,7 +666,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
 
     #[test]
-    fn sim_mixedmath_proptest_campaign(term in arb_bool(3u32)) {
+    fn sim_mixedmath_proptest_campaign(term in arb_int(3u32)) {
         use mettail_simulation::runner::{SimulationConfig, SimulationRunner};
         use mettail_simulation::trace::TraceOutcome;
         use mettail_simulation::invariant::{BoundedSize, BoundedDepth};

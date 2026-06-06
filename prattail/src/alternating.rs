@@ -138,12 +138,7 @@ impl AlternatingState {
 
     /// Create a state with explicit branching mode and priority.
     pub fn with_priority(id: usize, branching: BranchingMode, priority: u32) -> Self {
-        AlternatingState {
-            id,
-            branching,
-            priority,
-            label: None,
-        }
+        AlternatingState { id, branching, priority, label: None }
     }
 
     /// Create a labeled state.
@@ -217,14 +212,7 @@ impl<W: Semiring> fmt::Display for WeightedAlternatingTransition<W> {
         if self.weight.is_one() {
             write!(f, "q{} --{}-> {{{}}}", self.from, label, succs.join(", "))
         } else {
-            write!(
-                f,
-                "q{} --{}/{:?}-> {{{}}}",
-                self.from,
-                label,
-                self.weight,
-                succs.join(", ")
-            )
+            write!(f, "q{} --{}/{:?}-> {{{}}}", self.from, label, self.weight, succs.join(", "))
         }
     }
 }
@@ -340,12 +328,8 @@ impl<W: Semiring> WeightedAlternatingAutomaton<W> {
         if let Some(ref l) = label {
             self.alphabet.insert(l.clone());
         }
-        self.transitions.push(WeightedAlternatingTransition {
-            from,
-            label,
-            successors,
-            weight,
-        });
+        self.transitions
+            .push(WeightedAlternatingTransition { from, label, successors, weight });
     }
 
     /// Set the terminal weight for a state.
@@ -382,12 +366,7 @@ impl WeightedAlternatingAutomaton<BooleanWeight> {
     /// Add an unweighted transition (weight = `BooleanWeight::one()`).
     ///
     /// This is the original API preserved for backward compatibility.
-    pub fn add_transition(
-        &mut self,
-        from: usize,
-        label: Option<String>,
-        successors: Vec<usize>,
-    ) {
+    pub fn add_transition(&mut self, from: usize, label: Option<String>, successors: Vec<usize>) {
         self.add_weighted_transition(from, label, successors, BooleanWeight::one());
     }
 }
@@ -484,13 +463,13 @@ pub fn check_emptiness(automaton: &AlternatingAutomaton) -> bool {
                     transitions_from[s]
                         .iter()
                         .any(|succs| succs.iter().all(|&succ| succ < n && accepting[succ]))
-                }
+                },
                 BranchingMode::Universal => {
                     // ALL transitions must lead to all-accepting successors.
                     transitions_from[s]
                         .iter()
                         .all(|succs| succs.iter().all(|&succ| succ < n && accepting[succ]))
-                }
+                },
             };
 
             if new_status && !accepting[s] {
@@ -537,8 +516,8 @@ pub fn bisimulation_game(a: &AlternatingAutomaton, b: &AlternatingAutomaton) -> 
             } else {
                 return check_emptiness(a);
             }
-        }
-        (Some(_), Some(_)) => {} // both have initial states, proceed
+        },
+        (Some(_), Some(_)) => {}, // both have initial states, proceed
     }
 
     let init_a = a.initial_state.expect("checked above");
@@ -637,9 +616,9 @@ pub fn bisimulation_game(a: &AlternatingAutomaton, b: &AlternatingAutomaton) -> 
 
                         let attacker_wins_this_label = b_matches.iter().all(|succs_b| {
                             succs_a.iter().any(|&sa| {
-                                succs_b.iter().any(|&sb| {
-                                    sa < na && sb < nb && attacker_wins[pos(sa, sb)]
-                                })
+                                succs_b
+                                    .iter()
+                                    .any(|&sb| sa < na && sb < nb && attacker_wins[pos(sa, sb)])
                             })
                         });
 
@@ -675,9 +654,9 @@ pub fn bisimulation_game(a: &AlternatingAutomaton, b: &AlternatingAutomaton) -> 
 
                         let attacker_wins_this_label = a_matches.iter().all(|succs_a| {
                             succs_b.iter().any(|&sb| {
-                                succs_a.iter().any(|&sa| {
-                                    sa < na && sb < nb && attacker_wins[pos(sa, sb)]
-                                })
+                                succs_a
+                                    .iter()
+                                    .any(|&sa| sa < na && sb < nb && attacker_wins[pos(sa, sb)])
                             })
                         });
 
@@ -797,7 +776,7 @@ pub fn weighted_emptiness<W: Semiring>(automaton: &WeightedAlternatingAutomaton<
                         acc = acc.plus(&prod);
                     }
                     acc
-                }
+                },
                 BranchingMode::Universal => {
                     // ⊗ over all transitions: product of (weight ⊗ product-of-successor-weights)
                     let mut acc = W::one();
@@ -815,7 +794,7 @@ pub fn weighted_emptiness<W: Semiring>(automaton: &WeightedAlternatingAutomaton<
                         acc = acc.times(&prod);
                     }
                     acc
-                }
+                },
             };
 
             if !new_weight.approx_eq(&weights[s], epsilon) {
@@ -961,7 +940,7 @@ pub fn evaluate_word<W: Semiring>(automaton: &WeightedAlternatingAutomaton<W>, w
                     acc = acc.plus(&prod);
                 }
                 acc
-            }
+            },
             BranchingMode::Universal => {
                 // ⊗ over matching transitions.
                 let mut acc = W::one();
@@ -979,7 +958,7 @@ pub fn evaluate_word<W: Semiring>(automaton: &WeightedAlternatingAutomaton<W>, w
                     acc = acc.times(&prod);
                 }
                 acc
-            }
+            },
         };
 
         memo[state][pos] = Some(result);
@@ -1097,39 +1076,24 @@ fn extract_item_label(item: &crate::SyntaxItemSpec) -> String {
         crate::SyntaxItemSpec::Terminal(t) => format!("T:{}", t),
         crate::SyntaxItemSpec::NonTerminal { category, .. } => format!("NT:{}", category),
         crate::SyntaxItemSpec::IdentCapture { param_name } => format!("ID:{}", param_name),
-        crate::SyntaxItemSpec::Binder {
-            param_name,
-            category,
-            ..
-        } => {
+        crate::SyntaxItemSpec::Binder { param_name, category, .. } => {
             format!("BIND:{}:{}", param_name, category)
-        }
-        crate::SyntaxItemSpec::Collection {
-            element_category,
-            separator,
-            ..
-        } => {
+        },
+        crate::SyntaxItemSpec::Collection { element_category, separator, .. } => {
             format!("COL:{}:{}", element_category, separator)
-        }
+        },
         crate::SyntaxItemSpec::Sep { separator, .. } => format!("SEP:{}", separator),
         crate::SyntaxItemSpec::Map { .. } => "MAP".to_string(),
-        crate::SyntaxItemSpec::Zip {
-            left_category,
-            right_category,
-            ..
-        } => {
+        crate::SyntaxItemSpec::Zip { left_category, right_category, .. } => {
             format!("ZIP:{}:{}", left_category, right_category)
-        }
-        crate::SyntaxItemSpec::BinderCollection {
-            param_name,
-            separator,
-        } => {
+        },
+        crate::SyntaxItemSpec::BinderCollection { param_name, separator } => {
             format!("BCOL:{}:{}", param_name, separator)
-        }
+        },
         crate::SyntaxItemSpec::Optional { .. } => "OPT".to_string(),
         crate::SyntaxItemSpec::GuardExpression { param_name } => {
             format!("GUARD:{}", param_name)
-        }
+        },
     }
 }
 
@@ -1289,8 +1253,7 @@ mod tests {
         assert_eq!(e.to_string(), "q0[E,p=0]");
         let u = AlternatingState::universal(1);
         assert_eq!(u.to_string(), "q1[A,p=0]");
-        let labeled =
-            AlternatingState::labeled(2, BranchingMode::Universal, 3, "check_all");
+        let labeled = AlternatingState::labeled(2, BranchingMode::Universal, 3, "check_all");
         assert_eq!(labeled.to_string(), "q2[A,p=3](check_all)");
     }
 
@@ -1657,26 +1620,12 @@ mod tests {
         let q1 = aa.add_state(BranchingMode::Existential, 0);
         let q2 = aa.add_state(BranchingMode::Existential, 0);
         aa.initial_state = Some(q0);
-        aa.add_weighted_transition(
-            q0,
-            Some("a".to_string()),
-            vec![q1],
-            TropicalWeight::new(2.0),
-        );
-        aa.add_weighted_transition(
-            q0,
-            Some("b".to_string()),
-            vec![q2],
-            TropicalWeight::new(5.0),
-        );
+        aa.add_weighted_transition(q0, Some("a".to_string()), vec![q1], TropicalWeight::new(2.0));
+        aa.add_weighted_transition(q0, Some("b".to_string()), vec![q2], TropicalWeight::new(5.0));
         // q1 and q2 are leaves with even priority -> terminal weight = one = 0.0.
         // weight(q0) = min(2.0 + 0.0, 5.0 + 0.0) = 2.0
         let w = weighted_emptiness(&aa);
-        assert!(
-            w.approx_eq(&TropicalWeight::new(2.0), 1e-9),
-            "expected 2.0, got {:?}",
-            w
-        );
+        assert!(w.approx_eq(&TropicalWeight::new(2.0), 1e-9), "expected 2.0, got {:?}", w);
     }
 
     #[test]
@@ -1699,11 +1648,7 @@ mod tests {
         );
         // weight(q0) = 1.0 + weight(q1) + weight(q2) = 1.0 + 0.0 + 0.0 = 1.0
         let w = weighted_emptiness(&aa);
-        assert!(
-            w.approx_eq(&TropicalWeight::new(1.0), 1e-9),
-            "expected 1.0, got {:?}",
-            w
-        );
+        assert!(w.approx_eq(&TropicalWeight::new(1.0), 1e-9), "expected 1.0, got {:?}", w);
     }
 
     #[test]
@@ -1718,24 +1663,14 @@ mod tests {
         let q1 = aa.add_state(BranchingMode::Existential, 0);
         aa.initial_state = Some(q0);
         aa.set_terminal_weight(q1, TropicalWeight::new(3.0));
-        aa.add_weighted_transition(
-            q0,
-            Some("a".to_string()),
-            vec![q1],
-            TropicalWeight::new(1.0),
-        );
+        aa.add_weighted_transition(q0, Some("a".to_string()), vec![q1], TropicalWeight::new(1.0));
         let w = weighted_emptiness(&aa);
-        assert!(
-            w.approx_eq(&TropicalWeight::new(4.0), 1e-9),
-            "expected 4.0, got {:?}",
-            w
-        );
+        assert!(w.approx_eq(&TropicalWeight::new(4.0), 1e-9), "expected 4.0, got {:?}", w);
     }
 
     #[test]
     fn weighted_emptiness_empty_automaton() {
-        let aa: WeightedAlternatingAutomaton<TropicalWeight> =
-            WeightedAlternatingAutomaton::new();
+        let aa: WeightedAlternatingAutomaton<TropicalWeight> = WeightedAlternatingAutomaton::new();
         let w = weighted_emptiness(&aa);
         assert!(w.is_zero(), "empty automaton should have zero weight");
     }
@@ -1773,25 +1708,11 @@ mod tests {
         let q1 = aa.add_state(BranchingMode::Existential, 1); // odd -> must continue
         let q2 = aa.add_state(BranchingMode::Existential, 0); // even -> accepting
         aa.initial_state = Some(q0);
-        aa.add_weighted_transition(
-            q0,
-            Some("a".to_string()),
-            vec![q1],
-            TropicalWeight::new(2.0),
-        );
-        aa.add_weighted_transition(
-            q1,
-            Some("b".to_string()),
-            vec![q2],
-            TropicalWeight::new(3.0),
-        );
+        aa.add_weighted_transition(q0, Some("a".to_string()), vec![q1], TropicalWeight::new(2.0));
+        aa.add_weighted_transition(q1, Some("b".to_string()), vec![q2], TropicalWeight::new(3.0));
 
         let w = evaluate_word(&aa, &["a", "b"]);
-        assert!(
-            w.approx_eq(&TropicalWeight::new(5.0), 1e-9),
-            "expected 5.0, got {:?}",
-            w
-        );
+        assert!(w.approx_eq(&TropicalWeight::new(5.0), 1e-9), "expected 5.0, got {:?}", w);
 
         // Wrong word should get infinite weight (zero = unreachable).
         let w_bad = evaluate_word(&aa, &["a", "c"]);
@@ -1830,11 +1751,7 @@ mod tests {
             weight: TropicalWeight::new(2.5),
         };
         let s = t.to_string();
-        assert!(
-            s.contains("2.5"),
-            "display should include weight 2.5, got: {}",
-            s
-        );
+        assert!(s.contains("2.5"), "display should include weight 2.5, got: {}", s);
     }
 
     #[test]
@@ -1887,8 +1804,7 @@ mod tests {
 
     #[test]
     fn weighted_automaton_display() {
-        let aa: WeightedAlternatingAutomaton<TropicalWeight> =
-            WeightedAlternatingAutomaton::new();
+        let aa: WeightedAlternatingAutomaton<TropicalWeight> = WeightedAlternatingAutomaton::new();
         let s = aa.to_string();
         assert!(
             s.contains("WeightedAlternatingAutomaton"),
@@ -1931,12 +1847,7 @@ mod tests {
         aa.initial_state = Some(q0);
         aa.set_terminal_weight(q1, TropicalWeight::new(2.0));
 
-        aa.add_weighted_transition(
-            q0,
-            Some("a".to_string()),
-            vec![q1],
-            TropicalWeight::new(4.0),
-        );
+        aa.add_weighted_transition(q0, Some("a".to_string()), vec![q1], TropicalWeight::new(4.0));
 
         let w = evaluate_word(&aa, &["a"]);
         // Expected: transition weight (4.0) + terminal weight (2.0) = 6.0 in tropical
@@ -1990,7 +1901,10 @@ mod green_thread_fork_join_tests {
         assert!(result.should_parallelize);
         assert!((result.serial_cost - 20.0).abs() < EPS);
         assert!((result.parallel_cost - 11.0).abs() < EPS);
-        assert!(result.speedup_ratio > 1.5, "two equal branches should yield significant speedup");
+        assert!(
+            result.speedup_ratio > 1.5,
+            "two equal branches should yield significant speedup"
+        );
         assert_eq!(result.parallelism_degree, 2);
     }
 
@@ -2028,8 +1942,11 @@ mod green_thread_fork_join_tests {
         assert!(result.should_parallelize);
         assert!((result.serial_cost - 103.0).abs() < EPS);
         assert!((result.parallel_cost - 101.0).abs() < EPS);
-        assert!(result.speedup_ratio > 1.0 && result.speedup_ratio < 1.1,
-            "one dominant branch limits speedup: ratio = {}", result.speedup_ratio);
+        assert!(
+            result.speedup_ratio > 1.0 && result.speedup_ratio < 1.1,
+            "one dominant branch limits speedup: ratio = {}",
+            result.speedup_ratio
+        );
         assert_eq!(result.parallelism_degree, 3);
     }
 

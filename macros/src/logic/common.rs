@@ -3,10 +3,10 @@
 //! This module provides common utilities used across multiple logic
 //! generation modules, reducing duplication and ensuring consistency.
 
+use crate::gen::{generate_literal_label, is_literal_rule};
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::{EvalMode, TypeExpr};
-use crate::gen::{generate_literal_label, is_literal_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -104,7 +104,9 @@ pub fn count_nonterminals(rule: &GrammarRule) -> usize {
     // Regular rule - count non-terminals and collections
     rule.items
         .iter()
-        .filter(|item| matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }))
+        .filter(|item| {
+            matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. })
+        })
         .count()
 }
 
@@ -395,7 +397,8 @@ fn collect_type_refs(
 ///
 /// Returns the set of demanded category names.
 pub fn compute_demanded_categories(language: &LanguageDef) -> BTreeSet<String> {
-    let all_categories: BTreeSet<String> = language.types.iter().map(|t| t.name.to_string()).collect();
+    let all_categories: BTreeSet<String> =
+        language.types.iter().map(|t| t.name.to_string()).collect();
     let mut demanded = BTreeSet::new();
 
     // 1. Categories referenced in equation patterns
@@ -714,8 +717,7 @@ fn collect_constructor_field_categories(
                     TermParam::Simple { ty, .. } => {
                         collect_type_expr_categories(ty, all_categories, demanded);
                     },
-                    TermParam::Abstraction { ty, .. }
-                    | TermParam::MultiAbstraction { ty, .. } => {
+                    TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                         collect_type_expr_categories(ty, all_categories, demanded);
                     },
                     TermParam::GuardBody { .. } => {},
@@ -1072,7 +1074,9 @@ pub fn classify_rewrite_strata(
         } else {
             // Old syntax: check that all NonTerminal items point to literal-bearing cats
             rule.items.iter().all(|item| match item {
-                GrammarItem::NonTerminal { ident: cat, .. } => literal_label_for(language, cat).is_some(),
+                GrammarItem::NonTerminal { ident: cat, .. } => {
+                    literal_label_for(language, cat).is_some()
+                },
                 _ => true, // Terminals don't affect groundness
             })
         };
@@ -1151,7 +1155,10 @@ mod tests {
                     premises: vec![],
                     left: Pattern::Term(PatternTerm::Apply {
                         constructor: lhs_ident,
-                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site())))],
+                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new(
+                            "X",
+                            Span::call_site(),
+                        )))],
                     }),
                     right: Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site()))),
                 }
@@ -1169,14 +1176,19 @@ mod tests {
                     premises: vec![],
                     left: Pattern::Term(PatternTerm::Apply {
                         constructor: lhs_ident,
-                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site())))],
+                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new(
+                            "X",
+                            Span::call_site(),
+                        )))],
                     }),
                     right: Pattern::Term(PatternTerm::Apply {
                         constructor: rhs_ident,
-                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site())))],
+                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new(
+                            "X",
+                            Span::call_site(),
+                        )))],
                     }),
                     is_auto_injected: false,
-
                 }
             })
             .collect();
@@ -1249,7 +1261,10 @@ mod tests {
         let demanded = compute_demanded_categories(&lang);
 
         assert!(demanded.contains("Proc"), "Proc should be demanded (rewrite LHS category)");
-        assert!(demanded.contains("Name"), "Name should be demanded (field of PFoo in rewrite pattern)");
+        assert!(
+            demanded.contains("Name"),
+            "Name should be demanded (field of PFoo in rewrite pattern)"
+        );
         // Expr is NOT directly referenced in any equation/rewrite pattern.
         // NBar is a constructor but NBar doesn't appear in any pattern.
         // The demand analysis only collects categories from patterns, not transitively
@@ -1265,10 +1280,7 @@ mod tests {
         // Every category has an equation — all should be demanded.
         let lang = make_test_language_with_rewrites(
             vec!["Proc", "Name"],
-            vec![
-                ("PFoo", "Proc", vec!["Name"]),
-                ("NBar", "Name", vec!["Proc"]),
-            ],
+            vec![("PFoo", "Proc", vec!["Name"]), ("NBar", "Name", vec!["Proc"])],
             vec![("EqP", "PFoo"), ("EqN", "NBar")],
             vec![],
         );
@@ -1305,7 +1317,10 @@ mod tests {
 
         assert!(filtered.contains(&("Proc".to_string(), "Proc".to_string())), "self-loop kept");
         assert!(filtered.contains(&("Name".to_string(), "Name".to_string())), "self-loop kept");
-        assert!(filtered.contains(&("Proc".to_string(), "Name".to_string())), "demanded tgt kept");
+        assert!(
+            filtered.contains(&("Proc".to_string(), "Name".to_string())),
+            "demanded tgt kept"
+        );
         assert!(
             !filtered.contains(&("Proc".to_string(), "Unused".to_string())),
             "non-demanded tgt pruned"

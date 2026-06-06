@@ -64,40 +64,46 @@ fn generate_depth_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
     match variant {
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => 0 }
-        }
+        },
         VariantKind::Literal { label } => {
             quote! { #category::#label(_) => 0 }
-        }
+        },
         VariantKind::Nullary { label } => {
             quote! { #category::#label => 0 }
-        }
-        VariantKind::Regular { label, fields } => generate_regular_depth_arm(category, label, fields),
+        },
+        VariantKind::Regular { label, fields } => {
+            generate_regular_depth_arm(category, label, fields)
+        },
         VariantKind::Collection { label, coll_type, .. } => {
             let max_elem = collection_max_depth(quote! { coll }, coll_type);
             quote! { #category::#label(coll) => 1 + #max_elem }
-        }
-        VariantKind::Binder {
-            label,
-            pre_scope_fields,
-            ..
-        } => generate_binder_depth_arm(category, label, pre_scope_fields),
-        VariantKind::MultiBinder {
-            label,
-            pre_scope_fields,
-            ..
-        } => generate_binder_depth_arm(category, label, pre_scope_fields),
+        },
+        VariantKind::Binder { label, pre_scope_fields, .. } => {
+            generate_binder_depth_arm(category, label, pre_scope_fields)
+        },
+        VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
+            generate_binder_depth_arm(category, label, pre_scope_fields)
+        },
     }
 }
 
 /// Compute max depth across elements of a collection.
 fn collection_max_depth(name: TokenStream, coll_type: &CollectionType) -> TokenStream {
     match coll_type {
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag => {
             quote! { #name.iter().map(|(x, _count)| x.term_depth()).max().unwrap_or(0) }
-        }
+        },
+        CollectionType::HashMap => {
+            quote! {
+                #name.iter()
+                    .map(|(k, v)| k.term_depth().max(v.term_depth()))
+                    .max()
+                    .unwrap_or(0)
+            }
+        },
         CollectionType::Vec | CollectionType::HashSet => {
             quote! { #name.iter().map(|x| x.term_depth()).max().unwrap_or(0) }
-        }
+        },
     }
 }
 
@@ -115,10 +121,7 @@ fn field_depth_expr(field: &FieldInfo, name: &Ident) -> TokenStream {
         // / Option<HashBag<T>> / Option<HashSet<T>>) — delegate to
         // iter-max-depth on the inner collection when Some.
         if field.is_collection {
-            let coll_type = field
-                .coll_type
-                .as_ref()
-                .unwrap_or(&CollectionType::HashBag);
+            let coll_type = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
             let inner = collection_max_depth(quote! { __c }, coll_type);
             return quote! { #name.as_ref().map(|__c| #inner).unwrap_or(0) };
         }
@@ -127,10 +130,7 @@ fn field_depth_expr(field: &FieldInfo, name: &Ident) -> TokenStream {
         return quote! { #name.as_ref().map(|__b| __b.term_depth()).unwrap_or(0) };
     }
     if field.is_collection {
-        let coll_type = field
-            .coll_type
-            .as_ref()
-            .unwrap_or(&CollectionType::HashBag);
+        let coll_type = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
         collection_max_depth(quote! { #name }, coll_type)
     } else {
         quote! { #name.term_depth() }
@@ -143,9 +143,8 @@ fn generate_regular_depth_arm(
     label: &Ident,
     fields: &[FieldInfo],
 ) -> TokenStream {
-    let field_names: Vec<Ident> = (0..fields.len())
-        .map(|i| format_ident!("f{}", i))
-        .collect();
+    let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let suppress_unused = field_names.iter().map(|name| quote! { let _ = #name; });
 
     let depth_exprs: Vec<TokenStream> = fields
         .iter()
@@ -171,7 +170,10 @@ fn generate_regular_depth_arm(
     };
 
     quote! {
-        #category::#label(#(#field_names),*) => #body
+        #category::#label(#(#field_names),*) => {
+            #(#suppress_unused)*
+            #body
+        }
     }
 }
 
@@ -184,6 +186,7 @@ fn generate_binder_depth_arm(
     let field_names: Vec<Ident> = (0..pre_scope_fields.len())
         .map(|i| format_ident!("f{}", i))
         .collect();
+    let suppress_unused = field_names.iter().map(|name| quote! { let _ = #name; });
 
     let field_depth_exprs: Vec<TokenStream> = pre_scope_fields
         .iter()
@@ -217,5 +220,35 @@ fn generate_binder_depth_arm(
         quote! { 1 + #chain }
     };
 
-    quote! { #pattern => #body }
+    quote! {
+        #pattern => {
+            #(#suppress_unused)*
+            #body
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collection_depth_hashmap_checks_keys_and_values() {
+        let generated = collection_max_depth(quote! { coll }, &CollectionType::HashMap).to_string();
+        assert!(
+            generated.contains("k . term_depth") && generated.contains("v . term_depth"),
+            "HashMap term depth must inspect both keys and values: {}",
+            generated,
+        );
+    }
+
+    #[test]
+    fn collection_depth_hashbag_uses_counted_items() {
+        let generated = collection_max_depth(quote! { coll }, &CollectionType::HashBag).to_string();
+        assert!(
+            generated.contains("_count") && generated.contains("x . term_depth"),
+            "HashBag term depth must inspect counted items: {}",
+            generated,
+        );
+    }
 }

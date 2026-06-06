@@ -75,6 +75,5 @@ pub fn arb_bool() -> impl Strategy<Value = bool> {
 
 /// Strategy for short strings (0-8 characters).
 pub fn arb_string_short() -> impl Strategy<Value = String> {
-    proptest::string::string_regex("[a-zA-Z0-9_]{0,8}")
-        .expect("valid regex for short strings")
+    proptest::string::string_regex("[a-zA-Z0-9_]{0,8}").expect("valid regex for short strings")
 }

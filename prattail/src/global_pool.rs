@@ -123,9 +123,7 @@ impl GlobalPoolMetrics {
     pub fn snapshot(&self) -> GlobalPoolMetricsSnapshot {
         GlobalPoolMetricsSnapshot {
             total_tasks_executed: self.total_tasks_executed.load(Ordering::Acquire),
-            total_cross_language_steals: self
-                .total_cross_language_steals
-                .load(Ordering::Acquire),
+            total_cross_language_steals: self.total_cross_language_steals.load(Ordering::Acquire),
             peak_worker_utilization: self.peak_worker_utilization.load(Ordering::Acquire),
         }
     }
@@ -184,16 +182,10 @@ pub struct HillClimber {
 impl std::fmt::Debug for HillClimber {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HillClimber")
-            .field(
-                "current_workers",
-                &self.current_workers.load(Ordering::Relaxed),
-            )
+            .field("current_workers", &self.current_workers.load(Ordering::Relaxed))
             .field("min_workers", &self.min_workers)
             .field("max_workers", &self.max_workers)
-            .field(
-                "throughput_ema",
-                &self.throughput_ema.load(Ordering::Relaxed),
-            )
+            .field("throughput_ema", &self.throughput_ema.load(Ordering::Relaxed))
             .field("direction", &self.direction.load(Ordering::Relaxed))
             .field("step_size", &self.step_size.load(Ordering::Relaxed))
             .finish()
@@ -388,10 +380,7 @@ impl std::fmt::Debug for GlobalPool {
             .unwrap_or(false);
         f.debug_struct("GlobalPool")
             .field("worker_count", &self.worker_count)
-            .field(
-                "parallel_budget",
-                &self.parallel_budget.load(Ordering::Relaxed),
-            )
+            .field("parallel_budget", &self.parallel_budget.load(Ordering::Relaxed))
             .field("active", &self.active.load(Ordering::Relaxed))
             .field("registered_languages", &self.language_schedulers.len())
             .field("runtime_started", &runtime_started)
@@ -437,7 +426,8 @@ impl GlobalPool {
             active: AtomicBool::new(true),
             language_schedulers: DashMap::new(),
             metrics: GlobalPoolMetrics::new(),
-            hill_climber: HillClimber::new(1, worker_count.max(1) as u32).expect("valid hill climber bounds"),
+            hill_climber: HillClimber::new(1, worker_count.max(1) as u32)
+                .expect("valid hill climber bounds"),
             runtime: Mutex::new(None),
         }
     }
@@ -518,16 +508,12 @@ impl GlobalPool {
     /// # Panics
     ///
     /// Panics if the runtime is already started. Call `stop()` first.
-    pub fn start(
-        &self,
-        registry: Arc<GreenThreadRegistry>,
-        channels: Arc<ChannelMap>,
-    ) {
-        let mut runtime_guard = self.runtime.lock().expect("GlobalPool runtime mutex poisoned");
-        assert!(
-            runtime_guard.is_none(),
-            "GlobalPool runtime already started; call stop() first"
-        );
+    pub fn start(&self, registry: Arc<GreenThreadRegistry>, channels: Arc<ChannelMap>) {
+        let mut runtime_guard = self
+            .runtime
+            .lock()
+            .expect("GlobalPool runtime mutex poisoned");
+        assert!(runtime_guard.is_none(), "GlobalPool runtime already started; call stop() first");
 
         let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -537,7 +523,10 @@ impl GlobalPool {
             self.parallel_budget.load(Ordering::Relaxed),
         );
 
-        let hill_climber = Arc::new(HillClimber::new(1, self.worker_count.max(1) as u32).expect("valid hill climber bounds"));
+        let hill_climber = Arc::new(
+            HillClimber::new(1, self.worker_count.max(1) as u32)
+                .expect("valid hill climber bounds"),
+        );
 
         // Create the MPSC channel first. Workers get report_tx to send
         // events; coordinator gets report_rx to receive them.
@@ -567,10 +556,7 @@ impl GlobalPool {
             CoordinatorConfig::default(),
         );
 
-        *runtime_guard = Some(PoolRuntime {
-            coordinator,
-            worker_pool,
-        });
+        *runtime_guard = Some(PoolRuntime { coordinator, worker_pool });
         // registry + channels Arc handles are held internally by
         // Coordinator and WorkerPool; the PoolRuntime-side clones were
         // never read and have been removed.
@@ -584,7 +570,10 @@ impl GlobalPool {
     ///
     /// No-op if the runtime is not started.
     pub fn stop(&self) {
-        let mut runtime_guard = self.runtime.lock().expect("GlobalPool runtime mutex poisoned");
+        let mut runtime_guard = self
+            .runtime
+            .lock()
+            .expect("GlobalPool runtime mutex poisoned");
         if let Some(mut runtime) = runtime_guard.take() {
             runtime.coordinator.shutdown();
             // Worker pool threads will exit on the shutdown flag.
@@ -602,7 +591,10 @@ impl GlobalPool {
     ///
     /// Returns `true` if the runtime is active, `false` otherwise.
     pub fn submit(&self, thread_id: crate::channel::GreenThreadId) -> bool {
-        let runtime_guard = self.runtime.lock().expect("GlobalPool runtime mutex poisoned");
+        let runtime_guard = self
+            .runtime
+            .lock()
+            .expect("GlobalPool runtime mutex poisoned");
         if let Some(runtime) = runtime_guard.as_ref() {
             runtime.worker_pool.inject(thread_id);
             runtime.worker_pool.unpark_one();

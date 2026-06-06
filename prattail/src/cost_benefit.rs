@@ -69,7 +69,6 @@ pub enum Optimization {
     PetriDeadlockCheck,
 
     // ── Advanced Automata Infrastructure ─────────────────────────────────────
-
     /// SYM01: Symbolic automata guard analysis (satisfiability, overlap, subsumption).
     SymbolicGuardAnalysis,
     /// O01: Weighted Büchi automaton analysis (liveness, accepting cycle weight).
@@ -111,7 +110,6 @@ pub enum Optimization {
     RefinementTypeCheck,
 
     // ── CEK Machine Optimizations ────────────────────────────────────────────
-
     /// CEK01: Dead capture elimination in Frame_Cat variants.
     /// Backward liveness analysis removes captures unused by subsequent segments.
     EnvironmentTrimming,
@@ -127,13 +125,11 @@ pub enum Optimization {
     // unreachable Frame_Cat variants — but Frame_Cat is gone with trampoline.rs
     // (Stage 10.6); Walker uses WPDS stack symbols (rule_idx, position), not
     // named frame variants. The optimization is structurally subsumed.
-
     /// GT01: Green thread fork/join cost analysis via alternating automaton.
     /// Determines whether parallel or serial execution is optimal for channel operations.
     GreenThreadForkJoin,
 
     // ── Codegen Optimization Catalog ─────────────────────────────────────────
-
     /// ART01: Hash-consing for recursive term types (Rc/Arc + interning).
     HashConsing,
     /// ART02: Incremental semi-naive delta guards.
@@ -516,7 +512,6 @@ pub struct GrammarProfile {
     pub deterministic_ratio: f64,
 
     // ── Advanced automata codegen promotion metrics ───────────────────────
-
     /// Number of unsatisfiable guards detected by symbolic analysis.
     pub unsatisfiable_guard_count: usize,
 
@@ -620,8 +615,16 @@ pub fn build_grammar_profile(
         let n = decision_trees.len() as f64;
         (
             total_depth as f64 / n,
-            if total_states > 0 { total_ambiguous as f64 / total_states as f64 } else { 0.0 },
-            if total_rules > 0 { total_det_rules as f64 / total_rules as f64 } else { 1.0 },
+            if total_states > 0 {
+                total_ambiguous as f64 / total_states as f64
+            } else {
+                0.0
+            },
+            if total_rules > 0 {
+                total_det_rules as f64 / total_rules as f64
+            } else {
+                1.0
+            },
         )
     };
 
@@ -669,10 +672,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         // cost: proportional to category count (each category may need factoring)
         profile.category_count as f64 * 0.1,
         profile.shared_prefix_ratio > 0.3,
-        format!(
-            "shared_prefix_ratio={:.2} (threshold: >0.3)",
-            profile.shared_prefix_ratio
-        ),
+        format!("shared_prefix_ratio={:.2} (threshold: >0.3)", profile.shared_prefix_ratio),
     ));
 
     // A2: Hot/cold splitting — beneficial when many dispatch arms are cold
@@ -686,10 +686,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         },
         0.05, // fixed low cost
         profile.cold_fraction > 0.4,
-        format!(
-            "cold_fraction={:.2} (threshold: >0.4)",
-            profile.cold_fraction
-        ),
+        format!("cold_fraction={:.2} (threshold: >0.4)", profile.cold_fraction),
     ));
 
     // A4: Enhanced DCE — always beneficial for grammar validation
@@ -711,10 +708,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         },
         0.1, // low cost (analysis only)
         profile.ambiguous_fraction > 0.1,
-        format!(
-            "ambiguous_fraction={:.2} (threshold: >0.1)",
-            profile.ambiguous_fraction
-        ),
+        format!("ambiguous_fraction={:.2} (threshold: >0.1)", profile.ambiguous_fraction),
     ));
 
     // B1: Multi-token lookahead — beneficial for ambiguous grammars with few tokens
@@ -752,10 +746,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         },
         0.15,
         profile.total_wfst_states > 4,
-        format!(
-            "total_wfst_states={} (threshold: >4)",
-            profile.total_wfst_states
-        ),
+        format!("total_wfst_states={} (threshold: >4)", profile.total_wfst_states),
     ));
 
     // Stage 10.7 (2026-05-05): F1 SpilloverPruning, F2 EarlyTermination,
@@ -774,7 +765,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // BP06: Continuation compression — beneficial when grammar has unary prefix operators
     candidates.push(OptimizationCandidate::new(
         Optimization::ContinuationCompression,
-        0.1, // modest speedup (reduced stack depth for prefix chains)
+        0.1,  // modest speedup (reduced stack depth for prefix chains)
         0.05, // very low cost (extends existing tail_wrap mechanism)
         true,
         "always applicable (extends BP02 tail-call mechanism)".to_string(),
@@ -800,16 +791,13 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.4, // moderate benefit (refines dead-rule detection)
         0.3, // medium cost (WPDS construction + poststar saturation)
         profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: >=2)", profile.category_count),
     ));
 
     // T01: TRS confluence check — beneficial when rules have overlapping patterns
     candidates.push(OptimizationCandidate::new(
         Optimization::TrsConfluenceCheck,
-        0.5, // diagnostic benefit (catches rewriting bugs)
+        0.5,  // diagnostic benefit (catches rewriting bugs)
         0.15, // low cost (critical pair enumeration)
         profile.rule_count > 3,
         format!("rule_count={} (threshold: >3)", profile.rule_count),
@@ -821,34 +809,25 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.6, // diagnostic benefit (identifies zero-backtracking sublanguage)
         0.1, // low cost (VPA construction)
         profile.category_count >= 1,
-        format!(
-            "category_count={} (threshold: >=1)",
-            profile.category_count,
-        ),
+        format!("category_count={} (threshold: >=1)", profile.category_count,),
     ));
 
     // S01: Safety verification — beneficial when WPDS detects unreachable rules
     candidates.push(OptimizationCandidate::new(
         Optimization::SafetyVerification,
-        0.3, // good benefit (confirms unreachability with prestar)
+        0.3,  // good benefit (confirms unreachability with prestar)
         0.25, // moderate cost (prestar saturation)
         profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count,
-        ),
+        format!("category_count={} (threshold: >=2)", profile.category_count,),
     ));
 
     // S03: CEGAR refinement — beneficial when WPDS reports unreachable rules
     candidates.push(OptimizationCandidate::new(
         Optimization::CegarRefinement,
         0.45, // diagnostic benefit
-        0.3, // medium cost (iterative refinement)
+        0.3,  // medium cost (iterative refinement)
         profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count,
-        ),
+        format!("category_count={} (threshold: >=2)", profile.category_count,),
     ));
 
     // N01: Petri net deadlock check — beneficial for grammars with parallel composition
@@ -863,7 +842,11 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // SYM01: Symbolic guard analysis — Auto: unsatisfiable guards → dead rule elimination
     candidates.push(OptimizationCandidate::new(
         Optimization::SymbolicGuardAnalysis,
-        if profile.unsatisfiable_guard_count > 0 { 0.3 } else { 0.5 },
+        if profile.unsatisfiable_guard_count > 0 {
+            0.3
+        } else {
+            0.5
+        },
         0.15, // low cost (reuses existing SFA analysis)
         profile.rule_count > 5,
         format!(
@@ -884,7 +867,11 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // N06: Weighted alternating analysis — Auto: bisimulation → extended isomorphic groups
     candidates.push(OptimizationCandidate::new(
         Optimization::WeightedAlternatingAnalysis,
-        if profile.bisimulation_extra_groups > 0 { 0.3 } else { 0.5 },
+        if profile.bisimulation_extra_groups > 0 {
+            0.3
+        } else {
+            0.5
+        },
         0.2, // moderate cost
         profile.rule_count > 5,
         format!(
@@ -896,7 +883,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // V05: Weighted VPA analysis — beneficial for nested structure analysis
     candidates.push(OptimizationCandidate::new(
         Optimization::WeightedVpaAnalysis,
-        0.5, // diagnostic benefit (weighted determinization)
+        0.5,  // diagnostic benefit (weighted determinization)
         0.15, // low cost
         profile.category_count >= 1,
         format!("category_count={} (threshold: >=1)", profile.category_count),
@@ -914,7 +901,11 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // RA01: Register analysis — Auto: dead registers → skip binder alpha-equiv
     candidates.push(OptimizationCandidate::new(
         Optimization::RegisterAnalysis,
-        if profile.dead_register_count > 0 { 0.3 } else { 0.6 },
+        if profile.dead_register_count > 0 {
+            0.3
+        } else {
+            0.6
+        },
         0.1, // low cost
         profile.category_count >= 1,
         format!(
@@ -926,13 +917,16 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // PR01: Probabilistic analysis — Auto: DCE + weight blending
     candidates.push(OptimizationCandidate::new(
         Optimization::ProbabilisticAnalysis,
-        if profile.low_selectivity_count > 0 { 0.25 } else { 0.4 },
+        if profile.low_selectivity_count > 0 {
+            0.25
+        } else {
+            0.4
+        },
         0.15, // low cost
         profile.rule_count > 3,
         format!(
             "rule_count={}, low_selectivity={}, entropy={:.2} → DCE + weight blend",
-            profile.rule_count, profile.low_selectivity_count,
-            profile.probabilistic_mean_entropy
+            profile.rule_count, profile.low_selectivity_count, profile.probabilistic_mean_entropy
         ),
     ));
 
@@ -957,7 +951,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // MSO01: Weighted MSO analysis — beneficial for formula classification
     candidates.push(OptimizationCandidate::new(
         Optimization::WeightedMsoAnalysis,
-        0.4, // diagnostic benefit (decidability classification)
+        0.4,  // diagnostic benefit (decidability classification)
         0.15, // low cost
         profile.rule_count > 3,
         format!("rule_count={} (threshold: >3)", profile.rule_count),
@@ -966,7 +960,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     // TW01: Two-way transducer analysis — beneficial for deadlock detection
     candidates.push(OptimizationCandidate::new(
         Optimization::TwoWayTransducerAnalysis,
-        0.6, // diagnostic benefit (deadlock cycle detection)
+        0.6,  // diagnostic benefit (deadlock cycle detection)
         0.15, // low cost
         profile.category_count >= 2,
         format!("category_count={} (threshold: >=2)", profile.category_count),
@@ -985,7 +979,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
     candidates.push(OptimizationCandidate::new(
         Optimization::EGraphSaturation,
         0.45, // moderate diagnostic benefit
-        0.4, // moderate cost (saturation loop)
+        0.4,  // moderate cost (saturation loop)
         profile.rule_count > 3,
         format!("rule_count={} (threshold: >3)", profile.rule_count),
     ));
@@ -1052,10 +1046,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.25,
         0.05,
         profile.category_count >= 1,
-        format!(
-            "category_count={} (threshold: >=1)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: >=1)", profile.category_count),
     ));
 
     // AL06: Accept state bitmap widening — always applicable
@@ -1073,10 +1064,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.5,
         0.02,
         profile.category_count < 3,
-        format!(
-            "category_count={} (threshold: <3)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: <3)", profile.category_count),
     ));
 
     // ── Tier 2: Moderate complexity ──────────────────────────────────────
@@ -1105,10 +1093,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.5,
         0.1,
         profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: >=2)", profile.category_count),
     ));
 
     // BCG01: Join ordering optimization
@@ -1135,10 +1120,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.3,
         0.2,
         profile.total_wfst_states > 30,
-        format!(
-            "total_wfst_states={} (threshold: >30)",
-            profile.total_wfst_states
-        ),
+        format!("total_wfst_states={} (threshold: >30)", profile.total_wfst_states),
     ));
 
     // BP03: Token peek cache / BP table lookup
@@ -1174,10 +1156,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.4,
         0.2,
         profile.category_count >= 3,
-        format!(
-            "category_count={} (threshold: >=3)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: >=3)", profile.category_count),
     ));
 
     // ── Tier 3: High complexity ──────────────────────────────────────────
@@ -1224,10 +1203,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.3,
         0.4,
         profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: >=2)", profile.category_count),
     ));
 
     // AL01: DFA transition table multi-row repacking — always applicable
@@ -1272,10 +1248,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.4,
         0.2,
         profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: >=2)", profile.category_count),
     ));
 
     // BP05: Specialized Pratt loop for fixed BP ranges
@@ -1293,10 +1266,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.3,
         0.35,
         profile.avg_trie_depth > 3.0,
-        format!(
-            "avg_trie_depth={:.1} (threshold: >3.0)",
-            profile.avg_trie_depth
-        ),
+        format!("avg_trie_depth={:.1} (threshold: >3.0)", profile.avg_trie_depth),
     ));
 
     // CD04: Jump threading through decision tree branches
@@ -1305,10 +1275,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.35,
         0.25,
         profile.avg_trie_depth > 2.0,
-        format!(
-            "avg_trie_depth={:.1} (threshold: >2.0)",
-            profile.avg_trie_depth
-        ),
+        format!("avg_trie_depth={:.1} (threshold: >2.0)", profile.avg_trie_depth),
     ));
 
     // CD05: Prefix CSE for shared nonterminal parses
@@ -1317,10 +1284,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.15,
         0.45,
         profile.shared_prefix_ratio > 0.2,
-        format!(
-            "shared_prefix_ratio={:.2} (threshold: >0.2)",
-            profile.shared_prefix_ratio
-        ),
+        format!("shared_prefix_ratio={:.2} (threshold: >0.2)", profile.shared_prefix_ratio),
     ));
 
     // DB03: Parallel analysis phase execution
@@ -1329,10 +1293,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.3,
         0.3,
         profile.category_count >= 3,
-        format!(
-            "category_count={} (threshold: >=3)",
-            profile.category_count
-        ),
+        format!("category_count={} (threshold: >=3)", profile.category_count),
     ));
 
     // DB04: Cached lint results across builds
@@ -1350,10 +1311,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.4,
         0.35,
         profile.refinement_type_count > 0,
-        format!(
-            "refinement_type_count={} (threshold: >0)",
-            profile.refinement_type_count
-        ),
+        format!("refinement_type_count={} (threshold: >0)", profile.refinement_type_count),
     ));
 
     // CEK02: CekTracedParser candidate — REMOVED in Stage 6 Phase F.2.
@@ -1367,10 +1325,7 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         0.35, // good benefit (parallelism exploitation)
         0.25, // moderate cost (6-phase verification pipeline)
         profile.category_count >= 2,
-        format!(
-            "category_count={} (threshold: >=2)",
-            profile.category_count,
-        ),
+        format!("category_count={} (threshold: >=2)", profile.category_count,),
     ));
 
     // Sort by score (lexicographic: speedup first, then compile_cost)
@@ -1478,14 +1433,12 @@ pub struct OptimizationGates {
     pub refinement_type_check: bool,
 
     // ── CEK Machine Optimizations ────────────────────────────────────────────
-
     /// CEK01: Dead capture elimination in Frame_Cat variants.
     pub environment_trimming: bool,
     // Stage 10.7 (2026-05-05): CEK03 dead_frame_elimination gate DELETED.
     // Frame_Cat enum gone with trampoline.rs.
 
     // ── Advanced Automata Codegen Promotions ─────────────────────────────────
-
     /// SYM01-DCE: Symbolic unsatisfiable guard → dead rule elimination.
     pub symbolic_guard_dce: bool,
     /// PR01-DCE: Probabilistic low-selectivity → dead rule elimination.
@@ -1656,10 +1609,8 @@ impl OptimizationGates {
     /// Only optimizations that appear in `recommended` are enabled.
     /// All others default to `false`.
     pub fn from_recommendations(recommended: &[OptimizationCandidate]) -> Self {
-        let enabled: std::collections::HashSet<Optimization> = recommended
-            .iter()
-            .map(|c| c.optimization)
-            .collect();
+        let enabled: std::collections::HashSet<Optimization> =
+            recommended.iter().map(|c| c.optimization).collect();
 
         OptimizationGates {
             left_factoring: enabled.contains(&Optimization::LeftFactoring),
@@ -2267,7 +2218,11 @@ impl GrammarComplexityReport {
             let state_count = wfst.num_states();
             let action_count = wfst.num_actions();
             total_states += state_count;
-            total_transitions += wfst.states.iter().map(|s| s.transitions.len()).sum::<usize>();
+            total_transitions += wfst
+                .states
+                .iter()
+                .map(|s| s.transitions.len())
+                .sum::<usize>();
 
             categories.push(CategoryComplexity {
                 name: cat_name.clone(),
@@ -2330,8 +2285,12 @@ impl GrammarComplexityReport {
 
         // Line 2: per-category summary (only if ≤ 8 categories)
         if !self.categories.is_empty() && self.categories.len() <= 8 {
-            let cat_parts: Vec<String> = self.categories.iter()
-                .map(|c| format!("{}({}t/{}a)", c.name, c.dispatch_token_count, c.wfst_action_count))
+            let cat_parts: Vec<String> = self
+                .categories
+                .iter()
+                .map(|c| {
+                    format!("{}({}t/{}a)", c.name, c.dispatch_token_count, c.wfst_action_count)
+                })
                 .collect();
             write!(out, "\n  per-category: {}", cat_parts.join(" ")).unwrap();
         }
@@ -2508,15 +2467,14 @@ mod tests {
 
     #[test]
     fn test_ambiguity_targeting_result_fields() {
-        use crate::prediction::DispatchAction;
-        use crate::wfst::PredictionWfstBuilder;
-        use crate::token_id::TokenIdMap;
         use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::PredictionWfstBuilder;
 
         // Build a WFST with one ambiguous token (Ident → 2 rules) and one unambiguous (LParen)
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident".to_string(), "LParen".to_string()].into_iter(),
-        );
+        let token_map =
+            TokenIdMap::from_names(vec!["Ident".to_string(), "LParen".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Proc", token_map);
         builder.add_action(
             "Ident",
@@ -2611,27 +2569,12 @@ mod tests {
         let profile = simple_profile();
         let recommended = recommended_optimizations(&profile);
         let gates = OptimizationGates::from_recommendations(&recommended);
-        assert!(
-            gates.adaptive_recovery,
-            "B2 should be enabled for simple grammars"
-        );
-        assert!(
-            gates.enhanced_dce,
-            "A4 should be enabled for grammars with >5 rules"
-        );
+        assert!(gates.adaptive_recovery, "B2 should be enabled for simple grammars");
+        assert!(gates.enhanced_dce, "A4 should be enabled for grammars with >5 rules");
         // All other gates should be disabled for a simple grammar
-        assert!(
-            !gates.left_factoring,
-            "A1 should not be enabled: shared_prefix_ratio=0.0"
-        );
-        assert!(
-            !gates.hot_cold_splitting,
-            "A2 should not be enabled: cold_fraction=0.0"
-        );
-        assert!(
-            !gates.multi_token_lookahead,
-            "B1 should not be enabled: ambiguous_fraction=0.0"
-        );
+        assert!(!gates.left_factoring, "A1 should not be enabled: shared_prefix_ratio=0.0");
+        assert!(!gates.hot_cold_splitting, "A2 should not be enabled: cold_fraction=0.0");
+        assert!(!gates.multi_token_lookahead, "B1 should not be enabled: ambiguous_fraction=0.0");
     }
 
     #[test]
@@ -2668,10 +2611,7 @@ mod tests {
         };
         let recommended = recommended_optimizations(&profile);
         let gates = OptimizationGates::from_recommendations(&recommended);
-        assert!(
-            gates.hot_cold_splitting,
-            "A2 should be enabled when cold_fraction > 0.4"
-        );
+        assert!(gates.hot_cold_splitting, "A2 should be enabled when cold_fraction > 0.4");
     }
 
     #[test]
@@ -2687,10 +2627,7 @@ mod tests {
         };
         let recommended = recommended_optimizations(&profile);
         let gates = OptimizationGates::from_recommendations(&recommended);
-        assert!(
-            gates.wfst_minimization,
-            "B3 should be enabled when total_wfst_states > 4"
-        );
+        assert!(gates.wfst_minimization, "B3 should be enabled when total_wfst_states > 4");
     }
 
     // ── D2: GrammarComplexityReport tests ──────────────────────────────
@@ -2709,14 +2646,13 @@ mod tests {
 
     #[test]
     fn test_d2_report_build_with_wfst() {
-        use crate::prediction::DispatchAction;
-        use crate::wfst::PredictionWfstBuilder;
-        use crate::token_id::TokenIdMap;
         use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::PredictionWfstBuilder;
 
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident".to_string(), "LParen".to_string()].into_iter(),
-        );
+        let token_map =
+            TokenIdMap::from_names(vec!["Ident".to_string(), "LParen".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Proc", token_map);
         builder.add_action(
             "Ident",
@@ -2781,19 +2717,17 @@ mod tests {
 
     #[test]
     fn test_d2_report_categories_sorted_by_name() {
-        use crate::prediction::DispatchAction;
-        use crate::wfst::PredictionWfstBuilder;
-        use crate::token_id::TokenIdMap;
         use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::PredictionWfstBuilder;
 
         // Create two categories: "Proc" and "Int" — report should sort alphabetically
         let mut wfsts = HashMap::new();
         let mut fsets = HashMap::new();
 
         for cat_name in &["Proc", "Int"] {
-            let token_map = TokenIdMap::from_names(
-                vec!["Ident".to_string()].into_iter(),
-            );
+            let token_map = TokenIdMap::from_names(vec!["Ident".to_string()].into_iter());
             let mut builder = PredictionWfstBuilder::new(cat_name, token_map);
             builder.add_action(
                 "Ident",
@@ -2848,9 +2782,13 @@ mod tests {
                 wfst_state_count: 8,
                 wfst_action_count: 10,
             }],
-            recommended_optimizations: vec![
-                ("AmbiguityTargeting".to_string(), 1.9, 0.1, "ambiguous_fraction=0.15".to_string(), OptimizationStatus::Diagnostic),
-            ],
+            recommended_optimizations: vec![(
+                "AmbiguityTargeting".to_string(),
+                1.9,
+                0.1,
+                "ambiguous_fraction=0.15".to_string(),
+                OptimizationStatus::Diagnostic,
+            )],
             total_wfst_states: 8,
             total_wfst_transitions: 12,
             composed_dispatch_entries: 7,
@@ -2869,7 +2807,10 @@ mod tests {
         assert!(compact.contains("2 resolved"), "should contain resolved count");
         assert!(compact.contains("Expr(5t/10a)"), "should contain per-category summary");
         // Recommendations are NOT in compact format (I05 lint handles them)
-        assert!(!compact.contains("AmbiguityTargeting"), "recommendations should not appear in compact format");
+        assert!(
+            !compact.contains("AmbiguityTargeting"),
+            "recommendations should not appear in compact format"
+        );
     }
 
     #[test]
@@ -2887,7 +2828,10 @@ mod tests {
         };
         let compact = report.format_compact();
         // Should NOT contain per-category line when no categories
-        assert!(!compact.contains("per-category"), "empty categories should not show per-category line");
+        assert!(
+            !compact.contains("per-category"),
+            "empty categories should not show per-category line"
+        );
         // Should still contain scalar metrics
         assert!(compact.contains("4 cats"), "should contain category count");
         assert!(compact.contains("20 rules"), "should contain rule count");
@@ -2915,15 +2859,13 @@ mod tests {
 
     #[test]
     fn test_d2_report_includes_recommendations() {
-        use crate::prediction::DispatchAction;
-        use crate::wfst::PredictionWfstBuilder;
-        use crate::token_id::TokenIdMap;
         use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::PredictionWfstBuilder;
 
         // Build a grammar profile that triggers B2 (adaptive recovery) + A4 (DCE)
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident".to_string()].into_iter(),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Ident".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Proc", token_map);
         builder.add_action(
             "Ident",
@@ -2950,7 +2892,9 @@ mod tests {
             !report.recommended_optimizations.is_empty(),
             "should have at least one recommendation"
         );
-        let opt_names: Vec<&str> = report.recommended_optimizations.iter()
+        let opt_names: Vec<&str> = report
+            .recommended_optimizations
+            .iter()
             .map(|(name, _, _, _, _)| name.as_str())
             .collect();
         assert!(
@@ -2960,12 +2904,17 @@ mod tests {
         );
 
         // Verify status tags in report: B2 (AdaptiveRecovery) should be auto
-        let statuses: Vec<(&str, &OptimizationStatus)> = report.recommended_optimizations.iter()
+        let statuses: Vec<(&str, &OptimizationStatus)> = report
+            .recommended_optimizations
+            .iter()
             .map(|(name, _, _, _, status)| (name.as_str(), status))
             .collect();
         assert!(
-            statuses.iter().any(|(n, s)| n.contains("AdaptiveRecovery") && **s == OptimizationStatus::Auto),
-            "B2 should have Auto status: {:?}", statuses
+            statuses
+                .iter()
+                .any(|(n, s)| n.contains("AdaptiveRecovery") && **s == OptimizationStatus::Auto),
+            "B2 should have Auto status: {:?}",
+            statuses
         );
     }
 
@@ -2978,7 +2927,10 @@ mod tests {
         use std::str::FromStr;
         assert_eq!(Optimization::from_str("A1").expect("A1"), Optimization::LeftFactoring);
         assert_eq!(Optimization::from_str("A2").expect("A2"), Optimization::HotColdSplitting);
-        assert_eq!(Optimization::from_str("A4").expect("A4"), Optimization::EnhancedDeadCodeElimination);
+        assert_eq!(
+            Optimization::from_str("A4").expect("A4"),
+            Optimization::EnhancedDeadCodeElimination
+        );
         assert_eq!(Optimization::from_str("A5").expect("A5"), Optimization::AmbiguityTargeting);
         assert_eq!(Optimization::from_str("B1").expect("B1"), Optimization::MultiTokenLookahead);
         assert_eq!(Optimization::from_str("B2").expect("B2"), Optimization::AdaptiveRecovery);
@@ -2989,17 +2941,32 @@ mod tests {
     #[test]
     fn test_optimization_from_str_full_names() {
         use std::str::FromStr;
-        assert_eq!(Optimization::from_str("LeftFactoring").expect("name"), Optimization::LeftFactoring);
-        assert_eq!(Optimization::from_str("adaptiverecovery").expect("lower"), Optimization::AdaptiveRecovery);
+        assert_eq!(
+            Optimization::from_str("LeftFactoring").expect("name"),
+            Optimization::LeftFactoring
+        );
+        assert_eq!(
+            Optimization::from_str("adaptiverecovery").expect("lower"),
+            Optimization::AdaptiveRecovery
+        );
         // Stage 10.7 (2026-05-05): LAZYSPILLOVER assertion DELETED — variant removed.
-        assert_eq!(Optimization::from_str("EnhancedDCE").expect("alias"), Optimization::EnhancedDeadCodeElimination);
+        assert_eq!(
+            Optimization::from_str("EnhancedDCE").expect("alias"),
+            Optimization::EnhancedDeadCodeElimination
+        );
     }
 
     #[test]
     fn test_optimization_from_str_display_format() {
         use std::str::FromStr;
-        assert_eq!(Optimization::from_str("A1:LeftFactoring").expect("display"), Optimization::LeftFactoring);
-        assert_eq!(Optimization::from_str("B2:AdaptiveRecovery").expect("display"), Optimization::AdaptiveRecovery);
+        assert_eq!(
+            Optimization::from_str("A1:LeftFactoring").expect("display"),
+            Optimization::LeftFactoring
+        );
+        assert_eq!(
+            Optimization::from_str("B2:AdaptiveRecovery").expect("display"),
+            Optimization::AdaptiveRecovery
+        );
     }
 
     #[test]
@@ -3116,7 +3083,8 @@ mod tests {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
         assert!(
-            all.iter().any(|c| c.optimization == Optimization::TrsConfluenceCheck),
+            all.iter()
+                .any(|c| c.optimization == Optimization::TrsConfluenceCheck),
             "TrsConfluenceCheck should be in evaluated candidates"
         );
     }
@@ -3126,7 +3094,8 @@ mod tests {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
         assert!(
-            all.iter().any(|c| c.optimization == Optimization::VpaInclusionCheck),
+            all.iter()
+                .any(|c| c.optimization == Optimization::VpaInclusionCheck),
             "VpaInclusionCheck should be in evaluated candidates"
         );
     }
@@ -3136,7 +3105,8 @@ mod tests {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
         assert!(
-            all.iter().any(|c| c.optimization == Optimization::SafetyVerification),
+            all.iter()
+                .any(|c| c.optimization == Optimization::SafetyVerification),
             "SafetyVerification should be in evaluated candidates"
         );
     }
@@ -3146,7 +3116,8 @@ mod tests {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
         assert!(
-            all.iter().any(|c| c.optimization == Optimization::CegarRefinement),
+            all.iter()
+                .any(|c| c.optimization == Optimization::CegarRefinement),
             "CegarRefinement should be in evaluated candidates"
         );
     }
@@ -3156,7 +3127,8 @@ mod tests {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
         assert!(
-            all.iter().any(|c| c.optimization == Optimization::PetriDeadlockCheck),
+            all.iter()
+                .any(|c| c.optimization == Optimization::PetriDeadlockCheck),
             "PetriDeadlockCheck should be in evaluated candidates"
         );
     }
@@ -3166,10 +3138,7 @@ mod tests {
     #[test]
     fn test_art03_from_str() {
         use std::str::FromStr;
-        assert_eq!(
-            Optimization::from_str("ART03").expect("ART03"),
-            Optimization::RelationIndexing
-        );
+        assert_eq!(Optimization::from_str("ART03").expect("ART03"), Optimization::RelationIndexing);
         assert_eq!(
             Optimization::from_str("relationindexing").expect("lower"),
             Optimization::RelationIndexing
@@ -3193,7 +3162,9 @@ mod tests {
             ..simple_profile()
         };
         let all = evaluate_optimizations(&profile);
-        let db02 = all.iter().find(|c| c.optimization == Optimization::LazyAnalysis);
+        let db02 = all
+            .iter()
+            .find(|c| c.optimization == Optimization::LazyAnalysis);
         assert!(db02.is_some(), "DB02 should be in evaluated candidates");
         assert!(
             db02.expect("db02").applicable,
@@ -3211,7 +3182,9 @@ mod tests {
             ..simple_profile()
         };
         let all_large = evaluate_optimizations(&profile_large);
-        let db02_large = all_large.iter().find(|c| c.optimization == Optimization::LazyAnalysis);
+        let db02_large = all_large
+            .iter()
+            .find(|c| c.optimization == Optimization::LazyAnalysis);
         assert!(
             !db02_large.expect("db02_large").applicable,
             "DB02 should not be applicable when category_count=5 >= 3"
@@ -3371,7 +3344,11 @@ mod tests {
     fn test_optimization_display_fromstr_roundtrip_all() {
         use std::str::FromStr;
         let variants = all_optimizations();
-        assert_eq!(variants.len(), 48, "expected exactly 48 variants (post-Stage-10.7: F1/F2/F3/H1/CEK03 deleted)");
+        assert_eq!(
+            variants.len(),
+            48,
+            "expected exactly 48 variants (post-Stage-10.7: F1/F2/F3/H1/CEK03 deleted)"
+        );
 
         for variant in &variants {
             let display = variant.to_string();
@@ -3387,10 +3364,7 @@ mod tests {
 
             // Roundtrip via short code
             let parsed_code = Optimization::from_str(short_code).unwrap_or_else(|e| {
-                panic!(
-                    "FromStr should accept short code '{}' for {:?}: {}",
-                    short_code, variant, e
-                )
+                panic!("FromStr should accept short code '{}' for {:?}: {}", short_code, variant, e)
             });
             assert_eq!(
                 parsed_code, *variant,
@@ -3400,23 +3374,13 @@ mod tests {
 
             // Roundtrip via name
             let parsed_name = Optimization::from_str(name).unwrap_or_else(|e| {
-                panic!(
-                    "FromStr should accept name '{}' for {:?}: {}",
-                    name, variant, e
-                )
+                panic!("FromStr should accept name '{}' for {:?}: {}", name, variant, e)
             });
-            assert_eq!(
-                parsed_name, *variant,
-                "name '{}' should roundtrip to {:?}",
-                name, variant
-            );
+            assert_eq!(parsed_name, *variant, "name '{}' should roundtrip to {:?}", name, variant);
 
             // Roundtrip via full Display output (colon-separated form)
             let parsed_full = Optimization::from_str(&display).unwrap_or_else(|e| {
-                panic!(
-                    "FromStr should accept full display '{}' for {:?}: {}",
-                    display, variant, e
-                )
+                panic!("FromStr should accept full display '{}' for {:?}: {}", display, variant, e)
             });
             assert_eq!(
                 parsed_full, *variant,
@@ -3478,17 +3442,16 @@ mod tests {
             ("DB03", Optimization::ParallelAnalysis),
             ("DB04", Optimization::CachedLints),
         ];
-        assert_eq!(all_codes.len(), 47, "expected 47 short codes (Stage 10.7: F1/F2/F3/H1/CEK03 removed)");
+        assert_eq!(
+            all_codes.len(),
+            47,
+            "expected 47 short codes (Stage 10.7: F1/F2/F3/H1/CEK03 removed)"
+        );
 
         for (code, expected) in &all_codes {
-            let parsed = Optimization::from_str(code).unwrap_or_else(|e| {
-                panic!("FromStr should accept short code '{}': {}", code, e)
-            });
-            assert_eq!(
-                parsed, *expected,
-                "short code '{}' should parse to {:?}",
-                code, expected
-            );
+            let parsed = Optimization::from_str(code)
+                .unwrap_or_else(|e| panic!("FromStr should accept short code '{}': {}", code, e));
+            assert_eq!(parsed, *expected, "short code '{}' should parse to {:?}", code, expected);
         }
     }
 
@@ -3496,11 +3459,7 @@ mod tests {
     fn test_optimization_fromstr_invalid() {
         use std::str::FromStr;
         let result = Optimization::from_str("NotAnOptimization");
-        assert!(
-            result.is_err(),
-            "FromStr should reject 'NotAnOptimization', got: {:?}",
-            result
-        );
+        assert!(result.is_err(), "FromStr should reject 'NotAnOptimization', got: {:?}", result);
         let err = result.unwrap_err();
         assert!(
             err.contains("unknown optimization"),
@@ -3514,9 +3473,8 @@ mod tests {
         use std::str::FromStr;
         // Test several case variations for LeftFactoring
         for input in &["leftfactoring", "LEFTFACTORING", "LeftFactoring", "lEfTfAcToRiNg"] {
-            let parsed = Optimization::from_str(input).unwrap_or_else(|e| {
-                panic!("FromStr should accept '{}': {}", input, e)
-            });
+            let parsed = Optimization::from_str(input)
+                .unwrap_or_else(|e| panic!("FromStr should accept '{}': {}", input, e));
             assert_eq!(
                 parsed,
                 Optimization::LeftFactoring,
@@ -3527,9 +3485,8 @@ mod tests {
 
         // Test case insensitivity for EnhancedDCE (the abbreviated Display name)
         for input in &["enhanceddce", "ENHANCEDDCE", "EnhancedDCE"] {
-            let parsed = Optimization::from_str(input).unwrap_or_else(|e| {
-                panic!("FromStr should accept '{}': {}", input, e)
-            });
+            let parsed = Optimization::from_str(input)
+                .unwrap_or_else(|e| panic!("FromStr should accept '{}': {}", input, e));
             assert_eq!(
                 parsed,
                 Optimization::EnhancedDeadCodeElimination,
@@ -3540,9 +3497,8 @@ mod tests {
 
         // Test case insensitivity for a catalog name
         for input in &["hashconsing", "HASHCONSING", "HashConsing"] {
-            let parsed = Optimization::from_str(input).unwrap_or_else(|e| {
-                panic!("FromStr should accept '{}': {}", input, e)
-            });
+            let parsed = Optimization::from_str(input)
+                .unwrap_or_else(|e| panic!("FromStr should accept '{}': {}", input, e));
             assert_eq!(
                 parsed,
                 Optimization::HashConsing,
@@ -3577,14 +3533,10 @@ mod tests {
         // Verify all short codes parse to unique variants
         // Stage 10.7 (2026-05-05): F1, F2, F3, H1, CEK03 removed.
         let mut all_short_codes: Vec<&str> = vec![
-            "A1", "A2", "A4", "A5", "B1", "B2", "B3",
-            "G1", "G25", "T01", "V01", "S01", "S03", "N01",
-            "CEK01",
-            "ART01", "ART02", "ART03", "ART04", "ART05", "ART06",
-            "BCG01", "BCG02", "BCG03", "BCG04", "BCG05", "BCG06",
-            "AL01", "AL02", "AL03", "AL04", "AL05", "AL06",
-            "BP01", "BP02", "BP03", "BP04", "BP05", "BP06",
-            "CD01", "CD02", "CD03", "CD04", "CD05",
+            "A1", "A2", "A4", "A5", "B1", "B2", "B3", "G1", "G25", "T01", "V01", "S01", "S03",
+            "N01", "CEK01", "ART01", "ART02", "ART03", "ART04", "ART05", "ART06", "BCG01", "BCG02",
+            "BCG03", "BCG04", "BCG05", "BCG06", "AL01", "AL02", "AL03", "AL04", "AL05", "AL06",
+            "BP01", "BP02", "BP03", "BP04", "BP05", "BP06", "CD01", "CD02", "CD03", "CD04", "CD05",
             "DB01", "DB02", "DB03", "DB04",
         ];
         // Feature-gated short codes. Stage 6 Phase F.2 removed CEK02 (CekTracedParser).
@@ -3766,19 +3718,13 @@ mod tests {
             "bisimulation_extra_groups should default to 0"
         );
 
-        assert_eq!(
-            profile.dead_register_count, 0,
-            "dead_register_count should default to 0"
-        );
+        assert_eq!(profile.dead_register_count, 0, "dead_register_count should default to 0");
     }
 
     #[test]
     fn test_all_enabled_includes_new_gates() {
         let gates = OptimizationGates::all_enabled();
-        assert!(
-            gates.symbolic_guard_dce,
-            "all_enabled() should have symbolic_guard_dce == true"
-        );
+        assert!(gates.symbolic_guard_dce, "all_enabled() should have symbolic_guard_dce == true");
     }
 
     #[test]

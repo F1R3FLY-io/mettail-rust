@@ -7,26 +7,22 @@
 //! - Iterator collect performance
 //! - once/gnot/ifte throughput
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use mettail_prattail::logict::{LogicStream, multiset_partitions, multiset_select};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use mettail_prattail::logict::{multiset_partitions, multiset_select, LogicStream};
 
 fn bench_interleave_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("logict/interleave");
 
     for size in [100, 1_000, 10_000] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(size),
-            &size,
-            |b, &size| {
-                b.iter(|| {
-                    let left = LogicStream::from_iter(0..size);
-                    let right = LogicStream::from_iter(size..2 * size);
-                    let merged = left.interleave(right);
-                    let results = merged.collect_all();
-                    black_box(results.len());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let left = LogicStream::from_iter(0..size);
+                let right = LogicStream::from_iter(size..2 * size);
+                let merged = left.interleave(right);
+                let results = merged.collect_all();
+                black_box(results.len());
+            });
+        });
     }
 
     group.finish();
@@ -36,19 +32,15 @@ fn bench_mplus(c: &mut Criterion) {
     let mut group = c.benchmark_group("logict/mplus");
 
     for size in [100, 1_000, 10_000] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(size),
-            &size,
-            |b, &size| {
-                b.iter(|| {
-                    let left = LogicStream::from_iter(0..size);
-                    let right = LogicStream::from_iter(size..2 * size);
-                    let merged = left.mplus(right);
-                    let results = merged.collect_all();
-                    black_box(results.len());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let left = LogicStream::from_iter(0..size);
+                let right = LogicStream::from_iter(size..2 * size);
+                let merged = left.mplus(right);
+                let results = merged.collect_all();
+                black_box(results.len());
+            });
+        });
     }
 
     group.finish();
@@ -71,9 +63,8 @@ fn bench_fair_conjoin(c: &mut Criterion) {
     group.bench_function("depth_2_10x10", |b| {
         b.iter(|| {
             let stream = LogicStream::from_iter(0..10_i32);
-            let result = stream.fair_conjoin(|x| {
-                LogicStream::from_iter((0..10).map(move |y| (x, y)))
-            });
+            let result =
+                stream.fair_conjoin(|x| LogicStream::from_iter((0..10).map(move |y| (x, y))));
             let results = result.collect_all();
             black_box(results.len());
         });
@@ -83,9 +74,8 @@ fn bench_fair_conjoin(c: &mut Criterion) {
     group.bench_function("depth_2_100x10", |b| {
         b.iter(|| {
             let stream = LogicStream::from_iter(0..100_i32);
-            let result = stream.fair_conjoin(|x| {
-                LogicStream::from_iter((0..10).map(move |y| (x, y)))
-            });
+            let result =
+                stream.fair_conjoin(|x| LogicStream::from_iter((0..10).map(move |y| (x, y))));
             let results = result.collect_all();
             black_box(results.len());
         });
@@ -98,18 +88,14 @@ fn bench_once(c: &mut Criterion) {
     let mut group = c.benchmark_group("logict/once");
 
     for size in [100, 1_000, 10_000] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(size),
-            &size,
-            |b, &size| {
-                b.iter(|| {
-                    let stream = LogicStream::from_iter(0..size);
-                    let result = stream.once();
-                    let results = result.collect_all();
-                    black_box(results.len());
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            b.iter(|| {
+                let stream = LogicStream::from_iter(0..size);
+                let result = stream.once();
+                let results = result.collect_all();
+                black_box(results.len());
+            });
+        });
     }
 
     group.finish();
@@ -146,10 +132,7 @@ fn bench_ifte(c: &mut Criterion) {
     group.bench_function("success", |b| {
         b.iter(|| {
             let test = LogicStream::unit(42_i32);
-            let result = test.ifte(
-                |x| LogicStream::unit(x * 2),
-                LogicStream::unit(-1),
-            );
+            let result = test.ifte(|x| LogicStream::unit(x * 2), LogicStream::unit(-1));
             let results = result.collect_all();
             black_box(results);
         });
@@ -159,10 +142,7 @@ fn bench_ifte(c: &mut Criterion) {
     group.bench_function("failure", |b| {
         b.iter(|| {
             let test: LogicStream<i32> = LogicStream::empty();
-            let result = test.ifte(
-                |x| LogicStream::unit(x * 2),
-                LogicStream::unit(-1),
-            );
+            let result = test.ifte(|x| LogicStream::unit(x * 2), LogicStream::unit(-1));
             let results = result.collect_all();
             black_box(results);
         });

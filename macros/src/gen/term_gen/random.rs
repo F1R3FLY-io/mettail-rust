@@ -11,12 +11,12 @@
     clippy::unnecessary_filter_map
 )]
 
+use crate::gen::native::NativeType;
+use crate::gen::term_gen::is_lang_type;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
 };
-use crate::gen::native::NativeType;
-use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -91,6 +91,10 @@ fn generate_random_for_category(cat_name: &Ident, language: &LanguageDef) -> Tok
                 rng: &mut R,
                 binding_depth: usize,
             ) -> Self {
+                let _ = vars;
+                let _ = max_collection_width;
+                let _ = &mut *rng;
+                let _ = binding_depth;
                 if depth == 0 {
                     #depth_0_impl
                 } else {
@@ -131,7 +135,9 @@ fn generate_random_depth_0(
         let non_terminals: Vec<_> = rule
             .items
             .iter()
-            .filter(|item| matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Binder { .. }))
+            .filter(|item| {
+                matches!(item, GrammarItem::NonTerminal { .. } | GrammarItem::Binder { .. })
+            })
             .collect();
 
         if non_terminals.is_empty() {
@@ -139,7 +145,7 @@ fn generate_random_depth_0(
             cases.push(quote! { #cat_name::#label });
         } else if non_terminals.len() == 1 {
             // Check if it's a Var or literal constructor (Integer, Boolean, StringLiteral, FloatLiteral)
-            if let GrammarItem::NonTerminal { ident: nt, kind } = non_terminals[0] {
+            if let GrammarItem::NonTerminal { ident: _nt, kind } = non_terminals[0] {
                 if *kind == NonTerminalKind::Var {
                     // VarRef or other Var rules — generate variables
                     // using a spec-derived ident name (replaces
@@ -184,9 +190,12 @@ fn generate_random_depth_0(
                     let literal_case = match kind {
                         NonTerminalKind::Integer => {
                             let pattern = effective_pattern_for(language, "Integer");
-                            let signed = matches!(classify_token(&pattern), CanonicalKind::SignedInt)
-                                || (matches!(classify_token(&pattern), CanonicalKind::Unclassified)
-                                    && language_equivalent(&pattern, "-?[0-9]+"));
+                            let signed =
+                                matches!(classify_token(&pattern), CanonicalKind::SignedInt)
+                                    || (matches!(
+                                        classify_token(&pattern),
+                                        CanonicalKind::Unclassified
+                                    ) && language_equivalent(&pattern, "-?[0-9]+"));
                             if signed {
                                 quote! {
                                     let val = rng.gen_range(-100i32..100i32);
@@ -209,29 +218,43 @@ fn generate_random_depth_0(
                                 .iter()
                                 .find(|t| t.name == *cat_name)
                                 .and_then(|t| t.native_type.as_ref())
-                                .map(|n| NativeType::from_syn_type(n).is_float() && NativeType::from_syn_type(n) == NativeType::Float32)
+                                .map(|n| {
+                                    NativeType::from_syn_type(n).is_float()
+                                        && NativeType::from_syn_type(n) == NativeType::Float32
+                                })
                                 .unwrap_or(false);
                             let pattern = effective_pattern_for(language, "Float");
-                            let signed = matches!(classify_token(&pattern), CanonicalKind::SignedFloat)
-                                || (matches!(classify_token(&pattern), CanonicalKind::Unclassified)
-                                    && language_equivalent(
+                            let signed =
+                                matches!(classify_token(&pattern), CanonicalKind::SignedFloat)
+                                    || (matches!(
+                                        classify_token(&pattern),
+                                        CanonicalKind::Unclassified
+                                    ) && language_equivalent(
                                         &pattern,
                                         r"-?[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?",
                                     ));
                             let (wrapper_ty, val_ty) = if is_f32 {
                                 if signed {
-                                    (quote! { mettail_runtime::CanonicalFloat32 },
-                                     quote! { rng.gen_range(-100.0f32..100.0f32) })
+                                    (
+                                        quote! { mettail_runtime::CanonicalFloat32 },
+                                        quote! { rng.gen_range(-100.0f32..100.0f32) },
+                                    )
                                 } else {
-                                    (quote! { mettail_runtime::CanonicalFloat32 },
-                                     quote! { rng.gen_range(0.0f32..100.0f32) })
+                                    (
+                                        quote! { mettail_runtime::CanonicalFloat32 },
+                                        quote! { rng.gen_range(0.0f32..100.0f32) },
+                                    )
                                 }
                             } else if signed {
-                                (quote! { mettail_runtime::CanonicalFloat64 },
-                                 quote! { rng.gen_range(-100.0f64..100.0f64) })
+                                (
+                                    quote! { mettail_runtime::CanonicalFloat64 },
+                                    quote! { rng.gen_range(-100.0f64..100.0f64) },
+                                )
                             } else {
-                                (quote! { mettail_runtime::CanonicalFloat64 },
-                                 quote! { rng.gen_range(0.0f64..100.0f64) })
+                                (
+                                    quote! { mettail_runtime::CanonicalFloat64 },
+                                    quote! { rng.gen_range(0.0f64..100.0f64) },
+                                )
                             };
                             quote! {
                                 let val = #val_ty;
@@ -325,9 +348,8 @@ fn generate_random_depth_d(
                 .iter()
                 .any(|item| matches!(item, GrammarItem::Collection { .. }));
             if !rule.bindings.is_empty() && !has_collections {
-                constructor_cases.push(
-                    generate_random_multi_binder_constructor(cat_name, rule, language),
-                );
+                constructor_cases
+                    .push(generate_random_multi_binder_constructor(cat_name, rule, language));
             }
             continue;
         }
@@ -357,9 +379,10 @@ fn generate_random_depth_d(
         // SimpleCollection inside `*opt(...)`) also have wider arity than
         // the single-arg HashBag-typed tuple variant assumed by
         // generate_random_collection_constructor. Skip them too.
-        let has_optional_param = rule.term_context.as_ref().is_some_and(|ctx| {
-            ctx.iter().any(|p| matches!(p, TermParam::Optional { .. }))
-        });
+        let has_optional_param = rule
+            .term_context
+            .as_ref()
+            .is_some_and(|ctx| ctx.iter().any(|p| matches!(p, TermParam::Optional { .. })));
 
         if has_collections && !is_class2_binder && !has_optional_param {
             // Handle collection constructors
@@ -495,10 +518,7 @@ fn generate_random_simple_constructor(
             fn count(p: &mettail_ast::grammar::TermParam) -> usize {
                 use mettail_ast::grammar::TermParam;
                 match p {
-                    TermParam::Optional { params: inner } => inner
-                        .iter()
-                        .map(count_one)
-                        .sum(),
+                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
                     _ => 0,
                 }
             }
@@ -507,9 +527,7 @@ fn generate_random_simple_constructor(
                 match p {
                     TermParam::Simple { .. } | TermParam::GuardBody { .. } => 1,
                     TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => 1,
-                    TermParam::Optional { params: inner } => {
-                        inner.iter().map(count_one).sum()
-                    }
+                    TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
                 }
             }
             ctx.iter().map(count).sum()
@@ -522,7 +540,13 @@ fn generate_random_simple_constructor(
     let core: TokenStream = match positional_cats.len() {
         0 => quote! { #cat_name::#label() },
         1 => generate_random_unary(cat_name, label, &positional_cats[0], language),
-        2 => generate_random_binary(cat_name, label, &positional_cats[0], &positional_cats[1], language),
+        2 => generate_random_binary(
+            cat_name,
+            label,
+            &positional_cats[0],
+            &positional_cats[1],
+            language,
+        ),
         _ => generate_random_nary(cat_name, label, &positional_cats, language),
     };
 

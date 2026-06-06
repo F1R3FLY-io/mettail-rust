@@ -6,11 +6,11 @@
 //!
 //! All recursive operations use iterative work-stacks (trampolines).
 
+use crate::gen::generate_literal_label;
+use crate::gen::native::native_type_to_string;
 use mettail_ast::grammar::{GrammarRule, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
-use crate::gen::native::native_type_to_string;
-use crate::gen::generate_literal_label;
 use std::collections::HashMap;
 
 /// A ground term suitable for testing operational semantics.
@@ -50,11 +50,7 @@ fn build_leaf_bank(language: &LanguageDef) -> HashMap<String, Vec<LeafValue>> {
 
     // Work-stack: list of categories to process.
     // No recursion needed for leaf bank since leaves are by definition non-recursive.
-    let mut work_stack: Vec<String> = language
-        .types
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect();
+    let mut work_stack: Vec<String> = language.types.iter().map(|t| t.name.to_string()).collect();
 
     while let Some(cat) = work_stack.pop() {
         if bank.contains_key(&cat) {
@@ -90,15 +86,12 @@ fn build_leaf_bank(language: &LanguageDef) -> HashMap<String, Vec<LeafValue>> {
                 });
 
                 // Derive representative values from the TYPE
-                let representative_values = representative_values_for_type(language, &type_str, has_prefix_neg);
+                let representative_values =
+                    representative_values_for_type(language, &type_str, has_prefix_neg);
 
                 for (raw_val, display_val) in representative_values {
-                    let construction = construct_literal_code(
-                        &cat,
-                        &lit_label,
-                        &type_str,
-                        &raw_val,
-                    );
+                    let construction =
+                        construct_literal_code(&cat, &lit_label, &type_str, &raw_val);
                     leaves.push(LeafValue {
                         construction,
                         display: display_val.clone(),
@@ -158,7 +151,11 @@ fn build_leaf_bank(language: &LanguageDef) -> HashMap<String, Vec<LeafValue>> {
 /// underlying integer-sample helper already gates negatives on the
 /// pattern's signedness — passing `has_prefix_neg=false` filters out
 /// negatives even if the pattern is signed.
-fn representative_values_for_type(language: &LanguageDef, type_str: &str, has_prefix_neg: bool) -> Vec<(String, String)> {
+fn representative_values_for_type(
+    language: &LanguageDef,
+    type_str: &str,
+    has_prefix_neg: bool,
+) -> Vec<(String, String)> {
     let int_samples = |suffix: &str| -> Vec<(String, String)> {
         crate::gen::spec_admitted_integer_samples(language, crate::gen::SamplePurpose::GroundEnum)
             .into_iter()
@@ -207,21 +204,14 @@ fn representative_values_for_type(language: &LanguageDef, type_str: &str, has_pr
 }
 
 /// Construct the Rust code for a literal value in a given category.
-fn construct_literal_code(
-    cat: &str,
-    lit_label: &str,
-    type_str: &str,
-    raw_val: &str,
-) -> String {
+fn construct_literal_code(cat: &str, lit_label: &str, type_str: &str, raw_val: &str) -> String {
     match type_str {
-        "f64" => format!(
-            "{}::{}(mettail_runtime::CanonicalFloat64::from({}))",
-            cat, lit_label, raw_val
-        ),
-        "f32" => format!(
-            "{}::{}(mettail_runtime::CanonicalFloat32::from({}))",
-            cat, lit_label, raw_val
-        ),
+        "f64" => {
+            format!("{}::{}(mettail_runtime::CanonicalFloat64::from({}))", cat, lit_label, raw_val)
+        },
+        "f32" => {
+            format!("{}::{}(mettail_runtime::CanonicalFloat32::from({}))", cat, lit_label, raw_val)
+        },
         "str" | "String" => format!("{}::{}({})", cat, lit_label, raw_val),
         _ => format!("{}::{}({})", cat, lit_label, raw_val),
     }
@@ -361,12 +351,7 @@ pub fn enumerate_ground_terms(language: &LanguageDef) -> Vec<GroundTerm> {
                 field_exprs.push("None".to_string());
             }
 
-            let construction_code = format!(
-                "{}::{}({})",
-                category,
-                label,
-                field_exprs.join(", ")
-            );
+            let construction_code = format!("{}::{}({})", category, label, field_exprs.join(", "));
 
             let param_values: Vec<String> = selected_leaves
                 .iter()
@@ -405,12 +390,14 @@ pub fn enumerate_ground_terms(language: &LanguageDef) -> Vec<GroundTerm> {
 pub fn count_optional_inner_simples(rule: &GrammarRule) -> usize {
     fn count_one(p: &TermParam, in_optional: bool) -> usize {
         match p {
-            TermParam::Optional { params: inner } => {
-                inner.iter().map(|q| count_one(q, true)).sum()
-            }
+            TermParam::Optional { params: inner } => inner.iter().map(|q| count_one(q, true)).sum(),
             TermParam::Simple { .. } => {
-                if in_optional { 1 } else { 0 }
-            }
+                if in_optional {
+                    1
+                } else {
+                    0
+                }
+            },
             TermParam::GuardBody { .. }
             | TermParam::Abstraction { .. }
             | TermParam::MultiAbstraction { .. } => 0,
@@ -424,10 +411,7 @@ pub fn count_optional_inner_simples(rule: &GrammarRule) -> usize {
 
 /// For a given rule, return the list of parameter names used in the rust_code expression.
 /// This is needed by the symbolic evaluator to build the environment.
-pub fn extract_param_info(
-    rule: &GrammarRule,
-    language: &LanguageDef,
-) -> Vec<ParamInfo> {
+pub fn extract_param_info(rule: &GrammarRule, language: &LanguageDef) -> Vec<ParamInfo> {
     let mut info = Vec::new();
 
     if let Some(ctx) = &rule.term_context {
@@ -491,9 +475,7 @@ pub fn raw_value_to_sym_value(
             stripped.parse::<i64>().ok().map(SymValue::Int)
         },
         "f32" | "f64" => {
-            let stripped = raw
-                .trim_end_matches("f32")
-                .trim_end_matches("f64");
+            let stripped = raw.trim_end_matches("f32").trim_end_matches("f64");
             stripped.parse::<f64>().ok().map(SymValue::Float)
         },
         "bool" => match raw {

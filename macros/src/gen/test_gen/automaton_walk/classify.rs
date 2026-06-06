@@ -21,13 +21,11 @@
 //! these parameters are passed to the family's sampler so the
 //! generated values stay within the pattern's admitted domain.
 
-use mettail_prattail::automata::{
-    Dfa, Nfa, StateId, TokenKind, DEAD_STATE,
-};
 use mettail_prattail::automata::minimize::minimize_dfa;
 use mettail_prattail::automata::partition::compute_equivalence_classes;
 use mettail_prattail::automata::regex::compile_regex;
 use mettail_prattail::automata::subset::subset_construction;
+use mettail_prattail::automata::{Dfa, Nfa, TokenKind, DEAD_STATE};
 
 /// Canonical token family — the "semantic kind" a pattern belongs to.
 ///
@@ -97,12 +95,6 @@ fn compile_to_minimized_dfa(pattern: &str) -> Option<Dfa> {
     Some(minimize_dfa(&dfa))
 }
 
-/// Is the given DFA state an accepting state?
-#[inline]
-fn is_accept(dfa: &Dfa, s: StateId) -> bool {
-    dfa.states[s as usize].accept.is_some()
-}
-
 /// Decide whether two patterns (given as regex strings) accept the
 /// same language.
 ///
@@ -161,12 +153,20 @@ pub fn language_equivalent(pattern_a: &str, pattern_b: &str) -> bool {
         let mut has_a = false;
         let mut has_b = false;
         if let Some(ref k) = state.accept {
-            if *k == kind_a { has_a = true; }
-            if *k == kind_b { has_b = true; }
+            if *k == kind_a {
+                has_a = true;
+            }
+            if *k == kind_b {
+                has_b = true;
+            }
         }
         for (k, _) in &state.alt_accepts {
-            if *k == kind_a { has_a = true; }
-            if *k == kind_b { has_b = true; }
+            if *k == kind_a {
+                has_a = true;
+            }
+            if *k == kind_b {
+                has_b = true;
+            }
         }
 
         if has_a != has_b {
@@ -268,10 +268,7 @@ fn has_dash_from_start(pattern: &str, dfa: &Dfa) -> bool {
 /// Matches the resolution logic at
 /// `macros/src/gen/syntax/parser/prattail_bridge.rs:78–92` so the
 /// strategy's classifier sees the same pattern the parser will see.
-pub fn effective_pattern_for(
-    language: &mettail_ast::language::LanguageDef,
-    kind: &str,
-) -> String {
+pub fn effective_pattern_for(language: &mettail_ast::language::LanguageDef, kind: &str) -> String {
     // Walk user overrides first — they win.
     for td in &language.token_defs {
         if td.name == kind {

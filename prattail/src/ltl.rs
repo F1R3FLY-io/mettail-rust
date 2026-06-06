@@ -151,13 +151,16 @@ impl LtlFormula {
 
     fn collect_atoms(&self, acc: &mut HashSet<String>) {
         match self {
-            LtlFormula::True | LtlFormula::False => {}
+            LtlFormula::True | LtlFormula::False => {},
             LtlFormula::Atom(name) => {
                 acc.insert(name.clone());
-            }
-            LtlFormula::Not(phi) | LtlFormula::Next(phi) | LtlFormula::Eventually(phi) | LtlFormula::Always(phi) => {
+            },
+            LtlFormula::Not(phi)
+            | LtlFormula::Next(phi)
+            | LtlFormula::Eventually(phi)
+            | LtlFormula::Always(phi) => {
                 phi.collect_atoms(acc);
-            }
+            },
             LtlFormula::And(phi, psi)
             | LtlFormula::Or(phi, psi)
             | LtlFormula::Implies(phi, psi)
@@ -166,7 +169,7 @@ impl LtlFormula {
             | LtlFormula::WeakUntil(phi, psi) => {
                 phi.collect_atoms(acc);
                 psi.collect_atoms(acc);
-            }
+            },
         }
     }
 }
@@ -254,10 +257,10 @@ impl fmt::Display for LtlCheckResult {
             LtlCheckResult::Satisfied => write!(f, "Satisfied"),
             LtlCheckResult::Violated { prefix, lasso } => {
                 write!(f, "Violated (prefix: {:?}, lasso: {:?})", prefix, lasso)
-            }
+            },
             LtlCheckResult::Inconclusive { reason } => {
                 write!(f, "Inconclusive: {}", reason)
-            }
+            },
         }
     }
 }
@@ -327,19 +330,19 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
             match chars[i] {
                 ' ' | '\t' | '\n' | '\r' => {
                     i += 1;
-                }
+                },
                 '(' => {
                     tokens.push(LtlToken::LParen);
                     i += 1;
-                }
+                },
                 ')' => {
                     tokens.push(LtlToken::RParen);
                     i += 1;
-                }
+                },
                 '!' => {
                     tokens.push(LtlToken::Not);
                     i += 1;
-                }
+                },
                 '&' => {
                     if i + 1 < chars.len() && chars[i + 1] == '&' {
                         tokens.push(LtlToken::And);
@@ -349,7 +352,7 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
                         tokens.push(LtlToken::And);
                         i += 1;
                     }
-                }
+                },
                 '|' => {
                     if i + 1 < chars.len() && chars[i + 1] == '|' {
                         tokens.push(LtlToken::Or);
@@ -359,7 +362,7 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
                         tokens.push(LtlToken::Or);
                         i += 1;
                     }
-                }
+                },
                 '-' => {
                     if i + 1 < chars.len() && chars[i + 1] == '>' {
                         tokens.push(LtlToken::Implies);
@@ -367,7 +370,7 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
                     } else {
                         return Err(format!("unexpected character '-' at position {}", i));
                     }
-                }
+                },
                 c if c.is_alphabetic() || c == '_' => {
                     let start = i;
                     while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
@@ -389,10 +392,10 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
                         "W" => tokens.push(LtlToken::WeakU),
                         _ => tokens.push(LtlToken::Ident(word)),
                     }
-                }
+                },
                 c => {
                     return Err(format!("unexpected character '{}' at position {}", c, i));
-                }
+                },
             }
         }
         Ok(tokens)
@@ -460,17 +463,17 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
                     self.advance();
                     let rhs = self.parse_until()?; // right-associative
                     Ok(LtlFormula::Until(Box::new(lhs), Box::new(rhs)))
-                }
+                },
                 Some(&LtlToken::Release) => {
                     self.advance();
                     let rhs = self.parse_until()?;
                     Ok(LtlFormula::Release(Box::new(lhs), Box::new(rhs)))
-                }
+                },
                 Some(&LtlToken::WeakU) => {
                     self.advance();
                     let rhs = self.parse_until()?;
                     Ok(LtlFormula::WeakUntil(Box::new(lhs), Box::new(rhs)))
-                }
+                },
                 _ => Ok(lhs),
             }
         }
@@ -482,22 +485,22 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
                     self.advance();
                     let inner = self.parse_unary()?;
                     Ok(LtlFormula::Not(Box::new(inner)))
-                }
+                },
                 Some(&LtlToken::Next) => {
                     self.advance();
                     let inner = self.parse_unary()?;
                     Ok(LtlFormula::Next(Box::new(inner)))
-                }
+                },
                 Some(&LtlToken::Globally) => {
                     self.advance();
                     let inner = self.parse_unary()?;
                     Ok(LtlFormula::Always(Box::new(inner)))
-                }
+                },
                 Some(&LtlToken::Finally) => {
                     self.advance();
                     let inner = self.parse_unary()?;
                     Ok(LtlFormula::Eventually(Box::new(inner)))
-                }
+                },
                 _ => self.parse_primary(),
             }
         }
@@ -512,7 +515,7 @@ pub fn parse_ltl(input: &str) -> Result<LtlFormula, String> {
                     let inner = self.parse_implies()?;
                     self.expect(&LtlToken::RParen)?;
                     Ok(inner)
-                }
+                },
                 Some(tok) => Err(format!("unexpected token {:?} in primary position", tok)),
                 None => Err("unexpected end of input".to_string()),
             }
@@ -574,14 +577,14 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             // Self-loop labeled "true" (matches any input).
             ba.add_transition(q0, Some("__true__".to_string()), q0);
             ba
-        }
+        },
         LtlFormula::False => {
             // Accepts no infinite words: single non-accepting state.
             let mut ba = BuchiAutomaton::new();
             let q0 = ba.add_state(false);
             ba.initial_states.insert(q0);
             ba
-        }
+        },
         LtlFormula::Atom(p) => {
             // Accepts infinite words where p holds at every position.
             // Two states: q0 (accepting, initial) with p-transition to self,
@@ -613,7 +616,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             ba.add_transition(q0, Some(p.clone()), q1);
             ba.add_transition(q1, Some("__true__".to_string()), q1);
             ba
-        }
+        },
         LtlFormula::Not(phi) => {
             match phi.as_ref() {
                 LtlFormula::Atom(p) => {
@@ -627,36 +630,33 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                     ba.add_transition(q0, Some(format!("!{}", p)), q1);
                     ba.add_transition(q1, Some("__true__".to_string()), q1);
                     ba
-                }
+                },
                 _ => {
                     // For general negation, push negation inward (NNF) and
                     // then compile the result.
                     let negated = negate_ltl(phi);
                     ltl_to_buchi(&negated)
-                }
+                },
             }
-        }
+        },
         LtlFormula::And(phi, psi) => {
             // L(phi AND psi) = L(phi) intersect L(psi).
             let ba_phi = ltl_to_buchi(phi);
             let ba_psi = ltl_to_buchi(psi);
             buchi::buchi_intersect(&ba_phi, &ba_psi)
-        }
+        },
         LtlFormula::Or(phi, psi) => {
             // L(phi OR psi) = L(phi) union L(psi).
             // Union: merge both automata, unioning initial and accepting states.
             let ba_phi = ltl_to_buchi(phi);
             let ba_psi = ltl_to_buchi(psi);
             buchi_union(&ba_phi, &ba_psi)
-        }
+        },
         LtlFormula::Implies(phi, psi) => {
             // phi -> psi  ===  !phi | psi
-            let desugared = LtlFormula::Or(
-                Box::new(LtlFormula::Not(phi.clone())),
-                psi.clone(),
-            );
+            let desugared = LtlFormula::Or(Box::new(LtlFormula::Not(phi.clone())), psi.clone());
             ltl_to_buchi(&desugared)
-        }
+        },
         LtlFormula::Next(phi) => {
             // X phi: phi must hold at the next step.
             // q0 (initial) --__true__--> q1, then from q1 behave as the
@@ -687,7 +687,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             }
 
             ba
-        }
+        },
         LtlFormula::Eventually(phi) => {
             // F phi === true U phi.
             // Two states: q0 (initial, non-accepting) loops on __true__,
@@ -738,7 +738,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             }
 
             ba
-        }
+        },
         LtlFormula::Always(phi) => {
             // G phi: phi must hold at every step.
             //
@@ -755,7 +755,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                     ba.initial_states.insert(q0);
                     ba.add_transition(q0, Some(p.clone()), q0);
                     ba
-                }
+                },
                 LtlFormula::Not(inner) => {
                     match inner.as_ref() {
                         LtlFormula::Atom(p) => {
@@ -766,18 +766,16 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                             ba.initial_states.insert(q0);
                             ba.add_transition(q0, Some(format!("!{}", p)), q0);
                             ba
-                        }
+                        },
                         _ => {
                             // G !phi: use general construction.
                             // G phi = !F(!phi)
-                            let f_not_phi = LtlFormula::Eventually(
-                                Box::new(negate_ltl(phi))
-                            );
+                            let f_not_phi = LtlFormula::Eventually(Box::new(negate_ltl(phi)));
                             let neg = negate_ltl(&f_not_phi);
                             ltl_to_buchi(&neg)
-                        }
+                        },
                     }
-                }
+                },
                 _ => {
                     // General case: G phi.
                     // Build the phi automaton and require it to accept at every step.
@@ -819,9 +817,9 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                     }
 
                     ba
-                }
+                },
             }
-        }
+        },
         LtlFormula::Until(phi, psi) => {
             // phi U psi: phi holds until psi eventually holds.
             //
@@ -876,7 +874,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             }
 
             ba
-        }
+        },
         LtlFormula::Release(phi, psi) => {
             // phi R psi === !(!phi U !psi)
             let desugared = LtlFormula::Not(Box::new(LtlFormula::Until(
@@ -884,7 +882,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                 Box::new(negate_ltl(psi)),
             )));
             ltl_to_buchi(&desugared)
-        }
+        },
         LtlFormula::WeakUntil(phi, psi) => {
             // phi W psi === (phi U psi) | G(phi)
             let desugared = LtlFormula::Or(
@@ -892,7 +890,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                 Box::new(LtlFormula::Always(phi.clone())),
             );
             ltl_to_buchi(&desugared)
-        }
+        },
     }
 }
 
@@ -907,51 +905,48 @@ fn negate_ltl(phi: &LtlFormula) -> LtlFormula {
         LtlFormula::Not(inner) => {
             // Double negation elimination.
             (**inner).clone()
-        }
+        },
         LtlFormula::And(phi, psi) => {
             // !(phi & psi) = !phi | !psi
             LtlFormula::Or(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        }
+        },
         LtlFormula::Or(phi, psi) => {
             // !(phi | psi) = !phi & !psi
             LtlFormula::And(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        }
+        },
         LtlFormula::Implies(phi, psi) => {
             // !(phi -> psi) = phi & !psi
             LtlFormula::And(phi.clone(), Box::new(negate_ltl(psi)))
-        }
+        },
         LtlFormula::Next(phi) => {
             // !X phi = X !phi
             LtlFormula::Next(Box::new(negate_ltl(phi)))
-        }
+        },
         LtlFormula::Eventually(phi) => {
             // !F phi = G !phi
             LtlFormula::Always(Box::new(negate_ltl(phi)))
-        }
+        },
         LtlFormula::Always(phi) => {
             // !G phi = F !phi
             LtlFormula::Eventually(Box::new(negate_ltl(phi)))
-        }
+        },
         LtlFormula::Until(phi, psi) => {
             // !(phi U psi) = !phi R !psi
             LtlFormula::Release(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        }
+        },
         LtlFormula::Release(phi, psi) => {
             // !(phi R psi) = !phi U !psi
             LtlFormula::Until(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))
-        }
+        },
         LtlFormula::WeakUntil(phi, psi) => {
             // !(phi W psi): phi W psi = (phi U psi) | G phi
             // Negate: !((phi U psi) | G phi) = !(phi U psi) & !G phi
             //       = (!phi R !psi) & F !phi
             LtlFormula::And(
-                Box::new(LtlFormula::Release(
-                    Box::new(negate_ltl(phi)),
-                    Box::new(negate_ltl(psi)),
-                )),
+                Box::new(LtlFormula::Release(Box::new(negate_ltl(phi)), Box::new(negate_ltl(psi)))),
                 Box::new(LtlFormula::Eventually(Box::new(negate_ltl(phi)))),
             )
-        }
+        },
     }
 }
 
@@ -1019,10 +1014,7 @@ fn buchi_union(a: &BuchiAutomaton, b: &BuchiAutomaton) -> BuchiAutomaton {
 ///
 /// An `LtlCheckResult` indicating satisfaction, violation (with counterexample),
 /// or inconclusiveness.
-pub fn check_ltl_property(
-    system: &BuchiAutomaton,
-    property: &LtlProperty,
-) -> LtlCheckResult {
+pub fn check_ltl_property(system: &BuchiAutomaton, property: &LtlProperty) -> LtlCheckResult {
     // Standard automata-theoretic model checking:
     //   1. Negate the property formula: neg_phi = !phi
     //   2. Compile neg_phi to a Buchi automaton: A_neg
@@ -1073,17 +1065,14 @@ pub fn check_ltl_property(
 /// and model-checks the properties via the standard automata-theoretic pipeline:
 /// negate the LTL formula, compile to Buchi, intersect with the system, and
 /// check emptiness.
-pub fn check_from_bundle(
-    wpds_analysis: &crate::wpds::WpdsAnalysis,
-) -> Vec<LtlCheckResult> {
+pub fn check_from_bundle(wpds_analysis: &crate::wpds::WpdsAnalysis) -> Vec<LtlCheckResult> {
     let mut results = Vec::new();
 
     // Build system Buchi automaton from WPDS call graph.
     // Each category maps to a state; reachable categories become accepting states.
     let call_graph = &wpds_analysis.call_graph;
     let mut system = BuchiAutomaton::new();
-    let mut cat_to_id: std::collections::HashMap<String, usize> =
-        std::collections::HashMap::new();
+    let mut cat_to_id: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for cat in &call_graph.categories {
         let is_accepting = wpds_analysis.reachable_categories.contains(cat);
@@ -1106,10 +1095,9 @@ pub fn check_from_bundle(
 
     // Add transitions from call graph edges (caller → callee, labelled by callee).
     for edge in &call_graph.edges {
-        if let (Some(&from), Some(&to)) = (
-            cat_to_id.get(&edge.caller_cat),
-            cat_to_id.get(&edge.callee_cat),
-        ) {
+        if let (Some(&from), Some(&to)) =
+            (cat_to_id.get(&edge.caller_cat), cat_to_id.get(&edge.callee_cat))
+        {
             system.add_transition(from, Some(edge.callee_cat.clone()), to);
         }
     }
@@ -1243,10 +1231,7 @@ mod tests {
         let f = parse_ltl("p -> q").expect("should parse implies");
         assert_eq!(
             f,
-            LtlFormula::Implies(
-                Box::new(LtlFormula::atom("p")),
-                Box::new(LtlFormula::atom("q"))
-            )
+            LtlFormula::Implies(Box::new(LtlFormula::atom("p")), Box::new(LtlFormula::atom("q")))
         );
     }
 
@@ -1291,10 +1276,7 @@ mod tests {
     #[test]
     fn parse_ltl_nested_temporal() {
         let f = parse_ltl("G F p").expect("should parse nested temporal");
-        assert_eq!(
-            f,
-            LtlFormula::always(LtlFormula::eventually(LtlFormula::atom("p")))
-        );
+        assert_eq!(f, LtlFormula::always(LtlFormula::eventually(LtlFormula::atom("p"))));
     }
 
     #[test]
@@ -1315,10 +1297,7 @@ mod tests {
         let f = parse_ltl("error_state && token_matched").expect("should parse");
         assert_eq!(
             f,
-            LtlFormula::and(
-                LtlFormula::atom("error_state"),
-                LtlFormula::atom("token_matched"),
-            )
+            LtlFormula::and(LtlFormula::atom("error_state"), LtlFormula::atom("token_matched"),)
         );
     }
 
@@ -1343,19 +1322,13 @@ mod tests {
         let f = parse_ltl("p R q").expect("should parse release");
         assert_eq!(
             f,
-            LtlFormula::Release(
-                Box::new(LtlFormula::atom("p")),
-                Box::new(LtlFormula::atom("q"))
-            )
+            LtlFormula::Release(Box::new(LtlFormula::atom("p")), Box::new(LtlFormula::atom("q")))
         );
 
         let f = parse_ltl("p W q").expect("should parse weak until");
         assert_eq!(
             f,
-            LtlFormula::WeakUntil(
-                Box::new(LtlFormula::atom("p")),
-                Box::new(LtlFormula::atom("q"))
-            )
+            LtlFormula::WeakUntil(Box::new(LtlFormula::atom("p")), Box::new(LtlFormula::atom("q")))
         );
     }
 
@@ -1422,18 +1395,12 @@ mod tests {
         // !G p = F !p
         let phi = LtlFormula::always(LtlFormula::atom("p"));
         let neg = negate_ltl(&phi);
-        assert_eq!(
-            neg,
-            LtlFormula::eventually(LtlFormula::not(LtlFormula::atom("p")))
-        );
+        assert_eq!(neg, LtlFormula::eventually(LtlFormula::not(LtlFormula::atom("p"))));
 
         // !F p = G !p
         let phi = LtlFormula::eventually(LtlFormula::atom("p"));
         let neg = negate_ltl(&phi);
-        assert_eq!(
-            neg,
-            LtlFormula::always(LtlFormula::not(LtlFormula::atom("p")))
-        );
+        assert_eq!(neg, LtlFormula::always(LtlFormula::not(LtlFormula::atom("p"))));
     }
 
     #[test]
@@ -1512,10 +1479,7 @@ mod tests {
     fn ltl_to_buchi_and_same_atom() {
         // p && p should behave like p.
         let ba_p = ltl_to_buchi(&LtlFormula::atom("p"));
-        let ba_pp = ltl_to_buchi(&LtlFormula::and(
-            LtlFormula::atom("p"),
-            LtlFormula::atom("p"),
-        ));
+        let ba_pp = ltl_to_buchi(&LtlFormula::and(LtlFormula::atom("p"), LtlFormula::atom("p")));
         // Both should be non-empty.
         assert!(!buchi::check_emptiness(&ba_p));
         assert!(!buchi::check_emptiness(&ba_pp));
@@ -1524,10 +1488,7 @@ mod tests {
     #[test]
     fn ltl_to_buchi_or_produces_union() {
         // p || q should be non-empty.
-        let ba = ltl_to_buchi(&LtlFormula::or(
-            LtlFormula::atom("p"),
-            LtlFormula::atom("q"),
-        ));
+        let ba = ltl_to_buchi(&LtlFormula::or(LtlFormula::atom("p"), LtlFormula::atom("q")));
         assert!(!buchi::check_emptiness(&ba));
     }
 
@@ -1660,8 +1621,13 @@ mod tests {
     #[test]
     fn test_check_from_bundle_basic() {
         let mut wpds_analysis = make_empty_wpds_analysis();
-        wpds_analysis.call_graph.categories.insert("Expr".to_string());
-        wpds_analysis.reachable_categories.insert("Expr".to_string());
+        wpds_analysis
+            .call_graph
+            .categories
+            .insert("Expr".to_string());
+        wpds_analysis
+            .reachable_categories
+            .insert("Expr".to_string());
         let results = check_from_bundle(&wpds_analysis);
         // Returns Vec<LtlCheckResult> — may be empty if no properties to check,
         // but should not panic.

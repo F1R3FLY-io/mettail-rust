@@ -11,7 +11,6 @@
 
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
-use crate::gen::native::native_type_to_string;
 use mettail_prattail::PipelineAnalysis;
 use std::collections::{HashMap, HashSet};
 
@@ -78,7 +77,6 @@ pub fn generate_wfst_guided_tests(
         }
 
         let label = rule.label.to_string();
-        let category = rule.category.to_string();
 
         // Get the first safe ground term for this rule
         let gts = match gt_by_label.get(&label) {
@@ -87,24 +85,16 @@ pub fn generate_wfst_guided_tests(
         };
 
         // Find a non-dangerous ground term
-        let gt = match gts.iter().find(|gt| !super::is_dangerous_input(rule, &gt.param_values)) {
+        let gt = match gts
+            .iter()
+            .find(|gt| !super::is_dangerous_input(rule, &gt.param_values))
+        {
             Some(gt) => gt,
             None => continue,
         };
 
-        // Compute the weight annotation
-        let weight_comment = pipeline
-            .constructor_weights
-            .get(&label)
-            .map(|w| format!("// WFST weight: {:.4}\n", w))
-            .unwrap_or_default();
-
         // Build a full display-parse-eval test
-        let test_name = format!(
-            "wfst_{}_dispatch_{}_eval",
-            lang_name_lower,
-            label.to_lowercase()
-        );
+        let test_name = format!("wfst_{}_dispatch_{}_eval", lang_name_lower, label.to_lowercase());
 
         // For WFST tests, we do a full construct -> display -> parse -> eval pipeline
         // We don't assert a specific result (smoke test), but verify the pipeline works.
@@ -166,7 +156,7 @@ fn generate_disambiguation_tests<'a>(
     }
 
     // For ambiguous groups (>1 member), generate a test for each member
-    for ((cat, first_lit), labels) in &groups {
+    for ((_cat, first_lit), labels) in &groups {
         if labels.len() <= 1 {
             continue;
         }
@@ -215,7 +205,7 @@ fn extract_first_literal(rule: &GrammarRule) -> Option<String> {
 ///
 /// Shows which constructors are tested, their weights, and the allocation strategy.
 pub fn generate_wfst_coverage_comment(
-    language: &LanguageDef,
+    _language: &LanguageDef,
     pipeline: &PipelineAnalysis,
 ) -> String {
     let mut out = String::with_capacity(2048);

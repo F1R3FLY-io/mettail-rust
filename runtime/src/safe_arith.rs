@@ -105,23 +105,39 @@ macro_rules! impl_safe_arith_signed {
         impl SafeArith for $t {
             type Output = Self;
             #[inline]
-            fn safe_add(self, rhs: Self) -> Option<Self> { self.checked_add(rhs) }
+            fn safe_add(self, rhs: Self) -> Option<Self> {
+                self.checked_add(rhs)
+            }
             #[inline]
-            fn safe_sub(self, rhs: Self) -> Option<Self> { self.checked_sub(rhs) }
+            fn safe_sub(self, rhs: Self) -> Option<Self> {
+                self.checked_sub(rhs)
+            }
             #[inline]
-            fn safe_mul(self, rhs: Self) -> Option<Self> { self.checked_mul(rhs) }
+            fn safe_mul(self, rhs: Self) -> Option<Self> {
+                self.checked_mul(rhs)
+            }
             #[inline]
-            fn safe_div(self, rhs: Self) -> Option<Self> { self.checked_div(rhs) }
+            fn safe_div(self, rhs: Self) -> Option<Self> {
+                self.checked_div(rhs)
+            }
             #[inline]
-            fn safe_rem(self, rhs: Self) -> Option<Self> { self.checked_rem(rhs) }
+            fn safe_rem(self, rhs: Self) -> Option<Self> {
+                self.checked_rem(rhs)
+            }
             #[inline]
-            fn safe_neg(self) -> Option<Self> { self.checked_neg() }
+            fn safe_neg(self) -> Option<Self> {
+                self.checked_neg()
+            }
             #[inline]
-            fn safe_not(self) -> Option<Self> { Some(!self) }
+            fn safe_not(self) -> Option<Self> {
+                Some(!self)
+            }
             #[inline]
             fn safe_pow(self, exp: i32) -> Option<Self> {
                 // Negative exponent on integer: result is not integral (e.g. 2^-1 = 1/2).
-                if exp < 0 { return None; }
+                if exp < 0 {
+                    return None;
+                }
                 self.checked_pow(exp as u32)
             }
         }
@@ -133,25 +149,43 @@ macro_rules! impl_safe_arith_unsigned {
         impl SafeArith for $t {
             type Output = Self;
             #[inline]
-            fn safe_add(self, rhs: Self) -> Option<Self> { self.checked_add(rhs) }
+            fn safe_add(self, rhs: Self) -> Option<Self> {
+                self.checked_add(rhs)
+            }
             #[inline]
-            fn safe_sub(self, rhs: Self) -> Option<Self> { self.checked_sub(rhs) }
+            fn safe_sub(self, rhs: Self) -> Option<Self> {
+                self.checked_sub(rhs)
+            }
             #[inline]
-            fn safe_mul(self, rhs: Self) -> Option<Self> { self.checked_mul(rhs) }
+            fn safe_mul(self, rhs: Self) -> Option<Self> {
+                self.checked_mul(rhs)
+            }
             #[inline]
-            fn safe_div(self, rhs: Self) -> Option<Self> { self.checked_div(rhs) }
+            fn safe_div(self, rhs: Self) -> Option<Self> {
+                self.checked_div(rhs)
+            }
             #[inline]
-            fn safe_rem(self, rhs: Self) -> Option<Self> { self.checked_rem(rhs) }
+            fn safe_rem(self, rhs: Self) -> Option<Self> {
+                self.checked_rem(rhs)
+            }
             #[inline]
             fn safe_neg(self) -> Option<Self> {
                 // 0_u* has a trivially representable negation (itself); all others overflow.
-                if self == 0 { Some(self) } else { None }
+                if self == 0 {
+                    Some(self)
+                } else {
+                    None
+                }
             }
             #[inline]
-            fn safe_not(self) -> Option<Self> { Some(!self) }
+            fn safe_not(self) -> Option<Self> {
+                Some(!self)
+            }
             #[inline]
             fn safe_pow(self, exp: i32) -> Option<Self> {
-                if exp < 0 { return None; }
+                if exp < 0 {
+                    return None;
+                }
                 self.checked_pow(exp as u32)
             }
         }
@@ -185,14 +219,38 @@ macro_rules! impl_safe_arith_ref {
     ($t:ty) => {
         impl SafeArith for &$t {
             type Output = <$t as SafeArith>::Output;
-            #[inline] fn safe_add(self, rhs: Self) -> Option<Self::Output> { (*self).safe_add(*rhs) }
-            #[inline] fn safe_sub(self, rhs: Self) -> Option<Self::Output> { (*self).safe_sub(*rhs) }
-            #[inline] fn safe_mul(self, rhs: Self) -> Option<Self::Output> { (*self).safe_mul(*rhs) }
-            #[inline] fn safe_div(self, rhs: Self) -> Option<Self::Output> { (*self).safe_div(*rhs) }
-            #[inline] fn safe_rem(self, rhs: Self) -> Option<Self::Output> { (*self).safe_rem(*rhs) }
-            #[inline] fn safe_neg(self) -> Option<Self::Output> { (*self).safe_neg() }
-            #[inline] fn safe_not(self) -> Option<Self::Output> { (*self).safe_not() }
-            #[inline] fn safe_pow(self, exp: i32) -> Option<Self::Output> { (*self).safe_pow(exp) }
+            #[inline]
+            fn safe_add(self, rhs: Self) -> Option<Self::Output> {
+                (*self).safe_add(*rhs)
+            }
+            #[inline]
+            fn safe_sub(self, rhs: Self) -> Option<Self::Output> {
+                (*self).safe_sub(*rhs)
+            }
+            #[inline]
+            fn safe_mul(self, rhs: Self) -> Option<Self::Output> {
+                (*self).safe_mul(*rhs)
+            }
+            #[inline]
+            fn safe_div(self, rhs: Self) -> Option<Self::Output> {
+                (*self).safe_div(*rhs)
+            }
+            #[inline]
+            fn safe_rem(self, rhs: Self) -> Option<Self::Output> {
+                (*self).safe_rem(*rhs)
+            }
+            #[inline]
+            fn safe_neg(self) -> Option<Self::Output> {
+                (*self).safe_neg()
+            }
+            #[inline]
+            fn safe_not(self) -> Option<Self::Output> {
+                (*self).safe_not()
+            }
+            #[inline]
+            fn safe_pow(self, exp: i32) -> Option<Self::Output> {
+                (*self).safe_pow(exp)
+            }
         }
     };
 }
@@ -225,21 +283,37 @@ impl_safe_arith_ref!(bool);
 impl SafeArith for bool {
     type Output = Self;
     #[inline]
-    fn safe_add(self, rhs: Self) -> Option<Self> { Some(self || rhs) }
+    fn safe_add(self, rhs: Self) -> Option<Self> {
+        Some(self || rhs)
+    }
     #[inline]
-    fn safe_sub(self, _rhs: Self) -> Option<Self> { None }
+    fn safe_sub(self, _rhs: Self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_mul(self, rhs: Self) -> Option<Self> { Some(self && rhs) }
+    fn safe_mul(self, rhs: Self) -> Option<Self> {
+        Some(self && rhs)
+    }
     #[inline]
-    fn safe_div(self, _rhs: Self) -> Option<Self> { None }
+    fn safe_div(self, _rhs: Self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_rem(self, _rhs: Self) -> Option<Self> { None }
+    fn safe_rem(self, _rhs: Self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_neg(self) -> Option<Self> { Some(!self) }
+    fn safe_neg(self) -> Option<Self> {
+        Some(!self)
+    }
     #[inline]
-    fn safe_not(self) -> Option<Self> { Some(!self) }
+    fn safe_not(self) -> Option<Self> {
+        Some(!self)
+    }
     #[inline]
-    fn safe_pow(self, _exp: i32) -> Option<Self> { None }
+    fn safe_pow(self, _exp: i32) -> Option<Self> {
+        None
+    }
 }
 
 // ─── String impl ────────────────────────────────────────────────────────────
@@ -256,19 +330,33 @@ impl SafeArith for String {
         Some(out)
     }
     #[inline]
-    fn safe_sub(self, _rhs: Self) -> Option<Self> { None }
+    fn safe_sub(self, _rhs: Self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_mul(self, _rhs: Self) -> Option<Self> { None }
+    fn safe_mul(self, _rhs: Self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_div(self, _rhs: Self) -> Option<Self> { None }
+    fn safe_div(self, _rhs: Self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_rem(self, _rhs: Self) -> Option<Self> { None }
+    fn safe_rem(self, _rhs: Self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_neg(self) -> Option<Self> { None }
+    fn safe_neg(self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_not(self) -> Option<Self> { None }
+    fn safe_not(self) -> Option<Self> {
+        None
+    }
     #[inline]
-    fn safe_pow(self, _exp: i32) -> Option<Self> { None }
+    fn safe_pow(self, _exp: i32) -> Option<Self> {
+        None
+    }
 }
 
 // ─── Float impls ────────────────────────────────────────────────────────────
@@ -295,12 +383,20 @@ use crate::canonical_float::{CanonicalFloat32, CanonicalFloat64};
 /// place.
 #[inline]
 fn finite_or_inf_f64(x: f64) -> Option<f64> {
-    if x.is_nan() { None } else { Some(x) }
+    if x.is_nan() {
+        None
+    } else {
+        Some(x)
+    }
 }
 
 #[inline]
 fn finite_or_inf_f32(x: f32) -> Option<f32> {
-    if x.is_nan() { None } else { Some(x) }
+    if x.is_nan() {
+        None
+    } else {
+        Some(x)
+    }
 }
 
 /// Float-only extension trait for transcendental functions.
@@ -327,65 +423,181 @@ pub trait SafeFloat: SafeArith {
 
 impl SafeArith for f64 {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { finite_or_inf_f64(self + r) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { finite_or_inf_f64(self - r) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { finite_or_inf_f64(self * r) }
-    #[inline] fn safe_div(self, r: Self) -> Option<Self> { finite_or_inf_f64(self / r) }
-    #[inline] fn safe_rem(self, r: Self) -> Option<Self> { finite_or_inf_f64(self % r) }
-    #[inline] fn safe_neg(self) -> Option<Self> {
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        finite_or_inf_f64(self + r)
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        finite_or_inf_f64(self - r)
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        finite_or_inf_f64(self * r)
+    }
+    #[inline]
+    fn safe_div(self, r: Self) -> Option<Self> {
+        finite_or_inf_f64(self / r)
+    }
+    #[inline]
+    fn safe_rem(self, r: Self) -> Option<Self> {
+        finite_or_inf_f64(self % r)
+    }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
         // Normalise `-0.0` to `+0.0` (matches CanonicalFloat64 canonicalisation).
         let r = -self;
         let r = if r == 0.0 { 0.0_f64 } else { r };
         finite_or_inf_f64(r)
     }
-    #[inline] fn safe_not(self) -> Option<Self> { None }
-    #[inline] fn safe_pow(self, exp: i32) -> Option<Self> { finite_or_inf_f64(self.powi(exp)) }
+    #[inline]
+    fn safe_not(self) -> Option<Self> {
+        None
+    }
+    #[inline]
+    fn safe_pow(self, exp: i32) -> Option<Self> {
+        finite_or_inf_f64(self.powi(exp))
+    }
 }
 
 impl SafeFloat for f64 {
-    #[inline] fn safe_sqrt(self)  -> Option<Self> { finite_or_inf_f64(self.sqrt()) }
-    #[inline] fn safe_ln(self)    -> Option<Self> { finite_or_inf_f64(self.ln()) }
-    #[inline] fn safe_log2(self)  -> Option<Self> { finite_or_inf_f64(self.log2()) }
-    #[inline] fn safe_log10(self) -> Option<Self> { finite_or_inf_f64(self.log10()) }
-    #[inline] fn safe_exp(self)   -> Option<Self> { finite_or_inf_f64(self.exp()) }
-    #[inline] fn safe_sin(self)   -> Option<Self> { finite_or_inf_f64(self.sin()) }
-    #[inline] fn safe_cos(self)   -> Option<Self> { finite_or_inf_f64(self.cos()) }
-    #[inline] fn safe_tan(self)   -> Option<Self> { finite_or_inf_f64(self.tan()) }
-    #[inline] fn safe_asin(self)  -> Option<Self> { finite_or_inf_f64(self.asin()) }
-    #[inline] fn safe_acos(self)  -> Option<Self> { finite_or_inf_f64(self.acos()) }
-    #[inline] fn safe_atan(self)  -> Option<Self> { finite_or_inf_f64(self.atan()) }
-    #[inline] fn safe_powf(self, exp: Self) -> Option<Self> { finite_or_inf_f64(self.powf(exp)) }
+    #[inline]
+    fn safe_sqrt(self) -> Option<Self> {
+        finite_or_inf_f64(self.sqrt())
+    }
+    #[inline]
+    fn safe_ln(self) -> Option<Self> {
+        finite_or_inf_f64(self.ln())
+    }
+    #[inline]
+    fn safe_log2(self) -> Option<Self> {
+        finite_or_inf_f64(self.log2())
+    }
+    #[inline]
+    fn safe_log10(self) -> Option<Self> {
+        finite_or_inf_f64(self.log10())
+    }
+    #[inline]
+    fn safe_exp(self) -> Option<Self> {
+        finite_or_inf_f64(self.exp())
+    }
+    #[inline]
+    fn safe_sin(self) -> Option<Self> {
+        finite_or_inf_f64(self.sin())
+    }
+    #[inline]
+    fn safe_cos(self) -> Option<Self> {
+        finite_or_inf_f64(self.cos())
+    }
+    #[inline]
+    fn safe_tan(self) -> Option<Self> {
+        finite_or_inf_f64(self.tan())
+    }
+    #[inline]
+    fn safe_asin(self) -> Option<Self> {
+        finite_or_inf_f64(self.asin())
+    }
+    #[inline]
+    fn safe_acos(self) -> Option<Self> {
+        finite_or_inf_f64(self.acos())
+    }
+    #[inline]
+    fn safe_atan(self) -> Option<Self> {
+        finite_or_inf_f64(self.atan())
+    }
+    #[inline]
+    fn safe_powf(self, exp: Self) -> Option<Self> {
+        finite_or_inf_f64(self.powf(exp))
+    }
 }
 
 impl SafeArith for f32 {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { finite_or_inf_f32(self + r) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { finite_or_inf_f32(self - r) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { finite_or_inf_f32(self * r) }
-    #[inline] fn safe_div(self, r: Self) -> Option<Self> { finite_or_inf_f32(self / r) }
-    #[inline] fn safe_rem(self, r: Self) -> Option<Self> { finite_or_inf_f32(self % r) }
-    #[inline] fn safe_neg(self) -> Option<Self> {
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        finite_or_inf_f32(self + r)
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        finite_or_inf_f32(self - r)
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        finite_or_inf_f32(self * r)
+    }
+    #[inline]
+    fn safe_div(self, r: Self) -> Option<Self> {
+        finite_or_inf_f32(self / r)
+    }
+    #[inline]
+    fn safe_rem(self, r: Self) -> Option<Self> {
+        finite_or_inf_f32(self % r)
+    }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
         let r = -self;
         let r = if r == 0.0_f32 { 0.0_f32 } else { r };
         finite_or_inf_f32(r)
     }
-    #[inline] fn safe_not(self) -> Option<Self> { None }
-    #[inline] fn safe_pow(self, exp: i32) -> Option<Self> { finite_or_inf_f32(self.powi(exp)) }
+    #[inline]
+    fn safe_not(self) -> Option<Self> {
+        None
+    }
+    #[inline]
+    fn safe_pow(self, exp: i32) -> Option<Self> {
+        finite_or_inf_f32(self.powi(exp))
+    }
 }
 
 impl SafeFloat for f32 {
-    #[inline] fn safe_sqrt(self)  -> Option<Self> { finite_or_inf_f32(self.sqrt()) }
-    #[inline] fn safe_ln(self)    -> Option<Self> { finite_or_inf_f32(self.ln()) }
-    #[inline] fn safe_log2(self)  -> Option<Self> { finite_or_inf_f32(self.log2()) }
-    #[inline] fn safe_log10(self) -> Option<Self> { finite_or_inf_f32(self.log10()) }
-    #[inline] fn safe_exp(self)   -> Option<Self> { finite_or_inf_f32(self.exp()) }
-    #[inline] fn safe_sin(self)   -> Option<Self> { finite_or_inf_f32(self.sin()) }
-    #[inline] fn safe_cos(self)   -> Option<Self> { finite_or_inf_f32(self.cos()) }
-    #[inline] fn safe_tan(self)   -> Option<Self> { finite_or_inf_f32(self.tan()) }
-    #[inline] fn safe_asin(self)  -> Option<Self> { finite_or_inf_f32(self.asin()) }
-    #[inline] fn safe_acos(self)  -> Option<Self> { finite_or_inf_f32(self.acos()) }
-    #[inline] fn safe_atan(self)  -> Option<Self> { finite_or_inf_f32(self.atan()) }
-    #[inline] fn safe_powf(self, exp: Self) -> Option<Self> { finite_or_inf_f32(self.powf(exp)) }
+    #[inline]
+    fn safe_sqrt(self) -> Option<Self> {
+        finite_or_inf_f32(self.sqrt())
+    }
+    #[inline]
+    fn safe_ln(self) -> Option<Self> {
+        finite_or_inf_f32(self.ln())
+    }
+    #[inline]
+    fn safe_log2(self) -> Option<Self> {
+        finite_or_inf_f32(self.log2())
+    }
+    #[inline]
+    fn safe_log10(self) -> Option<Self> {
+        finite_or_inf_f32(self.log10())
+    }
+    #[inline]
+    fn safe_exp(self) -> Option<Self> {
+        finite_or_inf_f32(self.exp())
+    }
+    #[inline]
+    fn safe_sin(self) -> Option<Self> {
+        finite_or_inf_f32(self.sin())
+    }
+    #[inline]
+    fn safe_cos(self) -> Option<Self> {
+        finite_or_inf_f32(self.cos())
+    }
+    #[inline]
+    fn safe_tan(self) -> Option<Self> {
+        finite_or_inf_f32(self.tan())
+    }
+    #[inline]
+    fn safe_asin(self) -> Option<Self> {
+        finite_or_inf_f32(self.asin())
+    }
+    #[inline]
+    fn safe_acos(self) -> Option<Self> {
+        finite_or_inf_f32(self.acos())
+    }
+    #[inline]
+    fn safe_atan(self) -> Option<Self> {
+        finite_or_inf_f32(self.atan())
+    }
+    #[inline]
+    fn safe_powf(self, exp: Self) -> Option<Self> {
+        finite_or_inf_f32(self.powf(exp))
+    }
 }
 
 // Wrapper-type impls: delegate to the raw float impl, then re-canonicalise via
@@ -395,56 +607,176 @@ impl SafeFloat for f32 {
 
 impl SafeArith for CanonicalFloat64 {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { self.get().safe_add(r.get()).map(Self::from) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { self.get().safe_sub(r.get()).map(Self::from) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { self.get().safe_mul(r.get()).map(Self::from) }
-    #[inline] fn safe_div(self, r: Self) -> Option<Self> { self.get().safe_div(r.get()).map(Self::from) }
-    #[inline] fn safe_rem(self, r: Self) -> Option<Self> { self.get().safe_rem(r.get()).map(Self::from) }
-    #[inline] fn safe_neg(self) -> Option<Self> { self.get().safe_neg().map(Self::from) }
-    #[inline] fn safe_not(self) -> Option<Self> { None }
-    #[inline] fn safe_pow(self, exp: i32) -> Option<Self> { self.get().safe_pow(exp).map(Self::from) }
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        self.get().safe_add(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        self.get().safe_sub(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        self.get().safe_mul(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_div(self, r: Self) -> Option<Self> {
+        self.get().safe_div(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_rem(self, r: Self) -> Option<Self> {
+        self.get().safe_rem(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
+        self.get().safe_neg().map(Self::from)
+    }
+    #[inline]
+    fn safe_not(self) -> Option<Self> {
+        None
+    }
+    #[inline]
+    fn safe_pow(self, exp: i32) -> Option<Self> {
+        self.get().safe_pow(exp).map(Self::from)
+    }
 }
 
 impl SafeFloat for CanonicalFloat64 {
-    #[inline] fn safe_sqrt(self)  -> Option<Self> { self.get().safe_sqrt().map(Self::from) }
-    #[inline] fn safe_ln(self)    -> Option<Self> { self.get().safe_ln().map(Self::from) }
-    #[inline] fn safe_log2(self)  -> Option<Self> { self.get().safe_log2().map(Self::from) }
-    #[inline] fn safe_log10(self) -> Option<Self> { self.get().safe_log10().map(Self::from) }
-    #[inline] fn safe_exp(self)   -> Option<Self> { self.get().safe_exp().map(Self::from) }
-    #[inline] fn safe_sin(self)   -> Option<Self> { self.get().safe_sin().map(Self::from) }
-    #[inline] fn safe_cos(self)   -> Option<Self> { self.get().safe_cos().map(Self::from) }
-    #[inline] fn safe_tan(self)   -> Option<Self> { self.get().safe_tan().map(Self::from) }
-    #[inline] fn safe_asin(self)  -> Option<Self> { self.get().safe_asin().map(Self::from) }
-    #[inline] fn safe_acos(self)  -> Option<Self> { self.get().safe_acos().map(Self::from) }
-    #[inline] fn safe_atan(self)  -> Option<Self> { self.get().safe_atan().map(Self::from) }
-    #[inline] fn safe_powf(self, exp: Self) -> Option<Self> { self.get().safe_powf(exp.get()).map(Self::from) }
+    #[inline]
+    fn safe_sqrt(self) -> Option<Self> {
+        self.get().safe_sqrt().map(Self::from)
+    }
+    #[inline]
+    fn safe_ln(self) -> Option<Self> {
+        self.get().safe_ln().map(Self::from)
+    }
+    #[inline]
+    fn safe_log2(self) -> Option<Self> {
+        self.get().safe_log2().map(Self::from)
+    }
+    #[inline]
+    fn safe_log10(self) -> Option<Self> {
+        self.get().safe_log10().map(Self::from)
+    }
+    #[inline]
+    fn safe_exp(self) -> Option<Self> {
+        self.get().safe_exp().map(Self::from)
+    }
+    #[inline]
+    fn safe_sin(self) -> Option<Self> {
+        self.get().safe_sin().map(Self::from)
+    }
+    #[inline]
+    fn safe_cos(self) -> Option<Self> {
+        self.get().safe_cos().map(Self::from)
+    }
+    #[inline]
+    fn safe_tan(self) -> Option<Self> {
+        self.get().safe_tan().map(Self::from)
+    }
+    #[inline]
+    fn safe_asin(self) -> Option<Self> {
+        self.get().safe_asin().map(Self::from)
+    }
+    #[inline]
+    fn safe_acos(self) -> Option<Self> {
+        self.get().safe_acos().map(Self::from)
+    }
+    #[inline]
+    fn safe_atan(self) -> Option<Self> {
+        self.get().safe_atan().map(Self::from)
+    }
+    #[inline]
+    fn safe_powf(self, exp: Self) -> Option<Self> {
+        self.get().safe_powf(exp.get()).map(Self::from)
+    }
 }
 
 impl SafeArith for CanonicalFloat32 {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { self.get().safe_add(r.get()).map(Self::from) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { self.get().safe_sub(r.get()).map(Self::from) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { self.get().safe_mul(r.get()).map(Self::from) }
-    #[inline] fn safe_div(self, r: Self) -> Option<Self> { self.get().safe_div(r.get()).map(Self::from) }
-    #[inline] fn safe_rem(self, r: Self) -> Option<Self> { self.get().safe_rem(r.get()).map(Self::from) }
-    #[inline] fn safe_neg(self) -> Option<Self> { self.get().safe_neg().map(Self::from) }
-    #[inline] fn safe_not(self) -> Option<Self> { None }
-    #[inline] fn safe_pow(self, exp: i32) -> Option<Self> { self.get().safe_pow(exp).map(Self::from) }
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        self.get().safe_add(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        self.get().safe_sub(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        self.get().safe_mul(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_div(self, r: Self) -> Option<Self> {
+        self.get().safe_div(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_rem(self, r: Self) -> Option<Self> {
+        self.get().safe_rem(r.get()).map(Self::from)
+    }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
+        self.get().safe_neg().map(Self::from)
+    }
+    #[inline]
+    fn safe_not(self) -> Option<Self> {
+        None
+    }
+    #[inline]
+    fn safe_pow(self, exp: i32) -> Option<Self> {
+        self.get().safe_pow(exp).map(Self::from)
+    }
 }
 
 impl SafeFloat for CanonicalFloat32 {
-    #[inline] fn safe_sqrt(self)  -> Option<Self> { self.get().safe_sqrt().map(Self::from) }
-    #[inline] fn safe_ln(self)    -> Option<Self> { self.get().safe_ln().map(Self::from) }
-    #[inline] fn safe_log2(self)  -> Option<Self> { self.get().safe_log2().map(Self::from) }
-    #[inline] fn safe_log10(self) -> Option<Self> { self.get().safe_log10().map(Self::from) }
-    #[inline] fn safe_exp(self)   -> Option<Self> { self.get().safe_exp().map(Self::from) }
-    #[inline] fn safe_sin(self)   -> Option<Self> { self.get().safe_sin().map(Self::from) }
-    #[inline] fn safe_cos(self)   -> Option<Self> { self.get().safe_cos().map(Self::from) }
-    #[inline] fn safe_tan(self)   -> Option<Self> { self.get().safe_tan().map(Self::from) }
-    #[inline] fn safe_asin(self)  -> Option<Self> { self.get().safe_asin().map(Self::from) }
-    #[inline] fn safe_acos(self)  -> Option<Self> { self.get().safe_acos().map(Self::from) }
-    #[inline] fn safe_atan(self)  -> Option<Self> { self.get().safe_atan().map(Self::from) }
-    #[inline] fn safe_powf(self, exp: Self) -> Option<Self> { self.get().safe_powf(exp.get()).map(Self::from) }
+    #[inline]
+    fn safe_sqrt(self) -> Option<Self> {
+        self.get().safe_sqrt().map(Self::from)
+    }
+    #[inline]
+    fn safe_ln(self) -> Option<Self> {
+        self.get().safe_ln().map(Self::from)
+    }
+    #[inline]
+    fn safe_log2(self) -> Option<Self> {
+        self.get().safe_log2().map(Self::from)
+    }
+    #[inline]
+    fn safe_log10(self) -> Option<Self> {
+        self.get().safe_log10().map(Self::from)
+    }
+    #[inline]
+    fn safe_exp(self) -> Option<Self> {
+        self.get().safe_exp().map(Self::from)
+    }
+    #[inline]
+    fn safe_sin(self) -> Option<Self> {
+        self.get().safe_sin().map(Self::from)
+    }
+    #[inline]
+    fn safe_cos(self) -> Option<Self> {
+        self.get().safe_cos().map(Self::from)
+    }
+    #[inline]
+    fn safe_tan(self) -> Option<Self> {
+        self.get().safe_tan().map(Self::from)
+    }
+    #[inline]
+    fn safe_asin(self) -> Option<Self> {
+        self.get().safe_asin().map(Self::from)
+    }
+    #[inline]
+    fn safe_acos(self) -> Option<Self> {
+        self.get().safe_acos().map(Self::from)
+    }
+    #[inline]
+    fn safe_atan(self) -> Option<Self> {
+        self.get().safe_atan().map(Self::from)
+    }
+    #[inline]
+    fn safe_powf(self, exp: Self) -> Option<Self> {
+        self.get().safe_powf(exp.get()).map(Self::from)
+    }
 }
 
 // ─── Arbitrary-precision impls ──────────────────────────────────────────────
@@ -464,24 +796,49 @@ impl SafeFloat for CanonicalFloat32 {
 // yield `None`; negative exponents also yield `None`.
 impl SafeArith for &num_bigint::BigInt {
     type Output = num_bigint::BigInt;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self::Output> { Some(self + r) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self::Output> { Some(self - r) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self::Output> { Some(self * r) }
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self::Output> {
+        Some(self + r)
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self::Output> {
+        Some(self - r)
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self::Output> {
+        Some(self * r)
+    }
     #[inline]
     fn safe_div(self, r: Self) -> Option<Self::Output> {
         use num_traits::Zero;
-        if r.is_zero() { None } else { Some(self / r) }
+        if r.is_zero() {
+            None
+        } else {
+            Some(self / r)
+        }
     }
     #[inline]
     fn safe_rem(self, r: Self) -> Option<Self::Output> {
         use num_traits::Zero;
-        if r.is_zero() { None } else { Some(self % r) }
+        if r.is_zero() {
+            None
+        } else {
+            Some(self % r)
+        }
     }
-    #[inline] fn safe_neg(self) -> Option<Self::Output> { Some(-self) }
-    #[inline] fn safe_not(self) -> Option<Self::Output> { Some(!self.clone()) }
+    #[inline]
+    fn safe_neg(self) -> Option<Self::Output> {
+        Some(-self)
+    }
+    #[inline]
+    fn safe_not(self) -> Option<Self::Output> {
+        Some(!self.clone())
+    }
     #[inline]
     fn safe_pow(self, exp: i32) -> Option<Self::Output> {
-        if exp < 0 { return None; }
+        if exp < 0 {
+            return None;
+        }
         Some(num_traits::pow::pow(self.clone(), exp as usize))
     }
 }
@@ -491,68 +848,138 @@ impl SafeArith for &num_bigint::BigInt {
 // same semantics as the `&BigInt` impl but takes Self by value.
 impl SafeArith for num_bigint::BigInt {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { Some(self + r) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { Some(self - r) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { Some(self * r) }
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        Some(self + r)
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        Some(self - r)
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        Some(self * r)
+    }
     #[inline]
     fn safe_div(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.is_zero() { None } else { Some(self / r) }
+        if r.is_zero() {
+            None
+        } else {
+            Some(self / r)
+        }
     }
     #[inline]
     fn safe_rem(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.is_zero() { None } else { Some(self % r) }
+        if r.is_zero() {
+            None
+        } else {
+            Some(self % r)
+        }
     }
-    #[inline] fn safe_neg(self) -> Option<Self> { Some(-self) }
-    #[inline] fn safe_not(self) -> Option<Self> { Some(!self) }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
+        Some(-self)
+    }
+    #[inline]
+    fn safe_not(self) -> Option<Self> {
+        Some(!self)
+    }
     #[inline]
     fn safe_pow(self, exp: i32) -> Option<Self> {
-        if exp < 0 { return None; }
+        if exp < 0 {
+            return None;
+        }
         Some(num_traits::pow::pow(self, exp as usize))
     }
 }
 
 impl SafeArith for crate::CanonicalBigInt {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { Some(Self::from(self.get() + r.get())) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { Some(Self::from(self.get() - r.get())) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { Some(Self::from(self.get() * r.get())) }
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        Some(Self::from(self.get() + r.get()))
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        Some(Self::from(self.get() - r.get()))
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        Some(Self::from(self.get() * r.get()))
+    }
     #[inline]
     fn safe_div(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.get().is_zero() { None } else { Some(Self::from(self.get() / r.get())) }
+        if r.get().is_zero() {
+            None
+        } else {
+            Some(Self::from(self.get() / r.get()))
+        }
     }
     #[inline]
     fn safe_rem(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.get().is_zero() { None } else { Some(Self::from(self.get() % r.get())) }
+        if r.get().is_zero() {
+            None
+        } else {
+            Some(Self::from(self.get() % r.get()))
+        }
     }
-    #[inline] fn safe_neg(self) -> Option<Self> { Some(Self::from(-self.get())) }
-    #[inline] fn safe_not(self) -> Option<Self> { Some(Self::from(!self.get().clone())) }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
+        Some(Self::from(-self.get()))
+    }
+    #[inline]
+    fn safe_not(self) -> Option<Self> {
+        Some(Self::from(!self.get().clone()))
+    }
     #[inline]
     fn safe_pow(self, exp: i32) -> Option<Self> {
-        if exp < 0 { return None; } // negative exponent: reciprocal not in BigInt
+        if exp < 0 {
+            return None;
+        } // negative exponent: reciprocal not in BigInt
         Some(Self::from(num_traits::pow::pow(self.get().clone(), exp as usize)))
     }
 }
 
 impl SafeArith for crate::CanonicalBigRat {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { Some(Self::from(self.get() + r.get())) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { Some(Self::from(self.get() - r.get())) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { Some(Self::from(self.get() * r.get())) }
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        Some(Self::from(self.get() + r.get()))
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        Some(Self::from(self.get() - r.get()))
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        Some(Self::from(self.get() * r.get()))
+    }
     #[inline]
     fn safe_div(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.get().is_zero() { None } else { Some(Self::from(self.get() / r.get())) }
+        if r.get().is_zero() {
+            None
+        } else {
+            Some(Self::from(self.get() / r.get()))
+        }
     }
     #[inline]
     fn safe_rem(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.get().is_zero() { None } else { Some(Self::from(self.get() % r.get())) }
+        if r.get().is_zero() {
+            None
+        } else {
+            Some(Self::from(self.get() % r.get()))
+        }
     }
-    #[inline] fn safe_neg(self) -> Option<Self> { Some(Self::from(-self.get())) }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
+        Some(Self::from(-self.get()))
+    }
     #[inline]
     fn safe_not(self) -> Option<Self> {
         // Bitwise NOT on a rational: flip the numerator bits, keep denominator.
@@ -569,20 +996,40 @@ impl SafeArith for crate::CanonicalBigRat {
 
 impl SafeArith for crate::CanonicalFixedPoint {
     type Output = Self;
-    #[inline] fn safe_add(self, r: Self) -> Option<Self> { Some(self + r) }
-    #[inline] fn safe_sub(self, r: Self) -> Option<Self> { Some(self - r) }
-    #[inline] fn safe_mul(self, r: Self) -> Option<Self> { Some(self * r) }
+    #[inline]
+    fn safe_add(self, r: Self) -> Option<Self> {
+        Some(self + r)
+    }
+    #[inline]
+    fn safe_sub(self, r: Self) -> Option<Self> {
+        Some(self - r)
+    }
+    #[inline]
+    fn safe_mul(self, r: Self) -> Option<Self> {
+        Some(self * r)
+    }
     #[inline]
     fn safe_div(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.unscaled().is_zero() { None } else { Some(self / r) }
+        if r.unscaled().is_zero() {
+            None
+        } else {
+            Some(self / r)
+        }
     }
     #[inline]
     fn safe_rem(self, r: Self) -> Option<Self> {
         use num_traits::Zero;
-        if r.unscaled().is_zero() { None } else { Some(self % r) }
+        if r.unscaled().is_zero() {
+            None
+        } else {
+            Some(self % r)
+        }
     }
-    #[inline] fn safe_neg(self) -> Option<Self> { Some(-self) }
+    #[inline]
+    fn safe_neg(self) -> Option<Self> {
+        Some(-self)
+    }
     #[inline]
     fn safe_not(self) -> Option<Self> {
         // Bitwise NOT on a fixed-point: flip the scaled integer bits,
@@ -591,7 +1038,9 @@ impl SafeArith for crate::CanonicalFixedPoint {
     }
     #[inline]
     fn safe_pow(self, exp: i32) -> Option<Self> {
-        if exp < 0 { return None; }
+        if exp < 0 {
+            return None;
+        }
         let mut acc = Self::new(num_bigint::BigInt::from(1), 0);
         for _ in 0..exp {
             acc = acc * self.clone();
@@ -812,8 +1261,10 @@ mod tests {
     fn f64_neg_zero_normalises_to_positive_zero() {
         let r = 0.0_f64.safe_neg().unwrap();
         assert_eq!(r, 0.0);
-        assert!(!r.is_sign_negative(),
-                "safe_neg(0.0) must produce +0.0 (found -0.0) to match CanonicalFloat64");
+        assert!(
+            !r.is_sign_negative(),
+            "safe_neg(0.0) must produce +0.0 (found -0.0) to match CanonicalFloat64"
+        );
     }
 
     #[test]
@@ -851,11 +1302,19 @@ mod tests {
         // Iterator that yields 1.0, 2.0, NaN, 4.0. If short-circuit works, count ≤ 3.
         let iter = (0..4).map(|i| {
             count.set(count.get() + 1);
-            match i { 0 => 1.0, 1 => 2.0, 2 => f64::NAN, _ => 4.0 }
+            match i {
+                0 => 1.0,
+                1 => 2.0,
+                2 => f64::NAN,
+                _ => 4.0,
+            }
         });
         assert_eq!(f64::safe_product(iter), None);
-        assert!(count.get() <= 3,
-                "safe_product should short-circuit on NaN, consumed {}", count.get());
+        assert!(
+            count.get() <= 3,
+            "safe_product should short-circuit on NaN, consumed {}",
+            count.get()
+        );
     }
 
     #[test]

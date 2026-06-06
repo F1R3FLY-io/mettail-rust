@@ -11,13 +11,10 @@ use mettail_runtime::BehavioralPred;
 // ═══════════════════════════════════════════════════════════
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
-// Dead rules (skipped):
-//   - PredToNum
 // Constructor weights (lower = more frequent):
 //   EqNum                weight: 0.0000
 //   ExprToNum            weight: 0.0000
 //   Grouping             weight: 0.0000
-//   NegNum               weight: 0.0000
 //   NumLit               weight: 0.0000
 //   PredLit              weight: 0.0000
 //   CastNum              weight: 0.5000
@@ -34,18 +31,19 @@ use mettail_runtime::BehavioralPred;
 //   Num::NegNum          weight: inf
 //   Num::PredToNum       weight: inf
 //   Pred::AndPred        weight: inf
-//   ... and 2 more
+//   Pred::EqNum          weight: inf
+//   ... and 1 more
 // Category weights:
 //   Pred                 weight: 0.0833
-//   Num                  weight: 0.4000
+//   Num                  weight: 0.5000
 //   Expr                 weight: 0.7500
 //
 
 // ─────────────────────────────────────────────────────────
 // WPDS path coverage plan
 // ─────────────────────────────────────────────────────────
-//   Num                  budget:   6  (category weight: 0.4000)
-//   Pred                 budget:  30  (category weight: 0.0833)
+//   Num                  budget:   5  (category weight: 0.5000)
+//   Pred                 budget:  31  (category weight: 0.0833)
 //   Expr                 budget:   3  (category weight: 0.7500)
 //
 
@@ -2199,18 +2197,6 @@ fn wfst_ledtest_dispatch_eqnum_eval() {
 }
 
 #[test]
-fn wfst_ledtest_dispatch_negnum_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
 fn wfst_ledtest_dispatch_nenum_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
@@ -2238,6 +2224,18 @@ fn wfst_ledtest_dispatch_addnum_eval() {
 fn wfst_ledtest_dispatch_mulnum_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::MulNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_ledtest_dispatch_negnum_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2331,69 +2329,57 @@ fn assoc_ledtest_mulnum_left() {
 // ═══════════════════════════════════════════════════════════
 
 #[test]
-fn wpda_ledtest_negnum_0() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(0i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_ledtest_negnum_1() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(1i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_ledtest_negnum_2() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(2i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_ledtest_negnum_3() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(3i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_ledtest_negnum_5() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Num::NegNum(std::sync::Arc::new(Num::NumLit(5i32)));
-    let input_str = format!("{}", input_term);
-    let lang = LedTestLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
 fn wpda_ledtest_addnum_0_0() {
     mettail_runtime::clear_var_cache();
     let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(0i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_ledtest_addnum_0_1() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(1i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_ledtest_addnum_0_2() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(2i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_ledtest_addnum_0_3() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(3i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_ledtest_addnum_0_5() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Num::AddNum(std::sync::Arc::new(Num::NumLit(0i32)), std::sync::Arc::new(Num::NumLit(5i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -2754,6 +2740,18 @@ fn wpda_ledtest_nenum_1_3() {
 fn wpda_ledtest_nenum_1_5() {
     mettail_runtime::clear_var_cache();
     let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(1i32)), std::sync::Arc::new(Num::NumLit(5i32)));
+    let input_str = format!("{}", input_term);
+    let lang = LedTestLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wpda_ledtest_nenum_2_0() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Pred::NeNum(std::sync::Arc::new(Num::NumLit(2i32)), std::sync::Arc::new(Num::NumLit(0i32)));
     let input_str = format!("{}", input_term);
     let lang = LedTestLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");

@@ -5,7 +5,7 @@
 //! per-(src, rule, slot_idx) predicate `is_class3_collection_per_slot`
 //! correctly returns `false` for this Class-2 slot — no BinderScope is
 //! opened spuriously. The Optional extractor's CollectionDrain inner arm
-//! (previously a `()` placeholder when SimpleCollection was rejected by
+//! (previously emitted as `()` when SimpleCollection was rejected by
 //! classify_binder) now materializes `Option<Vec<#elem>>`.
 //!
 //! Grammar:

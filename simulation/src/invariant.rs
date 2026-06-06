@@ -136,7 +136,11 @@ impl Invariant for NormalFormReachable {
 
 impl NormalFormReachable {
     /// Check at simulation completion whether normal form was reached.
-    pub fn check_completion(&self, total_steps: usize, reached_normal_form: bool) -> Result<(), String> {
+    pub fn check_completion(
+        &self,
+        total_steps: usize,
+        reached_normal_form: bool,
+    ) -> Result<(), String> {
         if !reached_normal_form && total_steps >= self.max_steps {
             Err(format!(
                 "Normal form not reached after {} steps (limit: {})",
@@ -256,29 +260,53 @@ mod tests {
         fn parse_term(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, String> {
             Ok(Box::new(MockTerm(input.to_string())))
         }
-        fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, String> {
+        fn parse_term_for_env(
+            &self,
+            input: &str,
+        ) -> Result<Box<dyn mettail_runtime::Term>, String> {
             self.parse_term(input)
         }
-        fn run_ascent(&self, _term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, String> {
+        fn run_ascent(
+            &self,
+            _term: &dyn mettail_runtime::Term,
+        ) -> Result<mettail_runtime::AscentResults, String> {
             Ok(mettail_runtime::AscentResults::empty())
         }
         fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync> {
             Box::new(())
         }
-        fn add_to_env(&self, _env: &mut dyn std::any::Any, _name: &str, _term: &dyn mettail_runtime::Term) -> Result<(), String> {
+        fn add_to_env(
+            &self,
+            _env: &mut dyn std::any::Any,
+            _name: &str,
+            _term: &dyn mettail_runtime::Term,
+        ) -> Result<(), String> {
             Ok(())
         }
-        fn remove_from_env(&self, _env: &mut dyn std::any::Any, _name: &str) -> Result<bool, String> {
+        fn remove_from_env(
+            &self,
+            _env: &mut dyn std::any::Any,
+            _name: &str,
+        ) -> Result<bool, String> {
             Ok(false)
         }
         fn clear_env(&self, _env: &mut dyn std::any::Any) {}
-        fn substitute_env(&self, term: &dyn mettail_runtime::Term, _env: &dyn std::any::Any) -> Result<Box<dyn mettail_runtime::Term>, String> {
+        fn substitute_env(
+            &self,
+            term: &dyn mettail_runtime::Term,
+            _env: &dyn std::any::Any,
+        ) -> Result<Box<dyn mettail_runtime::Term>, String> {
             Ok(term.clone_box())
         }
         fn list_env(&self, _env: &dyn std::any::Any) -> Vec<(String, String, Option<String>)> {
             vec![]
         }
-        fn set_env_comment(&self, _env: &mut dyn std::any::Any, _name: &str, _comment: String) -> Result<(), String> {
+        fn set_env_comment(
+            &self,
+            _env: &mut dyn std::any::Any,
+            _name: &str,
+            _comment: String,
+        ) -> Result<(), String> {
             Ok(())
         }
         fn is_env_empty(&self, _env: &dyn std::any::Any) -> bool {
@@ -287,10 +315,17 @@ mod tests {
         fn infer_term_type(&self, _term: &dyn mettail_runtime::Term) -> mettail_runtime::TermType {
             mettail_runtime::TermType::Unknown
         }
-        fn infer_var_types(&self, _term: &dyn mettail_runtime::Term) -> Vec<mettail_runtime::VarTypeInfo> {
+        fn infer_var_types(
+            &self,
+            _term: &dyn mettail_runtime::Term,
+        ) -> Vec<mettail_runtime::VarTypeInfo> {
             vec![]
         }
-        fn infer_var_type(&self, _term: &dyn mettail_runtime::Term, _var_name: &str) -> Option<mettail_runtime::TermType> {
+        fn infer_var_type(
+            &self,
+            _term: &dyn mettail_runtime::Term,
+            _var_name: &str,
+        ) -> Option<mettail_runtime::TermType> {
             None
         }
     }
@@ -298,11 +333,21 @@ mod tests {
     struct MockMetadata;
 
     impl mettail_runtime::LanguageMetadata for MockMetadata {
-        fn name(&self) -> &'static str { "Mock" }
-        fn types(&self) -> &'static [mettail_runtime::TypeDef] { &[] }
-        fn terms(&self) -> &'static [mettail_runtime::TermDef] { &[] }
-        fn equations(&self) -> &'static [mettail_runtime::EquationDef] { &[] }
-        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] { &[] }
+        fn name(&self) -> &'static str {
+            "Mock"
+        }
+        fn types(&self) -> &'static [mettail_runtime::TypeDef] {
+            &[]
+        }
+        fn terms(&self) -> &'static [mettail_runtime::TermDef] {
+            &[]
+        }
+        fn equations(&self) -> &'static [mettail_runtime::EquationDef] {
+            &[]
+        }
+        fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
+            &[]
+        }
     }
 
     #[derive(Debug, Clone)]
@@ -416,8 +461,8 @@ mod tests {
     // ═════════════════════════════════════════════════════════════════════
 
     use crate::model::{
-        LanguageStateMachine, ModelBuiltinPredicate, ModelChannel, ModelConnective,
-        ModelEquation, ModelJoinPattern, ModelRewriteRule, ModelTheory,
+        LanguageStateMachine, ModelBuiltinPredicate, ModelChannel, ModelConnective, ModelEquation,
+        ModelJoinPattern, ModelRewriteRule, ModelTheory,
     };
 
     fn state_machine_with_guarded_rules(rules: Vec<(&str, bool)>) -> LanguageStateMachine {
@@ -459,10 +504,7 @@ mod tests {
 
     #[test]
     fn sim_d_guard_satisfaction_empty_when_no_guarded_rules() {
-        let state = state_machine_with_guarded_rules(vec![
-            ("Rule1", false),
-            ("Rule2", false),
-        ]);
+        let state = state_machine_with_guarded_rules(vec![("Rule1", false), ("Rule2", false)]);
         let inv = GuardSatisfaction::from_state_machine(&state);
         assert_eq!(inv.guarded_rule_count(), 0);
     }

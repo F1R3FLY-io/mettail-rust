@@ -17,7 +17,6 @@ pub enum AttributeValue {
     /// Floating-point value (e.g., `beam_width: 1.5`).
     Float(f64),
     /// Integer value.
-    #[expect(dead_code)] // Parsed from DSL, not yet consumed
     Int(i64),
     /// Boolean value (e.g., `auto_hol: false`).
     Bool(bool),
@@ -315,13 +314,13 @@ pub enum BehavioralPred {
         /// Optional rest variable for unmatched elements.
         rest: Option<Ident>,
     },
-    /// Always-true placeholder.
+    /// Always-true identity predicate.
     ///
     /// Used by the guarded Comm rule generator at compile time when
     /// the actual predicate is per-instance runtime data (attached to
     /// the generated enum variant as a `mettail_runtime::BehavioralPred`
     /// field) rather than a language-spec-time fixed shape. The
-    /// placeholder lets the compile-time guard-set analysis continue
+    /// identity predicate lets the compile-time guard-set analysis continue
     /// to receive a consistent input shape without gating its emission
     /// on per-instance data that it cannot see.
     Top,
@@ -333,11 +332,7 @@ impl BehavioralPred {
     pub fn to_quantified_formula(&self) -> proc_macro2::TokenStream {
         use quote::quote;
         match self {
-            BehavioralPred::RelationQuery {
-                relation_name,
-                args,
-                negated,
-            } => {
+            BehavioralPred::RelationQuery { relation_name, args, negated } => {
                 let rel_str = relation_name.to_string();
                 let arg_exprs: Vec<_> = args
                     .iter()
@@ -345,11 +340,11 @@ impl BehavioralPred {
                         PredArg::Var(v) => {
                             let v_str = v.to_string();
                             quote! { prattail::logict::QuantifiedArg::Var(#v_str.to_string()) }
-                        }
+                        },
                         PredArg::Constant(c) => {
                             let c_str = c.to_string();
                             quote! { prattail::logict::QuantifiedArg::Constant(#c_str.to_string()) }
-                        }
+                        },
                     })
                     .collect();
                 let atom = quote! {
@@ -363,14 +358,8 @@ impl BehavioralPred {
                 } else {
                     atom
                 }
-            }
-            BehavioralPred::Quantified {
-                quantifier,
-                var,
-                domain,
-                bound,
-                body,
-            } => {
+            },
+            BehavioralPred::Quantified { quantifier, var, domain, bound, body } => {
                 let var_str = var.to_string();
                 let body_expr = body.to_quantified_formula();
                 let domain_expr = if let Some(dom) = domain {
@@ -410,43 +399,43 @@ impl BehavioralPred {
                         )
                     },
                 }
-            }
+            },
             BehavioralPred::And(a, b) => {
                 let a_expr = a.to_quantified_formula();
                 let b_expr = b.to_quantified_formula();
                 quote! {
                     prattail::logict::QuantifiedFormula::and(#a_expr, #b_expr)
                 }
-            }
+            },
             BehavioralPred::Or(a, b) => {
                 let a_expr = a.to_quantified_formula();
                 let b_expr = b.to_quantified_formula();
                 quote! {
                     prattail::logict::QuantifiedFormula::or(#a_expr, #b_expr)
                 }
-            }
+            },
             BehavioralPred::Not(inner) => {
                 let inner_expr = inner.to_quantified_formula();
                 quote! {
                     prattail::logict::QuantifiedFormula::not(#inner_expr)
                 }
-            }
+            },
             BehavioralPred::Implies(a, b) => {
                 let a_expr = a.to_quantified_formula();
                 let b_expr = b.to_quantified_formula();
                 quote! {
                     prattail::logict::QuantifiedFormula::implies(#a_expr, #b_expr)
                 }
-            }
+            },
             BehavioralPred::AcMatch { .. } => {
                 // AcMatch does not translate to QuantifiedFormula —
                 // it generates specialized partition enumeration code
                 // in the codegen layer (rules.rs). This arm should never
                 // be reached; AcMatch is intercepted before this point.
                 panic!("BUG: AcMatch should be handled by specialized codegen, not to_quantified_formula()")
-            }
+            },
             BehavioralPred::Top => {
-                // Top is the always-true placeholder used when the guard
+                // Top is the always-true identity predicate used when the guard
                 // slot is declared at language-spec time but the actual
                 // predicate is per-instance runtime data. The Ascent rule
                 // body has no join clause for Top (the rule fires
@@ -457,7 +446,7 @@ impl BehavioralPred {
                         vec![],
                     )
                 }
-            }
+            },
         }
     }
 }
@@ -574,10 +563,7 @@ pub enum ParamType {
 pub enum ParamQuantifier {
     OneOrMore,
     ZeroOrMore,
-    Range {
-        min: usize,
-        max: Option<usize>,
-    },
+    Range { min: usize, max: Option<usize> },
 }
 
 /// A single parameter in a built-in predicate declaration.
@@ -714,10 +700,7 @@ impl ConnectiveMap {
             }
         }
 
-        Ok(ConnectiveMap {
-            role_to_keywords,
-            keyword_to_role,
-        })
+        Ok(ConnectiveMap { role_to_keywords, keyword_to_role })
     }
 
     /// Whether the given role has any declared keywords.
@@ -1049,62 +1032,84 @@ impl NativeKind {
         match self {
             // Bool → all integer widths (false=0, true=1 fits everywhere).
             Self::Bool => &[
-                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
-                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
+                Self::Int8,
+                Self::Int16,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::Isize,
+                Self::UInt8,
+                Self::UInt16,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Usize,
+                Self::CanonicalBigInt,
+                Self::CanonicalBigRat,
             ],
 
             // Signed integer widening: IntN → IntM for N ≤ M, plus to CanonicalBigInt + CanonicalBigRat.
             Self::Int8 => &[
-                Self::Int16, Self::Int32, Self::Int64, Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
+                Self::Int16,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::CanonicalBigInt,
+                Self::CanonicalBigRat,
             ],
             Self::Int16 => &[
-                Self::Int32, Self::Int64, Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
-            ],
-            Self::Int32 => &[
-                Self::Int64, Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
-            ],
-            Self::Int64 => &[
+                Self::Int32,
+                Self::Int64,
                 Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
+                Self::CanonicalBigInt,
+                Self::CanonicalBigRat,
             ],
+            Self::Int32 => {
+                &[Self::Int64, Self::Int128, Self::CanonicalBigInt, Self::CanonicalBigRat]
+            },
+            Self::Int64 => &[Self::Int128, Self::CanonicalBigInt, Self::CanonicalBigRat],
             Self::Int128 => &[Self::CanonicalBigInt, Self::CanonicalBigRat],
             // isize is 32-or-64-bit platform-dependent; treat as Int64-equivalent for lattice purposes.
-            Self::Isize => &[
-                Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
-            ],
+            Self::Isize => &[Self::Int128, Self::CanonicalBigInt, Self::CanonicalBigRat],
 
             // Unsigned integer widening: UIntN → UIntM (N ≤ M); UIntN → IntM (N < M, sign bit available).
             Self::UInt8 => &[
-                Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128,
-                Self::Int16, Self::Int32, Self::Int64, Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
+                Self::UInt16,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Int16,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::CanonicalBigInt,
+                Self::CanonicalBigRat,
             ],
             Self::UInt16 => &[
-                Self::UInt32, Self::UInt64, Self::UInt128,
-                Self::Int32, Self::Int64, Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::CanonicalBigInt,
+                Self::CanonicalBigRat,
             ],
             Self::UInt32 => &[
-                Self::UInt64, Self::UInt128,
-                Self::Int64, Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
-            ],
-            Self::UInt64 => &[
+                Self::UInt64,
                 Self::UInt128,
+                Self::Int64,
                 Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
+                Self::CanonicalBigInt,
+                Self::CanonicalBigRat,
             ],
+            Self::UInt64 => {
+                &[Self::UInt128, Self::Int128, Self::CanonicalBigInt, Self::CanonicalBigRat]
+            },
             Self::UInt128 => &[Self::CanonicalBigInt, Self::CanonicalBigRat],
-            Self::Usize => &[
-                Self::UInt128,
-                Self::Int128,
-                Self::CanonicalBigInt, Self::CanonicalBigRat,
-            ],
+            Self::Usize => {
+                &[Self::UInt128, Self::Int128, Self::CanonicalBigInt, Self::CanonicalBigRat]
+            },
 
             // Float widening + exact-to-BigRat.
             Self::Float32 => &[Self::Float64, Self::CanonicalBigRat],
@@ -1141,33 +1146,87 @@ impl NativeKind {
     pub const fn lossy_targets(self) -> &'static [NativeKind] {
         match self {
             Self::Int8 | Self::Int16 | Self::Int32 | Self::Int64 | Self::Int128 | Self::Isize => &[
-                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
-                Self::Float32, Self::Float64,
+                Self::UInt8,
+                Self::UInt16,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Usize,
+                Self::Float32,
+                Self::Float64,
             ],
-            Self::UInt8 | Self::UInt16 | Self::UInt32 | Self::UInt64 | Self::UInt128 | Self::Usize => &[
-                Self::Float32, Self::Float64,
-            ],
+            Self::UInt8
+            | Self::UInt16
+            | Self::UInt32
+            | Self::UInt64
+            | Self::UInt128
+            | Self::Usize => &[Self::Float32, Self::Float64],
             Self::Float32 | Self::Float64 => &[
-                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
-                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
+                Self::Int8,
+                Self::Int16,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::Isize,
+                Self::UInt8,
+                Self::UInt16,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Usize,
                 Self::CanonicalFixedPoint,
             ],
             Self::Bool => &[Self::Float32, Self::Float64],
             Self::CanonicalBigInt => &[
-                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
-                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
-                Self::Float32, Self::Float64,
+                Self::Int8,
+                Self::Int16,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::Isize,
+                Self::UInt8,
+                Self::UInt16,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Usize,
+                Self::Float32,
+                Self::Float64,
             ],
             Self::CanonicalBigRat => &[
                 Self::CanonicalBigInt,
-                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
-                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
-                Self::Float32, Self::Float64, Self::CanonicalFixedPoint,
+                Self::Int8,
+                Self::Int16,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::Isize,
+                Self::UInt8,
+                Self::UInt16,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Usize,
+                Self::Float32,
+                Self::Float64,
+                Self::CanonicalFixedPoint,
             ],
             Self::CanonicalFixedPoint => &[
-                Self::Int8, Self::Int16, Self::Int32, Self::Int64, Self::Int128, Self::Isize,
-                Self::UInt8, Self::UInt16, Self::UInt32, Self::UInt64, Self::UInt128, Self::Usize,
-                Self::Float32, Self::Float64, Self::CanonicalBigInt,
+                Self::Int8,
+                Self::Int16,
+                Self::Int32,
+                Self::Int64,
+                Self::Int128,
+                Self::Isize,
+                Self::UInt8,
+                Self::UInt16,
+                Self::UInt32,
+                Self::UInt64,
+                Self::UInt128,
+                Self::Usize,
+                Self::Float32,
+                Self::Float64,
+                Self::CanonicalBigInt,
             ],
             Self::Str | Self::Other => &[],
         }
@@ -1326,7 +1385,7 @@ impl std::fmt::Display for RefinementPredicate {
                     }
                 }
                 write!(f, " {} {}", relation, rhs)
-            }
+            },
             RefinementPredicate::Relation { name, args, negated } => {
                 if *negated {
                     write!(f, "~")?;
@@ -1342,7 +1401,7 @@ impl std::fmt::Display for RefinementPredicate {
                     }
                 }
                 write!(f, ")")
-            }
+            },
             RefinementPredicate::Quantified { quantifier, var, domain, bound, body } => {
                 match quantifier {
                     Quantifier::ForAll => write!(f, "forall")?,
@@ -1356,21 +1415,33 @@ impl std::fmt::Display for RefinementPredicate {
                     write!(f, " in {}", d)?;
                 }
                 write!(f, ". ({})", body)
-            }
+            },
             RefinementPredicate::And(a, b) => write!(f, "({} && {})", a, b),
             RefinementPredicate::Or(a, b) => write!(f, "({} || {})", a, b),
             RefinementPredicate::Not(a) => write!(f, "~{}", a),
             RefinementPredicate::Implies(a, b) => write!(f, "({} => {})", a, b),
             RefinementPredicate::TermEq(a, b) => {
-                let a_str = match a { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
-                let b_str = match b { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
+                let a_str = match a {
+                    PredArg::Var(v) => v.to_string(),
+                    PredArg::Constant(c) => c.to_string(),
+                };
+                let b_str = match b {
+                    PredArg::Var(v) => v.to_string(),
+                    PredArg::Constant(c) => c.to_string(),
+                };
                 write!(f, "{} == {}", a_str, b_str)
-            }
+            },
             RefinementPredicate::TermNeq(a, b) => {
-                let a_str = match a { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
-                let b_str = match b { PredArg::Var(v) => v.to_string(), PredArg::Constant(c) => c.to_string() };
+                let a_str = match a {
+                    PredArg::Var(v) => v.to_string(),
+                    PredArg::Constant(c) => c.to_string(),
+                };
+                let b_str = match b {
+                    PredArg::Var(v) => v.to_string(),
+                    PredArg::Constant(c) => c.to_string(),
+                };
                 write!(f, "{} != {}", a_str, b_str)
-            }
+            },
         }
     }
 }
@@ -1418,7 +1489,7 @@ impl std::fmt::Display for ConstraintDomain {
                     write!(f, "{}", c)?;
                 }
                 write!(f, ")")
-            }
+            },
         }
     }
 }
@@ -1446,9 +1517,7 @@ impl RefinementPredicate {
             RefinementPredicate::Not(inner) => inner.classify(),
             RefinementPredicate::And(a, b)
             | RefinementPredicate::Or(a, b)
-            | RefinementPredicate::Implies(a, b) => {
-                Self::merge_domains(a.classify(), b.classify())
-            }
+            | RefinementPredicate::Implies(a, b) => Self::merge_domains(a.classify(), b.classify()),
         }
     }
 
@@ -1508,7 +1577,7 @@ impl RefinementPredicate {
                 for c in children {
                     Self::flatten_into(c, out);
                 }
-            }
+            },
             other => out.push(other.clone()),
         }
     }
@@ -1587,10 +1656,7 @@ pub enum SyncConstraint {
         boundary_pattern: String,
     },
     /// Track `auxiliary` stream positions relative to `primary` stream.
-    Track {
-        auxiliary: Ident,
-        primary: Ident,
-    },
+    Track { auxiliary: Ident, primary: Ident },
 }
 
 /// A tree structural invariant from the `tree_invariants { ... }` block.
@@ -1611,7 +1677,10 @@ pub struct TreeInvariant {
 #[derive(Debug, Clone)]
 pub enum TreeConstraintExpr {
     /// `forall children of Symbol { body }` / `∀ ↓ Symbol { body }`
-    ForallChildren { symbol: String, body: Box<TreeConstraintExpr> },
+    ForallChildren {
+        symbol: String,
+        body: Box<TreeConstraintExpr>,
+    },
     /// `exists child` / `∃ child`
     ExistsChild,
     /// `not expr` / `¬ expr`
@@ -2187,10 +2256,7 @@ fn parse_types(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTy
 ///
 /// Called after `Name =` has been consumed. The `name` is the refinement
 /// type's identifier (e.g., `PosInt`).
-fn parse_refinement_type_body(
-    input: ParseStream,
-    name: Ident,
-) -> SynResult<RefinementTypeDef> {
+fn parse_refinement_type_body(input: ParseStream, name: Ident) -> SynResult<RefinementTypeDef> {
     let brace_content;
     syn::braced!(brace_content in input);
 
@@ -2203,12 +2269,7 @@ fn parse_refinement_type_body(
     brace_content.parse::<Token![|]>()?;
     let predicate = parse_refinement_pred_implies(&brace_content)?;
 
-    Ok(RefinementTypeDef {
-        name,
-        var,
-        base_type,
-        predicate,
-    })
+    Ok(RefinementTypeDef { name, var, base_type, predicate })
 }
 
 // ── Refinement predicate parser (operator-precedence climbing) ──────────────
@@ -2364,11 +2425,7 @@ fn parse_refinement_pred_atom(input: ParseStream) -> SynResult<RefinementPredica
                 paren_content.parse::<Token![,]>()?;
             }
         }
-        return Ok(RefinementPredicate::Relation {
-            name: ident,
-            args,
-            negated: false,
-        });
+        return Ok(RefinementPredicate::Relation { name: ident, args, negated: false });
     }
 
     // Linear arithmetic or simple variable comparison
@@ -2489,7 +2546,9 @@ fn parse_linear_rhs(input: ParseStream) -> SynResult<i64> {
 }
 
 /// Public wrapper for `parse_types` for use by `fragment.rs`.
-pub fn parse_types_public(input: ParseStream) -> SynResult<(Vec<LangType>, Vec<RefinementTypeDef>)> {
+pub fn parse_types_public(
+    input: ParseStream,
+) -> SynResult<(Vec<LangType>, Vec<RefinementTypeDef>)> {
     parse_types(input)
 }
 
@@ -2547,8 +2606,7 @@ fn parse_regex_pattern(input: ParseStream) -> SynResult<String> {
         }
 
         let tt: proc_macro2::TokenTree = input.parse()?;
-        prev_was_backslash =
-            matches!(&tt, proc_macro2::TokenTree::Punct(p) if p.as_char() == '\\');
+        prev_was_backslash = matches!(&tt, proc_macro2::TokenTree::Punct(p) if p.as_char() == '\\');
         tokens.push(tt);
     }
 
@@ -2724,11 +2782,7 @@ fn parse_sync_block(input: ParseStream) -> SynResult<Vec<SyncConstraint>> {
                 let boundary_pattern = parse_pattern_spec(&content)?;
                 let _ = content.parse::<Token![;]>()?;
 
-                constraints.push(SyncConstraint::Align {
-                    stream_a,
-                    stream_b,
-                    boundary_pattern,
-                });
+                constraints.push(SyncConstraint::Align { stream_a, stream_b, boundary_pattern });
             },
             "track" => {
                 let args;
@@ -2743,10 +2797,7 @@ fn parse_sync_block(input: ParseStream) -> SynResult<Vec<SyncConstraint>> {
             _ => {
                 return Err(syn::Error::new(
                     kw.span(),
-                    format!(
-                        "unknown sync constraint '{}'; expected 'align' or 'track'",
-                        kw
-                    ),
+                    format!("unknown sync constraint '{}'; expected 'align' or 'track'", kw),
                 ));
             },
         }
@@ -2961,9 +3012,9 @@ fn parse_tokens(
                 },
             }
         } else {
-            return Err(content.error(
-                "expected token definition, 'mode', 'sync', or 'tree_invariants'",
-            ));
+            return Err(
+                content.error("expected token definition, 'mode', 'sync', or 'tree_invariants'")
+            );
         }
     }
 
@@ -2976,9 +3027,7 @@ fn parse_tokens(
 }
 
 /// Public wrapper for `parse_tokens` for use by `fragment.rs`.
-pub fn parse_tokens_public(
-    input: ParseStream,
-) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>)> {
+pub fn parse_tokens_public(input: ParseStream) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>)> {
     let (token_defs, mode_defs, _, _) = parse_tokens(input)?;
     Ok((token_defs, mode_defs))
 }
@@ -3119,7 +3168,7 @@ fn parse_guards(input: ParseStream) -> SynResult<GuardConfig> {
                     ));
                 }
                 connectives = Some(parse_connectives_block(&content)?);
-            }
+            },
             "theories" => {
                 if !theories.is_empty() {
                     return Err(syn::Error::new(
@@ -3128,7 +3177,7 @@ fn parse_guards(input: ParseStream) -> SynResult<GuardConfig> {
                     ));
                 }
                 theories = parse_theories_block(&content)?;
-            }
+            },
             "channels" => {
                 if channels.is_some() {
                     return Err(syn::Error::new(
@@ -3137,12 +3186,12 @@ fn parse_guards(input: ParseStream) -> SynResult<GuardConfig> {
                     ));
                 }
                 channels = Some(parse_channels_block(&content)?);
-            }
+            },
             _ => {
                 // Direct item: builtin predicate declaration
                 builtin_predicates.push(parse_builtin_predicate(&content)?);
                 saw_explicit_predicates = true;
-            }
+            },
         }
     }
 
@@ -3202,12 +3251,7 @@ fn parse_builtin_predicate(input: ParseStream) -> SynResult<BuiltinPredicate> {
     // Required `;` terminator
     let _ = input.parse::<Token![;]>()?;
 
-    Ok(BuiltinPredicate {
-        name,
-        params,
-        syntax_forms,
-        annotations,
-    })
+    Ok(BuiltinPredicate { name, params, syntax_forms, annotations })
 }
 
 /// Parse the parameter list of a built-in predicate.
@@ -3237,11 +3281,7 @@ fn parse_predicate_params(input: ParseStream) -> SynResult<Vec<PredicateParam>> 
         // Optional quantifier suffix
         let quantifier = parse_optional_param_quantifier(input)?;
 
-        params.push(PredicateParam {
-            name,
-            ty,
-            quantifier,
-        });
+        params.push(PredicateParam { name, ty, quantifier });
 
         // Continue if comma; otherwise stop
         if input.peek(Token![,]) {
@@ -3311,9 +3351,7 @@ fn parse_optional_param_quantifier(input: ParseStream) -> SynResult<Option<Param
 
 /// Parse a single syntax form for a built-in predicate. Stops at `|` (next
 /// alternative form), `@` (annotations), or `;` (terminator).
-fn parse_predicate_syntax_form(
-    input: ParseStream,
-) -> SynResult<Vec<super::grammar::SyntaxExpr>> {
+fn parse_predicate_syntax_form(input: ParseStream) -> SynResult<Vec<super::grammar::SyntaxExpr>> {
     let mut exprs = Vec::new();
     while !input.is_empty()
         && !input.peek(Token![;])
@@ -3347,24 +3385,21 @@ fn parse_annotations(input: ParseStream) -> SynResult<PredicateAnnotations> {
                 let lit = arg.parse::<syn::LitFloat>()?;
                 let value: f64 = lit.base10_parse()?;
                 if !(0.0..=1.0).contains(&value) {
-                    return Err(syn::Error::new(
-                        lit.span(),
-                        "selectivity must be in [0.0, 1.0]",
-                    ));
+                    return Err(syn::Error::new(lit.span(), "selectivity must be in [0.0, 1.0]"));
                 }
                 annotations.selectivity = Some(value);
-            }
+            },
             "cost" => {
                 let lit = arg.parse::<syn::LitInt>()?;
                 let value: u32 = lit.base10_parse()?;
                 annotations.cost = Some(value);
-            }
+            },
             other => {
                 return Err(syn::Error::new(
                     name_ident.span(),
                     format!("unknown annotation `{}` (expected `selectivity` or `cost`)", other),
                 ));
-            }
+            },
         }
 
         if inner.peek(Token![,]) {
@@ -3451,11 +3486,7 @@ fn parse_theories_block(input: ParseStream) -> SynResult<Vec<TheoryRegistration>
 
         let _ = content.parse::<Token![;]>()?;
 
-        regs.push(TheoryRegistration {
-            name,
-            theory_type,
-            handled_types,
-        });
+        regs.push(TheoryRegistration { name, theory_type, handled_types });
     }
 
     Ok(regs)
@@ -3481,7 +3512,7 @@ fn parse_channels_block(input: ParseStream) -> SynResult<ChannelConfig> {
                 let category = content.parse::<Ident>()?;
                 let _ = content.parse::<Token![;]>()?;
                 channel_categories.push(ChannelDecl { category });
-            }
+            },
             "join" => {
                 let label = content.parse::<Ident>()?;
                 let inner;
@@ -3491,36 +3522,24 @@ fn parse_channels_block(input: ParseStream) -> SynResult<ChannelConfig> {
                     let param_name = inner.parse::<Ident>()?;
                     let _ = inner.parse::<Token![:]>()?;
                     let category = inner.parse::<Ident>()?;
-                    channel_params.push(ChannelParam {
-                        param_name,
-                        category,
-                    });
+                    channel_params.push(ChannelParam { param_name, category });
                     if inner.peek(Token![,]) {
                         let _ = inner.parse::<Token![,]>()?;
                     }
                 }
                 let _ = content.parse::<Token![;]>()?;
-                join_patterns.push(JoinPatternDecl {
-                    label,
-                    channel_params,
-                });
-            }
+                join_patterns.push(JoinPatternDecl { label, channel_params });
+            },
             other => {
                 return Err(syn::Error::new(
                     item_kw.span(),
-                    format!(
-                        "unknown channels item `{}` (expected `channel` or `join`)",
-                        other
-                    ),
+                    format!("unknown channels item `{}` (expected `channel` or `join`)", other),
                 ));
-            }
+            },
         }
     }
 
-    Ok(ChannelConfig {
-        channel_categories,
-        join_patterns,
-    })
+    Ok(ChannelConfig { channel_categories, join_patterns })
 }
 
 fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue>> {
@@ -4793,7 +4812,11 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
             // ascent_syntax_export does not surface relation-level doc
             // comments. Future: extend ascent_syntax_export to capture
             // and forward `#[doc = "..."]` attributes per relation.
-            RelationDecl { name: rel.name, param_types, doc_comment: None }
+            RelationDecl {
+                name: rel.name,
+                param_types,
+                doc_comment: None,
+            }
         })
         .collect();
 
@@ -4914,9 +4937,13 @@ mod guards_parse_tests {
             },
             terms { }
         });
-        let preds = lang.guard_config
-            .as_ref().expect("present")
-            .builtin_predicates.as_ref().expect("explicit");
+        let preds = lang
+            .guard_config
+            .as_ref()
+            .expect("present")
+            .builtin_predicates
+            .as_ref()
+            .expect("explicit");
         assert_eq!(preds.len(), 3);
         assert_eq!(preds[0].params[0].quantifier, Some(ParamQuantifier::OneOrMore));
         assert_eq!(preds[1].params[0].quantifier, Some(ParamQuantifier::ZeroOrMore));
@@ -4924,7 +4951,7 @@ mod guards_parse_tests {
             Some(ParamQuantifier::Range { min, max }) => {
                 assert_eq!(*min, 2);
                 assert_eq!(*max, Some(5));
-            }
+            },
             other => panic!("expected Range, got {:?}", other),
         }
     }
@@ -4940,9 +4967,13 @@ mod guards_parse_tests {
             },
             terms { }
         });
-        let preds = lang.guard_config
-            .as_ref().expect("present")
-            .builtin_predicates.as_ref().expect("explicit");
+        let preds = lang
+            .guard_config
+            .as_ref()
+            .expect("present")
+            .builtin_predicates
+            .as_ref()
+            .expect("explicit");
         match &preds[0].params[0].ty {
             Some(ParamType::Single(id)) => assert_eq!(id.to_string(), "Int"),
             other => panic!("expected Single(Int), got {:?}", other),
@@ -4952,7 +4983,7 @@ mod guards_parse_tests {
                 assert_eq!(ids.len(), 2);
                 assert_eq!(ids[0].to_string(), "Int");
                 assert_eq!(ids[1].to_string(), "Float");
-            }
+            },
             other => panic!("expected Union, got {:?}", other),
         }
     }
@@ -4971,9 +5002,13 @@ mod guards_parse_tests {
             },
             terms { }
         });
-        let conns = lang.guard_config
-            .as_ref().expect("present")
-            .connectives.as_ref().expect("present");
+        let conns = lang
+            .guard_config
+            .as_ref()
+            .expect("present")
+            .connectives
+            .as_ref()
+            .expect("present");
         assert_eq!(conns.len(), 3);
         assert_eq!(conns[0].role, ConnectiveRole::And);
         assert_eq!(conns[0].keywords, vec!["and".to_string(), "∧".to_string()]);
@@ -4998,10 +5033,7 @@ mod guards_parse_tests {
         let theories = &lang.guard_config.as_ref().expect("present").theories;
         assert_eq!(theories.len(), 3);
         assert_eq!(theories[0].name.to_string(), "arithmetic");
-        assert_eq!(
-            theories[0].handled_types.as_ref().map(|cs| cs.len()),
-            Some(1)
-        );
+        assert_eq!(theories[0].handled_types.as_ref().map(|cs| cs.len()), Some(1));
         assert!(theories[2].handled_types.is_none(), "no `for [...]` → None");
     }
 
@@ -5020,9 +5052,13 @@ mod guards_parse_tests {
             },
             terms { }
         });
-        let ch = lang.guard_config
-            .as_ref().expect("present")
-            .channels.as_ref().expect("present");
+        let ch = lang
+            .guard_config
+            .as_ref()
+            .expect("present")
+            .channels
+            .as_ref()
+            .expect("present");
         assert_eq!(ch.channel_categories.len(), 2);
         assert_eq!(ch.join_patterns.len(), 2);
         assert_eq!(ch.join_patterns[1].channel_params.len(), 3);
@@ -5055,7 +5091,11 @@ mod guards_parse_tests {
         assert_eq!(gc.connectives.as_ref().expect("present").len(), 2);
         assert_eq!(gc.theories.len(), 1);
         assert_eq!(
-            gc.channels.as_ref().expect("present").channel_categories.len(),
+            gc.channels
+                .as_ref()
+                .expect("present")
+                .channel_categories
+                .len(),
             1
         );
     }
@@ -5234,10 +5274,22 @@ mod guards_parse_tests {
     #[test]
     fn cleanup_d_full_map_accepts_all_listed_tokens() {
         let decls = vec![
-            ConnectiveDecl { role: ConnectiveRole::And, keywords: vec!["&&".into()] },
-            ConnectiveDecl { role: ConnectiveRole::Or, keywords: vec!["||".into()] },
-            ConnectiveDecl { role: ConnectiveRole::Not, keywords: vec!["~".into()] },
-            ConnectiveDecl { role: ConnectiveRole::Entails, keywords: vec!["=>".into()] },
+            ConnectiveDecl {
+                role: ConnectiveRole::And,
+                keywords: vec!["&&".into()],
+            },
+            ConnectiveDecl {
+                role: ConnectiveRole::Or,
+                keywords: vec!["||".into()],
+            },
+            ConnectiveDecl {
+                role: ConnectiveRole::Not,
+                keywords: vec!["~".into()],
+            },
+            ConnectiveDecl {
+                role: ConnectiveRole::Entails,
+                keywords: vec!["=>".into()],
+            },
         ];
         let map = ConnectiveMap::from_decls(&decls).expect("valid");
         let _guard = ConnectiveMapGuard::install(Some(map));
@@ -5299,15 +5351,6 @@ mod guards_parse_tests {
             ConnectiveRole::Forall,
             ConnectiveRole::Exists,
         ])
-    }
-
-    /// Generate a `ConnectiveDecl` with a single unique keyword based on the
-    /// role's index, so two distinct roles always have distinct keywords.
-    fn arb_decl_unique_kw(i: usize) -> impl Strategy<Value = ConnectiveDecl> {
-        arb_role().prop_map(move |role| ConnectiveDecl {
-            role,
-            keywords: vec![format!("kw_{}", i)],
-        })
     }
 
     proptest! {

@@ -167,21 +167,21 @@ impl PatternTerm {
                 for arg in args {
                     arg.collect_constructor_labels(labels);
                 }
-            }
+            },
             PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
                 body.collect_constructor_labels(labels);
-            }
+            },
             PatternTerm::Subst { term, replacement, .. } => {
                 term.collect_constructor_labels(labels);
                 replacement.collect_constructor_labels(labels);
-            }
+            },
             PatternTerm::MultiSubst { scope, replacements } => {
                 scope.collect_constructor_labels(labels);
                 for r in replacements {
                     r.collect_constructor_labels(labels);
                 }
-            }
-            PatternTerm::Var(_) => {}
+            },
+            PatternTerm::Var(_) => {},
         }
     }
 
@@ -230,15 +230,15 @@ impl Pattern {
                     elem.collect_constructor_labels(labels);
                 }
                 // `rest` is an Ident (variable binding), not a constructor — skip.
-            }
+            },
             Pattern::Map { collection, body, .. } => {
                 collection.collect_constructor_labels(labels);
                 body.collect_constructor_labels(labels);
-            }
+            },
             Pattern::Zip { first, second } => {
                 first.collect_constructor_labels(labels);
                 second.collect_constructor_labels(labels);
-            }
+            },
         }
     }
 
@@ -511,7 +511,9 @@ impl AscentClauses {
         // If no clauses have been pushed yet (clause index 0), the variable
         // is available from the start (bound by the initial relation lookup).
         let clause_idx = self.clauses.len();
-        self.binding_clause_index.entry(name.clone()).or_insert(clause_idx);
+        self.binding_clause_index
+            .entry(name.clone())
+            .or_insert(clause_idx);
         self.bindings.insert(name, binding);
     }
 }
@@ -1034,8 +1036,9 @@ impl PatternTerm {
                         let eq_rel = format_ident!("eq_{}", category.to_string().to_lowercase());
                         // F1: Eqrel dereference fix — bind fresh temporaries from the
                         // eqrel join to handle &&T vs &T in ascent_par! mode.
-                        let eq_tmp_a = format_ident!("__eqpat_a_{}", var_name);
-                        let eq_tmp_b = format_ident!("__eqpat_b_{}", var_name);
+                        let eq_tmp_suffix = var_name.to_string().to_ascii_lowercase();
+                        let eq_tmp_a = format_ident!("__eqpat_a_{}", eq_tmp_suffix);
+                        let eq_tmp_b = format_ident!("__eqpat_b_{}", eq_tmp_suffix);
                         result.clauses.push(quote! {
                             #eq_rel(#eq_tmp_a, #eq_tmp_b),
                             if #existing == #eq_tmp_a.clone(),
@@ -1785,7 +1788,7 @@ impl Pattern {
         let is_vec =
             matches!(collection, Pattern::Collection { coll_type: Some(CollectionType::Vec), .. });
 
-        // Get a default lang_type for iteration variables (use first binding's type or a placeholder)
+        // Get a default lang_type for iteration variables from the first binding, or `Term`.
         let default_lang_type = bindings
             .values()
             .next()
@@ -2434,7 +2437,7 @@ fn try_detect_cancellation(
     let (outer_ctor, inner_pattern) = match structured {
         Pattern::Term(PatternTerm::Apply { constructor, args }) if args.len() == 1 => {
             (constructor, &args[0])
-        }
+        },
         _ => return None,
     };
 
@@ -2442,7 +2445,7 @@ fn try_detect_cancellation(
     let (inner_ctor, innermost_var) = match inner_pattern {
         Pattern::Term(PatternTerm::Apply { constructor, args }) if args.len() == 1 => {
             (constructor, &args[0])
-        }
+        },
         _ => return None,
     };
 
@@ -2456,14 +2459,8 @@ fn try_detect_cancellation(
     }
 
     // Look up both constructors in language.terms
-    let outer_rule = language
-        .terms
-        .iter()
-        .find(|r| r.label == *outer_ctor)?;
-    let inner_rule = language
-        .terms
-        .iter()
-        .find(|r| r.label == *inner_ctor)?;
+    let outer_rule = language.terms.iter().find(|r| r.label == *outer_ctor)?;
+    let inner_rule = language.terms.iter().find(|r| r.label == *inner_ctor)?;
 
     // Both must have exactly 1 non-terminal field and no binders
     let outer_nt_count = outer_rule
@@ -2497,7 +2494,9 @@ fn try_detect_cancellation(
 ///
 /// Returns `(pairs, suppressed_indices)` where `suppressed_indices` is the set of
 /// equation indices to suppress from `eqrel` generation.
-pub fn detect_cancellation_pairs(language: &LanguageDef) -> (Vec<CancellationPair>, HashSet<usize>) {
+pub fn detect_cancellation_pairs(
+    language: &LanguageDef,
+) -> (Vec<CancellationPair>, HashSet<usize>) {
     let mut pairs = Vec::new();
     let mut suppressed = HashSet::new();
     for (idx, eq) in language.equations.iter().enumerate() {

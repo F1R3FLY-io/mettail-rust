@@ -71,7 +71,7 @@ fn sigb_crosswrap_trace() -> bool {
 /// cache itself still keys on full DispatchKey.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DispatchKey {
-    pub pos: u32,
+    pub pos: usize,
     pub source_src_idx: u16,
     pub inner_cur_bp: u8,
     /// M4 (2026-05-30, re-landed): the WRAPPING rule's category +
@@ -104,7 +104,7 @@ impl DispatchKey {
         wrap_rule: u16,
     ) -> Self {
         DispatchKey {
-            pos: pos as u32,
+            pos,
             source_src_idx,
             inner_cur_bp,
             wrap_cat,
@@ -155,10 +155,7 @@ pub struct EquivKey {
 impl EquivKey {
     #[inline(always)]
     pub fn new(source_src_idx: u16, inner_cur_bp: u8) -> Self {
-        EquivKey {
-            source_src_idx,
-            inner_cur_bp,
-        }
+        EquivKey { source_src_idx, inner_cur_bp }
     }
 }
 
@@ -253,8 +250,8 @@ pub enum DispatchCacheEntry<W: SemiringRef> {
     /// produces N revived cursors).
     Resolved {
         symbol_id: SppfId,
-        hi_pos: u32,
-        pos_at_dispatch: u32,
+        hi_pos: usize,
+        pos_at_dispatch: usize,
         /// Stage 1.5: ALL worker snapshots, one per packing. For
         /// single-packing sub-parses this Vec has length 1 (collapses
         /// to Stage 1.3.1 behavior).
@@ -301,10 +298,7 @@ impl<W: SemiringRef> std::fmt::Debug for DispatchCacheEntry<W> {
                 .field("cohort_size", cohort_size)
                 .field("pending_members_len", &pending_members.len())
                 .field("worker_snapshots_len", &worker_snapshots.len())
-                .field(
-                    "deferred_continuations_len",
-                    &deferred_continuations.len(),
-                )
+                .field("deferred_continuations_len", &deferred_continuations.len())
                 .finish(),
             DispatchCacheEntry::Resolved {
                 symbol_id,
@@ -375,10 +369,10 @@ pub struct CrossWrapSpliceJob<W: SemiringRef> {
     /// `R.symbol_id` — the resolved sibling's full-body SPPF symbol.
     pub symbol_id: SppfId,
     /// `R.hi_pos` — the resolved sibling's body end position.
-    pub hi_pos: u32,
+    pub hi_pos: usize,
     /// `R.pos_at_dispatch` — the shared dispatch-site position
     /// (== `K_sib.pos` by the eligibility predicate).
-    pub pos_at_dispatch: u32,
+    pub pos_at_dispatch: usize,
     /// Shared dispatch source category (== `resolved_key.source_src_idx`
     /// == `K_sib.source_src_idx`, since `equiv()` matches).
     pub source_src_idx: u16,
@@ -516,6 +510,15 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         self.crosswrap_splices_total = 0;
     }
 
+    /// Clear token/SPPF-dependent entry state after a live token-source
+    /// mutation while preserving cumulative diagnostics. Unlike `clear`,
+    /// this is not a parse-boundary reset.
+    #[inline(always)]
+    pub fn clear_entries_preserving_diagnostics(&mut self) {
+        self.entries.clear();
+        self.crosswrap_drained.clear();
+    }
+
     /// Phase F.13 H12 Stage 1.5 — register a cross-cat-projection
     /// dispatch. Returns the outcome (ResolvedHit clones snapshots).
     ///
@@ -523,11 +526,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// cumulative weight at the moment of register (= parent.weight ×
     /// branch.weight at the Fork-arm allocation site). Stashed on the
     /// InFlight entry for later cohort revive weight delta computation.
-    pub fn register(
-        &mut self,
-        key: DispatchKey,
-        worker_pre_weight: W,
-    ) -> RegisterOutcome<W> {
+    pub fn register(&mut self, key: DispatchKey, worker_pre_weight: W) -> RegisterOutcome<W> {
         self.registrations_total += 1;
         match self.entries.get_mut(&key) {
             None => {
@@ -544,12 +543,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     },
                 );
                 RegisterOutcome::WorkerInserted
-            }
+            },
             Some(DispatchCacheEntry::InFlight { cohort_size, .. }) => {
                 *cohort_size += 1;
                 self.inflight_collisions_total += 1;
                 RegisterOutcome::InflightCollision
-            }
+            },
             Some(DispatchCacheEntry::Resolved {
                 symbol_id,
                 hi_pos,
@@ -564,11 +563,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     pos_at_dispatch: *pos_at_dispatch,
                     worker_snapshots: worker_snapshots.clone(),
                 }
-            }
+            },
             Some(DispatchCacheEntry::Failed) => {
                 self.failed_hits_total += 1;
                 RegisterOutcome::FailedHit
-            }
+            },
         }
     }
 
@@ -582,8 +581,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         &mut self,
         key: DispatchKey,
         symbol_id: SppfId,
-        hi_pos: u32,
-        pos_at_dispatch: u32,
+        hi_pos: usize,
+        pos_at_dispatch: usize,
         snap: WorkerSnapshot<W>,
     ) -> ResolveOutcome {
         let entry = match self.entries.get_mut(&key) {
@@ -607,8 +606,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 // Phase F.13 chain_10000 Exp 9 S1.a (2026-05-26):
                 // transfer deferred continuations through the
                 // InFlight → Resolved transition verbatim.
-                let preserved_continuations =
-                    std::mem::take(deferred_continuations);
+                let preserved_continuations = std::mem::take(deferred_continuations);
                 *entry = DispatchCacheEntry::Resolved {
                     symbol_id,
                     hi_pos,
@@ -622,7 +620,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 };
                 self.resolved_total += 1;
                 ResolveOutcome::FirstResolve
-            }
+            },
             DispatchCacheEntry::Resolved { worker_snapshots, .. } => {
                 // Memory cap: refuse further snapshots beyond cap.
                 // Pathological grammars with > 8 packings per Symbol
@@ -653,7 +651,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     self.snapshot_appends_total += 1;
                 }
                 ResolveOutcome::SnapshotAppended
-            }
+            },
             DispatchCacheEntry::Failed => ResolveOutcome::NoOp,
         }
     }
@@ -691,7 +689,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     pub fn take_pending_for_drain(
         &mut self,
         key: &DispatchKey,
-    ) -> Option<(SppfId, u32, u32, Vec<WorkerSnapshot<W>>, Vec<CohortMember<W>>)> {
+    ) -> Option<(SppfId, usize, usize, Vec<WorkerSnapshot<W>>, Vec<CohortMember<W>>)> {
         let entry = self.entries.get_mut(key)?;
         match entry {
             DispatchCacheEntry::Resolved {
@@ -727,9 +725,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 if *snapshots_drained >= worker_snapshots.len() {
                     return None;
                 }
-                let new_snaps: Vec<WorkerSnapshot<W>> = worker_snapshots
-                    [*snapshots_drained..]
-                    .to_vec();
+                let new_snaps: Vec<WorkerSnapshot<W>> =
+                    worker_snapshots[*snapshots_drained..].to_vec();
                 *snapshots_drained = worker_snapshots.len();
                 let shell = cohort_shell.as_ref().expect(
                     "L2c invariant: cohort_shell is Some whenever pending_members is non-empty",
@@ -737,20 +734,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 let materialized: Vec<CohortMember<W>> = pending_members
                     .iter()
                     .map(|state| CohortMember {
-                        return_frame: crate::cohort_lazy::materialize_branch_cursor(
-                            shell, state,
-                        ),
+                        return_frame: crate::cohort_lazy::materialize_branch_cursor(shell, state),
                         weight_at_dispatch: state.weight_at_dispatch.clone(),
                     })
                     .collect();
-                Some((
-                    *symbol_id,
-                    *hi_pos,
-                    *pos_at_dispatch,
-                    new_snaps,
-                    materialized,
-                ))
-            }
+                Some((*symbol_id, *hi_pos, *pos_at_dispatch, new_snaps, materialized))
+            },
             _ => None,
         }
     }
@@ -806,8 +795,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         //    `self.entries` immutably without aliasing.
         let (r_symbol_id, r_hi_pos, r_pos_at_dispatch, r_snaps): (
             SppfId,
-            u32,
-            u32,
+            usize,
+            usize,
             Vec<WorkerSnapshot<W>>,
         ) = match self.entries.get(resolved_key) {
             Some(DispatchCacheEntry::Resolved {
@@ -830,7 +819,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     return Vec::new();
                 }
                 (*symbol_id, *hi_pos, *pos_at_dispatch, live)
-            }
+            },
             _ => return Vec::new(),
         };
         let r_equiv = resolved_key.equiv();
@@ -868,11 +857,11 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                 &Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
                 &Vec<crate::cohort_lazy::CohortMemberState<W>>,
             ) = match entry {
-                DispatchCacheEntry::InFlight {
-                    cohort_shell,
-                    pending_members,
-                    ..
-                } if !pending_members.is_empty() => (cohort_shell, pending_members),
+                DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. }
+                    if !pending_members.is_empty() =>
+                {
+                    (cohort_shell, pending_members)
+                },
                 DispatchCacheEntry::Resolved {
                     hi_pos: sib_hi,
                     cohort_shell,
@@ -880,7 +869,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     ..
                 } if *sib_hi < r_hi_pos && !pending_members.is_empty() => {
                     (cohort_shell, pending_members)
-                }
+                },
                 // Clause-4 FAIL (or empty members). This is the EXCLUDED
                 // branch — most importantly the PARENS-INNER steal: a
                 // sibling that passed clauses 1-3 but is self-`Resolved` at
@@ -891,14 +880,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                     if sigb_crosswrap_trace() {
                         let (st, sib_hi_dbg, mem_dbg) = match other {
                             DispatchCacheEntry::InFlight { pending_members, .. } => {
-                                ("InFlight(empty)", u32::MAX, pending_members.len())
-                            }
+                                ("InFlight(empty)", usize::MAX, pending_members.len())
+                            },
                             DispatchCacheEntry::Resolved {
-                                hi_pos: sh,
-                                pending_members,
-                                ..
+                                hi_pos: sh, pending_members, ..
                             } => ("Resolved(>=hi)", *sh, pending_members.len()),
-                            DispatchCacheEntry::Failed => ("Failed", u32::MAX, 0),
+                            DispatchCacheEntry::Failed => ("Failed", usize::MAX, 0),
                         };
                         eprintln!(
                             "[SIGB_CROSSWRAP] EXCLUDED K_sib={{pos:{},src:{},bp:{},wrap:({},{})}} \
@@ -916,7 +903,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         );
                     }
                     continue;
-                }
+                },
             };
             let shell = match shell_opt {
                 Some(s) => s,
@@ -928,9 +915,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             let members: Vec<CohortMember<W>> = states
                 .iter()
                 .map(|state| CohortMember {
-                    return_frame: crate::cohort_lazy::materialize_branch_cursor(
-                        shell, state,
-                    ),
+                    return_frame: crate::cohort_lazy::materialize_branch_cursor(shell, state),
                     weight_at_dispatch: state.weight_at_dispatch.clone(),
                 })
                 .collect();
@@ -948,7 +933,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         } else {
                             "Resolved(>=)"
                         }
-                    }
+                    },
                     DispatchCacheEntry::Failed => "Failed",
                 };
                 eprintln!(
@@ -1065,8 +1050,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         //    need so the sibling scan can borrow `self.entries` immutably.
         struct ResolvedBody<W: SemiringRef> {
             symbol_id: SppfId,
-            span_lo: u32,
-            span_hi: u32,
+            span_lo: usize,
+            span_hi: usize,
             body_cat: u16,
             equiv: EquivKey,
             snaps: Vec<WorkerSnapshot<W>>,
@@ -1074,11 +1059,9 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         let mut bodies: Vec<ResolvedBody<W>> = Vec::new();
         for (r_key, r_entry) in self.entries.iter() {
             let (symbol_id, worker_snapshots) = match r_entry {
-                DispatchCacheEntry::Resolved {
-                    symbol_id,
-                    worker_snapshots,
-                    ..
-                } => (*symbol_id, worker_snapshots),
+                DispatchCacheEntry::Resolved { symbol_id, worker_snapshots, .. } => {
+                    (*symbol_id, worker_snapshots)
+                },
                 _ => continue,
             };
             // Live (non-terminal) snapshots only — a terminal worker yields no
@@ -1098,15 +1081,15 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             };
             // body_cat = R.symbol_id's category_src_idx (non_terminal_tag).
             let body_cat = match sppf.node(symbol_id) {
-                Some(crate::sppf::SppfNode::Symbol {
-                    non_terminal_tag, ..
-                }) => *non_terminal_tag as u16,
+                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                    *non_terminal_tag as u16
+                },
                 _ => continue,
             };
             bodies.push(ResolvedBody {
                 symbol_id,
-                span_lo,
-                span_hi,
+                span_lo: span_lo as usize,
+                span_hi: span_hi as usize,
                 body_cat,
                 equiv: r_key.equiv(),
                 snaps: live,
@@ -1134,13 +1117,13 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             let (shell_opt, states, sib_hi_opt): (
                 &Option<std::sync::Arc<crate::cohort_lazy::CohortShell<W>>>,
                 &Vec<crate::cohort_lazy::CohortMemberState<W>>,
-                Option<u32>,
+                Option<usize>,
             ) = match entry {
-                DispatchCacheEntry::InFlight {
-                    cohort_shell,
-                    pending_members,
-                    ..
-                } if !pending_members.is_empty() => (cohort_shell, pending_members, None),
+                DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. }
+                    if !pending_members.is_empty() =>
+                {
+                    (cohort_shell, pending_members, None)
+                },
                 DispatchCacheEntry::Resolved {
                     hi_pos: sib_hi,
                     cohort_shell,
@@ -1316,9 +1299,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             .iter()
             .filter_map(|(k, entry)| match entry {
                 DispatchCacheEntry::InFlight {
-                    cohort_shell: Some(_),
-                    pending_members,
-                    ..
+                    cohort_shell: Some(_), pending_members, ..
                 } if !pending_members.is_empty() => Some(k.clone()),
                 _ => None,
             })
@@ -1334,7 +1315,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             .filter_map(|k| match self.entries.get(k) {
                 Some(DispatchCacheEntry::InFlight { pending_members, .. }) => {
                     Some(pending_members.len())
-                }
+                },
                 _ => None,
             })
             .sum();
@@ -1345,11 +1326,8 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         for key in orphan_keys {
             // `remove` drops the stale InFlight entry so re-registration
             // of a re-injected orphan returns `WorkerInserted`.
-            if let Some(DispatchCacheEntry::InFlight {
-                cohort_shell,
-                pending_members,
-                ..
-            }) = self.entries.remove(&key)
+            if let Some(DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. }) =
+                self.entries.remove(&key)
             {
                 let shell = cohort_shell.expect(
                     "drain_orphaned_inflight_members: cohort_shell is Some by the \
@@ -1389,12 +1367,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         let mut inflight_orphans: u64 = 0;
         let failed_orphans: u64 = 0;
         for entry in self.entries.values() {
-            if let DispatchCacheEntry::InFlight {
-                cohort_shell,
-                pending_members,
-                ..
-            } = entry
-            {
+            if let DispatchCacheEntry::InFlight { cohort_shell, pending_members, .. } = entry {
                 // Only members with a materializable shell are revivable.
                 // (pause_cohort_member always sets the shell before
                 // pushing a member, so a non-empty pending_members
@@ -1417,14 +1390,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// `WorkerSnapshot::worker_pre_dispatch_weight`.
     pub fn read_worker_pre(&self, key: &DispatchKey) -> Option<W> {
         match self.entries.get(key)? {
-            DispatchCacheEntry::InFlight {
-                worker_pre_dispatch_weight,
-                ..
-            } => Some(worker_pre_dispatch_weight.clone()),
-            DispatchCacheEntry::Resolved {
-                worker_pre_dispatch_weight,
-                ..
-            } => Some(worker_pre_dispatch_weight.clone()),
+            DispatchCacheEntry::InFlight { worker_pre_dispatch_weight, .. } => {
+                Some(worker_pre_dispatch_weight.clone())
+            },
+            DispatchCacheEntry::Resolved { worker_pre_dispatch_weight, .. } => {
+                Some(worker_pre_dispatch_weight.clone())
+            },
             DispatchCacheEntry::Failed => None,
         }
     }
@@ -1438,11 +1409,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// `pending_cohort.len() >= MAX_PENDING_COHORT_PER_KEY`. The
     /// caller falls through to per-cursor sub-parse (no correctness
     /// loss; just no sharing for the overflow members).
-    pub fn pause_cohort_member(
-        &mut self,
-        key: DispatchKey,
-        member: CohortMember<W>,
-    ) -> bool {
+    pub fn pause_cohort_member(&mut self, key: DispatchKey, member: CohortMember<W>) -> bool {
         // Phase F.13 Stage L6 (2026-05-25): cap raised from 4 to 16
         // (matching MAX_WORKER_SNAPSHOTS_PER_KEY). cap=256 empirically
         // rejected — chain_10000 grew past 22 GB at 2:54 (near
@@ -1472,19 +1439,17 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         ),
                     ));
                 }
-                pending_members.push(
-                    crate::cohort_lazy::CohortMemberState::from_branch_cursor(
-                        &member.return_frame,
-                        member.weight_at_dispatch.clone(),
-                    ),
-                );
+                pending_members.push(crate::cohort_lazy::CohortMemberState::from_branch_cursor(
+                    &member.return_frame,
+                    member.weight_at_dispatch.clone(),
+                ));
                 // The `member: CohortMember<W>` parameter is consumed
                 // and dropped here — the full BranchCursor inside is
                 // released (only the small shell + state captures
                 // survive).
                 drop(member);
                 true
-            }
+            },
             Some(DispatchCacheEntry::Resolved { cohort_shell, pending_members, .. })
                 if pending_members.len() < MAX_PENDING_COHORT_PER_KEY =>
             {
@@ -1496,15 +1461,13 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
                         ),
                     ));
                 }
-                pending_members.push(
-                    crate::cohort_lazy::CohortMemberState::from_branch_cursor(
-                        &member.return_frame,
-                        member.weight_at_dispatch.clone(),
-                    ),
-                );
+                pending_members.push(crate::cohort_lazy::CohortMemberState::from_branch_cursor(
+                    &member.return_frame,
+                    member.weight_at_dispatch.clone(),
+                ));
                 drop(member);
                 true
-            }
+            },
             _ => false,
         }
     }
@@ -1553,7 +1516,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // Read `K_pause`'s own state to evaluate clause 4 for the
         // `Resolved`-pause case (own span must be strictly shorter than R'
         // to be eligible; InFlight is always eligible).
-        let pause_own_hi: Option<u32> = match self.entries.get(k_pause) {
+        let pause_own_hi: Option<usize> = match self.entries.get(k_pause) {
             Some(DispatchCacheEntry::Resolved { hi_pos, .. }) => Some(*hi_pos),
             // InFlight / absent / Failed: treat as "own wrap not resolved"
             // (eligible by clause 4's InFlight disjunct). Failed members
@@ -1564,8 +1527,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         // OWN wrap (`wrap_cat`/`wrap_rule`) so the spliced member adopts the
         // RESOLVED body's wrap — symmetric with the drain (§3b: the revive
         // re-pushes `CategoryEntry(source)` with the RESOLVED wrap).
-        let mut sources: Vec<(SppfId, u32, u32, u16, u16, Vec<WorkerSnapshot<W>>)> =
-            Vec::new();
+        let mut sources: Vec<(SppfId, usize, usize, u16, u16, Vec<WorkerSnapshot<W>>)> = Vec::new();
         for (k_sib, entry) in self.entries.iter() {
             if k_sib == k_pause {
                 continue;
@@ -1642,11 +1604,12 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
             return Vec::new();
         }
         let mut jobs: Vec<CrossWrapSpliceJob<W>> = Vec::with_capacity(
-            sources.iter().map(|(_, _, _, _, _, s)| s.len()).sum::<usize>(),
-        );
-        for (symbol_id, hi_pos, pos_at_dispatch, sib_wrap_cat, sib_wrap_rule, snaps) in
             sources
-        {
+                .iter()
+                .map(|(_, _, _, _, _, s)| s.len())
+                .sum::<usize>(),
+        );
+        for (symbol_id, hi_pos, pos_at_dispatch, sib_wrap_cat, sib_wrap_rule, snaps) in sources {
             self.crosswrap_drained.insert((k_pause.clone(), symbol_id));
             for snap in snaps {
                 jobs.push(CrossWrapSpliceJob {
@@ -1674,9 +1637,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// SPPF symbol). Reserved for Stage 1.5+.
     #[allow(dead_code)]
     pub fn fail(&mut self, key: DispatchKey) {
-        if let Some(entry @ DispatchCacheEntry::InFlight { .. }) =
-            self.entries.get_mut(&key)
-        {
+        if let Some(entry @ DispatchCacheEntry::InFlight { .. }) = self.entries.get_mut(&key) {
             *entry = DispatchCacheEntry::Failed;
             self.failed_total += 1;
         }
@@ -1684,8 +1645,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
 
     pub fn write_summary(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let collisions_ratio = if self.registrations_total > 0 {
-            (self.inflight_collisions_total as f64) * 100.0
-                / (self.registrations_total as f64)
+            (self.inflight_collisions_total as f64) * 100.0 / (self.registrations_total as f64)
         } else {
             0.0
         };
@@ -1711,8 +1671,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         writeln!(
             f,
             "  cohort_cursors_emitted={}  cohort_cursors_graduated={}",
-            self.cohort_cursors_emitted_total,
-            self.cohort_cursors_graduated_total,
+            self.cohort_cursors_emitted_total, self.cohort_cursors_graduated_total,
         )?;
         // Cohort-revive-rework M0/M1 (2026-05-29): orphan census +
         // revive accounting. `inflight_orphan_members` / `failed_orphan_members`
@@ -1723,8 +1682,7 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
         writeln!(
             f,
             "  inflight_orphan_members={}  failed_orphan_members={}",
-            self.inflight_orphan_members_total,
-            self.failed_orphan_members_total,
+            self.inflight_orphan_members_total, self.failed_orphan_members_total,
         )?;
         // Sig-B Blocker-2 (2026-05-31): cross-wrap body-splice accounting.
         writeln!(
@@ -1749,8 +1707,8 @@ pub enum RegisterOutcome<W: SemiringRef> {
     InflightCollision,
     ResolvedHit {
         symbol_id: SppfId,
-        hi_pos: u32,
-        pos_at_dispatch: u32,
+        hi_pos: usize,
+        pos_at_dispatch: usize,
         worker_snapshots: Vec<WorkerSnapshot<W>>,
     },
     FailedHit,
@@ -1762,4 +1720,33 @@ pub enum ResolveOutcome {
     NoOp,
     FirstResolve,
     SnapshotAppended,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::automata::semiring::TropicalWeight;
+
+    #[test]
+    fn dispatch_key_preserves_positions_above_u32() {
+        let low = DispatchKey::new(0, 7, 3, 11, 13);
+        let after_u32 = (u32::MAX as usize) + 1;
+        let high = DispatchKey::new(after_u32, 7, 3, 11, 13);
+
+        assert_ne!(low, high);
+        assert_eq!(high.pos, after_u32);
+
+        let mut cache = DispatchCohortCache::<TropicalWeight>::new();
+        assert!(matches!(
+            cache.register(low.clone(), TropicalWeight(0.0)),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert!(matches!(
+            cache.register(high.clone(), TropicalWeight(0.0)),
+            RegisterOutcome::WorkerInserted
+        ));
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries.contains_key(&low));
+        assert!(cache.entries.contains_key(&high));
+    }
 }

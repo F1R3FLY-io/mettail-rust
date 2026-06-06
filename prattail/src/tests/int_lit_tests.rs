@@ -12,14 +12,8 @@ fn parses_narrowest_fit_decimal() {
     assert_eq!(parse_int_lit("23", None).unwrap(), IntLit::I32(23));
     assert_eq!(parse_int_lit("1_000_000", None).unwrap(), IntLit::I32(1_000_000));
     // Values exceeding i32::MAX skip to the next-widest fit.
-    assert_eq!(
-        parse_int_lit("3_000_000_000", None).unwrap(),
-        IntLit::U32(3_000_000_000),
-    );
-    assert_eq!(
-        parse_int_lit("9_999_999_999", None).unwrap(),
-        IntLit::I64(9_999_999_999),
-    );
+    assert_eq!(parse_int_lit("3_000_000_000", None).unwrap(), IntLit::U32(3_000_000_000),);
+    assert_eq!(parse_int_lit("9_999_999_999", None).unwrap(), IntLit::I64(9_999_999_999),);
 }
 
 #[test]
@@ -190,8 +184,14 @@ fn to_bigint_is_lossless_across_all_variants() {
         ("3000000000", "3000000000"),
         ("9999999999", "9999999999"),
         ("18446744073709551615", "18446744073709551615"), // u64::MAX → I128 in cascade
-        ("170141183460469231731687303715884105727", "170141183460469231731687303715884105727"), // i128::MAX → U128 in cascade
-        ("340282366920938463463374607431768211455", "340282366920938463463374607431768211455"), // u128::MAX → BigInt
+        (
+            "170141183460469231731687303715884105727",
+            "170141183460469231731687303715884105727",
+        ), // i128::MAX → U128 in cascade
+        (
+            "340282366920938463463374607431768211455",
+            "340282366920938463463374607431768211455",
+        ), // u128::MAX → BigInt
     ] {
         let lit = parse_int_lit(text, None).unwrap();
         assert_eq!(
@@ -204,7 +204,13 @@ fn to_bigint_is_lossless_across_all_variants() {
     // Suffixed variants: each variant maps directly.
     assert_eq!(parse_int_lit("-128i8", None).unwrap().to_bigint().unwrap(), BigInt::from(-128));
     assert_eq!(parse_int_lit("255u8", None).unwrap().to_bigint().unwrap(), BigInt::from(255));
-    assert_eq!(parse_int_lit("65535u16", None).unwrap().to_bigint().unwrap(), BigInt::from(65535));
+    assert_eq!(
+        parse_int_lit("65535u16", None)
+            .unwrap()
+            .to_bigint()
+            .unwrap(),
+        BigInt::from(65535)
+    );
 }
 
 #[test]

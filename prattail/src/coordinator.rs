@@ -230,14 +230,14 @@ fn coordinator_loop(
                     &mut join_sets,
                     &mut tasks_completed_since_last,
                 );
-            }
+            },
             Err(RecvTimeoutError::Timeout) => {
                 // No reports — run periodic tasks below.
-            }
+            },
             Err(RecvTimeoutError::Disconnected) => {
                 // All senders dropped — workers are gone.
                 break;
-            }
+            },
         }
 
         // Periodic: check WakeRegistry for channel wake-ups (fallback polling).
@@ -250,8 +250,7 @@ fn coordinator_loop(
 
             // Join-pattern waiters: wake only when ALL channels have pending messages.
             if !join_sets.is_empty() {
-                let join_wakes =
-                    wake_registry.check_and_wake_join(channels, &join_sets);
+                let join_wakes = wake_registry.check_and_wake_join(channels, &join_sets);
                 for (thread_id, _channel_id) in &join_wakes {
                     join_sets.remove(thread_id);
                     resume_and_dispatch(*thread_id, registry, scheduler, worker_pool);
@@ -322,17 +321,13 @@ fn handle_worker_report(
 ) {
     match report {
         WorkerReport::ThreadCompleted { thread_id, .. } => {
-            let transition = scheduler.process_event(SchedulerEvent::ThreadCompleted {
-                thread_id: *thread_id,
-            });
+            let transition =
+                scheduler.process_event(SchedulerEvent::ThreadCompleted { thread_id: *thread_id });
             execute_scheduler_actions(&transition.actions, worker_pool, registry, scheduler);
             *tasks_completed += 1;
-        }
+        },
 
-        WorkerReport::ThreadSuspended {
-            thread_id,
-            waiting_on,
-        } => {
+        WorkerReport::ThreadSuspended { thread_id, waiting_on } => {
             if waiting_on.len() > 1 {
                 // Join pattern: register the thread's join set and register
                 // the thread on each channel individually.
@@ -346,12 +341,9 @@ fn handle_worker_report(
                     wake_registry.register(*channel_id, *thread_id);
                 }
             }
-        }
+        },
 
-        WorkerReport::ForkRequested {
-            parent_id,
-            categories,
-        } => {
+        WorkerReport::ForkRequested { parent_id, categories } => {
             for category in categories {
                 let transition = scheduler.process_event(SchedulerEvent::ForkRequest {
                     parent_id: *parent_id,
@@ -359,24 +351,20 @@ fn handle_worker_report(
                 });
                 execute_scheduler_actions(&transition.actions, worker_pool, registry, scheduler);
             }
-        }
+        },
 
         WorkerReport::ThreadFailed { thread_id, .. } => {
             // Treat failure like completion for budget purposes.
-            let transition = scheduler.process_event(SchedulerEvent::ThreadCompleted {
-                thread_id: *thread_id,
-            });
+            let transition =
+                scheduler.process_event(SchedulerEvent::ThreadCompleted { thread_id: *thread_id });
             execute_scheduler_actions(&transition.actions, worker_pool, registry, scheduler);
             *tasks_completed += 1;
-        }
+        },
 
-        WorkerReport::ThreadReady {
-            thread_id,
-            priority,
-        } => {
+        WorkerReport::ThreadReady { thread_id, priority } => {
             scheduler.enqueue(*thread_id, *priority);
             dispatch_ready_threads(scheduler, worker_pool);
-        }
+        },
 
         WorkerReport::ChannelActivity { channel_ids } => {
             // Event-driven wake: immediately check affected channels for waiters.
@@ -410,7 +398,7 @@ fn handle_worker_report(
                     resume_and_dispatch(tid, registry, scheduler, worker_pool);
                 }
             }
-        }
+        },
     }
 }
 
@@ -432,54 +420,43 @@ fn execute_scheduler_actions(
                         worker_pool.unpark_one();
                     }
                 }
-            }
+            },
 
             SchedulerAction::SpawnThread { parent, category } => {
                 if let Some(parent_id) = parent {
-                    if let Some(child_id) =
-                        registry.spawn_child(*parent_id, category.clone())
-                    {
-                        let priority = registry
-                            .get(child_id)
-                            .map(|t| t.priority)
-                            .unwrap_or(0);
+                    if let Some(child_id) = registry.spawn_child(*parent_id, category.clone()) {
+                        let priority = registry.get(child_id).map(|t| t.priority).unwrap_or(0);
                         scheduler.enqueue(child_id, priority);
                         worker_pool.inject(child_id);
                         worker_pool.unpark_one();
                     }
                 } else {
                     let child_id = registry.spawn(category.clone());
-                    let priority = registry
-                        .get(child_id)
-                        .map(|t| t.priority)
-                        .unwrap_or(0);
+                    let priority = registry.get(child_id).map(|t| t.priority).unwrap_or(0);
                     scheduler.enqueue(child_id, priority);
                     worker_pool.inject(child_id);
                     worker_pool.unpark_one();
                 }
-            }
+            },
 
             SchedulerAction::ParkWorkers => {
                 // Workers self-park; no action needed from coordinator.
-            }
+            },
 
             SchedulerAction::NotifyComplete { .. } => {
                 // Completion notification — budget replenishment handled by scheduler.
-            }
+            },
 
             SchedulerAction::EmitMetrics => {
                 // Metrics emission — handled by the coordinator's periodic loop.
-            }
+            },
 
-            SchedulerAction::Dispatch {
-                thread_id,
-                quantum_size,
-            } => {
+            SchedulerAction::Dispatch { thread_id, quantum_size } => {
                 // Dispatch a thread to a worker with an adaptive quantum size.
                 // The quantum_size is determined by the current BackpressureTier.
                 worker_pool.inject(*thread_id);
                 let _ = quantum_size; // Used by worker when executing the thread
-            }
+            },
         }
     }
 }
@@ -506,12 +483,8 @@ mod tests {
     use super::*;
     use crate::channel::ChannelCapacity;
 
-    fn make_test_infra() -> (
-        Arc<GreenThreadRegistry>,
-        Arc<ChannelMap>,
-        Arc<AtomicBool>,
-        Arc<HillClimber>,
-    ) {
+    fn make_test_infra(
+    ) -> (Arc<GreenThreadRegistry>, Arc<ChannelMap>, Arc<AtomicBool>, Arc<HillClimber>) {
         let registry = Arc::new(GreenThreadRegistry::new());
         let channels = Arc::new(ChannelMap::new());
         let shutdown = Arc::new(AtomicBool::new(false));
@@ -525,18 +498,11 @@ mod tests {
     fn test_coordinator_spawn_and_shutdown() {
         let (registry, channels, shutdown, hill_climber) = make_test_infra();
 
-        let scheduler = Scheduler::with_budget(
-            Arc::clone(&registry),
-            Arc::clone(&channels),
-            8,
-        );
+        let scheduler = Scheduler::with_budget(Arc::clone(&registry), Arc::clone(&channels), 8);
 
         let (report_tx, report_rx) = crossbeam_channel::unbounded();
         let pool = Arc::new(WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::clone(&registry),
             report_tx.clone(),
         ));
@@ -567,20 +533,14 @@ mod tests {
         let channels = Arc::new(ChannelMap::new());
         let (report_tx, _rx) = crossbeam_channel::unbounded();
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::new(GreenThreadRegistry::new()),
             report_tx,
         );
         let wake_registry = WakeRegistry::new();
         let mut join_sets = HashMap::new();
-        let mut scheduler = Scheduler::with_budget(
-            Arc::new(GreenThreadRegistry::new()),
-            Arc::clone(&channels),
-            8,
-        );
+        let mut scheduler =
+            Scheduler::with_budget(Arc::new(GreenThreadRegistry::new()), Arc::clone(&channels), 8);
 
         let tid = registry.spawn("Expr".to_string());
         let mut completed = 0u64;
@@ -609,20 +569,14 @@ mod tests {
         let channels = Arc::new(ChannelMap::new());
         let (report_tx, _rx) = crossbeam_channel::unbounded();
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::new(GreenThreadRegistry::new()),
             report_tx,
         );
         let wake_registry = WakeRegistry::new();
         let mut join_sets = HashMap::new();
-        let mut scheduler = Scheduler::with_budget(
-            Arc::new(GreenThreadRegistry::new()),
-            Arc::clone(&channels),
-            8,
-        );
+        let mut scheduler =
+            Scheduler::with_budget(Arc::new(GreenThreadRegistry::new()), Arc::clone(&channels), 8);
 
         let tid = registry.spawn("Proc".to_string());
         let ch_id = ChannelId(42);
@@ -630,10 +584,7 @@ mod tests {
 
         handle_worker_report(
             &mut scheduler,
-            &WorkerReport::ThreadSuspended {
-                thread_id: tid,
-                waiting_on: vec![ch_id],
-            },
+            &WorkerReport::ThreadSuspended { thread_id: tid, waiting_on: vec![ch_id] },
             &registry,
             &channels,
             &pool,
@@ -644,10 +595,7 @@ mod tests {
 
         // Waiter should be registered.
         assert_eq!(wake_registry.total_waiters(), 1);
-        assert_eq!(
-            wake_registry.channels_with_waiters(),
-            vec![ch_id]
-        );
+        assert_eq!(wake_registry.channels_with_waiters(), vec![ch_id]);
         // Single-channel waiter should NOT create a join_set entry.
         assert!(join_sets.is_empty(), "single-channel waiter should not create join set");
 
@@ -660,20 +608,14 @@ mod tests {
         let channels = Arc::new(ChannelMap::new());
         let (report_tx, _rx) = crossbeam_channel::unbounded();
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::new(GreenThreadRegistry::new()),
             report_tx,
         );
         let wake_registry = WakeRegistry::new();
         let mut join_sets = HashMap::new();
-        let mut scheduler = Scheduler::with_budget(
-            Arc::new(GreenThreadRegistry::new()),
-            Arc::clone(&channels),
-            8,
-        );
+        let mut scheduler =
+            Scheduler::with_budget(Arc::new(GreenThreadRegistry::new()), Arc::clone(&channels), 8);
 
         let tid = registry.spawn("Proc".to_string());
         let ch_a = ChannelId(10);
@@ -709,20 +651,14 @@ mod tests {
         let channels = Arc::new(ChannelMap::new());
         let (report_tx, _rx) = crossbeam_channel::unbounded();
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::new(GreenThreadRegistry::new()),
             report_tx,
         );
         let wake_registry = WakeRegistry::new();
         let mut join_sets = HashMap::new();
-        let mut scheduler = Scheduler::with_budget(
-            Arc::new(GreenThreadRegistry::new()),
-            Arc::clone(&channels),
-            8,
-        );
+        let mut scheduler =
+            Scheduler::with_budget(Arc::new(GreenThreadRegistry::new()), Arc::clone(&channels), 8);
 
         let tid = registry.spawn("Proc".to_string());
         let ch_id = ChannelId(42);
@@ -741,9 +677,7 @@ mod tests {
         // Process ChannelActivity — should wake the thread.
         handle_worker_report(
             &mut scheduler,
-            &WorkerReport::ChannelActivity {
-                channel_ids: vec![ch_id],
-            },
+            &WorkerReport::ChannelActivity { channel_ids: vec![ch_id] },
             &registry,
             &channels,
             &pool,
@@ -766,19 +700,12 @@ mod tests {
         let channels = Arc::new(ChannelMap::new());
         let (report_tx, _rx) = crossbeam_channel::unbounded();
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::clone(&registry),
             report_tx,
         );
 
-        let mut scheduler = Scheduler::with_budget(
-            Arc::clone(&registry),
-            channels,
-            4,
-        );
+        let mut scheduler = Scheduler::with_budget(Arc::clone(&registry), channels, 4);
 
         // Enqueue 3 threads.
         let t1 = registry.spawn("A".to_string());
@@ -805,20 +732,13 @@ mod tests {
         // Create a thread to execute (empty stacks → completes immediately).
         let tid = registry.spawn("Expr".to_string());
 
-        let scheduler = Scheduler::with_budget(
-            Arc::clone(&registry),
-            Arc::clone(&channels),
-            8,
-        );
+        let scheduler = Scheduler::with_budget(Arc::clone(&registry), Arc::clone(&channels), 8);
 
         // Create MPSC channel: workers send reports, coordinator reads them.
         let (report_tx, report_rx) = crossbeam_channel::unbounded();
 
         let pool = Arc::new(WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 2,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 2, quantum_size: 100 },
             Arc::clone(&registry),
             report_tx.clone(),
         ));
@@ -879,8 +799,7 @@ mod tests {
         let wake_registry = WakeRegistry::new();
 
         // Create a channel and a suspended thread.
-        let ch_id =
-            channels.create_channel::<String>("test_wake", &ChannelCapacity::Unbounded);
+        let ch_id = channels.create_channel::<String>("test_wake", &ChannelCapacity::Unbounded);
         let tid = registry.spawn("Proc".to_string());
 
         // Transition thread to Suspended.

@@ -58,10 +58,7 @@ fn test_calc_recovery_unclosed_paren() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Int::parse_recovering("(1 + 2");
     // Should report an error for the missing closing paren
-    assert!(
-        !errors.is_empty(),
-        "unclosed paren should produce at least one error"
-    );
+    assert!(!errors.is_empty(), "unclosed paren should produce at least one error");
 }
 
 #[test]
@@ -69,10 +66,7 @@ fn test_calc_recovery_unclosed_nested_paren() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("((1 + 2)");
     // Missing one closing paren
-    assert!(
-        !errors.is_empty(),
-        "unclosed nested paren should produce at least one error"
-    );
+    assert!(!errors.is_empty(), "unclosed nested paren should produce at least one error");
     let _ = result;
 }
 
@@ -94,10 +88,7 @@ fn test_calc_recovery_trailing_integer() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("1 2");
     assert!(result.is_some(), "should parse '1' successfully from '1 2'");
-    assert!(
-        !errors.is_empty(),
-        "trailing '2' should be reported as an error"
-    );
+    assert!(!errors.is_empty(), "trailing '2' should be reported as an error");
 }
 
 #[test]
@@ -105,10 +96,7 @@ fn test_calc_recovery_trailing_operator() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Int::parse_recovering("1 +");
     // "1 +" — parses "1", sees "+", tries to parse RHS, hits EOF
-    assert!(
-        !errors.is_empty(),
-        "trailing operator should produce an error"
-    );
+    assert!(!errors.is_empty(), "trailing operator should produce an error");
 }
 
 // ── Missing operator ──
@@ -119,10 +107,7 @@ fn test_calc_recovery_missing_operator() {
     let (result, errors) = Int::parse_recovering("1 2 3");
     // "1 2 3" — "1" parses, "2" and "3" are trailing tokens
     assert!(result.is_some(), "should parse '1' from '1 2 3'");
-    assert!(
-        !errors.is_empty(),
-        "juxtaposed literals should produce errors"
-    );
+    assert!(!errors.is_empty(), "juxtaposed literals should produce errors");
 }
 
 // ── Cascading errors (Sprint 15 — error count should be bounded) ──
@@ -154,10 +139,7 @@ fn test_calc_recovery_deeply_nested_valid() {
     let input = format!("{}1 + 2{}", open, close);
     let (result, errors) = Int::parse_recovering(&input);
     assert!(result.is_some(), "deeply nested valid should succeed");
-    assert!(
-        errors.is_empty(),
-        "deeply nested valid should have no errors"
-    );
+    assert!(errors.is_empty(), "deeply nested valid should have no errors");
 }
 
 #[test]
@@ -170,10 +152,7 @@ fn test_calc_recovery_deeply_nested_with_error() {
     let input = format!("{}1 + + 2{}", open, close);
     let (_result, errors) = Int::parse_recovering(&input);
     // Should produce errors but not blow up
-    assert!(
-        !errors.is_empty(),
-        "deeply nested with error should produce errors"
-    );
+    assert!(!errors.is_empty(), "deeply nested with error should produce errors");
 }
 
 // ── Empty and minimal inputs ──
@@ -182,10 +161,7 @@ fn test_calc_recovery_deeply_nested_with_error() {
 fn test_calc_recovery_empty_input() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("");
-    assert!(
-        result.is_none(),
-        "empty input should return None (prefix failure)"
-    );
+    assert!(result.is_none(), "empty input should return None (prefix failure)");
     assert!(!errors.is_empty(), "empty input should produce an error");
 }
 
@@ -194,20 +170,14 @@ fn test_calc_recovery_only_parens() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Int::parse_recovering("()");
     // Empty parens — should fail
-    assert!(
-        !errors.is_empty(),
-        "empty parens should produce errors"
-    );
+    assert!(!errors.is_empty(), "empty parens should produce errors");
 }
 
 #[test]
 fn test_calc_recovery_mismatched_close() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Int::parse_recovering(")");
-    assert!(
-        !errors.is_empty(),
-        "bare close paren should produce errors"
-    );
+    assert!(!errors.is_empty(), "bare close paren should produce errors");
 }
 
 // ── Error message quality ──
@@ -233,11 +203,7 @@ fn test_calc_error_display_includes_position() {
     assert!(!errors.is_empty());
     let msg = format!("{}", errors[0]);
     // Should include line:column position
-    assert!(
-        msg.contains(':'),
-        "error should include position info (line:col), got: {}",
-        msg
-    );
+    assert!(msg.contains(':'), "error should include position info (line:col), got: {}", msg);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -257,20 +223,14 @@ fn test_float_recovery_trailing() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Float::parse_recovering("1.5 2.5");
     assert!(result.is_some(), "should parse '1.5' from '1.5 2.5'");
-    assert!(
-        !errors.is_empty(),
-        "trailing float should produce errors"
-    );
+    assert!(!errors.is_empty(), "trailing float should produce errors");
 }
 
 #[test]
 fn test_float_recovery_trig_unclosed() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Float::parse_recovering("sin(1.0");
-    assert!(
-        !errors.is_empty(),
-        "unclosed sin() should produce errors"
-    );
+    assert!(!errors.is_empty(), "unclosed sin() should produce errors");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -289,10 +249,7 @@ fn test_bool_recovery_valid() {
 fn test_bool_recovery_missing_operand() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Bool::parse_recovering("true and");
-    assert!(
-        !errors.is_empty(),
-        "trailing 'and' should produce errors"
-    );
+    assert!(!errors.is_empty(), "trailing 'and' should produce errors");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -311,14 +268,8 @@ fn test_str_recovery_valid() {
 fn test_str_recovery_trailing() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Str::parse_recovering("\"hello\" \"world\"");
-    assert!(
-        result.is_some(),
-        "should parse first string from juxtaposed strings"
-    );
-    assert!(
-        !errors.is_empty(),
-        "trailing string should produce errors"
-    );
+    assert!(result.is_some(), "should parse first string from juxtaposed strings");
+    assert!(!errors.is_empty(), "trailing string should produce errors");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -338,10 +289,7 @@ fn test_calc_recovery_ternary_missing_colon() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Int::parse_recovering("1 ? 2 3");
     // Missing ":" — should fail somewhere
-    assert!(
-        !errors.is_empty(),
-        "ternary missing ':' should produce errors"
-    );
+    assert!(!errors.is_empty(), "ternary missing ':' should produce errors");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -395,20 +343,14 @@ fn test_lambda_recovery_valid_application() {
 fn test_lambda_recovery_unclosed_paren() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Term::parse_recovering("(lam x.x");
-    assert!(
-        !errors.is_empty(),
-        "unclosed paren in lambda should produce errors"
-    );
+    assert!(!errors.is_empty(), "unclosed paren in lambda should produce errors");
 }
 
 #[test]
 fn test_lambda_recovery_empty() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Term::parse_recovering("");
-    assert!(
-        result.is_none(),
-        "empty lambda input should return None"
-    );
+    assert!(result.is_none(), "empty lambda input should return None");
     assert!(!errors.is_empty(), "empty input should produce an error");
 }
 
@@ -487,8 +429,5 @@ fn test_calc_recovery_power_valid() {
 fn test_calc_recovery_power_missing_exponent() {
     mettail_runtime::clear_var_cache();
     let (_result, errors) = Int::parse_recovering("2 ^");
-    assert!(
-        !errors.is_empty(),
-        "power missing exponent should produce errors"
-    );
+    assert!(!errors.is_empty(), "power missing exponent should produce errors");
 }

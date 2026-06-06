@@ -478,26 +478,17 @@ pub fn kleene_fixpoint<W: Semiring>(
 impl<W: Semiring> Term<W> {
     /// Create a constant term (no variables).
     pub fn constant(coeff: W) -> Self {
-        Term {
-            coeff,
-            vars: vec![],
-        }
+        Term { coeff, vars: vec![] }
     }
 
     /// Create a linear term: `coeff * x_{var_idx}`.
     pub fn linear(coeff: W, var_idx: usize) -> Self {
-        Term {
-            coeff,
-            vars: vec![var_idx],
-        }
+        Term { coeff, vars: vec![var_idx] }
     }
 
     /// Create a quadratic term: `coeff * x_i * x_j`.
     pub fn quadratic(coeff: W, var_i: usize, var_j: usize) -> Self {
-        Term {
-            coeff,
-            vars: vec![var_i, var_j],
-        }
+        Term { coeff, vars: vec![var_i, var_j] }
     }
 }
 
@@ -542,10 +533,7 @@ impl<W: Semiring> EquationSystem<W> {
                 }
             }
         }
-        Ok(EquationSystem {
-            num_variables,
-            equations,
-        })
+        Ok(EquationSystem { num_variables, equations })
     }
 }
 
@@ -623,11 +611,7 @@ mod tests {
         let term = Term::linear(TropicalWeight::new(5.0), 0);
         let values = vec![TropicalWeight::zero()]; // +inf
         let result = evaluate_term(&term, &values);
-        assert!(
-            result.is_zero(),
-            "term with zero variable should be zero, got {:?}",
-            result
-        );
+        assert!(result.is_zero(), "term with zero variable should be zero, got {:?}", result);
     }
 
     #[test]
@@ -657,7 +641,8 @@ mod tests {
         let system = EquationSystem::new(
             1,
             vec![Equation::single(Term::constant(TropicalWeight::new(5.0)))],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let values = vec![TropicalWeight::zero()];
         let jac = jacobian(&system, &values);
         assert!(
@@ -675,11 +660,9 @@ mod tests {
         let b = TropicalWeight::new(3.0);
         let system = EquationSystem::new(
             1,
-            vec![Equation::sum(vec![
-                Term::linear(a, 0),
-                Term::constant(b),
-            ])],
-        ).expect("valid equation system");
+            vec![Equation::sum(vec![Term::linear(a, 0), Term::constant(b)])],
+        )
+        .expect("valid equation system");
         let values = vec![TropicalWeight::zero()];
         let jac = jacobian(&system, &values);
         assert!(
@@ -698,12 +681,9 @@ mod tests {
         // At x_0 = 3.0 (tropical): d/dx_0 = plus(3.0, 3.0) = min(3.0, 3.0) = 3.0
         let system = EquationSystem::new(
             1,
-            vec![Equation::single(Term::quadratic(
-                TropicalWeight::one(),
-                0,
-                0,
-            ))],
-        ).expect("valid equation system");
+            vec![Equation::single(Term::quadratic(TropicalWeight::one(), 0, 0))],
+        )
+        .expect("valid equation system");
         let values = vec![TropicalWeight::new(3.0)];
         let jac = jacobian(&system, &values);
         // d/dx_0 of (one * x_0 * x_0) at x_0=3.0:
@@ -730,14 +710,11 @@ mod tests {
                 Equation::single(Term::linear(a, 1)), // x_0 = a * x_1
                 Equation::single(Term::linear(b, 0)), // x_1 = b * x_0
             ],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let values = vec![TropicalWeight::zero(), TropicalWeight::zero()];
         let jac = jacobian(&system, &values);
-        assert!(
-            jac[0][0].is_zero(),
-            "J[0][0] should be zero, got {:?}",
-            jac[0][0]
-        );
+        assert!(jac[0][0].is_zero(), "J[0][0] should be zero, got {:?}", jac[0][0]);
         assert!(
             jac[0][1].approx_eq(&a, 1e-9),
             "J[0][1] should be a={:?}, got {:?}",
@@ -750,11 +727,7 @@ mod tests {
             b,
             jac[1][0]
         );
-        assert!(
-            jac[1][1].is_zero(),
-            "J[1][1] should be zero, got {:?}",
-            jac[1][1]
-        );
+        assert!(jac[1][1].is_zero(), "J[1][1] should be zero, got {:?}", jac[1][1]);
     }
 
     // ── Newton fixpoint: 1-variable tests ───────────────────────────────────
@@ -766,7 +739,8 @@ mod tests {
         let system = EquationSystem::new(
             1,
             vec![Equation::single(Term::constant(TropicalWeight::new(5.0)))],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         assert!(
             result.values[0].approx_eq(&TropicalWeight::new(5.0), 1e-9),
@@ -786,11 +760,9 @@ mod tests {
         let b = TropicalWeight::new(3.0);
         let system = EquationSystem::new(
             1,
-            vec![Equation::sum(vec![
-                Term::linear(a, 0),
-                Term::constant(b),
-            ])],
-        ).expect("valid equation system");
+            vec![Equation::sum(vec![Term::linear(a, 0), Term::constant(b)])],
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         let expected = TropicalWeight::new(3.0);
         assert!(
@@ -811,23 +783,19 @@ mod tests {
                 Term::linear(BooleanWeight::one(), 0),
                 Term::constant(BooleanWeight::one()),
             ])],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
-        assert_eq!(
-            result.values[0],
-            BooleanWeight::one(),
-            "boolean fixpoint should be true"
-        );
+        assert_eq!(result.values[0], BooleanWeight::one(), "boolean fixpoint should be true");
         assert!(result.converged, "boolean should converge quickly");
     }
 
     #[test]
     fn newton_identity_equation() {
         // x = x (identity — any value is a fixpoint; least fixpoint is zero)
-        let system = EquationSystem::new(
-            1,
-            vec![Equation::single(Term::linear(TropicalWeight::one(), 0))],
-        ).expect("valid equation system");
+        let system =
+            EquationSystem::new(1, vec![Equation::single(Term::linear(TropicalWeight::one(), 0))])
+                .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         // The least fixpoint of x = x is x = 0 (semiring zero = +inf for tropical)
         // Wait — let's think about this. F(x) = x. Starting from x = +inf:
@@ -846,7 +814,8 @@ mod tests {
     #[test]
     fn newton_zero_variables() {
         // Degenerate: 0 variables, 0 equations
-        let system: EquationSystem<TropicalWeight> = EquationSystem::new(0, vec![]).expect("valid equation system");
+        let system: EquationSystem<TropicalWeight> =
+            EquationSystem::new(0, vec![]).expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 10);
         assert!(result.values.is_empty());
         assert!(result.converged);
@@ -866,7 +835,8 @@ mod tests {
                 Equation::single(Term::constant(TropicalWeight::new(3.0))),
                 Equation::single(Term::constant(TropicalWeight::new(7.0))),
             ],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         assert!(
             result.values[0].approx_eq(&TropicalWeight::new(3.0), 1e-9),
@@ -906,7 +876,8 @@ mod tests {
                     Term::constant(TropicalWeight::new(3.0)),
                 ]),
             ],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         assert!(
             result.values[0].approx_eq(&TropicalWeight::new(4.0), 1e-9),
@@ -931,11 +902,9 @@ mod tests {
         let b = TropicalWeight::new(3.0);
         let system = EquationSystem::new(
             1,
-            vec![Equation::sum(vec![
-                Term::linear(a, 0),
-                Term::constant(b),
-            ])],
-        ).expect("valid equation system");
+            vec![Equation::sum(vec![Term::linear(a, 0), Term::constant(b)])],
+        )
+        .expect("valid equation system");
         let newton_result = newton_fixpoint_detailed(&system, 100);
         let kleene_result = kleene_fixpoint(&system, 100);
 
@@ -975,33 +944,18 @@ mod tests {
                 ]),
                 Equation::single(Term::linear(BooleanWeight::one(), 0)),
             ],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let newton_result = newton_fixpoint_detailed(&system, 100);
         let kleene_result = kleene_fixpoint(&system, 100);
 
         assert!(newton_result.converged, "Newton should converge");
         assert!(kleene_result.converged, "Kleene should converge");
 
-        assert_eq!(
-            newton_result.values[0],
-            BooleanWeight::one(),
-            "x_0 should be true"
-        );
-        assert_eq!(
-            newton_result.values[1],
-            BooleanWeight::one(),
-            "x_1 should be true"
-        );
-        assert_eq!(
-            kleene_result.values[0],
-            BooleanWeight::one(),
-            "Kleene x_0 should be true"
-        );
-        assert_eq!(
-            kleene_result.values[1],
-            BooleanWeight::one(),
-            "Kleene x_1 should be true"
-        );
+        assert_eq!(newton_result.values[0], BooleanWeight::one(), "x_0 should be true");
+        assert_eq!(newton_result.values[1], BooleanWeight::one(), "x_1 should be true");
+        assert_eq!(kleene_result.values[0], BooleanWeight::one(), "Kleene x_0 should be true");
+        assert_eq!(kleene_result.values[1], BooleanWeight::one(), "Kleene x_1 should be true");
 
         assert!(
             newton_result.iterations <= kleene_result.iterations,
@@ -1018,7 +972,8 @@ mod tests {
         let system = EquationSystem::new(
             1,
             vec![Equation::single(Term::constant(TropicalWeight::new(5.0)))],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = kleene_fixpoint(&system, 20);
         assert!(
             result.values[0].approx_eq(&TropicalWeight::new(5.0), 1e-9),
@@ -1039,7 +994,8 @@ mod tests {
                 Term::linear(TropicalWeight::new(2.0), 0),
                 Term::constant(TropicalWeight::new(3.0)),
             ])],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = kleene_fixpoint(&system, 20);
         assert!(
             result.values[0].approx_eq(&TropicalWeight::new(3.0), 1e-9),
@@ -1051,7 +1007,8 @@ mod tests {
 
     #[test]
     fn kleene_zero_variables() {
-        let system: EquationSystem<BooleanWeight> = EquationSystem::new(0, vec![]).expect("valid equation system");
+        let system: EquationSystem<BooleanWeight> =
+            EquationSystem::new(0, vec![]).expect("valid equation system");
         let result = kleene_fixpoint(&system, 10);
         assert!(result.values.is_empty());
         assert!(result.converged);
@@ -1064,10 +1021,9 @@ mod tests {
     fn newton_all_zero_rhs() {
         // x_0 = 0 (semiring zero)
         // Fixpoint: x_0 = 0
-        let system = EquationSystem::new(
-            1,
-            vec![Equation::single(Term::constant(TropicalWeight::zero()))],
-        ).expect("valid equation system");
+        let system =
+            EquationSystem::new(1, vec![Equation::single(Term::constant(TropicalWeight::zero()))])
+                .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         assert!(
             result.values[0].is_zero(),
@@ -1088,7 +1044,8 @@ mod tests {
                 Term::linear(TropicalWeight::one(), 0),
                 Term::constant(TropicalWeight::new(5.0)),
             ])],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         assert!(
             result.values[0].approx_eq(&TropicalWeight::new(5.0), 1e-9),
@@ -1108,7 +1065,8 @@ mod tests {
                 Term::linear(CountingWeight::new(2), 0),
                 Term::constant(CountingWeight::new(3)),
             ])],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         // star(2) = MAX; MAX * 3 = MAX (saturating)
         assert_eq!(
@@ -1130,7 +1088,8 @@ mod tests {
                 Term::linear(CountingWeight::zero(), 0),
                 Term::constant(CountingWeight::new(5)),
             ])],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let kleene_result = kleene_fixpoint(&system, 20);
         assert_eq!(
             kleene_result.values[0],
@@ -1169,7 +1128,8 @@ mod tests {
                 Equation::single(Term::linear(BooleanWeight::one(), 2)),
                 Equation::single(Term::constant(BooleanWeight::one())),
             ],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let newton_result = newton_fixpoint_detailed(&system, 20);
         let kleene_result = kleene_fixpoint(&system, 20);
 
@@ -1201,10 +1161,9 @@ mod tests {
     fn newton_boolean_unreachable() {
         // x_0 = false ∧ x_0 = false
         // No constant source of truth, so fixpoint is false
-        let system = EquationSystem::new(
-            1,
-            vec![Equation::single(Term::linear(BooleanWeight::zero(), 0))],
-        ).expect("valid equation system");
+        let system =
+            EquationSystem::new(1, vec![Equation::single(Term::linear(BooleanWeight::zero(), 0))])
+                .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         assert_eq!(
             result.values[0],
@@ -1222,11 +1181,7 @@ mod tests {
         let term = Term::linear(TropicalWeight::new(5.0), 1);
         let values = vec![TropicalWeight::new(1.0), TropicalWeight::new(2.0)];
         let deriv = partial_derivative_term(&term, 0, &values);
-        assert!(
-            deriv.is_zero(),
-            "d/dx_0 of (5*x_1) should be zero, got {:?}",
-            deriv
-        );
+        assert!(deriv.is_zero(), "d/dx_0 of (5*x_1) should be zero, got {:?}", deriv);
     }
 
     #[test]
@@ -1281,28 +1236,18 @@ mod tests {
 
     #[test]
     fn equation_system_wrong_count() {
-        let result = EquationSystem::new(
-            2,
-            vec![Equation::single(Term::constant(TropicalWeight::one()))],
-        );
+        let result =
+            EquationSystem::new(2, vec![Equation::single(Term::constant(TropicalWeight::one()))]);
         let err = result.expect_err("should fail on wrong equation count");
-        assert!(
-            err.contains("expected 2 equations, got 1"),
-            "unexpected error message: {err}"
-        );
+        assert!(err.contains("expected 2 equations, got 1"), "unexpected error message: {err}");
     }
 
     #[test]
     fn equation_system_out_of_bounds_variable() {
-        let result = EquationSystem::new(
-            1,
-            vec![Equation::single(Term::linear(TropicalWeight::one(), 5))],
-        );
+        let result =
+            EquationSystem::new(1, vec![Equation::single(Term::linear(TropicalWeight::one(), 5))]);
         let err = result.expect_err("should fail on out-of-bounds variable");
-        assert!(
-            err.contains("references variable 5"),
-            "unexpected error message: {err}"
-        );
+        assert!(err.contains("references variable 5"), "unexpected error message: {err}");
     }
 
     // ── Convenience constructor tests ───────────────────────────────────────
@@ -1322,8 +1267,7 @@ mod tests {
 
     #[test]
     fn equation_constructors() {
-        let eq: Equation<BooleanWeight> =
-            Equation::single(Term::constant(BooleanWeight::one()));
+        let eq: Equation<BooleanWeight> = Equation::single(Term::constant(BooleanWeight::one()));
         assert_eq!(eq.terms.len(), 1);
 
         let eq2: Equation<BooleanWeight> = Equation::sum(vec![
@@ -1370,7 +1314,8 @@ mod tests {
                     },
                 ]),
             ],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
 
         let result = newton_fixpoint_detailed(&system, 20);
         assert!(
@@ -1393,13 +1338,11 @@ mod tests {
         let system = EquationSystem::new(
             1,
             vec![Equation::single(Term::constant(TropicalWeight::new(1.0)))],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 100);
         assert!(result.converged);
-        assert!(
-            result.iterations > 0,
-            "should report at least 1 iteration"
-        );
+        assert!(result.iterations > 0, "should report at least 1 iteration");
         assert!(
             result.iterations <= 5,
             "constant equation should converge very quickly, took {} iterations",
@@ -1409,10 +1352,9 @@ mod tests {
 
     #[test]
     fn kleene_reports_iterations() {
-        let system = EquationSystem::new(
-            1,
-            vec![Equation::single(Term::constant(BooleanWeight::one()))],
-        ).expect("valid equation system");
+        let system =
+            EquationSystem::new(1, vec![Equation::single(Term::constant(BooleanWeight::one()))])
+                .expect("valid equation system");
         let result = kleene_fixpoint(&system, 100);
         assert!(result.converged);
         assert!(result.iterations > 0);
@@ -1423,10 +1365,9 @@ mod tests {
     #[test]
     fn newton_empty_equation_rhs() {
         // x = (empty sum) = zero
-        let system: EquationSystem<TropicalWeight> = EquationSystem::new(
-            1,
-            vec![Equation { terms: vec![] }],
-        ).expect("valid equation system");
+        let system: EquationSystem<TropicalWeight> =
+            EquationSystem::new(1, vec![Equation { terms: vec![] }])
+                .expect("valid equation system");
         let result = newton_fixpoint_detailed(&system, 20);
         assert!(
             result.values[0].is_zero(),
@@ -1444,7 +1385,8 @@ mod tests {
             vec![Equation {
                 terms: vec![Term::constant(TropicalWeight::new(3.0))],
             }],
-        ).expect("valid equation system");
+        )
+        .expect("valid equation system");
         let result = accelerate_from_bundle(&system, 50);
         assert!(result.converged, "constant equation should converge");
         assert!(
@@ -1457,7 +1399,8 @@ mod tests {
     #[test]
     fn test_accelerate_from_bundle_empty() {
         // Zero-dimensional system (no variables, no equations).
-        let system: EquationSystem<TropicalWeight> = EquationSystem::new(0, vec![]).expect("valid equation system");
+        let system: EquationSystem<TropicalWeight> =
+            EquationSystem::new(0, vec![]).expect("valid equation system");
         let result = accelerate_from_bundle(&system, 50);
         assert!(result.converged, "empty system should converge immediately");
         assert!(result.values.is_empty(), "no variables means no values");

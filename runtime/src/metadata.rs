@@ -428,10 +428,8 @@ mod guard_metadata_tests {
         label: "PGuardedInput",
         channel_categories: &["Name"],
     }];
-    static RICH_CONNECTIVES: &[ConnectiveDef] = &[ConnectiveDef {
-        role: "and",
-        keywords: &["and", "∧"],
-    }];
+    static RICH_CONNECTIVES: &[ConnectiveDef] =
+        &[ConnectiveDef { role: "and", keywords: &["and", "∧"] }];
 
     impl LanguageMetadata for RichMeta {
         fn name(&self) -> &'static str {

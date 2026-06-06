@@ -137,9 +137,9 @@ fn class_matches(class: &CharClass, byte: u8) -> bool {
 mod tests {
     use super::*;
     use crate::automata::nfa::{build_nfa, BuiltinNeeds};
-    use crate::LiteralPatterns;
     use crate::automata::TerminalPattern;
     use crate::automata::TokenKind;
+    use crate::LiteralPatterns;
 
     #[test]
     fn test_equivalence_classes_simple() {

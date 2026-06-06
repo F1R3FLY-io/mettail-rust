@@ -244,9 +244,9 @@ pub fn extend_from_bundle(
     let mut merge_site_labels = Vec::new();
 
     for (category, rule_label, items) in all_syntax {
-        let has_binder = items.iter().any(|item| {
-            matches!(item, crate::SyntaxItemSpec::Binder { .. })
-        });
+        let has_binder = items
+            .iter()
+            .any(|item| matches!(item, crate::SyntaxItemSpec::Binder { .. }));
         if has_binder {
             merge_site_labels.push(format!("{}.{}", category, rule_label));
         }
@@ -329,10 +329,7 @@ mod tests {
 
         let ewpds = Ewpds::from_wpds(wpds);
         assert_eq!(ewpds.num_extended_rules(), 1);
-        assert_eq!(
-            ewpds.extended_push_rules[0].from_gamma,
-            StackSymbol::category_entry("Expr")
-        );
+        assert_eq!(ewpds.extended_push_rules[0].from_gamma, StackSymbol::category_entry("Expr"));
     }
 
     #[test]

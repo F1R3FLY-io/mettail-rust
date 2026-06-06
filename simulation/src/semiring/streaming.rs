@@ -297,8 +297,11 @@ mod tests {
         assert!((sw.mean - 4.0).abs() < 1e-10, "mean = {}", sw.mean);
         // Population variance of {2, 4, 6} = ((2-4)^2 + (4-4)^2 + (6-4)^2) / 3 = 8/3
         let expected_var = 8.0 / 3.0;
-        assert!((sw.population_variance() - expected_var).abs() < 1e-10,
-            "pop_var = {}", sw.population_variance());
+        assert!(
+            (sw.population_variance() - expected_var).abs() < 1e-10,
+            "pop_var = {}",
+            sw.population_variance()
+        );
         assert!((sw.min - 2.0).abs() < 1e-10);
         assert!((sw.max - 6.0).abs() < 1e-10);
     }
@@ -326,10 +329,13 @@ mod tests {
         }
 
         assert_eq!(merged.count, seq.count);
-        assert!((merged.mean - seq.mean).abs() < 1e-10,
-            "merged.mean={}, seq.mean={}", merged.mean, seq.mean);
-        assert!((merged.m2 - seq.m2).abs() < 1e-10,
-            "merged.m2={}, seq.m2={}", merged.m2, seq.m2);
+        assert!(
+            (merged.mean - seq.mean).abs() < 1e-10,
+            "merged.mean={}, seq.mean={}",
+            merged.mean,
+            seq.mean
+        );
+        assert!((merged.m2 - seq.m2).abs() < 1e-10, "merged.m2={}, seq.m2={}", merged.m2, seq.m2);
         assert!((merged.min - seq.min).abs() < 1e-10);
         assert!((merged.max - seq.max).abs() < 1e-10);
     }
@@ -366,7 +372,10 @@ mod tests {
         sw.observe(4.0);
         sw.observe(6.0);
         // Sample variance of {2, 4, 6} = 8/2 = 4.0
-        assert!((sw.sample_variance() - 4.0).abs() < 1e-10,
-            "sample_var = {}", sw.sample_variance());
+        assert!(
+            (sw.sample_variance() - 4.0).abs() < 1e-10,
+            "sample_var = {}",
+            sw.sample_variance()
+        );
     }
 }

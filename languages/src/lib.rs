@@ -32,10 +32,10 @@ pub mod composition;
 // Generated test files use `mettail_languages::{name}::*` which requires crate-root modules.
 pub use composition::base_lang as basemath;
 pub use composition::extended_lang as extmath;
-pub use composition::mixed_lang as mixedmath;
 pub use composition::grammar_import_lang as importedmath;
-pub use led_test as ledtest;
+pub use composition::mixed_lang as mixedmath;
 pub use guarded_rho as guardedrho;
+pub use led_test as ledtest;
 
 /// Proc → [`mettail_runtime::NumericInput`] adapters; lives beside `src/` on purpose.
 #[path = "../numeric_dispatch.rs"]

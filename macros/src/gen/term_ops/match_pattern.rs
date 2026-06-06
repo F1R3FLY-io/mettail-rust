@@ -36,9 +36,9 @@
 //! - **Binder/MultiBinder**: inline scope opening; body `match_pattern` call
 //!   re-enters the iterative engine (one re-entry per binder level)
 
-use mettail_ast::language::LanguageDef;
 use crate::gen::generate_var_label;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -353,29 +353,29 @@ fn generate_iterative_variant_arm(
             quote! {
                 (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {}
             }
-        }
+        },
 
         VariantKind::Literal { label } => {
             quote! {
                 (#category::#label(v1), #category::#label(v2)) if v1 == v2 => {}
             }
-        }
+        },
 
         VariantKind::Nullary { label } => {
             quote! {
                 (#category::#label, #category::#label) => {}
             }
-        }
+        },
 
         VariantKind::Regular { label, fields } => {
             generate_iterative_regular_arm(category, label, fields, language)
-        }
+        },
 
         VariantKind::Collection { label, element_cat, coll_type } => {
             // Collection matching is inline — calls match_pattern() on elements
             // which re-enters the iterative engine (bounded by element count).
             generate_collection_match_arm(category, label, element_cat, coll_type, language)
-        }
+        },
 
         VariantKind::Binder {
             label,
@@ -393,23 +393,21 @@ fn generate_iterative_variant_arm(
                 body_cat,
                 language,
             )
-        }
+        },
 
         VariantKind::MultiBinder {
             label,
             pre_scope_fields,
             binder_cat,
             body_cat,
-        } => {
-            generate_multi_binder_match_arm_inline(
-                category,
-                label,
-                pre_scope_fields,
-                binder_cat,
-                body_cat,
-                language,
-            )
-        }
+        } => generate_multi_binder_match_arm_inline(
+            category,
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+            language,
+        ),
     }
 }
 
@@ -503,7 +501,8 @@ fn generate_collection_match_arm(
     let var_label = generate_var_label(category);
 
     match coll_type {
-        mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
+        mettail_ast::types::CollectionType::HashBag
+        | mettail_ast::types::CollectionType::HashMap => {
             quote! {
                 (#category::#label(g_bag), #category::#label(p_bag)) => {
                     let g_elems: Vec<_> = g_bag.iter()
@@ -529,7 +528,7 @@ fn generate_collection_match_arm(
                                 if let #category::#var_label(mettail_runtime::OrdVar(
                                     mettail_runtime::Var::Free(ref fv)
                                 )) = p_elem {
-                                    if let Some(ref pretty_name) = fv.pretty_name {
+                                    if fv.pretty_name.is_some() {
                                         // Re-enter iterative engine via match_pattern
                                         let sub = p_elem.match_pattern(&g_elems[idx]);
                                         if let Some(b) = sub {
@@ -560,7 +559,7 @@ fn generate_collection_match_arm(
                     }
                 }
             }
-        }
+        },
         mettail_ast::types::CollectionType::Vec => {
             quote! {
                 (#category::#label(g_vec), #category::#label(p_vec)) => {
@@ -576,7 +575,7 @@ fn generate_collection_match_arm(
                     }
                 }
             }
-        }
+        },
         mettail_ast::types::CollectionType::HashSet => {
             quote! {
                 (#category::#label(g_set), #category::#label(p_set)) => {
@@ -601,7 +600,7 @@ fn generate_collection_match_arm(
                     }
                 }
             }
-        }
+        },
     }
 }
 

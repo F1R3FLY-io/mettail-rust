@@ -7,7 +7,7 @@ use std::sync::Arc;
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use mettail_prattail::channel::{Channel, ChannelId, ChannelMap};
-use mettail_prattail::green_thread::{GreenThreadId, GreenThreadRegistry};
+use mettail_prattail::green_thread::GreenThreadRegistry;
 use mettail_prattail::scheduler::{Scheduler, SchedulerAutomaton};
 
 /// Benchmark channel send/recv throughput.

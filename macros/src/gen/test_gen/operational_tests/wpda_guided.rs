@@ -10,9 +10,7 @@
 //! All recursive operations use iterative work-stacks (trampolines).
 //! Everything is derived from the `language!` spec.
 
-use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
-use crate::gen::native::native_type_to_string;
 use mettail_prattail::PipelineAnalysis;
 use std::collections::{HashMap, HashSet};
 
@@ -105,12 +103,6 @@ pub fn generate_wpda_guided_tests(
                 }
             }
 
-            let weight_str = pipeline
-                .constructor_weights
-                .get(&gt.rule_label)
-                .map(|w| format!("w={:.4}", w))
-                .unwrap_or_else(|| "w=default".to_string());
-
             let test_name = format!(
                 "wpda_{}_{}_{}",
                 lang_name_lower,
@@ -156,11 +148,7 @@ fn compute_category_budgets(
     let scores: Vec<(String, f64)> = categories
         .iter()
         .map(|cat| {
-            let weight = pipeline
-                .category_weights
-                .get(cat)
-                .copied()
-                .unwrap_or(1.0);
+            let weight = pipeline.category_weights.get(cat).copied().unwrap_or(1.0);
             // Inverse weight, clamped to avoid division by zero
             let score = if weight > 0.001 { 1.0 / weight } else { 1000.0 };
             (cat.clone(), score)

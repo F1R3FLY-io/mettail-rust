@@ -297,15 +297,8 @@ fn test_skip_whitespace_simd_spaces_only() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_short() {
     // Test inputs shorter than 16 bytes (scalar tail path only)
-    let inputs: &[&[u8]] = &[
-        b"",
-        b" ",
-        b"  \t\n",
-        b"   hello",
-        b"\n\nhello",
-        b"\r\n\t world",
-        b"no_ws_here",
-    ];
+    let inputs: &[&[u8]] =
+        &[b"", b" ", b"  \t\n", b"   hello", b"\n\nhello", b"\r\n\t world", b"no_ws_here"];
     for input in inputs {
         let scalar = scalar_skip(input, 0, 0, 0);
         let simd = simd_skip(input, 0, 0, 0);
@@ -316,7 +309,7 @@ fn test_skip_whitespace_simd_matches_scalar_short() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_exact_16() {
     // Exactly 16 bytes of whitespace
-    let input = b"                hello";  // 16 spaces + "hello"
+    let input = b"                hello"; // 16 spaces + "hello"
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for 16-space input");
@@ -325,7 +318,7 @@ fn test_skip_whitespace_simd_matches_scalar_exact_16() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_over_16() {
     // More than 16 bytes of whitespace (exercises full SIMD + tail)
-    let input = b"                      hello";  // 22 spaces + "hello"
+    let input = b"                      hello"; // 22 spaces + "hello"
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for 22-space input");
@@ -334,7 +327,7 @@ fn test_skip_whitespace_simd_matches_scalar_over_16() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_with_newlines() {
     // Whitespace run > 16 bytes containing newlines
-    let input = b"    \n    \n    \n    \nhello";  // 4*5=20 ws bytes + "hello"
+    let input = b"    \n    \n    \n    \nhello"; // 4*5=20 ws bytes + "hello"
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for newline-heavy input");
@@ -343,7 +336,7 @@ fn test_skip_whitespace_simd_matches_scalar_with_newlines() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_mixed_ws() {
     // Mix of space, tab, CR, LF
-    let input = b" \t\r\n \t\r\n \t\r\n \t\r\n \t\r\nX";  // 20 ws bytes + "X"
+    let input = b" \t\r\n \t\r\n \t\r\n \t\r\n \t\r\nX"; // 20 ws bytes + "X"
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for mixed whitespace");
@@ -352,7 +345,7 @@ fn test_skip_whitespace_simd_matches_scalar_mixed_ws() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_all_whitespace() {
     // Input is entirely whitespace (no non-ws terminator)
-    let input = b"                                ";  // 32 spaces
+    let input = b"                                "; // 32 spaces
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for all-whitespace input");
@@ -361,7 +354,7 @@ fn test_skip_whitespace_simd_matches_scalar_all_whitespace() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_partial_chunk() {
     // Non-ws byte in the middle of the first 16-byte chunk
-    let input = b"       X        ";  // 7 spaces + X + 8 spaces
+    let input = b"       X        "; // 7 spaces + X + 8 spaces
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for partial-chunk input");
@@ -408,7 +401,7 @@ fn test_skip_whitespace_simd_matches_scalar_cr_lf_sequences() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_15_bytes() {
     // Exactly 15 bytes of whitespace (just under SIMD lane width)
-    let input = b"               X";  // 15 spaces + "X"
+    let input = b"               X"; // 15 spaces + "X"
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for 15-byte input");
@@ -417,7 +410,7 @@ fn test_skip_whitespace_simd_matches_scalar_15_bytes() {
 #[test]
 fn test_skip_whitespace_simd_matches_scalar_17_bytes() {
     // 17 bytes of whitespace (SIMD chunk + 1 tail byte)
-    let input = b"                 X";  // 17 spaces + "X"
+    let input = b"                 X"; // 17 spaces + "X"
     let scalar = scalar_skip(input, 0, 0, 0);
     let simd = simd_skip(input, 0, 0, 0);
     assert_eq!(scalar, simd, "mismatch for 17-byte input");

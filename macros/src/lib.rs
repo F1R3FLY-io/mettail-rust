@@ -15,10 +15,6 @@ use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use syn::parse_macro_input;
 
-use mettail_ast::compose::ComposeDef;
-use mettail_ast::language::LanguageDef;
-use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
-use mettail_ast::validation::validate_language;
 use gen::runtime::wpda_codegen::generate_wpda_engine_module;
 use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
@@ -26,6 +22,10 @@ use gen::{
 };
 use logic::writer::spill_and_include;
 use logic::{generate_ascent_source, rules::generate_freshness_functions};
+use mettail_ast::compose::ComposeDef;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::merge::{apply_extends, apply_includes, apply_mixins};
+use mettail_ast::validation::validate_language;
 
 #[proc_macro]
 #[proc_macro_error]
@@ -201,7 +201,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     // Generate public proptest strategies (gated behind `strategies` feature)
     let public_strategies = gen::test_gen::strategies::generate_public_strategies(&language_def);
 
-    // Spill each large emitter to disk and replace with `include!` stubs.
+    // Spill each large emitter to disk and replace it with an `include!` wrapper.
     // Purpose: the proc-macro → rustc bridge ships TokenStreams by value, so a
     // multi-MB returned TokenStream costs 2× that in RSS (proc-macro copy +
     // rustc copy). Writing the content to `target/generated/<lang>/<mod>.rs`

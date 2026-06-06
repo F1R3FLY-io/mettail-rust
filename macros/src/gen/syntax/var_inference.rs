@@ -4,11 +4,11 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use crate::gen::{generate_var_label, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::{generate_var_label, is_var_rule};
 
 /// Generate variable category inference methods for lambda type checking
 ///
@@ -265,9 +265,9 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
 /// Field kind for inference generation
 #[derive(Clone)]
 enum InferFieldKind {
-    Simple,      // Regular field
-    HashBag,     // HashBag collection (iter returns (&T, usize))
-    Vec,         // Vec collection (iter returns &T)
+    Simple,  // Regular field
+    HashBag, // HashBag collection (iter returns (&T, usize))
+    Vec,     // Vec collection (iter returns &T)
     /// Phase 4 #5b (2026-05-12): HashMap collection. `iter()` returns
     /// `(&K, &V)`. Inference must visit BOTH k and v (each may
     /// contain free variables). For the Phase 4 #5b empty-only pilot
@@ -308,17 +308,20 @@ fn collect_inference_fields(
                 let i = *flat_idx;
                 *flat_idx += 1;
                 let field_cat = extract_base_cat(ty);
-                if all_cats.iter().any(|c| c.to_string() == field_cat.to_string()) {
+                if all_cats
+                    .iter()
+                    .any(|c| c.to_string() == field_cat.to_string())
+                {
                     let kind = match ty {
                         TypeExpr::Collection { coll_type: CollectionType::HashBag, .. } => {
                             InferFieldKind::HashBag
-                        }
+                        },
                         TypeExpr::Collection { coll_type: CollectionType::Vec, .. } => {
                             InferFieldKind::Vec
-                        }
+                        },
                         TypeExpr::Collection { coll_type: CollectionType::HashSet, .. } => {
                             InferFieldKind::Vec
-                        }
+                        },
                         // Phase 4 #5b (2026-05-12): HashMap(K, V).
                         TypeExpr::Collection { coll_type: CollectionType::HashMap, .. }
                         | TypeExpr::Map { .. } => InferFieldKind::HashMap,
@@ -327,34 +330,40 @@ fn collect_inference_fields(
                     let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
                     out.push((name, field_cat, kind, wrap));
                 }
-            }
+            },
             TermParam::Abstraction { ty, .. } => {
                 let i = *flat_idx;
                 *flat_idx += 1;
                 let body_cat = extract_base_cat(ty);
-                if all_cats.iter().any(|c| c.to_string() == body_cat.to_string()) {
+                if all_cats
+                    .iter()
+                    .any(|c| c.to_string() == body_cat.to_string())
+                {
                     let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
                     out.push((name, body_cat, InferFieldKind::Binder, wrap));
                 }
-            }
+            },
             TermParam::MultiAbstraction { ty, .. } => {
                 let i = *flat_idx;
                 *flat_idx += 1;
                 let body_cat = extract_base_cat(ty);
-                if all_cats.iter().any(|c| c.to_string() == body_cat.to_string()) {
+                if all_cats
+                    .iter()
+                    .any(|c| c.to_string() == body_cat.to_string())
+                {
                     let name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
                     out.push((name, body_cat, InferFieldKind::MultiBinder, wrap));
                 }
-            }
+            },
             TermParam::GuardBody { .. } => {
                 *flat_idx += 1;
-            }
+            },
             TermParam::Optional { params: inner } => {
                 // Inner params each consume their own flat slot. Mark
                 // recursion as Optional-wrapped so the emitter gates the
                 // sub-call on `if let Some(__v) = field.as_ref() { ... }`.
                 collect_inference_fields(inner, all_cats, flat_idx, InferFieldWrap::Optional, out);
-            }
+            },
         }
     }
 }
@@ -412,7 +421,12 @@ fn generate_var_inference_arm(
                 match item {
                     GrammarItem::NonTerminal { ident: nt, .. } => {
                         if all_cats.iter().any(|c| c.to_string() == nt.to_string()) {
-                            Some((field_name, nt.clone(), InferFieldKind::Simple, InferFieldWrap::Direct))
+                            Some((
+                                field_name,
+                                nt.clone(),
+                                InferFieldKind::Simple,
+                                InferFieldWrap::Direct,
+                            ))
                         } else {
                             None
                         }
@@ -423,7 +437,9 @@ fn generate_var_inference_arm(
                             .any(|c| c.to_string() == element_type.to_string())
                         {
                             let kind = match coll_type {
-                                CollectionType::HashBag | CollectionType::HashMap => InferFieldKind::HashBag,
+                                CollectionType::HashBag | CollectionType::HashMap => {
+                                    InferFieldKind::HashBag
+                                },
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };
@@ -437,7 +453,12 @@ fn generate_var_inference_arm(
                             .iter()
                             .any(|c| c.to_string() == category.to_string())
                         {
-                            Some((field_name, category.clone(), InferFieldKind::Binder, InferFieldWrap::Direct))
+                            Some((
+                                field_name,
+                                category.clone(),
+                                InferFieldKind::Binder,
+                                InferFieldWrap::Direct,
+                            ))
                         } else {
                             None
                         }
@@ -638,7 +659,12 @@ fn generate_var_type_inference_arm(
                 match item {
                     GrammarItem::NonTerminal { ident: nt, .. } => {
                         if all_cats.iter().any(|c| c.to_string() == nt.to_string()) {
-                            Some((field_name, nt.clone(), InferFieldKind::Simple, InferFieldWrap::Direct))
+                            Some((
+                                field_name,
+                                nt.clone(),
+                                InferFieldKind::Simple,
+                                InferFieldWrap::Direct,
+                            ))
                         } else {
                             None
                         }
@@ -649,7 +675,9 @@ fn generate_var_type_inference_arm(
                             .any(|c| c.to_string() == element_type.to_string())
                         {
                             let kind = match coll_type {
-                                CollectionType::HashBag | CollectionType::HashMap => InferFieldKind::HashBag,
+                                CollectionType::HashBag | CollectionType::HashMap => {
+                                    InferFieldKind::HashBag
+                                },
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
                             };
@@ -663,7 +691,12 @@ fn generate_var_type_inference_arm(
                             .iter()
                             .any(|c| c.to_string() == category.to_string())
                         {
-                            Some((field_name, category.clone(), InferFieldKind::Binder, InferFieldWrap::Direct))
+                            Some((
+                                field_name,
+                                category.clone(),
+                                InferFieldKind::Binder,
+                                InferFieldWrap::Direct,
+                            ))
                         } else {
                             None
                         }

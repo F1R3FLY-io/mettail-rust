@@ -12,9 +12,7 @@
 
 use crate::symbolic::KatBooleanAlgebra;
 use crate::weighted_mso::{
-    compile::{
-        atom, build_algebra, build_unique_var_automaton, compile_formula, MsoCompileError,
-    },
+    compile::{atom, build_algebra, build_unique_var_automaton, compile_formula, MsoCompileError},
     WeightedMsoFormula,
 };
 use std::collections::HashMap;
@@ -25,10 +23,7 @@ use std::collections::HashMap;
 
 /// A position in the encoded word: a closed-world map of every atom
 /// in `algebra.atoms` to true/false.
-fn position(
-    algebra: &KatBooleanAlgebra,
-    truths: &[(&str, bool)],
-) -> HashMap<String, bool> {
+fn position(algebra: &KatBooleanAlgebra, truths: &[(&str, bool)]) -> HashMap<String, bool> {
     let mut m = HashMap::new();
     for atom_name in &algebra.atoms {
         m.insert(atom_name.clone(), false);
@@ -56,14 +51,8 @@ fn atomic_pos_accepts_word_with_correct_label_at_witness() {
     let (alg, sfa) = compile_formula(&formula, &labels(&["a", "b"])).unwrap();
 
     // Word: position 0 is x AND has label_a → should accept
-    let w = vec![position(
-        &alg,
-        &[(&atom::label("a"), true), (&atom::is_var("x"), true)],
-    )];
-    assert!(
-        sfa.accepts(&w),
-        "expected acceptance: position 0 is x with label a"
-    );
+    let w = vec![position(&alg, &[(&atom::label("a"), true), (&atom::is_var("x"), true)])];
+    assert!(sfa.accepts(&w), "expected acceptance: position 0 is x with label a");
 }
 
 #[test]
@@ -75,14 +64,8 @@ fn atomic_pos_rejects_word_with_wrong_label_at_witness() {
     let (alg, sfa) = compile_formula(&formula, &labels(&["a", "b"])).unwrap();
 
     // Word: position 0 is x AND has label_b → should reject
-    let w = vec![position(
-        &alg,
-        &[(&atom::label("b"), true), (&atom::is_var("x"), true)],
-    )];
-    assert!(
-        !sfa.accepts(&w),
-        "expected rejection: position 0 is x with label b"
-    );
+    let w = vec![position(&alg, &[(&atom::label("b"), true), (&atom::is_var("x"), true)])];
+    assert!(!sfa.accepts(&w), "expected rejection: position 0 is x with label b");
 }
 
 #[test]
@@ -93,10 +76,7 @@ fn neg_atomic_pos_accepts_when_witness_label_differs() {
     };
     let (alg, sfa) = compile_formula(&formula, &labels(&["a", "b"])).unwrap();
 
-    let w = vec![position(
-        &alg,
-        &[(&atom::label("b"), true), (&atom::is_var("x"), true)],
-    )];
+    let w = vec![position(&alg, &[(&atom::label("b"), true), (&atom::is_var("x"), true)])];
     assert!(sfa.accepts(&w));
 }
 
@@ -193,16 +173,10 @@ fn or_accepts_either_subformula() {
     );
     let (alg, sfa) = compile_formula(&formula, &labels(&["a", "b"])).unwrap();
 
-    let w_a = vec![position(
-        &alg,
-        &[(&atom::label("a"), true), (&atom::is_var("x"), true)],
-    )];
+    let w_a = vec![position(&alg, &[(&atom::label("a"), true), (&atom::is_var("x"), true)])];
     assert!(sfa.accepts(&w_a));
 
-    let w_b = vec![position(
-        &alg,
-        &[(&atom::label("b"), true), (&atom::is_var("x"), true)],
-    )];
+    let w_b = vec![position(&alg, &[(&atom::label("b"), true), (&atom::is_var("x"), true)])];
     assert!(sfa.accepts(&w_b));
 }
 
@@ -229,10 +203,7 @@ fn exists_first_accepts_when_some_position_satisfies_body() {
 
     // Word: just one position labeled b
     let w_b = vec![position(&alg, &[(&atom::label("b"), true)])];
-    assert!(
-        !sfa.accepts(&w_b),
-        "∃x. label_a(x) should reject [b]"
-    );
+    assert!(!sfa.accepts(&w_b), "∃x. label_a(x) should reject [b]");
 
     // Word: a then b
     let w_ab = vec![
@@ -311,10 +282,7 @@ fn constant_false_accepts_nothing() {
 fn non_boolean_constant_returns_error() {
     let formula = WeightedMsoFormula::Constant("3.14".to_string());
     let result = compile_formula(&formula, &labels(&["a"]));
-    assert!(matches!(
-        result,
-        Err(MsoCompileError::NonBooleanConstant { .. })
-    ));
+    assert!(matches!(result, Err(MsoCompileError::NonBooleanConstant { .. })));
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -328,10 +296,7 @@ fn forall_second_returns_full_mso_error() {
         body: Box::new(WeightedMsoFormula::Constant("true".to_string())),
     };
     let result = compile_formula(&formula, &labels(&["a"]));
-    assert!(matches!(
-        result,
-        Err(MsoCompileError::FullMsoUnsupported { .. })
-    ));
+    assert!(matches!(result, Err(MsoCompileError::FullMsoUnsupported { .. })));
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -368,8 +333,7 @@ fn to_weighted_automaton_canonical_entry_point() {
     let result = formula.to_weighted_automaton(&labels(&["a", "b"]));
     assert!(result.is_ok());
     let (alg, sfa) = result.unwrap();
-    assert!(sfa.accepts(&[position(
-        &alg,
-        &[(&atom::label("a"), true), (&atom::is_var("x"), true)],
-    )]));
+    assert!(
+        sfa.accepts(&[position(&alg, &[(&atom::label("a"), true), (&atom::is_var("x"), true)],)])
+    );
 }

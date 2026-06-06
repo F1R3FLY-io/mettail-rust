@@ -343,10 +343,7 @@ mod tests {
     fn ambiguous_entry_carries_multiple_alternatives() {
         let entry = LexEntry {
             byte_start: 0,
-            alternatives: vec![
-                ident_alt("if", 2, 1.0),
-                ident_alt("if", 2, 2.0),
-            ],
+            alternatives: vec![ident_alt("if", 2, 1.0), ident_alt("if", 2, 2.0)],
         };
         assert!(entry.is_ambiguous());
         assert_eq!(entry.alternatives.len(), 2);
@@ -362,10 +359,7 @@ mod tests {
         assert!(!stream.has_ambiguity());
         stream.entries.push(LexEntry {
             byte_start: 1,
-            alternatives: vec![
-                ident_alt("if", 3, 1.0),
-                ident_alt("if", 3, 2.0),
-            ],
+            alternatives: vec![ident_alt("if", 3, 1.0), ident_alt("if", 3, 2.0)],
         });
         assert!(stream.has_ambiguity());
         assert_eq!(stream.len(), 2);

@@ -46,7 +46,7 @@ pub enum DataValue {
     Integer(i64),
     /// A symbolic data value (identifier, tag name, etc.).
     Symbol(String),
-    /// The unit value (placeholder / wildcard).
+    /// The unit value used as a wildcard.
     Unit,
 }
 
@@ -134,10 +134,7 @@ pub struct RegisterTransition<W: Semiring> {
 
 impl<W: Semiring + fmt::Display> fmt::Display for RegisterTransition<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let label_str = self
-            .label
-            .as_deref()
-            .unwrap_or("*");
+        let label_str = self.label.as_deref().unwrap_or("*");
         let ops_str: Vec<String> = self.ops.iter().map(|op| format!("{}", op)).collect();
         write!(
             f,
@@ -243,11 +240,7 @@ impl<W: Semiring> RegisterAutomaton<W> {
     /// If `is_accepting` is true, the state is added to the accepting set.
     pub fn add_state(&mut self, is_accepting: bool, label: Option<String>) -> usize {
         let id = self.states.len();
-        self.states.push(RegisterState {
-            id,
-            is_accepting,
-            label,
-        });
+        self.states.push(RegisterState { id, is_accepting, label });
         if is_accepting {
             self.accepting_states.insert(id);
         }
@@ -292,13 +285,8 @@ impl<W: Semiring> RegisterAutomaton<W> {
         if let Some(ref lbl) = label {
             self.alphabet.insert(lbl.clone());
         }
-        self.transitions.push(RegisterTransition {
-            from,
-            to,
-            label,
-            ops,
-            weight,
-        });
+        self.transitions
+            .push(RegisterTransition { from, to, label, ops, weight });
         Ok(())
     }
 
@@ -342,10 +330,7 @@ impl<W: Semiring> RegisterAutomaton<W> {
 
         // Map from configuration -> accumulated weight for that configuration.
         let mut current: HashMap<Config, W> = HashMap::new();
-        current.insert(
-            (initial_state, self.initial_registers.clone()),
-            W::one(),
-        );
+        current.insert((initial_state, self.initial_registers.clone()), W::one());
 
         for (label, data_val) in data_word {
             let mut next: HashMap<Config, W> = HashMap::new();
@@ -359,7 +344,7 @@ impl<W: Semiring> RegisterAutomaton<W> {
                     // Check label match: transition label None matches any input label.
                     if let Some(ref trans_label) = trans.label {
                         match label {
-                            Some(ref input_label) if input_label == trans_label => {}
+                            Some(ref input_label) if input_label == trans_label => {},
                             _ => continue,
                         }
                     }
@@ -395,27 +380,23 @@ impl<W: Semiring> RegisterAutomaton<W> {
 
     /// Check whether all guards in `ops` are satisfied by the current registers
     /// and the incoming data value.
-    fn check_guards(
-        ops: &[RegisterOp],
-        regs: &[Option<DataValue>],
-        data_val: &DataValue,
-    ) -> bool {
+    fn check_guards(ops: &[RegisterOp], regs: &[Option<DataValue>], data_val: &DataValue) -> bool {
         for (i, op) in ops.iter().enumerate() {
             match op {
                 RegisterOp::TestEq => {
                     // Register must be bound and equal to data_val.
                     match &regs[i] {
-                        Some(v) if v == data_val => {}
+                        Some(v) if v == data_val => {},
                         _ => return false,
                     }
-                }
+                },
                 RegisterOp::TestNeq => {
                     // Register must be bound and NOT equal to data_val.
                     match &regs[i] {
-                        Some(v) if v != data_val => {}
+                        Some(v) if v != data_val => {},
                         _ => return false,
                     }
-                }
+                },
                 RegisterOp::TestFresh => {
                     // Data value must not equal ANY currently bound register.
                     for reg_val in regs.iter().flatten() {
@@ -423,10 +404,10 @@ impl<W: Semiring> RegisterAutomaton<W> {
                             return false;
                         }
                     }
-                }
+                },
                 RegisterOp::Nop | RegisterOp::Store => {
                     // No guard to check.
-                }
+                },
             }
         }
         true
@@ -516,10 +497,10 @@ impl<W: Semiring> RegisterAutomaton<W> {
         // transitions. This models asymmetric reachability: when one automaton
         // can advance but the other is stuck, the stuck side enters the sink.
         type ProductConfig = (
-            Option<usize>,                // self state (None = dead)
-            Option<usize>,                // other state (None = dead)
-            Vec<Option<DataValue>>,       // self registers
-            Vec<Option<DataValue>>,       // other registers
+            Option<usize>,          // self state (None = dead)
+            Option<usize>,          // other state (None = dead)
+            Vec<Option<DataValue>>, // self registers
+            Vec<Option<DataValue>>, // other registers
         );
 
         let init_config: ProductConfig = (
@@ -715,11 +696,11 @@ impl<W: Semiring> RegisterAutomaton<W> {
                 match op {
                     RegisterOp::Store => {
                         stored.insert(i);
-                    }
+                    },
                     RegisterOp::TestEq | RegisterOp::TestNeq | RegisterOp::TestFresh => {
                         tested.insert(i);
-                    }
-                    RegisterOp::Nop => {}
+                    },
+                    RegisterOp::Nop => {},
                 }
             }
         }
@@ -840,40 +821,40 @@ fn collect_register_ops(
             if let Some(&reg) = cat_to_reg.get(rule_cat) {
                 has_store[reg] = true;
             }
-        }
+        },
         // Binder produces a Store for the binder's category register
         crate::SyntaxItemSpec::Binder { category, .. } => {
             if let Some(&reg) = cat_to_reg.get(category.as_str()) {
                 has_store[reg] = true;
             }
-        }
+        },
         // BinderCollection produces a Store for the rule's category register
         crate::SyntaxItemSpec::BinderCollection { .. } => {
             if let Some(&reg) = cat_to_reg.get(rule_cat) {
                 has_store[reg] = true;
             }
-        }
+        },
         // NonTerminal reference produces a TestEq (reads the category's register)
         crate::SyntaxItemSpec::NonTerminal { category, .. } => {
             if let Some(&reg) = cat_to_reg.get(category.as_str()) {
                 has_test[reg] = true;
             }
-        }
+        },
         // Collection reference produces a TestEq
         crate::SyntaxItemSpec::Collection { element_category, .. } => {
             if let Some(&reg) = cat_to_reg.get(element_category.as_str()) {
                 has_test[reg] = true;
             }
-        }
+        },
         // Recurse into compound items
         crate::SyntaxItemSpec::Sep { body, .. } => {
             collect_register_ops(body, rule_cat, cat_to_reg, has_store, has_test);
-        }
+        },
         crate::SyntaxItemSpec::Map { body_items } => {
             for sub in body_items {
                 collect_register_ops(sub, rule_cat, cat_to_reg, has_store, has_test);
             }
-        }
+        },
         crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             for ref_cat in [left_category.as_str(), right_category.as_str()] {
                 if let Some(&reg) = cat_to_reg.get(ref_cat) {
@@ -881,14 +862,14 @@ fn collect_register_ops(
                 }
             }
             collect_register_ops(body, rule_cat, cat_to_reg, has_store, has_test);
-        }
+        },
         crate::SyntaxItemSpec::Optional { inner } => {
             for sub in inner {
                 collect_register_ops(sub, rule_cat, cat_to_reg, has_store, has_test);
             }
-        }
+        },
         // Terminal — no register ops
-        _ => {}
+        _ => {},
     }
 }
 
@@ -918,9 +899,7 @@ pub fn analyze(automaton: &RegisterAutomaton<BooleanWeight>) -> RegisterAnalysis
 /// that are *definitely stored* on every path to that state. A transition
 /// testing register `i` from state `s` is flagged as unbound if `i` is
 /// not in the stored set for `s` and register `i` is initially `None`.
-fn find_unbound_references(
-    automaton: &RegisterAutomaton<BooleanWeight>,
-) -> Vec<(usize, usize)> {
+fn find_unbound_references(automaton: &RegisterAutomaton<BooleanWeight>) -> Vec<(usize, usize)> {
     let initial_state = match automaton.initial_state {
         Some(s) => s,
         None => return Vec::new(),
@@ -992,8 +971,8 @@ fn find_unbound_references(
                     if reg_idx < num_regs && !possibly_stored[t.from].contains(&reg_idx) {
                         unbound.push((trans_idx, reg_idx));
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
@@ -1128,7 +1107,9 @@ mod tests {
         ra.add_state(false, None);
         ra.add_state(false, None);
         // Only 1 op instead of 2 — should return error.
-        let err = ra.add_transition(0, 1, None, vec![RegisterOp::Nop], BooleanWeight::one()).unwrap_err();
+        let err = ra
+            .add_transition(0, 1, None, vec![RegisterOp::Nop], BooleanWeight::one())
+            .unwrap_err();
         assert!(err.contains("ops length"), "{err}");
     }
 
@@ -1193,14 +1174,16 @@ mod tests {
         ra.initial_state = Some(q0);
 
         ra.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("a".to_string()),
             vec![RegisterOp::Store],
             BooleanWeight::one(),
         )
         .expect("valid transition");
         ra.add_transition(
-            q1, q2,
+            q1,
+            q2,
             Some("b".to_string()),
             vec![RegisterOp::TestFresh],
             BooleanWeight::one(),
@@ -1232,14 +1215,16 @@ mod tests {
         ra.initial_state = Some(q0);
 
         ra.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("a".to_string()),
             vec![RegisterOp::Store],
             BooleanWeight::one(),
         )
         .expect("valid transition");
         ra.add_transition(
-            q1, q2,
+            q1,
+            q2,
             Some("b".to_string()),
             vec![RegisterOp::TestNeq],
             BooleanWeight::one(),
@@ -1269,13 +1254,8 @@ mod tests {
         let q1 = ra.add_state(true, None);
         ra.initial_state = Some(q0);
 
-        ra.add_transition(
-            q0, q1,
-            Some("a".to_string()),
-            vec![],
-            TropicalWeight::new(2.0),
-        )
-        .expect("valid transition");
+        ra.add_transition(q0, q1, Some("a".to_string()), vec![], TropicalWeight::new(2.0))
+            .expect("valid transition");
 
         let word = vec![(Some("a".to_string()), DataValue::Unit)];
         let result = ra.evaluate(&word);
@@ -1302,21 +1282,24 @@ mod tests {
         ra.initial_state = Some(q0);
 
         ra.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("a".to_string()),
             vec![RegisterOp::Store, RegisterOp::Nop],
             BooleanWeight::one(),
         )
         .expect("valid transition");
         ra.add_transition(
-            q1, q2,
+            q1,
+            q2,
             Some("b".to_string()),
             vec![RegisterOp::Nop, RegisterOp::Store],
             BooleanWeight::one(),
         )
         .expect("valid transition");
         ra.add_transition(
-            q2, q3,
+            q2,
+            q3,
             Some("c".to_string()),
             vec![RegisterOp::TestEq, RegisterOp::TestEq],
             BooleanWeight::one(),
@@ -1359,14 +1342,16 @@ mod tests {
         ra.initial_state = Some(q0);
 
         ra.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("a".to_string()),
             vec![RegisterOp::Store, RegisterOp::Store],
             BooleanWeight::one(),
         )
         .expect("valid transition");
         ra.add_transition(
-            q1, q2,
+            q1,
+            q2,
             Some("b".to_string()),
             vec![RegisterOp::TestEq, RegisterOp::Nop], // reg 1 never tested
             BooleanWeight::one(),
@@ -1387,7 +1372,8 @@ mod tests {
         ra.initial_state = Some(q0);
 
         ra.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("a".to_string()),
             vec![RegisterOp::Store, RegisterOp::Store], // reg 1 dead
             BooleanWeight::one(),
@@ -1395,7 +1381,8 @@ mod tests {
         .expect("valid transition");
         // Only reg 0 is tested.
         ra.add_transition(
-            q1, q0,
+            q1,
+            q0,
             Some("b".to_string()),
             vec![RegisterOp::TestEq, RegisterOp::Nop],
             BooleanWeight::one(),
@@ -1441,14 +1428,16 @@ mod tests {
         ra2.initial_state = Some(q0);
 
         ra2.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("open".to_string()),
             vec![RegisterOp::Nop],
             BooleanWeight::one(),
         )
         .expect("valid transition");
         ra2.add_transition(
-            q1, q2,
+            q1,
+            q2,
             Some("close".to_string()),
             vec![RegisterOp::Nop], // no TestEq — accepts all close values
             BooleanWeight::one(),
@@ -1488,7 +1477,8 @@ mod tests {
 
         // Directly test register 0 without storing — unbound reference.
         ra.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("x".to_string()),
             vec![RegisterOp::TestEq],
             BooleanWeight::one(),
@@ -1510,7 +1500,8 @@ mod tests {
         ra.initial_registers[0] = Some(DataValue::Integer(42));
 
         ra.add_transition(
-            q0, q1,
+            q0,
+            q1,
             Some("x".to_string()),
             vec![RegisterOp::TestEq],
             BooleanWeight::one(),
@@ -1548,11 +1539,7 @@ mod tests {
         };
         assert_eq!(format!("{}", s), "r0 [init]");
 
-        let s_acc = RegisterState {
-            id: 1,
-            is_accepting: true,
-            label: None,
-        };
+        let s_acc = RegisterState { id: 1, is_accepting: true, label: None };
         assert_eq!(format!("{}", s_acc), "r1*");
     }
 
@@ -1574,18 +1561,32 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-            CategoryInfo { name: "Name".to_string(), is_primary: false, has_var: true, native_type: None },
+            CategoryInfo {
+                name: "Expr".to_string(),
+                is_primary: true,
+                has_var: true,
+                native_type: None,
+            },
+            CategoryInfo {
+                name: "Name".to_string(),
+                is_primary: false,
+                has_var: true,
+                native_type: None,
+            },
         ];
 
         // Name has IdentCapture (Store) but is never referenced as NonTerminal (no TestEq)
         let all_syntax = vec![
-            ("Lit".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("42".to_string()),
-            ]),
-            ("Var".to_string(), "Name".to_string(), vec![
-                crate::SyntaxItemSpec::IdentCapture { param_name: "x".to_string() },
-            ]),
+            (
+                "Lit".to_string(),
+                "Expr".to_string(),
+                vec![crate::SyntaxItemSpec::Terminal("42".to_string())],
+            ),
+            (
+                "Var".to_string(),
+                "Name".to_string(),
+                vec![crate::SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }],
+            ),
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
@@ -1598,40 +1599,60 @@ mod tests {
         use crate::pipeline::CategoryInfo;
 
         let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-            CategoryInfo { name: "Name".to_string(), is_primary: false, has_var: true, native_type: None },
+            CategoryInfo {
+                name: "Expr".to_string(),
+                is_primary: true,
+                has_var: true,
+                native_type: None,
+            },
+            CategoryInfo {
+                name: "Name".to_string(),
+                is_primary: false,
+                has_var: true,
+                native_type: None,
+            },
         ];
 
         // Name has IdentCapture (Store) AND is referenced by Expr (TestEq)
         let all_syntax = vec![
-            ("Ref".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::NonTerminal {
+            (
+                "Ref".to_string(),
+                "Expr".to_string(),
+                vec![crate::SyntaxItemSpec::NonTerminal {
                     category: "Name".to_string(),
                     param_name: "n".to_string(),
-                },
-            ]),
-            ("Var".to_string(), "Name".to_string(), vec![
-                crate::SyntaxItemSpec::IdentCapture { param_name: "x".to_string() },
-            ]),
+                }],
+            ),
+            (
+                "Var".to_string(),
+                "Name".to_string(),
+                vec![crate::SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }],
+            ),
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(!result.dead_registers.contains(&1), "Name register should NOT be dead (it's referenced)");
+        assert!(
+            !result.dead_registers.contains(&1),
+            "Name register should NOT be dead (it's referenced)"
+        );
     }
 
     #[test]
     fn analyze_bundle_no_binders() {
         use crate::pipeline::CategoryInfo;
 
-        let categories = vec![
-            CategoryInfo { name: "Expr".to_string(), is_primary: true, has_var: true, native_type: None },
-        ];
+        let categories = vec![CategoryInfo {
+            name: "Expr".to_string(),
+            is_primary: true,
+            has_var: true,
+            native_type: None,
+        }];
 
-        let all_syntax = vec![
-            ("Lit".to_string(), "Expr".to_string(), vec![
-                crate::SyntaxItemSpec::Terminal("42".to_string()),
-            ]),
-        ];
+        let all_syntax = vec![(
+            "Lit".to_string(),
+            "Expr".to_string(),
+            vec![crate::SyntaxItemSpec::Terminal("42".to_string())],
+        )];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
         assert!(result.dead_registers.is_empty(), "no binders means no dead registers");
@@ -1657,9 +1678,9 @@ mod tests {
 #[cfg(test)]
 mod proptest_tests {
     use super::*;
-    use proptest::prelude::*;
     use crate::test_generators::*;
     use crate::SyntaxItemSpec;
+    use proptest::prelude::*;
 
     /// Helper: collect cross-category NonTerminal references.
     ///
@@ -1686,35 +1707,35 @@ mod proptest_tests {
         match item {
             SyntaxItemSpec::NonTerminal { category, .. } => {
                 referenced.insert(category.clone());
-            }
+            },
             SyntaxItemSpec::Collection { element_category, .. } => {
                 referenced.insert(element_category.clone());
-            }
+            },
             SyntaxItemSpec::Binder { category, .. } => {
                 // Binder produces Store, not TestEq — but we track the
                 // category for prop_referenced_category_not_dead which
                 // needs NonTerminal/Collection references specifically.
                 let _ = category;
-            }
+            },
             SyntaxItemSpec::Sep { body, .. } => {
                 collect_nt_refs(body, rule_cat, referenced);
-            }
+            },
             SyntaxItemSpec::Map { body_items } => {
                 for sub in body_items {
                     collect_nt_refs(sub, rule_cat, referenced);
                 }
-            }
+            },
             SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
                 collect_nt_refs(body, rule_cat, referenced);
-            }
+            },
             SyntaxItemSpec::Optional { inner } => {
                 for sub in inner {
                     collect_nt_refs(sub, rule_cat, referenced);
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 

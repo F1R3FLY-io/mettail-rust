@@ -11,7 +11,6 @@
 
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
-use crate::gen::native::native_type_to_string;
 use std::collections::{HashMap, HashSet};
 
 use super::expr_string_gen::TestCase;
@@ -45,10 +44,7 @@ pub fn generate_type_preservation_tests(
     if eval_rules.is_empty() {
         // Also include rules with rust_code but no explicit eval_mode
         // (they still participate in evaluation)
-        return generate_type_preservation_for_all_eval_rules(
-            language,
-            ambiguous_prefix_rules,
-        );
+        return generate_type_preservation_for_all_eval_rules(language, ambiguous_prefix_rules);
     }
 
     // Step 2: Enumerate ground terms

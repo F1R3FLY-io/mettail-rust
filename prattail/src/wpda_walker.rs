@@ -65,7 +65,6 @@ use std::any::Any;
 // per Fork's clone (vs O(1) Arc bump) but O(1) per insert (vs O(log N)
 // path-copy chunks), and the constant factor is dramatically smaller
 // — net win in this access pattern.
-use rustc_hash::FxHashSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -115,12 +114,10 @@ fn b3_span_disabled() -> bool {
     *GATE.get_or_init(|| std::env::var_os("B3_SPAN_DISABLE").is_some())
 }
 
-/// Sig-B Blocker-3 M7.0 (2026-06-01, pgmcp experiment #9): is the
-/// `SIGB_CROSSWRAP` trace gate on? Memoized sibling of dispatch_cohort's
-/// `sigb_crosswrap_trace`. Gates the INERT M7.0 span-anchored diagnostic
-/// survey (`sigb_m70_span_diagnostic`) emitted at the drop boundary. Off by
-/// default; the survey emits NOTHING and has zero behavioral effect when
-/// unset.
+/// `SIGB_CROSSWRAP` trace gate for span-anchored cross-wrap revival.
+///
+/// Off by default; when set, emits diagnostic retention logs without changing
+/// behavior.
 #[inline]
 fn sigb_m70_trace() -> bool {
     static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -132,10 +129,9 @@ use crate::automata::TokenKind;
 use crate::gss::{WpdaGss, WpdaGssNode};
 use crate::recovery::RecoveryConfig;
 use crate::wpda_runtime::{
-    ActionArg, ActionEntry, SemanticBuilder, StackSymbolV2,
-    SymbolKind, WpdaConfiguration, WpdaControl, WpdaEvent, WpdaMaxStepsExceeded,
-    WpdaMutableTokenSource, WpdaResolveResult, WpdaState, WpdaTokenSource, WpdaTraceEntry,
-    WpdaTransition,
+    ActionArg, ActionEntry, SemanticBuilder, StackSymbolV2, SymbolKind, WpdaConfiguration,
+    WpdaControl, WpdaEvent, WpdaMaxStepsExceeded, WpdaMutableTokenSource, WpdaResolveResult,
+    WpdaState, WpdaTokenSource, WpdaTraceEntry, WpdaTransition,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -428,10 +424,7 @@ pub enum WpdaStepAction<W: SemiringRef> {
         new_state: WpdaState,
     },
     /// WPDS pop: drop the frontier top, follow the predecessor edge.
-    Pop {
-        weight: W,
-        new_state: WpdaState,
-    },
+    Pop { weight: W, new_state: WpdaState },
     /// WPDS replace: swap the top symbol for another (intracategory step).
     Replace {
         symbol: StackSymbolV2,
@@ -495,9 +488,8 @@ pub enum WpdaStepAction<W: SemiringRef> {
     /// Return frame); on chain terminate the standard Unwinding-Return
     /// pop fires the action once with all accumulated RHS SPPF nodes.
     ///
-    /// Substage 6a scope: walker arm shipped. Engine codegen does
-    /// NOT yet emit this action (Substage 6b). Unreachable at this
-    /// commit; gauntlet invariant: never observed during a parse.
+    /// Engine codegen emits this action for iterative-eligible same-category
+    /// operators when the chain recognizer elects the iterative path.
     IterativeChainAbsorb {
         symbol: StackSymbolV2,
         weight: W,
@@ -513,18 +505,12 @@ pub enum WpdaStepAction<W: SemiringRef> {
     /// `CollectionMarker`), and transition to `new_state`. Used by the
     /// `CollectionLoop` close arm: consume the close delimiter, pop the
     /// `CollectionMarker`, and fire the finalize action.
-    ConsumeAndPop {
-        weight: W,
-        new_state: WpdaState,
-    },
+    ConsumeAndPop { weight: W, new_state: WpdaState },
     /// Phase 4: consume the current token (advance `pos` by 1) without
     /// touching the stack, then transition to `new_state`. Used by the
     /// `CollectionLoop` separator arm: consume the separator and re-enter
     /// `PrefixDispatch` to parse the next element.
-    Consume {
-        weight: W,
-        new_state: WpdaState,
-    },
+    Consume { weight: W, new_state: WpdaState },
     /// Phase 5: consume the current `Ident` token (advance `pos` by 1),
     /// push it as `ActionArg::Ident` to the builder, and replace the GSS
     /// top with `symbol`. If `start_scope` is true, also call
@@ -648,58 +634,50 @@ fn project_continuation_record_for_action<W: SemiringRef>(
         WpdaStepAction::AdvanceWithEffect { .. } => {
             // BuilderDelta is an enum w/ payload up to ~32 B.
             (header + state_size + 32, 1, 0)
-        }
-        WpdaStepAction::Push { .. } => {
-            (header + symbol_size + w_size + state_size, 2, 0)
-        }
+        },
+        WpdaStepAction::Push { .. } => (header + symbol_size + w_size + state_size, 2, 0),
         WpdaStepAction::Pop { .. } => (header + w_size + state_size, 3, 0),
-        WpdaStepAction::Replace { .. } => {
-            (header + symbol_size + w_size + state_size, 4, 0)
-        }
+        WpdaStepAction::Replace { .. } => (header + symbol_size + w_size + state_size, 4, 0),
         WpdaStepAction::Fork { branches, .. } => {
             // Per the plan, Fork's record DOES NOT carry the branches
             // Vec; the broadcast at enqueue produces N Continuation::Step
             // records (8 B each) and consumes the Vec inline. Record
             // shape is just header + bool consume_trigger.
             (header + 1, 5, branches.len())
-        }
+        },
         WpdaStepAction::ConsumeAndPush { .. } => {
             // +1 for TriggerMode (small enum).
             (header + symbol_size + w_size + state_size + 1, 6, 0)
-        }
-        WpdaStepAction::IterativeChainAbsorb { .. } => {
-            (
-                header
-                    + symbol_size
-                    + w_size
-                    + state_size
-                    + std::mem::size_of::<crate::binding_power::IterAbsorbSpec>(),
-                7,
-                0,
-            )
-        }
-        WpdaStepAction::ConsumeAndPop { .. } => {
-            (header + w_size + state_size, 8, 0)
-        }
+        },
+        WpdaStepAction::IterativeChainAbsorb { .. } => (
+            header
+                + symbol_size
+                + w_size
+                + state_size
+                + std::mem::size_of::<crate::binding_power::IterAbsorbSpec>(),
+            7,
+            0,
+        ),
+        WpdaStepAction::ConsumeAndPop { .. } => (header + w_size + state_size, 8, 0),
         WpdaStepAction::Consume { .. } => (header + w_size + state_size, 9, 0),
         WpdaStepAction::ConsumeIdentAndReplace { .. } => {
             (header + symbol_size + w_size + state_size + 1, 10, 0)
-        }
+        },
         WpdaStepAction::ConsumeAndReplace { .. } => {
             (header + symbol_size + w_size + state_size, 11, 0)
-        }
+        },
         WpdaStepAction::ReplaceAndPush { .. } => {
             (header + symbol_size * 2 + w_size + state_size, 12, 0)
-        }
+        },
         WpdaStepAction::ParsePredicate { .. } => {
             (header + symbol_size + w_size + state_size, 13, 0)
-        }
+        },
         WpdaStepAction::OptGroupAbsent { .. } => {
             (header + symbol_size + w_size + state_size, 14, 0)
-        }
+        },
         WpdaStepAction::OptGroupFinalize { .. } => {
             (header + symbol_size + w_size + state_size, 15, 0)
-        }
+        },
         WpdaStepAction::Accept | WpdaStepAction::Idle => (header, 16, 0),
         WpdaStepAction::Error(msg) => (header + 24 + msg.len(), 16, 0),
     }
@@ -916,10 +894,7 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// the SAME (cat, pos, inner_bp) are filtered.
     ///
     /// Reset by `reset()`.
-    dispatch_branch_seen: std::collections::HashMap<
-        (u16, u32, u8),
-        std::collections::HashSet<u16>,
-    >,
+    dispatch_branch_seen: std::collections::HashMap<(u16, u32, u8), std::collections::HashSet<u16>>,
     /// Phase F.13 H12 Stage 1.1 (2026-05-21): Tomita-GLR dispatch-cohort
     /// sharing cache. Walker-global; populated when a cross-cat-projection
     /// Fork-arm Push allocates a child cursor, consumed at the matching
@@ -937,8 +912,7 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// Drained by `step_fanout` at end-of-iteration BEFORE
     /// `merge_equivalent_cursors`, emitting `paused × snapshots`
     /// revived cursors per key.
-    pending_cohort_drain_keys:
-        rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
+    pending_cohort_drain_keys: rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey>,
     /// Cohort-revive-rework M1 (2026-05-29): bounded re-drive counter for
     /// EOI orphan revival. `run_to_end_of_input`'s `!progress_made` block
     /// calls `revive_orphaned_cohort_members_once`, which injects
@@ -991,10 +965,8 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// (SppfId, weight, chain_end) triple.
     ///
     /// Reset at parse boundary via the walker's `reset` method.
-    pub chain_earley_cache: rustc_hash::FxHashMap<
-        (usize, u16, u16),
-        (crate::sppf::SppfId, W, usize),
-    >,
+    pub chain_earley_cache:
+        rustc_hash::FxHashMap<(usize, u16, u16), (crate::sppf::SppfId, W, usize)>,
 
     /// Phase F.13 chain_10000 Plan v6 R4 (2026-05-28): half-open
     /// `[start, end)` token-position intervals that have been Earley-
@@ -1013,10 +985,7 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     /// never populate this map (H3 only fires for chains ≥ 4 atoms), so
     /// the gauntlet + cross-cat eval suites see an empty map → zero
     /// behavior change. Reset at parse boundary.
-    pub chain_absorbed_intervals: rustc_hash::FxHashMap<
-        (u16, u16),
-        Vec<(usize, usize)>,
-    >,
+    pub chain_absorbed_intervals: rustc_hash::FxHashMap<(u16, u16), Vec<(usize, usize)>>,
 }
 
 // Phase 5.6-tail-F (2026-05-12): CursorMode enum DELETED. The pre-tail
@@ -1210,7 +1179,7 @@ pub enum ForkActionKind {
         /// the captured token flows through `FireAction` and produces
         /// an AST term (e.g., `Int::NumLit(0)`).
         ///
-        /// Placeholder `0u16` during M6c.1; populated by codegen in M6c.3.
+        /// Populated by codegen when emitting the lex-Fork branch.
         rule_idx: u16,
     },
 
@@ -1224,7 +1193,7 @@ pub enum ForkActionKind {
     /// false` (trigger not stored on builder; operand sub-parse
     /// produces the AST). Walker apply: allocate child at `cursor.pos`,
     /// emit_push_side_effects, cursor_gss_push, advance to `next_pos`.
-    /// Activated at M6c.6.4.d; previously stubbed `unreachable!()`.
+    /// Activated at M6c.6.4.d.
     LexAltPrefixOp {
         alt_idx: u16,
         trigger: String,
@@ -1278,9 +1247,8 @@ pub enum ForkActionKind {
     /// `Tern`'s `?` trigger): symbol = `mixfix_marker(result_src,
     /// rule_idx, 0)` (NOT `rule_at`); `new_state = PrefixDispatch {
     /// pos: next_pos, cur_bp: 0 }`. Subsequent triggers (e.g., `:` of
-    /// Tern) handled deterministically by `MixfixLiteralRun` state
-    /// machine — OUT OF SCOPE for M6c.6.4 (tracked as M6c.6.5 if a
-    /// grammar exercises internal-trigger multi-LENGTH).
+    /// Tern) are handled deterministically by the `MixfixLiteralRun` state
+    /// machine.
     /// Activated at M6c.6.4.e.
     LexAltMixfixOp {
         alt_idx: u16,
@@ -1291,8 +1259,8 @@ pub enum ForkActionKind {
         result_src_idx: u16,
     },
 
-    /// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — atomic
-    /// literal multi-arm Fork branch. Mirrors `WpdaStepAction::ConsumeAndPush
+    /// Stage 3.16 atomic-literal multi-arm Fork branch (Cluster 2,
+    /// Mechanism gamma, 2026-05-05). Mirrors `WpdaStepAction::ConsumeAndPush
     /// { capture_token: true }`: emit_push_token captures the literal text
     /// onto the cursor's recovery_deltas/live builder, then push the
     /// `branch.symbol` (the rule's Return marker) onto the GSS, then advance
@@ -1302,7 +1270,7 @@ pub enum ForkActionKind {
     /// the lower rule_idx winner.
     ConsumeAndCaptureAndPush,
 
-    /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 hacks #4 & #5
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 guarded-text
     /// closure. Mirrors `WpdaStepAction::ConsumeAndReplace` but gated on
     /// a `peek_text == expected_text` equality check. Walker's
     /// `apply_action_to_cursor::Fork` arm reads the peek'd text at
@@ -1318,7 +1286,7 @@ pub enum ForkActionKind {
     /// guard-failing cursor dies; correct sibling cursors continue.
     GuardedConsumeAndReplace { expected_text: String },
 
-    /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 hacks #6 & 4th
+    /// Stage 3.20 / L12 Commit F (2026-05-06) — Cluster 1/6 guarded-ident
     /// closure. Mirrors `WpdaStepAction::ConsumeIdentAndReplace` but
     /// gated on a `peek_kind == TokenKind::Ident` check. Pass → behaves
     /// identically to `ConsumeIdentAndReplace { start_scope }`. Fail →
@@ -1375,9 +1343,7 @@ pub enum ForkActionKind {
     /// the Names accumulator. emit_push_side_effects fires for the
     /// pushed CollectionMarker (allocates accumulator, pushes
     /// CollectionId arg, opens BinderScope per is_class3_collection).
-    ReplaceAndPush {
-        replace_symbol: StackSymbolV2,
-    },
+    ReplaceAndPush { replace_symbol: StackSymbolV2 },
 
     /// B8 / Issue C followup (2026-05-09): consume an Ident token,
     /// optionally start a binder scope, push the ident name to builder,
@@ -1386,9 +1352,7 @@ pub enum ForkActionKind {
     /// inner BinderIdent step so the cursor returns to the
     /// CollectionMarker (not to a duplicate RuleAt) when the loop
     /// continues.
-    ConsumeIdentAndPop {
-        start_scope: bool,
-    },
+    ConsumeIdentAndPop { start_scope: bool },
 
     /// B8 / Issue C followup (2026-05-09): consume a token + Pop top-
     /// of-GSS + log a builder delta. Used by Class 3 BinderListLoop's
@@ -1410,9 +1374,7 @@ pub enum ForkActionKind {
     /// terminal action expects `ActionArg::BinderScope`, not Ident.
     /// Lambda Lam-style single-binder rules whose action expects
     /// `ActionArg::Ident` continue to use `GuardedConsumeIdentAndReplace`.
-    GuardedConsumeBinderIdentAndReplace {
-        start_scope: bool,
-    },
+    GuardedConsumeBinderIdentAndReplace { start_scope: bool },
 
     /// Phase 3.B.2 (2026-05-11): single-binder collapse variant.
     /// Same as `GuardedConsumeBinderIdentAndReplace` (peek_kind=Ident
@@ -1426,10 +1388,7 @@ pub enum ForkActionKind {
     /// scalar `Binder<String>` for the single-binder collapsed case,
     /// preserving Lambda Lam<Binder<String>, ...>, ambient PNew, and
     /// guardedRho PGuardedInput AST signatures.
-    GuardedConsumeBinderIdentAndReplaceWithEffect {
-        start_scope: bool,
-        effect: BuilderDelta,
-    },
+    GuardedConsumeBinderIdentAndReplaceWithEffect { start_scope: bool, effect: BuilderDelta },
 }
 
 impl<W: SemiringRef> std::fmt::Debug for ForkBranch<W>
@@ -1708,8 +1667,8 @@ pub struct BranchCursor<W: SemiringRef> {
     /// `ActionArg::BinderScope` without depending on parse-time builder
     /// state.
     pub binder_scope_marks: Vec<(u16, Vec<String>)>,
-    /// Phase C.2/C.3 (2026-05-17): per-Fork-arm weight increment that has
-    /// not yet been consumed by `emit_fire_action::intern_packing`.
+    /// Phase C.2/C.3 (2026-05-17): pending per-Fork-arm weight increment
+    /// consumed by `emit_fire_action::intern_packing`.
     ///
     /// Semantics (Q1.A+ in `~/.claude/plans/phase-c-sppf-w-resolved.md`):
     /// - Initial value at `seed_from_live`: `W::one_ref()`.
@@ -1792,7 +1751,6 @@ pub struct BranchCursor<W: SemiringRef> {
     // Per-cursor field DELETED. SPPF SymbolIds are global (Symbol-dedup
     // at `(nt, lo, hi)`); per-cursor memos were redundantly cloning
     // immutable shared data via the Arc<Vec> CoW.
-
     /// Phase F.3a/b (2026-05-20): walker-maintained mirror of
     /// `cursor.builder.top_term_type_name().and_then(|tn| cat_of_type_name(tn))`.
     ///
@@ -1978,7 +1936,7 @@ impl<W: SemiringRef> Clone for BranchCursor<W> {
 impl<W: SemiringRef> BranchCursor<W> {
     /// Stage 3.10 / ι Phase 5 (2026-05-01): construct a fresh cursor that
     /// mirrors the live walker's collection-stack depth via empty
-    /// placeholders.
+    /// slots.
     ///
     /// **Class C closure**: pre-Phase-4, the walker maintained two parallel
     /// mutation surfaces (live builder + cursor deltas). When a
@@ -1995,11 +1953,11 @@ impl<W: SemiringRef> BranchCursor<W> {
     /// (the pre-tail deterministic-mode singleton path mutated the live
     /// builder directly, NOT cursor.collection_stack). The Fork arm
     /// therefore needs to seed children's `collection_stack` with empty
-    /// placeholders matching the live builder's depth so subsequent
+    /// slots matching the live builder's depth so subsequent
     /// splice ids align.
     ///
     /// `seed_from_live` makes this explicit. Constructs a cursor with
-    /// `K` empty `Vec<ActionArg>` placeholders in `collection_stack`,
+    /// `K` empty `Vec<ActionArg>` reserved slots in `collection_stack`,
     /// where `K = live_collection_stack_depth`. Used by WpdaWalker
     /// constructors and the deterministic→nondeterministic transition (Fork) to ensure
     /// the always-non-empty + always-aligned cursor invariant.
@@ -2008,7 +1966,7 @@ impl<W: SemiringRef> BranchCursor<W> {
     /// new_for_category, seeded_from}` — single source of truth.
     // Phase 5.6-tail-G (2026-05-12): `live_collection_stack_depth` parameter
     // dropped. Pre-tail it was used to seed the deleted collection_stack
-    // mirror with placeholders; under always-eager Arc::make_mut, the
+    // mirror with reserved slots; under always-eager Arc::make_mut, the
     // cursor.builder.collection_stack is the authoritative state and is
     // populated by emit_start_collection directly.
     pub fn seed_from_live(
@@ -2148,9 +2106,7 @@ impl<W: SemiringRef> BranchCursor<W> {
             // weight. The next `emit_fire_action` will consume this
             // (mem::replace + W::one_ref()) and use it as the produced
             // packing's per-production weight.
-            pending_packing_weight: parent
-                .pending_packing_weight
-                .times_ref(&branch_weight),
+            pending_packing_weight: parent.pending_packing_weight.times_ref(&branch_weight),
             // Phase F.1 (2026-05-18): Fork-child inherits parent's
             // open-collection depth; the shared Arc<SemanticBuilder>
             // carries the actual stack content via copy-on-write.
@@ -2385,12 +2341,7 @@ impl RecoveryEvent {
             alt_idx: None,
         }
     }
-    pub fn lex_commit(
-        pos: usize,
-        alt_idx: u16,
-        kind: TokenKind,
-        text: String,
-    ) -> Self {
+    pub fn lex_commit(pos: usize, alt_idx: u16, kind: TokenKind, text: String) -> Self {
         RecoveryEvent {
             action_kind: 7,
             pos,
@@ -2400,6 +2351,18 @@ impl RecoveryEvent {
             alt_idx: Some(alt_idx),
         }
     }
+}
+
+/// Recovery primitive after grammar token ids have been resolved to concrete
+/// token payloads. This is the form replayed by `BuilderDelta` so commit-time
+/// token edits do not have to recover token text from a local id map.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ResolvedRepairAction {
+    SkipToSync { skip_count: usize },
+    DeleteToken,
+    InsertToken { kind: TokenKind, text: String },
+    SubstituteToken { kind: TokenKind, text: String },
+    SwapTokens { pos_a: usize, pos_b: usize },
 }
 
 /// BuilderDelta — payload variants for `cursor.recovery_deltas` AND for
@@ -2458,7 +2421,9 @@ pub enum BuilderDelta {
     /// CollectionMarker — when there's no enclosing collection, no delta
     /// is logged at all (the old code logged unconditionally and let the
     /// helper no-op).
-    SpliceIntoCollection { id: u8 },
+    SpliceIntoCollection {
+        id: u8,
+    },
 
     /// Codegen-emitted "allocate a fresh collection slot" payload. Survives
     /// 5.6-tail-E because BinderListLoop codegen emits it via
@@ -2497,7 +2462,17 @@ pub enum BuilderDelta {
         text: String,
     },
 
-    /// Stage 3.14 / Hack #12 prep: cursor commits a lex alternative
+    /// Stage 3.20 / L12 follow-up: swap two adjacent live tokens. Direct
+    /// swap repairs are represented as absolute stream positions here;
+    /// sequence-local swaps use `ResolvedRepairAction::SwapTokens` inside
+    /// `ApplyRecoverySequence`.
+    SwapTokens {
+        pos_a: usize,
+        pos_b: usize,
+        cost_tropical: f64,
+    },
+
+    /// Cursor commits a lex alternative
     /// selection at `pos`. Replay invokes
     /// `MutableMultiTokenSource::commit_alternative(pos, alt_idx)` which
     /// rewrites the lex stream's primary alternative for that position
@@ -2516,7 +2491,7 @@ pub enum BuilderDelta {
     /// repair sequence. The entire sequence applies as one unit; partial
     /// application would leave the token stream in an inconsistent state.
     ///
-    /// `actions` is `Arc<[RepairAction]>` for cheap clone on Fork-branch
+    /// `actions` is `Arc<[ResolvedRepairAction]>` for cheap clone on Fork-branch
     /// allocation (each cursor's recovery_deltas gets its own clone
     /// of the Arc, sharing the slice contents).
     ///
@@ -2526,8 +2501,9 @@ pub enum BuilderDelta {
     /// `total_cost_tropical` is the multi-step Viterbi-best cost; recorded
     /// on each emitted `RecoveryEvent` for downstream cost-based selection.
     ApplyRecoverySequence {
-        actions: Arc<[crate::recovery::RepairAction]>,
+        actions: Arc<[ResolvedRepairAction]>,
         base_pos: usize,
+        target_pos: usize,
         total_cost_tropical: f64,
     },
 }
@@ -2539,23 +2515,16 @@ impl std::fmt::Debug for BuilderDelta {
                 .debug_struct("StartBinderScope")
                 .field("names", names)
                 .finish(),
-            BuilderDelta::EndBinderScope => f
-                .debug_struct("EndBinderScope")
-                .finish(),
-            BuilderDelta::PushCollectionId { id } => f
-                .debug_struct("PushCollectionId")
-                .field("id", id)
-                .finish(),
+            BuilderDelta::EndBinderScope => f.debug_struct("EndBinderScope").finish(),
+            BuilderDelta::PushCollectionId { id } => {
+                f.debug_struct("PushCollectionId").field("id", id).finish()
+            },
             BuilderDelta::SpliceIntoCollection { id } => f
                 .debug_struct("SpliceIntoCollection")
                 .field("id", id)
                 .finish(),
             BuilderDelta::StartCollection => f.debug_struct("StartCollection").finish(),
-            BuilderDelta::RecoveryEvent {
-                action_kind,
-                pos,
-                cost_tropical,
-            } => f
+            BuilderDelta::RecoveryEvent { action_kind, pos, cost_tropical } => f
                 .debug_struct("RecoveryEvent")
                 .field("action_kind", action_kind)
                 .field("pos", pos)
@@ -2573,12 +2542,13 @@ impl std::fmt::Debug for BuilderDelta {
                 .field("kind", kind)
                 .field("text", text)
                 .finish(),
-            BuilderDelta::CommitLexAlternative {
-                pos,
-                alt_idx,
-                kind,
-                text,
-            } => f
+            BuilderDelta::SwapTokens { pos_a, pos_b, cost_tropical } => f
+                .debug_struct("SwapTokens")
+                .field("pos_a", pos_a)
+                .field("pos_b", pos_b)
+                .field("cost_tropical", cost_tropical)
+                .finish(),
+            BuilderDelta::CommitLexAlternative { pos, alt_idx, kind, text } => f
                 .debug_struct("CommitLexAlternative")
                 .field("pos", pos)
                 .field("alt_idx", alt_idx)
@@ -2588,11 +2558,13 @@ impl std::fmt::Debug for BuilderDelta {
             BuilderDelta::ApplyRecoverySequence {
                 actions,
                 base_pos,
+                target_pos,
                 total_cost_tropical,
             } => f
                 .debug_struct("ApplyRecoverySequence")
                 .field("actions_len", &actions.len())
                 .field("base_pos", base_pos)
+                .field("target_pos", target_pos)
                 .field("total_cost_tropical", total_cost_tropical)
                 .finish(),
         }
@@ -2647,6 +2619,7 @@ where
 ///   - `BuilderDelta::RecoveryEvent` (Skip / Delete branches)
 ///   - `BuilderDelta::InsertToken`   (Insert branches)
 ///   - `BuilderDelta::SubstituteToken` (Substitute branches)
+///   - `BuilderDelta::SwapTokens` (direct adjacent swap branches)
 ///   - `BuilderDelta::ApplyRecoverySequence` (multi-step Viterbi)
 ///
 /// These four deltas are NOT used by any non-recovery emitter — the
@@ -2684,6 +2657,7 @@ fn is_recovery_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
                 effect: BuilderDelta::RecoveryEvent { .. }
                     | BuilderDelta::InsertToken { .. }
                     | BuilderDelta::SubstituteToken { .. }
+                    | BuilderDelta::SwapTokens { .. }
                     | BuilderDelta::ApplyRecoverySequence { .. }
             }
         )
@@ -2696,7 +2670,8 @@ fn is_recovery_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
 /// A recovery branch is allowed if either:
 ///   1. Its `new_state` is `PrefixDispatch { pos, .. }` with `pos > base_pos`
 ///      (i.e., the cursor advances past the dead-end token), OR
-///   2. The branch carries a `BuilderDelta::InsertToken` effect (the only
+///   2. The branch carries a direct `BuilderDelta::InsertToken` effect
+///      or an `ApplyRecoverySequence` containing an insert (the only
 ///      legitimate non-advancing repair — synthetic token splice; the
 ///      live stream is mutated at commit time so the cursor's view of
 ///      the world changes, even though the synthesis-time pos doesn't).
@@ -2715,12 +2690,45 @@ fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: 
         _ => true,
     };
     advances
-        || matches!(
-            &branch.action_kind,
+        || match &branch.action_kind {
             ForkActionKind::ConsumeAndReplaceWithEffect {
-                effect: BuilderDelta::InsertToken { .. }
-            }
-        )
+                effect: BuilderDelta::InsertToken { .. },
+            } => true,
+            ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::ApplyRecoverySequence { actions, .. },
+            } => actions
+                .iter()
+                .any(|action| matches!(action, ResolvedRepairAction::InsertToken { .. })),
+            _ => false,
+        }
+}
+
+/// Bounded recovery: mirror `RecoveryBound.recovery_delta_target_valid`.
+///
+/// Synthesis-side recovery dispatch already constructs recovery branches with
+/// matching `BuilderDelta` target and branch `PrefixDispatch` target. The
+/// walker still consumes arbitrary `WpdaEngine` forks, so it validates the
+/// same invariant before allocating children.
+fn recovery_effect_target_matches_branch_state<W: SemiringRef>(branch: &ForkBranch<W>) -> bool {
+    let ForkActionKind::ConsumeAndReplaceWithEffect { effect } = &branch.action_kind else {
+        return true;
+    };
+    let WpdaState::PrefixDispatch { pos: state_target, .. } = &branch.new_state else {
+        return true;
+    };
+
+    match effect {
+        BuilderDelta::InsertToken { pos, .. } => *state_target == *pos,
+        BuilderDelta::SubstituteToken { pos, .. } => pos
+            .checked_add(1)
+            .is_some_and(|target| *state_target == target),
+        BuilderDelta::SwapTokens { pos_a, pos_b, .. } => pos_a
+            .max(pos_b)
+            .checked_add(1)
+            .is_some_and(|target| *state_target == target),
+        BuilderDelta::ApplyRecoverySequence { target_pos, .. } => *state_target == *target_pos,
+        _ => true,
+    }
 }
 
 /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): extract the
@@ -2729,7 +2737,7 @@ fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: 
 /// after dispatch so subsequent dispatches at the same configuration
 /// are refused (cursor cycle defense).
 ///
-/// Returns `None` if the cursor's `inner_state` isn't `PrefixDispatch`
+/// Returns `Ok(None)` if the cursor's `inner_state` isn't `PrefixDispatch`
 /// — recovery only fires from PrefixDispatch dead-ends per
 /// `engine_impl.rs`'s codegen, so this is normally unreachable. The
 /// caller falls back to bumping `recovery_depth` without a visited
@@ -2737,15 +2745,17 @@ fn forward_progress_or_insert<W: SemiringRef>(branch: &ForkBranch<W>, base_pos: 
 fn extract_recovery_dispatch_config<W: SemiringRef>(
     cursor: &BranchCursor<W>,
     gss: &WpdaGss<W>,
-) -> Option<PackedDispatchConfig> {
+) -> Result<Option<PackedDispatchConfig>, usize> {
     if let WpdaState::PrefixDispatch { pos, cur_bp } = &cursor.inner_state {
         let cat_src = gss
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
             .unwrap_or(0);
-        Some(PackedDispatchConfig::pack(*pos, cat_src, *cur_bp))
+        PackedDispatchConfig::try_pack(*pos, cat_src, *cur_bp)
+            .map(Some)
+            .ok_or(*pos)
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -2782,9 +2792,9 @@ fn extract_recovery_dispatch_config<W: SemiringRef>(
 /// (Scott & Johnstone 2010).
 fn is_projection_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
     !branches.is_empty()
-        && branches.iter().all(|b| {
-            matches!(&b.new_state, WpdaState::CrossCatDelegate { .. })
-        })
+        && branches
+            .iter()
+            .all(|b| matches!(&b.new_state, WpdaState::CrossCatDelegate { .. }))
 }
 
 /// B12 / Candidate E (2026-05-07): extract the `(pos, cat_src_idx, cur_bp)`
@@ -2813,23 +2823,31 @@ fn is_projection_fork<W: SemiringRef>(branches: &[ForkBranch<W>]) -> bool {
 pub struct PackedDispatchConfig(u64);
 
 impl PackedDispatchConfig {
+    pub const POS_BITS: u32 = 40;
+    pub const POS_LIMIT: u64 = 1u64 << Self::POS_BITS;
+    const POS_MASK: u64 = Self::POS_LIMIT - 1;
+
+    #[inline(always)]
+    pub fn try_pack(pos: usize, cat_src: u16, cur_bp: u8) -> Option<Self> {
+        let pos = u64::try_from(pos).ok()?;
+        if pos >= Self::POS_LIMIT {
+            return None;
+        }
+        Some(Self(
+            (pos & Self::POS_MASK) | ((cat_src as u64) << 40) | ((cur_bp as u64) << 56),
+        ))
+    }
+
     #[inline(always)]
     pub fn pack(pos: usize, cat_src: u16, cur_bp: u8) -> Self {
-        debug_assert!(
-            (pos as u64) < (1u64 << 40),
-            "PackedDispatchConfig::pack: pos {} overflows 40 bits",
-            pos,
-        );
-        Self(
-            ((pos as u64) & 0xFF_FFFF_FFFF)
-                | ((cat_src as u64) << 40)
-                | ((cur_bp as u64) << 56),
-        )
+        Self::try_pack(pos, cat_src, cur_bp).unwrap_or_else(|| {
+            panic!("PackedDispatchConfig::pack: pos {} overflows {} bits", pos, Self::POS_BITS,)
+        })
     }
 
     #[inline(always)]
     pub fn pos(self) -> usize {
-        (self.0 & 0xFF_FFFF_FFFF) as usize
+        (self.0 & Self::POS_MASK) as usize
     }
 
     #[inline(always)]
@@ -2932,12 +2950,7 @@ pub struct ProjDescriptorKey {
 impl ProjDescriptorKey {
     #[inline(always)]
     pub fn new(gss_node: u32, sppf_stack: u32, cat_src: u16, cur_bp: u8) -> Self {
-        ProjDescriptorKey {
-            gss_node,
-            sppf_stack,
-            cat_src,
-            cur_bp,
-        }
+        ProjDescriptorKey { gss_node, sppf_stack, cat_src, cur_bp }
     }
 }
 
@@ -2957,12 +2970,7 @@ fn extract_proj_descriptor<W: SemiringRef>(
             .node(cursor.node)
             .map(|n| n.symbol.category_src_idx)
             .unwrap_or(0);
-        Some(ProjDescriptorKey::new(
-            cursor.node,
-            cursor.sppf_stack_id.0,
-            cat_src,
-            *cur_bp,
-        ))
+        Some(ProjDescriptorKey::new(cursor.node, cursor.sppf_stack_id.0, cat_src, *cur_bp))
     } else {
         None
     }
@@ -2978,11 +2986,7 @@ fn extract_proj_descriptor<W: SemiringRef>(
 /// Free function (not a `WpdaWalker` method) because it is weight- and
 /// engine-agnostic — the codegen call site invokes it without the
 /// `WpdaWalker<W, E>` turbofish.
-pub fn peek_binary_chain(
-    tokens: &dyn WpdaTokenSource,
-    op_pos: usize,
-    min_atoms: usize,
-) -> bool {
+pub fn peek_binary_chain(tokens: &dyn WpdaTokenSource, op_pos: usize, min_atoms: usize) -> bool {
     if op_pos == 0 {
         return false;
     }
@@ -3002,11 +3006,11 @@ pub fn peek_binary_chain(
     let mut probe = op_pos;
     loop {
         match tokens.peek_kind(probe).as_ref() {
-            Some(k) if *k == op_kind => {}
+            Some(k) if *k == op_kind => {},
             _ => break,
         }
         match tokens.peek_kind(probe + 1).as_ref() {
-            Some(k) if *k == atom_kind => {}
+            Some(k) if *k == atom_kind => {},
             _ => break,
         }
         atom_count += 1;
@@ -3053,7 +3057,7 @@ pub fn peek_ternary_chain(
     }
     // The position must actually be ON the trigger.
     match tokens.peek_text(trigger_pos) {
-        Some(t) if t == trigger => {}
+        Some(t) if t == trigger => {},
         _ => return false,
     }
     // Predicate: is `pos` an operand atom? (`Some` kind, text is neither
@@ -3079,7 +3083,7 @@ pub fn peek_ternary_chain(
     loop {
         // `?`
         match tokens.peek_text(probe) {
-            Some(t) if t == trigger => {}
+            Some(t) if t == trigger => {},
             _ => break,
         }
         // then-atom t_i
@@ -3088,7 +3092,7 @@ pub fn peek_ternary_chain(
         }
         // `:`
         match tokens.peek_text(probe + 2) {
-            Some(t) if t == sep => {}
+            Some(t) if t == sep => {},
             _ => return false,
         }
         // The atom at probe+3 is either the next cond c_{i+1} or e_final.
@@ -3101,7 +3105,7 @@ pub fn peek_ternary_chain(
         match tokens.peek_text(probe + 4) {
             Some(t) if t == trigger => {
                 probe += 4;
-            }
+            },
             _ => break,
         }
     }
@@ -3125,13 +3129,9 @@ where
         // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
         // Sentinel node 0 — no GSS node yet; `cursor_gss_push` allocates
         // a CategoryEntry(0) root on first push when `cursor.node == 0`.
-        // Live builder is fresh (depth 0), so no placeholders.
-        let initial_cursor = BranchCursor::seed_from_live(
-            0,
-            0,
-            W::one_ref(),
-            initial_state.clone(),
-        );
+        // Live builder is fresh (depth 0), so no reserved slots.
+        let initial_cursor =
+            BranchCursor::seed_from_live(0, 0, W::one_ref(), initial_state.clone());
         WpdaWalker {
             state: initial_state,
             gss: WpdaGss::new(),
@@ -3209,17 +3209,10 @@ where
             pos: 0,
             symbol: StackSymbolV2::category_entry(cat_src_idx),
         });
-        let initial_state = WpdaState::PrefixDispatch {
-            pos: 0,
-            cur_bp: initial_min_bp,
-        };
+        let initial_state = WpdaState::PrefixDispatch { pos: 0, cur_bp: initial_min_bp };
         // Stage 3.10 / ι Phase 5 (2026-05-01): seed via `seed_from_live`.
-        let initial_cursor = BranchCursor::seed_from_live(
-            top_id,
-            0,
-            W::one_ref(),
-            initial_state.clone(),
-        );
+        let initial_cursor =
+            BranchCursor::seed_from_live(top_id, 0, W::one_ref(), initial_state.clone());
         WpdaWalker {
             state: initial_state,
             gss,
@@ -3288,10 +3281,7 @@ where
         // each new symbol pushing onto the previous top.
         for symbol in config.stack.iter() {
             let new_id = match top_node {
-                None => gss.get_or_create_node(WpdaGssNode {
-                    pos: config.pos,
-                    symbol: *symbol,
-                }),
+                None => gss.get_or_create_node(WpdaGssNode { pos: config.pos, symbol: *symbol }),
                 Some(prev) => gss.push_symbol(prev, *symbol, config.pos, W::one_ref()),
             };
             top_node = Some(new_id);
@@ -3481,10 +3471,12 @@ where
     /// The lifetime of the trait object is erased via raw-pointer cast +
     /// transmute to satisfy the struct's `'static` field type — the
     /// caller-managed contract above is the load-bearing safety invariant.
-    pub fn set_mutable_token_source<'src>(
-        &mut self,
-        source: &'src mut dyn WpdaMutableTokenSource,
-    ) {
+    ///
+    /// Rebinding the mutable source changes the token stream identity for
+    /// recovery replay. Any walker-global cache keyed by token positions
+    /// must be discarded, matching the Rocq `rebind_mutable_token_source`
+    /// obligation.
+    pub fn set_mutable_token_source<'src>(&mut self, source: &'src mut dyn WpdaMutableTokenSource) {
         // Erase the source's `'src` lifetime to fit the struct's
         // lifetime-free pointer slot. Sound under the documented SAFETY
         // contract: the caller must keep the source alive until the
@@ -3493,6 +3485,7 @@ where
         let erased: *mut (dyn WpdaMutableTokenSource + 'static) =
             unsafe { std::mem::transmute(raw) };
         self.mutable_token_source = Some(erased);
+        self.invalidate_token_dependent_caches_after_token_source_change();
     }
 
     /// Stage 3.20 / L12 (Commit A, 2026-05-06): clear the mutable token
@@ -3500,6 +3493,19 @@ where
     /// it (e.g. wrapper-level usage with explicit lifetime separation).
     pub fn clear_mutable_token_source(&mut self) {
         self.mutable_token_source = None;
+    }
+
+    /// Clear walker-global caches whose entries depend on the current token
+    /// stream after recovery replay mutates, or caller code rebinds, the
+    /// mutable token source.
+    /// Diagnostic counters are preserved; this is not a parse-boundary reset.
+    fn invalidate_token_dependent_caches_after_token_source_change(&mut self) {
+        self.dispatch_cohort_cache
+            .clear_entries_preserving_diagnostics();
+        self.pending_cohort_drain_keys.clear();
+        self.recovery_cohort_cache.clear();
+        self.chain_earley_cache.clear();
+        self.chain_absorbed_intervals.clear();
     }
 
     /// Stage 6 G6+ (2026-05-02): build a flat per-cursor census of the
@@ -3535,12 +3541,10 @@ where
                         collection_depth: c.collection_stack_depth as usize,
                     });
                     next_idx += 1;
-                }
+                },
                 crate::cohort_lazy::Frame::Cohort(cf) => {
                     for state in &cf.members {
-                        let c = crate::cohort_lazy::materialize_branch_cursor(
-                            &cf.shell, state,
-                        );
+                        let c = crate::cohort_lazy::materialize_branch_cursor(&cf.shell, state);
                         cursors.push(CursorSnapshot {
                             idx: next_idx,
                             pos: c.pos,
@@ -3553,7 +3557,7 @@ where
                         });
                         next_idx += 1;
                     }
-                }
+                },
             }
         }
         StepSnapshot {
@@ -3644,10 +3648,7 @@ where
 
     /// M11.7 (2026-05-14): set the cursor-bounding mode directly. Replaces
     /// any prior bounding mode. Mutually-exclusive by construction.
-    pub fn with_bounding_mode(
-        mut self,
-        mode: crate::wpda_runtime::CursorBoundingMode,
-    ) -> Self {
+    pub fn with_bounding_mode(mut self, mode: crate::wpda_runtime::CursorBoundingMode) -> Self {
         self.bounding_mode = mode;
         self
     }
@@ -3761,6 +3762,19 @@ where
         }
     }
 
+    #[inline]
+    fn pin_recovery_cache(&mut self) -> crate::recovery_cohort::RecoveryCachePinGuard {
+        let recovery_cache_ptr = &mut self.recovery_cohort_cache
+            as *mut crate::recovery_cohort::RecoveryCohortCache<W>
+            as *mut ();
+        crate::recovery_cohort::RecoveryCachePinGuard::pin(recovery_cache_ptr)
+    }
+
+    #[inline]
+    fn pin_recovery_config(&self) -> crate::recovery_cohort::RecoveryConfigPinGuard {
+        crate::recovery_cohort::RecoveryConfigPinGuard::pin(&self.recovery_config)
+    }
+
     // ─── Reactive driver ────────────────────────────────────────────────────
 
     /// Pure transition function: apply `event` to the current configuration
@@ -3776,6 +3790,8 @@ where
         event: WpdaEvent<W>,
         tokens: &dyn WpdaTokenSource,
     ) -> WpdaTransition<W> {
+        let _recovery_cache_guard = self.pin_recovery_cache();
+        let _recovery_config_guard = self.pin_recovery_config();
         // Terminal states absorb events without further action.
         if self.state.is_terminal() {
             return WpdaTransition::NoChange;
@@ -3793,16 +3809,11 @@ where
                     to_state: from.clone(),
                     stack_depth: self.gss.frontier_size(),
                 };
-                WpdaTransition::Transition {
-                    new_state: from,
-                    trace: Some(trace),
-                }
-            }
+                WpdaTransition::Transition { new_state: from, trace: Some(trace) }
+            },
             WpdaEvent::BranchForked { children, .. } => {
                 let from = self.state.clone();
-                let new_state = WpdaState::AmbiguityFanout {
-                    branches: children.clone(),
-                };
+                let new_state = WpdaState::AmbiguityFanout { branches: children.clone() };
                 self.state = new_state.clone();
                 self.maybe_prune_frontier();
                 let trace = WpdaTraceEntry {
@@ -3812,7 +3823,7 @@ where
                     stack_depth: self.gss.frontier_size(),
                 };
                 WpdaTransition::Transition { new_state, trace: Some(trace) }
-            }
+            },
             WpdaEvent::BranchResolved { winner, weight } => {
                 let from = self.state.clone();
                 self.weight = self.weight.times_ref(&weight);
@@ -3860,7 +3871,7 @@ where
                     visited_proj_descriptors: im::OrdSet::new(),
                     // B13d-R Step 2 (2026-05-08): post-resolution
                     // singleton has empty pending → Consistent memo.
-                            // Phase 5.2 (2026-05-12): fresh empty Arc — the
+                    // Phase 5.2 (2026-05-12): fresh empty Arc — the
                     // BranchResolved write-back resets cursor state to
                     // a canonical post-resolution singleton; the
                     // walker.builder (live mutation surface in 5.2)
@@ -3894,7 +3905,7 @@ where
                     cohort_revive_depth: 0,
                     lex_fork_path: std::sync::Arc::new(Vec::new()),
                     // Phase F.3c.2 (2026-05-20): fresh empty memo.
-                        })];
+                })];
                 self.state = new_state.clone();
                 let trace = WpdaTraceEntry {
                     pos: self.pos,
@@ -3903,7 +3914,7 @@ where
                     stack_depth: self.gss.frontier_size(),
                 };
                 WpdaTransition::Transition { new_state, trace: Some(trace) }
-            }
+            },
             WpdaEvent::SemanticActionFired { .. } => {
                 // Walker records the firing in its trace; no state change.
                 let trace = WpdaTraceEntry {
@@ -3916,11 +3927,11 @@ where
                     new_state: self.state.clone(),
                     trace: Some(trace),
                 }
-            }
+            },
             WpdaEvent::Checkpoint { reason: _ } => {
                 let config = self.current_configuration();
                 WpdaTransition::Checkpoint { config }
-            }
+            },
         }
     }
 
@@ -3931,6 +3942,12 @@ where
     /// dispatch code observes the same settings as the runtime depth checks.
     pub fn set_recovery_config(&mut self, recovery_config: RecoveryConfig) {
         self.recovery_config = recovery_config;
+    }
+
+    /// Builder-style variant of [`set_recovery_config`](Self::set_recovery_config).
+    pub fn with_recovery_config(mut self, recovery_config: RecoveryConfig) -> Self {
+        self.set_recovery_config(recovery_config);
+        self
     }
 
     /// Drive `process_event(Step)` repeatedly until a terminal state is
@@ -3957,14 +3974,12 @@ where
     /// terminal state is reached. Implements the saturation semantics of
     /// WPDS poststar — process all derivable transitions for the current
     /// input position before returning.
-    pub fn run_to_saturation(
-        &mut self,
-        max_steps: usize,
-        tokens: &dyn WpdaTokenSource,
-    ) -> WpdaState
+    pub fn run_to_saturation(&mut self, max_steps: usize, tokens: &dyn WpdaTokenSource) -> WpdaState
     where
         W: 'static + std::fmt::Debug,
     {
+        let _recovery_cache_guard = self.pin_recovery_cache();
+        let _recovery_config_guard = self.pin_recovery_config();
         for _ in 0..max_steps {
             if self.state.is_terminal() {
                 break;
@@ -3988,17 +4003,10 @@ where
                 }
                 continue;
             }
-            let frontier_top = self
-                .top_node
-                .and_then(|id| self.gss.node(id))
-                .cloned();
-            let action = self.engine.step(
-                &self.state,
-                &self.gss,
-                frontier_top.as_ref(),
-                self.pos,
-                tokens,
-            );
+            let frontier_top = self.top_node.and_then(|id| self.gss.node(id)).cloned();
+            let action =
+                self.engine
+                    .step(&self.state, &self.gss, frontier_top.as_ref(), self.pos, tokens);
             if matches!(action, WpdaStepAction::Idle) {
                 // B6 (2026-04-28): make stalls explicit. The engine has
                 // nothing more to derive at this configuration. If the
@@ -4057,15 +4065,12 @@ where
         // obligation at any existing call site.
         W: 'static + std::fmt::Debug + IdempotentSemiring + StarSemiringRef,
     {
-        // Phase F.13 Task #117 (2026-05-23): pin recovery cache pointer
+        // Phase F.13 Task #117 (2026-05-23): pin recovery cache/config
         // for the duration of the parse loop so the codegen-emitted
-        // emit_recovery_fork_cached can find it via TLS without
-        // changing the engine.step ABI.
-        let recovery_cache_ptr = &mut self.recovery_cohort_cache
-            as *mut crate::recovery_cohort::RecoveryCohortCache<W>
-            as *mut ();
-        let _recovery_guard =
-            crate::recovery_cohort::RecoveryCachePinGuard::pin(recovery_cache_ptr);
+        // recovery path can find them via TLS without changing the
+        // engine.step ABI.
+        let _recovery_cache_guard = self.pin_recovery_cache();
+        let _recovery_config_guard = self.pin_recovery_config();
         for _ in 0..max_steps {
             // T4 SIGUSR1 hang-dump (2026-05-12): publish a fresh snapshot
             // so an out-of-band SIGUSR1 / watchdog dump sees current walker
@@ -4115,13 +4120,7 @@ where
                 // both before AND after that call so each pre/post borrow
                 // is independent and the &mut self call sits between
                 // their lifetimes.
-                let prev_fingerprint: Vec<(
-                    crate::gss::GssNodeId,
-                    usize,
-                    WpdaState,
-                    usize,
-                    usize,
-                )> = {
+                let prev_fingerprint: Vec<(crate::gss::GssNodeId, usize, WpdaState, usize, usize)> = {
                     let arena = &self.sppf_stack_arena;
                     self.branch_cursors
                         .iter()
@@ -4146,10 +4145,8 @@ where
                 self.step_fanout(tokens);
                 let progress_made = self.branch_cursors.len() != prev_count || {
                     let arena = &self.sppf_stack_arena;
-                    self.branch_cursors
-                        .iter()
-                        .zip(prev_fingerprint.iter())
-                        .any(|(frame, (n, p, s, ops_len, sppf_len))| {
+                    self.branch_cursors.iter().zip(prev_fingerprint.iter()).any(
+                        |(frame, (n, p, s, ops_len, sppf_len))| {
                             let cur = match frame {
                                 crate::cohort_lazy::Frame::Concrete(c) => (
                                     c.node,
@@ -4171,7 +4168,8 @@ where
                                 || cur.2 != *s
                                 || cur.3 != *ops_len
                                 || cur.4 != *sppf_len
-                        })
+                        },
+                    )
                 };
                 if !progress_made {
                     // True fixed point — every cursor's engine.step
@@ -4233,17 +4231,10 @@ where
             }
             // Non-fanout (live single-cursor) path. Mirrors run_to_saturation
             // but treats EOI Idle as natural termination instead of Error.
-            let frontier_top = self
-                .top_node
-                .and_then(|id| self.gss.node(id))
-                .cloned();
-            let action = self.engine.step(
-                &self.state,
-                &self.gss,
-                frontier_top.as_ref(),
-                self.pos,
-                tokens,
-            );
+            let frontier_top = self.top_node.and_then(|id| self.gss.node(id)).cloned();
+            let action =
+                self.engine
+                    .step(&self.state, &self.gss, frontier_top.as_ref(), self.pos, tokens);
             if matches!(action, WpdaStepAction::Idle) {
                 if self.pos >= tokens.len() {
                     // Stage 3.5b: EOI Idle in live mode is a parked
@@ -4264,9 +4255,7 @@ where
             }
             self.apply_action(action, tokens);
         }
-        Err(WpdaMaxStepsExceeded {
-            position: self.pos,
-        })
+        Err(WpdaMaxStepsExceeded { position: self.pos })
     }
 
     /// Stage 3.5b (2026-05-01): WPDS-correct end-of-input resolution.
@@ -4290,10 +4279,7 @@ where
     ///      exactly one ties, commit it; if ≥2 tie, emit ambiguity
     ///      warning + commit earliest source-ordered + return
     ///      `AcceptedAmbiguous`.
-    pub fn resolve_at_end_of_input(
-        &mut self,
-        tokens: &dyn WpdaTokenSource,
-    ) -> WpdaResolveResult<W>
+    pub fn resolve_at_end_of_input(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaResolveResult<W>
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
@@ -4323,13 +4309,10 @@ where
                 .map(|v| v == "1")
                 .unwrap_or(false)
             {
-                let (inflight_orphans, failed_orphans) = self
-                    .dispatch_cohort_cache
-                    .orphaned_pending_members_count();
-                self.dispatch_cohort_cache.inflight_orphan_members_total +=
-                    inflight_orphans;
-                self.dispatch_cohort_cache.failed_orphan_members_total +=
-                    failed_orphans;
+                let (inflight_orphans, failed_orphans) =
+                    self.dispatch_cohort_cache.orphaned_pending_members_count();
+                self.dispatch_cohort_cache.inflight_orphan_members_total += inflight_orphans;
+                self.dispatch_cohort_cache.failed_orphan_members_total += failed_orphans;
             }
         }
         // Phase F.13 H12 Stage 1.2 (2026-05-21): emit dispatch-cohort
@@ -4344,9 +4327,7 @@ where
                 struct CacheSummary<'a, W: crate::automata::semiring::SemiringRef>(
                     &'a crate::dispatch_cohort::DispatchCohortCache<W>,
                 );
-                impl<'a, W: crate::automata::semiring::SemiringRef> std::fmt::Display
-                    for CacheSummary<'a, W>
-                {
+                impl<'a, W: crate::automata::semiring::SemiringRef> std::fmt::Display for CacheSummary<'a, W> {
                     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                         self.0.write_summary(f)
                     }
@@ -4371,8 +4352,8 @@ where
         // recovery_integration_tests' test_calc_recovery_trailing_*
         // family — those tests rely on the walker accepting at sub-EOI
         // and the wrapper handling trailing tokens via recovery. The
-        // positional gate is left unimplemented at this site; the
-        // wrapper's post-resolution `pos < tokens.len()` check (in
+        // positional gate is intentionally applied by the wrapper's
+        // post-resolution `pos < tokens.len()` check (in
         // codegen-emitted parse_<Cat>_via_wpda) handles TrailingTokens
         // correctly.
         if self.deterministic {
@@ -4382,10 +4363,9 @@ where
             // `~/.claude/plans/phase-f-cursor-builder-deletion.md`): the
             // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
             // The install site that read `(*cursor.builder).clone()`
-            // and assigned to `self.builder` is gone. self.builder
-            // remains as a stub for now (F.3c.5 deletes it); the
-            // extract path below uses realize_root_to_terms over the
-            // SPPF root captured from cursor.sppf_stack.last().
+            // and assigned to `self.builder` is gone. The extract path
+            // below uses realize_root_to_terms over the SPPF root captured
+            // from the cursor stack.
             // C6: extract the singleton cursor's SPPF root.
             // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
@@ -4419,12 +4399,11 @@ where
                             roots: vec![det_sppf_root],
                         },
                         None => WpdaResolveResult::ParseError {
-                            message: "walker accepted but SPPF realize yielded no term"
-                                .to_string(),
+                            message: "walker accepted but SPPF realize yielded no term".to_string(),
                             position: self.pos,
                         },
                     }
-                }
+                },
                 WpdaState::Error { message } => {
                     // M11.7 (2026-05-14): decode the AMBIGUITY_BUDGET_EXCEEDED
                     // sentinel emitted by `maybe_prune_frontier` and surface
@@ -4432,18 +4411,11 @@ where
                     if let Some((budget, actual, position)) =
                         parse_ambiguity_budget_sentinel(&message)
                     {
-                        WpdaResolveResult::AmbiguityBudget {
-                            budget,
-                            actual,
-                            position,
-                        }
+                        WpdaResolveResult::AmbiguityBudget { budget, actual, position }
                     } else {
-                        WpdaResolveResult::ParseError {
-                            message,
-                            position: self.pos,
-                        }
+                        WpdaResolveResult::ParseError { message, position: self.pos }
                     }
-                }
+                },
                 other => WpdaResolveResult::ParseError {
                     message: format!("incomplete parse in state {:?}", other),
                     position: self.pos,
@@ -4453,14 +4425,8 @@ where
         // Fanout mode: also decode the AMBIGUITY_BUDGET_EXCEEDED sentinel
         // BEFORE the per-cursor accepting/dead classification.
         if let WpdaState::Error { ref message } = self.state {
-            if let Some((budget, actual, position)) =
-                parse_ambiguity_budget_sentinel(message)
-            {
-                return WpdaResolveResult::AmbiguityBudget {
-                    budget,
-                    actual,
-                    position,
-                };
+            if let Some((budget, actual, position)) = parse_ambiguity_budget_sentinel(message) {
+                return WpdaResolveResult::AmbiguityBudget { budget, actual, position };
             }
         }
         // Phase E Fix A (2026-05-16): Premature-Accepted cursor filter.
@@ -4510,7 +4476,7 @@ where
                 .iter()
                 .filter_map(|frame| {
                     let c = frame.as_concrete_expect();
-                    if !self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c) {
+                    if !self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c, tokens) {
                         let root = self
                             .sppf_stack_arena
                             .top(c.sppf_stack_id)
@@ -4584,7 +4550,7 @@ where
                 // rule-end exit) accepts. The pre-3.12 `pos >= tokens.len()`
                 // was unreachable in nondeterministic mode because the engine's
                 // `Accept` arm doesn't advance past EOF.
-                self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c)
+                self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c, tokens)
             })
             .collect();
         let max_dead_pos = self
@@ -4617,7 +4583,7 @@ where
                     message: "no accepting branch reached end of input".to_string(),
                     position: max_dead_pos,
                 }
-            }
+            },
             1 => {
                 // C8.1 (2026-05-16): the M11 multiset snapshot-iteration arm was
                 // deleted alongside the C10 W revert to LexicographicWeight.
@@ -4658,14 +4624,15 @@ where
                             terms: Vec::new(),
                             roots: vec![winner_sppf_root],
                         }
-                    }
+                    },
                     None => WpdaResolveResult::ParseError {
-                        message: "winner committed but SPPF realize yielded no term and SPPF root absent"
-                            .to_string(),
+                        message:
+                            "winner committed but SPPF realize yielded no term and SPPF root absent"
+                                .to_string(),
                         position: self.pos,
                     },
                 }
-            }
+            },
             _ => {
                 // C8.1 (2026-05-16): the M11 multiset snapshot-iteration arm
                 // (per-cursor `entries_snapshots()` unfold) was deleted
@@ -4712,13 +4679,12 @@ where
                 self.commit_winner_at_eoi(winner_idx);
                 if weights.is_empty() {
                     return WpdaResolveResult::ParseError {
-                        message: "accepting cursors had no extractable terms"
-                            .to_string(),
+                        message: "accepting cursors had no extractable terms".to_string(),
                         position: self.pos,
                     };
                 }
                 WpdaResolveResult::Accepted { weights, terms, roots }
-            }
+            },
         }
     }
 
@@ -4772,12 +4738,7 @@ where
             // case; let the caller surface the generic failure.
             return None;
         }
-        Some(WpdaResolveResult::AcceptedWithTrailing {
-            weights,
-            terms,
-            roots,
-            position: max_pos,
-        })
+        Some(WpdaResolveResult::AcceptedWithTrailing { weights, terms, roots, position: max_pos })
     }
 
     /// Option C / C7 (2026-05-15): Realize the user AST from a Shared
@@ -4904,7 +4865,7 @@ where
                         has_cycle = true;
                         memo.entry(id).or_insert_with(Vec::new);
                         continue;
-                    }
+                    },
                     None => {
                         colors.insert(id, RealizeColor::Gray);
                         stack.push((id, Phase::Leave));
@@ -4915,14 +4876,14 @@ where
                                         stack.push((p, Phase::Enter));
                                     }
                                 }
-                            }
+                            },
                             Some(crate::sppf::SppfNode::Packing { children, .. }) => {
                                 for &c in children {
                                     if colors.get(&c) != Some(&RealizeColor::Black) {
                                         stack.push((c, Phase::Enter));
                                     }
                                 }
-                            }
+                            },
                             Some(crate::sppf::SppfNode::CollectionId { items, .. }) => {
                                 // Recursively realize each collected SppfId so
                                 // the Collection arg's contents are materialized.
@@ -4937,19 +4898,19 @@ where
                                         stack.push((item, Phase::Enter));
                                     }
                                 }
-                            }
+                            },
                             Some(_) | None => {
                                 // Leaves (Terminal, Epsilon, OptAbsent, Predicate)
                                 // have no children to traverse.
-                            }
+                            },
                         }
-                    }
+                    },
                 },
                 Phase::Leave => {
                     let realized = self.realize_node_leave(id, &memo, &colors, limit);
                     memo.insert(id, realized);
                     colors.insert(id, RealizeColor::Black);
-                }
+                },
             }
         }
         // Phase C-bis (2026-05-17, per
@@ -5022,7 +4983,7 @@ where
                 let pos_usize = match pos {
                     crate::sppf::PosOrSynth::Real(p) | crate::sppf::PosOrSynth::Synthesized(p) => {
                         *p as usize
-                    }
+                    },
                 };
                 // Bug E fix (Phase 3.1.3): branch on the discriminator from
                 // emit_* origin, NOT on TokenKind::Ident. emit_push_ident
@@ -5031,10 +4992,7 @@ where
                 // when kind happens to be Ident (cross-cat-projection,
                 // general-token-capture paths).
                 let arg = if *pushed_via_push_ident {
-                    ActionArg::Ident {
-                        name: text,
-                        pos: pos_usize,
-                    }
+                    ActionArg::Ident { name: text, pos: pos_usize }
                 } else {
                     ActionArg::Token {
                         kind: token_kind.clone(),
@@ -5044,26 +5002,26 @@ where
                 };
                 // Phase C.6: leaf node — weight is `W::one_ref()` per §2.5.
                 vec![(arg, W::one_ref())]
-            }
+            },
             Some(crate::sppf::SppfNode::Epsilon { .. }) => {
                 // Epsilon contributes nothing observable to the action's
                 // input — but realization still needs an entry per
                 // derivation. We yield Optional(None) as a neutral marker;
                 // typical grammars don't reduce on Epsilon directly.
                 vec![(ActionArg::Optional(None), W::one_ref())]
-            }
+            },
             Some(crate::sppf::SppfNode::OptAbsent { .. }) => {
                 vec![(ActionArg::Optional(None), W::one_ref())]
-            }
+            },
             Some(crate::sppf::SppfNode::Predicate { handle }) => {
                 if let Some(p) = self.sppf_predicate_arena.get(*handle as usize) {
                     vec![(ActionArg::Predicate(Arc::clone(p)), W::one_ref())]
                 } else {
                     Vec::new()
                 }
-            }
+            },
             Some(crate::sppf::SppfNode::CollectionId { id: cid, .. }) => {
-                // The CollectionId placeholder is consumed by the action
+                // The CollectionId marker is consumed by the action
                 // alongside the collected items. The realization yields
                 // ActionArg::CollectionId(cid); the parent Packing's
                 // action_fn call will see this and (in the generated
@@ -5074,7 +5032,7 @@ where
                 // realization builder before the action_fn call (see
                 // realize_packing_call).
                 vec![(ActionArg::CollectionId(*cid as u8), W::one_ref())]
-            }
+            },
             Some(crate::sppf::SppfNode::BinderScope { names_text, depth }) => {
                 // Bug N (Phase 3.1.5): reconstruct the ActionArg::BinderScope
                 // arg from the SPPF mirror. The builder side already pushed
@@ -5088,12 +5046,10 @@ where
                     .map(|&h| self.sppf.text(h).to_string())
                     .collect();
                 vec![(
-                    ActionArg::BinderScope(
-                        crate::wpda_runtime::BinderHandle::new(names, *depth),
-                    ),
+                    ActionArg::BinderScope(crate::wpda_runtime::BinderHandle::new(names, *depth)),
                     W::one_ref(),
                 )]
-            }
+            },
             Some(crate::sppf::SppfNode::Symbol { lo_pos: sym_lo, hi_pos: sym_hi, .. }) => {
                 // Concat all packings' realizations. Phase C.6 preserves
                 // per-derivation weights; the Symbol-level ⊕-aggregation
@@ -5133,8 +5089,9 @@ where
                     // crutch; a sound derivation always has slack >=
                     // min_terminal_span (interior grouping only adds slack), so
                     // no sound parse is dropped. See WpdaEngine::min_terminal_span.
-                    if let Some(crate::sppf::SppfNode::Packing { rule_idx: prule, children, .. }) =
-                        self.sppf.node(p)
+                    if let Some(crate::sppf::SppfNode::Packing {
+                        rule_idx: prule, children, ..
+                    }) = self.sppf.node(p)
                     {
                         let pcat = (*prule >> 16) as u16;
                         let plocal = (*prule & 0xFFFF) as u16;
@@ -5143,8 +5100,9 @@ where
                             let child_span_sum: u32 = children
                                 .iter()
                                 .map(|&c| match self.sppf.node(c) {
-                                    Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) =>
-                                        (*hi_pos).saturating_sub(*lo_pos),
+                                    Some(crate::sppf::SppfNode::Symbol {
+                                        lo_pos, hi_pos, ..
+                                    }) => (*hi_pos).saturating_sub(*lo_pos),
                                     Some(crate::sppf::SppfNode::Terminal { .. })
                                     | Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => 1,
                                     _ => 0,
@@ -5252,32 +5210,31 @@ where
                     // Symbol Leaves run in post-order — a consumed child Symbol's
                     // packings are already repaired before its parent Leaves.
                     let recomputed_storage: Vec<(ActionArg, W)>;
-                    let p_results: &Vec<(ActionArg, W)> = if memo_results.is_empty()
-                        && p_color == Some(RealizeColor::Black)
-                    {
-                        if let Some(crate::sppf::SppfNode::Packing {
-                            rule_idx: prule,
-                            children: pchildren,
-                            weight: pweight,
-                        }) = self.sppf.node(p)
-                        {
-                            recomputed_storage = self.realize_packing_call(
-                                *prule,
-                                pchildren,
-                                pweight.clone(),
-                                memo,
-                                limit,
-                            );
-                            &recomputed_storage
+                    let p_results: &Vec<(ActionArg, W)> =
+                        if memo_results.is_empty() && p_color == Some(RealizeColor::Black) {
+                            if let Some(crate::sppf::SppfNode::Packing {
+                                rule_idx: prule,
+                                children: pchildren,
+                                weight: pweight,
+                            }) = self.sppf.node(p)
+                            {
+                                recomputed_storage = self.realize_packing_call(
+                                    *prule,
+                                    pchildren,
+                                    pweight.clone(),
+                                    memo,
+                                    limit,
+                                );
+                                &recomputed_storage
+                            } else {
+                                // Black+empty but not a Packing node (defensive —
+                                // a Symbol's packings_of are always Packing nodes);
+                                // keep the empty memo result.
+                                memo_results
+                            }
                         } else {
-                            // Black+empty but not a Packing node (defensive —
-                            // a Symbol's packings_of are always Packing nodes);
-                            // keep the empty memo result.
                             memo_results
-                        }
-                    } else {
-                        memo_results
-                    };
+                        };
                     for entry in p_results {
                         if let Some(cap) = limit {
                             if out.len() >= cap {
@@ -5288,16 +5245,10 @@ where
                     }
                 }
                 out
-            }
+            },
             Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) => {
-                self.realize_packing_call(
-                    *rule_idx,
-                    children,
-                    weight.clone(),
-                    memo,
-                    limit,
-                )
-            }
+                self.realize_packing_call(*rule_idx, children, weight.clone(), memo, limit)
+            },
             // Phase F.8 (2026-05-18): TriggerTerminal contributes no
             // ActionArg. `realize_packing_call` filters TriggerTerminal
             // children out of the cartesian product, so this arm is
@@ -5348,9 +5299,7 @@ where
             rustc_hash::FxHashMap::default();
         for &symbol in scc {
             for &p in self.sppf.packings_of(symbol) {
-                if let Some(crate::sppf::SppfNode::Packing { children, .. }) =
-                    self.sppf.node(p)
-                {
+                if let Some(crate::sppf::SppfNode::Packing { children, .. }) = self.sppf.node(p) {
                     for &c in children {
                         if idx.contains_key(&c) || memo_outside.contains_key(&c) {
                             continue;
@@ -5369,10 +5318,7 @@ where
         let mut packings: Vec<crate::sppf::PackingFactored<W>> = Vec::new();
         for (i, &symbol) in scc.iter().enumerate() {
             for &p in self.sppf.packings_of(symbol) {
-                packings.push(
-                    self.sppf
-                        .factor_scc_packing(p, i, &idx, &memo_outside),
-                );
+                packings.push(self.sppf.factor_scc_packing(p, i, &idx, &memo_outside));
             }
         }
         crate::automata::semiring::solve_scc_weights_newton(scc.len(), &packings, 64)
@@ -5419,8 +5365,7 @@ where
                 // cap and produced O(N^K) RAM even though the inner loop
                 // bounded the result. Cap pre-allocation at `limit` so
                 // wide-fanout productions don't OOM during realization.
-                let unbounded_capacity =
-                    combos.len().saturating_mul(child_results.len().max(1));
+                let unbounded_capacity = combos.len().saturating_mul(child_results.len().max(1));
                 let pre_alloc = match limit {
                     Some(cap) => cap.min(unbounded_capacity),
                     None => unbounded_capacity,
@@ -5460,10 +5405,9 @@ where
         let action_children: Vec<crate::sppf::SppfId> = children
             .iter()
             .copied()
-            .filter(|&c| !matches!(
-                self.sppf.node(c),
-                Some(crate::sppf::SppfNode::TriggerTerminal { .. })
-            ))
+            .filter(|&c| {
+                !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
+            })
             .collect();
         // Bug A fix (Phase 3.1.2, 2026-05-15): the Packing.rule_idx is a
         // GLOBAL rule id encoded as `(cat_src_idx << 16) | rule_idx_within_cat`
@@ -5475,7 +5419,7 @@ where
         let action_entry = self.engine.action_for(cat, local_rule_idx);
         let action_fn = match action_entry {
             Some(e) => e.action_fn,
-            None => return Vec::new(), // No matching action — realization stub.
+            None => return Vec::new(), // No matching action for this packing.
         };
         debug_assert_eq!(
             action_entry.unwrap().arity as usize,
@@ -5489,8 +5433,7 @@ where
         // Cartesian product over children's realized args. Phase C.6
         // threads weights via ⊗: each combo accumulates the product of
         // child weights along the way.
-        let mut combos: Vec<(Vec<ActionArg>, W)> =
-            vec![(Vec::with_capacity(arity), W::one_ref())];
+        let mut combos: Vec<(Vec<ActionArg>, W)> = vec![(Vec::with_capacity(arity), W::one_ref())];
         for &c in &action_children {
             // Bug I fix (Phase 3.1.4): panic loudly on missing memo. The
             // realize_root_to_terms BFS guarantees Phase::Leave executes
@@ -5507,12 +5450,11 @@ where
                         c, rule_idx,
                     );
                     return Vec::new();
-                }
+                },
             };
             // Same C7b memory-safety fix as above: cap pre-allocation at
             // `limit` to bound O(N^K) RAM on wide-fanout productions.
-            let unbounded_capacity =
-                combos.len().saturating_mul(child_results.len().max(1));
+            let unbounded_capacity = combos.len().saturating_mul(child_results.len().max(1));
             let pre_alloc = match limit {
                 Some(cap) => cap.min(unbounded_capacity),
                 None => unbounded_capacity,
@@ -5545,27 +5487,25 @@ where
         let mut out: Vec<(ActionArg, W)> = Vec::with_capacity(combos.len());
         for (args, combo_w) in combos {
             let mut sb = SemanticBuilder::new();
-            // B.1 (Phase E Stage 1, 2026-05-16): Bug C fix — pre-allocate
-            // collection slots 0..=max(CollectionId) in `args` BEFORE the
-            // push loop. Without this, monotonic `sb.start_collection()`
-            // returns slot ids in encounter order, but the realize-time
-            // encounter order can differ from parse-time allocation
-            // order (e.g., `{open(n, 0) | n[{0}]}` produces a packing
-            // whose args list contains CollectionId(1) before
-            // CollectionId(0)). Pre-allocating all slots up to the max
-            // makes the per-id splice-into-collection branches operate
-            // on already-existing slots rather than allocating in
-            // arrival order. The previous `debug_assert_eq!(slot_id, *id)`
-            // gate would panic on out-of-order encounters.
-            let max_coll_id: Option<u32> = args.iter()
-                .filter_map(|a| match a {
-                    ActionArg::CollectionId(id) => Some(*id as u32),
-                    _ => None,
-                })
-                .max();
-            if let Some(max_id) = max_coll_id {
-                for _ in 0..=max_id {
-                    let _ = sb.start_collection();
+            // B.1 (Phase E Stage 1, 2026-05-16): pre-allocate collection
+            // slots before the push loop so realize-time encounter order
+            // cannot change slot ids. CollectionId can be nested inside
+            // Optional(Some(...)), so scan recursively.
+            let collection_ids = Self::collection_ids_in_args(&args);
+            Self::preallocate_collection_slots(&mut sb, &collection_ids);
+            for id in &collection_ids {
+                let items = self
+                    .collection_items_for_action_children(&action_children, *id)
+                    .unwrap_or(&[]);
+                for &item in items {
+                    if let Some(item_realized) = memo.get(&item) {
+                        if let Some((ActionArg::Term { value, .. }, _item_w)) =
+                            item_realized.first()
+                        {
+                            sb.push_term_arc(Arc::clone(value));
+                            sb.push_to_collection(*id);
+                        }
+                    }
                 }
             }
             // Push args one-by-one. The push semantics must match what
@@ -5575,62 +5515,24 @@ where
                 match arg {
                     ActionArg::Token { kind, text, pos } => {
                         sb.push_token(kind.clone(), text.clone(), *pos);
-                    }
+                    },
                     ActionArg::Ident { name, pos } => {
                         sb.push_ident(name.clone(), *pos);
-                    }
+                    },
                     ActionArg::Term { value, .. } => {
                         // Push as a Term arg; the action_fn pop_args
                         // sees this as ActionArg::Term.
                         sb.push_term_arc(Arc::clone(value));
-                    }
+                    },
                     ActionArg::CollectionId(id) => {
-                        // B.1: slot already pre-allocated above; no
-                        // start_collection call here. Splice items into
-                        // the slot the CollectionId references, then
-                        // push the CollectionId arg. action_fn will
-                        // pop_args and drain the collection.
-                        //
-                        // Collection-accumulation fix (2026-05-29): read the
-                        // element SppfIds from the matching `CollectionId`
-                        // child node's own derivation-local `items` (in scope
-                        // as `children: &[SppfId]`), NOT from the post-commit
-                        // `winner_collection_arena()` = `branch_cursors[0]`
-                        // (the WRONG cursor — it truncated/emptied collections
-                        // belonging to non-winner derivations). Each item
-                        // SppfId is realized via the existing `memo`.
-                        let items: &[crate::sppf::SppfId] = children
-                            .iter()
-                            .find_map(|&c| match self.sppf.node(c) {
-                                Some(crate::sppf::SppfNode::CollectionId {
-                                    id: cid,
-                                    items,
-                                }) if *cid == *id as u32 => Some(items.as_slice()),
-                                _ => None,
-                            })
-                            .unwrap_or(&[]);
-                        // Each item is realized as an ActionArg::Term
-                        // in `memo`; push them onto sb so
-                        // push_to_collection drains correctly.
-                        for &item in items {
-                            if let Some(item_realized) = memo.get(&item) {
-                                if let Some((item_arg, _item_w)) = item_realized.first() {
-                                    match item_arg {
-                                        ActionArg::Term { value, .. } => {
-                                            sb.push_term_arc(Arc::clone(value));
-                                            sb.push_to_collection(*id);
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
                         sb.push_collection_id(*id);
-                    }
+                    },
                     ActionArg::Predicate(p) => {
                         sb.push_predicate_arc(Arc::clone(p));
-                    }
-                    ActionArg::Optional(_) | ActionArg::Collection { .. } | ActionArg::BinderScope(_) => {
+                    },
+                    ActionArg::Optional(_)
+                    | ActionArg::Collection { .. }
+                    | ActionArg::BinderScope(_) => {
                         // BinderScope / Collection / Optional arrive via
                         // dedicated push pathways in the walker. For
                         // realization, push as the corresponding direct
@@ -5640,7 +5542,7 @@ where
                         // child positions in normal grammars; emit them
                         // via push_raw_arg as a safety fallback.
                         sb.push_raw_arg(arg.clone());
-                    }
+                    },
                 }
             }
             // Fire the action with the args. action_fn pops the args
@@ -5653,16 +5555,19 @@ where
             // rejected (e.g., Ident where Term was expected) for any
             // grammar's failing realize reconstruction.
             #[cfg(debug_assertions)]
-            let arg_shapes_for_diag: Vec<&'static str> = popped.iter().map(|a| match a {
-                ActionArg::Token { .. } => "Token",
-                ActionArg::Ident { .. } => "Ident",
-                ActionArg::Term { type_name, .. } => *type_name,
-                ActionArg::BinderScope(_) => "BinderScope",
-                ActionArg::Collection { type_name, .. } => *type_name,
-                ActionArg::CollectionId(_) => "CollectionId",
-                ActionArg::Predicate(_) => "Predicate",
-                ActionArg::Optional(_) => "Optional",
-            }).collect();
+            let arg_shapes_for_diag: Vec<&'static str> = popped
+                .iter()
+                .map(|a| match a {
+                    ActionArg::Token { .. } => "Token",
+                    ActionArg::Ident { .. } => "Ident",
+                    ActionArg::Term { type_name, .. } => *type_name,
+                    ActionArg::BinderScope(_) => "BinderScope",
+                    ActionArg::Collection { type_name, .. } => *type_name,
+                    ActionArg::CollectionId(_) => "CollectionId",
+                    ActionArg::Predicate(_) => "Predicate",
+                    ActionArg::Optional(_) => "Optional",
+                })
+                .collect();
             (action_fn)(&mut sb, popped);
             let post_len = sb.len();
             let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
@@ -5695,8 +5600,14 @@ where
                         "[realize_packing_call] action elided (post_len={}, expected={}): \
                          rule_idx={:#x} cat={} local_rule={} arity={} pre_len={} \
                          arg_shapes={:?}",
-                        post_len, expected_len, rule_idx, cat, local_rule_idx,
-                        arity, pre_len, arg_shapes_for_diag,
+                        post_len,
+                        expected_len,
+                        rule_idx,
+                        cat,
+                        local_rule_idx,
+                        arity,
+                        pre_len,
+                        arg_shapes_for_diag,
                     );
                 }
                 // Drain any stale state the action partially produced
@@ -5715,13 +5626,7 @@ where
                 //
                 // Phase C.6: per-derivation weight = combo_w ⊗ packing_weight.
                 let result_w = combo_w.times_ref(&packing_weight);
-                out.push((
-                    ActionArg::Term {
-                        value: t,
-                        type_name: "RealizedTerm",
-                    },
-                    result_w,
-                ));
+                out.push((ActionArg::Term { value: t, type_name: "RealizedTerm" }, result_w));
             }
             if let Some(cap) = limit {
                 if out.len() >= cap {
@@ -5746,7 +5651,7 @@ where
     /// In practice, cursors that reach EOI via `apply_action_to_cursor`'s
     /// Idle parking branch satisfy the first two conditions; the third
     /// is reached when the engine pops Returns up to the bottom.
-    fn is_accepting_config(&self, cursor: &BranchCursor<W>) -> bool {
+    fn is_accepting_config(&self, cursor: &BranchCursor<W>, tokens: &dyn WpdaTokenSource) -> bool {
         // Phase 5.6-tail-A (2026-05-12): replaces the pre-tail
         // `cursor_will_produce_term` dry-run over `recovery_deltas`
         // with a direct shape check on `cursor.builder`. Under always-
@@ -5757,7 +5662,10 @@ where
         // simply "does cursor.builder hold exactly one Term arg?" — the
         // EOI gate that `take_dyn_result` would consult at commit.
         // Phase F.2 (2026-05-18): SPPF-side helper.
-        if !self.is_cursor_accepting_terminal(cursor) {
+        // Phase FV-EOI (2026-06-05): pass the token source so the helper
+        // also validates the root span against the EOI delimiter-window
+        // obligation proved in the Rocq/Lean model.
+        if !self.is_cursor_accepting_terminal_at(cursor, tokens) {
             return false;
         }
         match &cursor.inner_state {
@@ -5773,9 +5681,12 @@ where
                 }
                 self.gss
                     .node(cursor.node)
-                    .map(|n| n.symbol.kind == SymbolKind::Return || n.symbol.kind == SymbolKind::CategoryEntry)
+                    .map(|n| {
+                        n.symbol.kind == SymbolKind::Return
+                            || n.symbol.kind == SymbolKind::CategoryEntry
+                    })
                     .unwrap_or(false)
-            }
+            },
             _ => false,
         }
     }
@@ -5817,8 +5728,95 @@ where
         // the Eof token and advanced past."
         pos == tokens.eof_node()
             || pos >= tokens.len()
-            || (pos + 1 == tokens.len()
-                && tokens.peek_kind(pos) == Some(TokenKind::Eof))
+            || (pos + 1 == tokens.len() && tokens.peek_kind(pos) == Some(TokenKind::Eof))
+    }
+
+    #[inline]
+    fn linear_semantic_cursor_pos(
+        &self,
+        pos: usize,
+        tokens: &dyn WpdaTokenSource,
+    ) -> Option<usize> {
+        let len = tokens.len();
+        if pos < len {
+            return Some(pos);
+        }
+        if pos == len {
+            let eof = tokens.eof_node();
+            if eof < len && tokens.peek_kind(eof) == Some(TokenKind::Eof) {
+                return Some(eof);
+            }
+            return Some(pos);
+        }
+        None
+    }
+
+    #[inline]
+    fn all_structural_open_delimiters(&self, tokens: &dyn WpdaTokenSource, finish: usize) -> bool {
+        if finish > tokens.len() {
+            return false;
+        }
+        (0..finish).all(|pos| {
+            let Some(kind) = tokens.peek_kind(pos) else {
+                return false;
+            };
+            self.engine
+                .is_structural_open_delimiter(&kind, tokens.peek_text(pos))
+        })
+    }
+
+    #[inline]
+    fn all_structural_close_delimiters(
+        &self,
+        tokens: &dyn WpdaTokenSource,
+        start: usize,
+        finish: usize,
+    ) -> bool {
+        if start > finish || finish > tokens.len() {
+            return false;
+        }
+        (start..finish).all(|pos| {
+            let Some(kind) = tokens.peek_kind(pos) else {
+                return false;
+            };
+            self.engine
+                .is_structural_close_delimiter(&kind, tokens.peek_text(pos))
+        })
+    }
+
+    #[inline]
+    fn semantic_root_accepts_at_cursor(
+        &self,
+        root: crate::sppf::SppfId,
+        cursor_pos: usize,
+        tokens: &dyn WpdaTokenSource,
+    ) -> bool {
+        // LatticeTokenSource positions are DAG node ids, not list indices.
+        // The formal delimiter-window obligation is a linear-token-source
+        // theorem; scanning numeric node-id intervals would be unsound.
+        if !tokens.positions_are_linear_tokens() {
+            return true;
+        }
+
+        let Some(root_lo) = self.sppf.span_lo(root).map(|p| p as usize) else {
+            return false;
+        };
+        let Some(root_hi) = self.sppf.span_hi(root).map(|p| p as usize) else {
+            return false;
+        };
+        let Some(semantic_cursor_pos) = self.linear_semantic_cursor_pos(cursor_pos, tokens) else {
+            return false;
+        };
+
+        if root_hi == semantic_cursor_pos {
+            return true;
+        }
+        if root_hi > semantic_cursor_pos {
+            return false;
+        }
+
+        self.all_structural_open_delimiters(tokens, root_lo)
+            && self.all_structural_close_delimiters(tokens, root_hi, semantic_cursor_pos)
     }
 
     /// Stage 3.5b (2026-05-01): EOI-time variant of `commit_winner`.
@@ -5854,26 +5852,17 @@ where
                 stack_depth: self.gss.frontier_size(),
             };
             if self.state.is_terminal() {
-                return WpdaTransition::Done {
-                    state: self.state.clone(),
-                };
+                return WpdaTransition::Done { state: self.state.clone() };
             }
             return WpdaTransition::Transition {
                 new_state: self.state.clone(),
                 trace: Some(trace),
             };
         }
-        let frontier_top = self
-            .top_node
-            .and_then(|id| self.gss.node(id))
-            .cloned();
-        let action = self.engine.step(
-            &self.state,
-            &self.gss,
-            frontier_top.as_ref(),
-            self.pos,
-            tokens,
-        );
+        let frontier_top = self.top_node.and_then(|id| self.gss.node(id)).cloned();
+        let action =
+            self.engine
+                .step(&self.state, &self.gss, frontier_top.as_ref(), self.pos, tokens);
         if matches!(action, WpdaStepAction::Idle) {
             return WpdaTransition::NoChange;
         }
@@ -5887,10 +5876,7 @@ where
                 to_state: from.clone(),
                 stack_depth: self.gss.frontier_size(),
             };
-            return WpdaTransition::Transition {
-                new_state: from,
-                trace: Some(trace),
-            };
+            return WpdaTransition::Transition { new_state: from, trace: Some(trace) };
         }
         let trace = WpdaTraceEntry {
             pos: self.pos,
@@ -5899,9 +5885,7 @@ where
             stack_depth: self.gss.frontier_size(),
         };
         if self.state.is_terminal() {
-            return WpdaTransition::Done {
-                state: self.state.clone(),
-            };
+            return WpdaTransition::Done { state: self.state.clone() };
         }
         WpdaTransition::Transition {
             new_state: self.state.clone(),
@@ -5961,64 +5945,65 @@ where
                 // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
                 // L0 (2026-05-27): seed/commit-winner write-back (NOT Fork fanout).
                 crate::stats_thunk_seed!(self);
-                self.branch_cursors.push(crate::cohort_lazy::Frame::Concrete(BranchCursor {
-                    node: self.top_node.unwrap_or(0),
-                    pos: self.pos,
-                    weight: W::one_ref(),
-                    inner_state: self.state.clone(),
-                    recovery_deltas: Arc::new(Vec::new()),
-                    // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
-                    // post-Drop has no Fork ancestor, so priority 0.
-                    source_priority: 0,
-                    // Stage 3.12.6 (2026-05-02): post-Drop reset starts
-                    // with empty stack history.
-                    // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
-                    // arena-interned EdgeStackId; ROOT = empty.
-                    incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
-                    // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
-                    // post-Drop reset resets recovery book-keeping.
-                    recovery_depth: 0,
-                    visited_recovery: im::OrdSet::new(),
-                    // B12 / Candidate E (2026-05-07): same rationale —
-                    // post-Drop reset clears projection visited set.
-                    visited_dispatch: im::OrdSet::new(),
-                    // Sig-B GLL-descriptor (#9): post-Drop reset clears the
-                    // projection-descriptor set too.
-                    visited_proj_descriptors: im::OrdSet::new(),
-                    // B13d-R Step 2 (2026-05-08): post-Drop reset has
-                    // empty pending → Consistent memo.
-                            // Phase 5.2 (2026-05-12): fresh empty Arc — the
-                    // post-Drop fresh singleton has no Fork-ancestor
-                    // builder to inherit. Live mutations continue to
-                    // flow through `self.builder` (deterministic mode); the
-                    // cursor's Arc is a future anchor (5.3+).
-                    // Option C / C2: post-Drop reset starts with empty SPPF
-                    // stack. The drop discards the failed cursor's tree
-                    // construction; the deterministic-mode singleton resets.
-                    // Phase F.11 (2026-05-20): Arc-wrapped (CoW).
-                    // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
-                    // walker-global arena-interned StackId. ROOT = empty.
-                    sppf_stack_id: crate::sppf_stack_arena::STACK_ID_ROOT,
-                    optional_scope_marks: Vec::new(),
-                    binder_scope_marks: Vec::new(),
-                    // Phase C.2 (2026-05-17): post-Drop reset clears the
-                    // pending weight chain — the dropped cursor's unused
-                    // per-production weight is discarded with the cursor.
-                    pending_packing_weight: W::one_ref(),
-                    // Phase F.1 (2026-05-18): post-Drop reset matches the
-                    // fresh empty builder Arc above — collection_stack_len == 0.
-                    collection_stack_depth: 0,
-                    // Phase F.4 (2026-05-18): fresh empty Arc.
-                    sppf_collection_arena: Arc::new(Vec::new()),
-                    // Phase F.3a (2026-05-20): post-Drop reset clears the
-                    // mirror — the dropped cursor's action history is gone.
-                    last_action_output_cat: None,
-                    cohort_origin: None,
-                    cohort_revive_depth: 0,
-                    lex_fork_path: std::sync::Arc::new(Vec::new()),
-                    // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
-                        }));
-            }
+                self.branch_cursors
+                    .push(crate::cohort_lazy::Frame::Concrete(BranchCursor {
+                        node: self.top_node.unwrap_or(0),
+                        pos: self.pos,
+                        weight: W::one_ref(),
+                        inner_state: self.state.clone(),
+                        recovery_deltas: Arc::new(Vec::new()),
+                        // Stage 3.12 Fix 2(ii) (2026-05-02): restored singleton
+                        // post-Drop has no Fork ancestor, so priority 0.
+                        source_priority: 0,
+                        // Stage 3.12.6 (2026-05-02): post-Drop reset starts
+                        // with empty stack history.
+                        // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+                        // arena-interned EdgeStackId; ROOT = empty.
+                        incoming_edge_stack_id: crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
+                        // Bounded recovery (Stage 3.20 / L12, 2026-05-06):
+                        // post-Drop reset resets recovery book-keeping.
+                        recovery_depth: 0,
+                        visited_recovery: im::OrdSet::new(),
+                        // B12 / Candidate E (2026-05-07): same rationale —
+                        // post-Drop reset clears projection visited set.
+                        visited_dispatch: im::OrdSet::new(),
+                        // Sig-B GLL-descriptor (#9): post-Drop reset clears the
+                        // projection-descriptor set too.
+                        visited_proj_descriptors: im::OrdSet::new(),
+                        // B13d-R Step 2 (2026-05-08): post-Drop reset has
+                        // empty pending → Consistent memo.
+                        // Phase 5.2 (2026-05-12): fresh empty Arc — the
+                        // post-Drop fresh singleton has no Fork-ancestor
+                        // builder to inherit. Live mutations continue to
+                        // flow through `self.builder` (deterministic mode); the
+                        // cursor's Arc is a future anchor (5.3+).
+                        // Option C / C2: post-Drop reset starts with empty SPPF
+                        // stack. The drop discards the failed cursor's tree
+                        // construction; the deterministic-mode singleton resets.
+                        // Phase F.11 (2026-05-20): Arc-wrapped (CoW).
+                        // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
+                        // walker-global arena-interned StackId. ROOT = empty.
+                        sppf_stack_id: crate::sppf_stack_arena::STACK_ID_ROOT,
+                        optional_scope_marks: Vec::new(),
+                        binder_scope_marks: Vec::new(),
+                        // Phase C.2 (2026-05-17): post-Drop reset clears the
+                        // pending weight chain — the dropped cursor's unused
+                        // per-production weight is discarded with the cursor.
+                        pending_packing_weight: W::one_ref(),
+                        // Phase F.1 (2026-05-18): post-Drop reset matches the
+                        // fresh empty builder Arc above — collection_stack_len == 0.
+                        collection_stack_depth: 0,
+                        // Phase F.4 (2026-05-18): fresh empty Arc.
+                        sppf_collection_arena: Arc::new(Vec::new()),
+                        // Phase F.3a (2026-05-20): post-Drop reset clears the
+                        // mirror — the dropped cursor's action history is gone.
+                        last_action_output_cat: None,
+                        cohort_origin: None,
+                        cohort_revive_depth: 0,
+                        lex_fork_path: std::sync::Arc::new(Vec::new()),
+                        // Phase F.3c.2 (2026-05-20): post-Drop reset clears memo.
+                    }));
+            },
             CursorOutcome::Alive | CursorOutcome::Resolved => {
                 // Phase 5.6-tail-B (2026-05-12): install the cursor's
                 // builder over self.builder before re-pushing. Under
@@ -6034,13 +6019,14 @@ where
                 // Phase F.3c.4 (2026-05-20): cursor.builder field deleted.
                 // The deterministic-mode install site
                 // `self.builder = (*cursor.builder).clone()` is gone.
-                // self.builder is a stub (F.3c.5 deletes); downstream
-                // consumers use walker.resolve() / realize_root_to_terms.
+                // Downstream consumers use walker.resolve() /
+                // realize_root_to_terms over the SPPF-backed cursor state.
                 // Phase F.13 Stage L3.1 (2026-05-25): wrap in Frame::Concrete.
                 // L0 (2026-05-27): commit-winner write-back (NOT Fork fanout).
                 crate::stats_thunk_seed!(self);
-                self.branch_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
-            }
+                self.branch_cursors
+                    .push(crate::cohort_lazy::Frame::Concrete(cursor));
+            },
             CursorOutcome::ForkInto(children) => {
                 // The cursor-side Fork arm already flipped `self.deterministic`
                 // to false. Replace branch_cursors with children and set
@@ -6060,11 +6046,13 @@ where
                 let branch_ids: Vec<crate::gss::GssNodeId> =
                     children.iter().map(|c| c.node).collect();
                 // Phase F.13 Stage L3.1 (2026-05-25): wrap each child in Frame::Concrete.
-                self.branch_cursors =
-                    children.into_iter().map(crate::cohort_lazy::Frame::Concrete).collect();
+                self.branch_cursors = children
+                    .into_iter()
+                    .map(crate::cohort_lazy::Frame::Concrete)
+                    .collect();
                 self.state = WpdaState::AmbiguityFanout { branches: branch_ids };
                 self.maybe_prune_frontier();
-            }
+            },
         }
     }
 
@@ -6105,7 +6093,7 @@ where
             WpdaStepAction::Advance(s) => {
                 self.set_cursor_inner_state(cursor, s);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::AdvanceWithEffect { new_state, effect } => {
                 // B8 / Issue C (2026-05-09): log effect to pending ops,
                 // invalidate consistency memo, then advance state.
@@ -6126,7 +6114,7 @@ where
                 }
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::Push { mut symbol, weight, new_state } => {
                 // Lazy redesign L2a prep (2026-05-27): record the residual
                 // Push EdgeKind (i.e., NOT covered by Substage 5's
@@ -6167,13 +6155,9 @@ where
                                  re-dispatch projection Push (Sig-B GLL \
                                  descriptor cycle defense, singleton-bucket \
                                  path)",
-                                desc.gss_node, desc.sppf_stack, desc.cat_src,
-                                desc.cur_bp,
+                                desc.gss_node, desc.sppf_stack, desc.cat_src, desc.cur_bp,
                             );
-                            self.set_cursor_inner_state(
-                                cursor,
-                                WpdaState::Error { message: msg },
-                            );
+                            self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
                             return CursorOutcome::Drop;
                         }
                         // im::OrdSet structural-share insert (CoW).
@@ -6189,7 +6173,7 @@ where
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::Pop { weight, new_state } => {
                 // Stage 3.12.6 (2026-05-02): single-predecessor pop via
                 // the cursor's recorded `incoming_edge_stack`. The
@@ -6213,25 +6197,32 @@ where
                     self.stats.pop_kind_histogram[bucket] =
                         self.stats.pop_kind_histogram[bucket].saturating_add(1);
                 }
-                let pred_id =
-                    self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
+                let pred_id = self
+                    .cursor_gss_pop_via_edge(cursor)
+                    .unwrap_or(crate::gss::GSS_NODE_NONE);
                 self.apply_pop_body_to_cursor(
-                    cursor, pred_id, popped_symbol, &weight, new_state, tokens,
+                    cursor,
+                    pred_id,
+                    popped_symbol,
+                    &weight,
+                    new_state,
+                    tokens,
                 );
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::Replace { symbol, weight, new_state } => {
-                let _ = self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
+                let _ =
+                    self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::Consume { weight, new_state } => {
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::ConsumeAndPush {
                 mut symbol,
                 weight,
@@ -6256,7 +6247,7 @@ where
                             let pos = cursor.pos;
                             self.emit_push_token(cursor, kind, text, pos);
                         }
-                    }
+                    },
                     TriggerMode::ConsumeAsTriggerOnly => {
                         if let Some(kind) = tokens.peek_kind(cursor.pos) {
                             let text = tokens.peek_text(cursor.pos).unwrap_or("");
@@ -6274,8 +6265,8 @@ where
                                 symbol.rule_index_in_category,
                             );
                         }
-                    }
-                    TriggerMode::Discard => {}
+                    },
+                    TriggerMode::Discard => {},
                 }
                 // Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time
                 // side effects (CollectionMarker + OptionalGroupAt(1)).
@@ -6285,7 +6276,7 @@ where
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::IterativeChainAbsorb { mut symbol, weight, new_state, spec } => {
                 // C1-R (WALK-S1, 2026-05-28) + C1-M (WALK-S2, 2026-05-28):
                 // dispatch on associativity / mixfix.
@@ -6364,12 +6355,7 @@ where
                     // failed to synthesize (should not happen). Treat as a
                     // plain consume+push so the parse still progresses.
                     self.emit_push_side_effects(cursor, &mut symbol);
-                    let _ = self.cursor_gss_push_auto(
-                        cursor,
-                        symbol,
-                        cursor.pos,
-                        weight.clone(),
-                    );
+                    let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
                     self.advance_cursor_pos(cursor, tokens, 1);
                     self.multiply_cursor_weight(cursor, &weight);
                     self.set_cursor_inner_state(cursor, new_state);
@@ -6418,12 +6404,7 @@ where
                     // synthesize (should not happen). Treat as a plain
                     // single-op consume+push so the parse still progresses.
                     self.emit_push_side_effects(cursor, &mut symbol);
-                    let _ = self.cursor_gss_push_auto(
-                        cursor,
-                        symbol,
-                        cursor.pos,
-                        weight.clone(),
-                    );
+                    let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
                     self.advance_cursor_pos(cursor, tokens, 1);
                     self.multiply_cursor_weight(cursor, &weight);
                     self.set_cursor_inner_state(cursor, new_state);
@@ -6458,8 +6439,7 @@ where
                     .map(|n| {
                         n.symbol.kind == crate::wpda_runtime::SymbolKind::Return
                             && n.symbol.category_src_idx == symbol.category_src_idx
-                            && n.symbol.rule_index_in_category
-                                == symbol.rule_index_in_category
+                            && n.symbol.rule_index_in_category == symbol.rule_index_in_category
                     })
                     .unwrap_or(false);
                 if already_chained {
@@ -6626,44 +6606,41 @@ where
                 }
                 self.emit_push_side_effects(cursor, &mut symbol);
                 if !already_chained {
-                    let _ = self.cursor_gss_push_auto(
-                        cursor,
-                        symbol,
-                        cursor.pos,
-                        weight.clone(),
-                    );
+                    let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
                 }
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::ConsumeAndPop { weight, new_state } => {
                 // Stage 3.12.6 (2026-05-02): single-predecessor pop via
                 // edge-id (see Pop arm). Consume token first, then pop
                 // along the cursor's recorded path.
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
-                let pred_id =
-                    self.cursor_gss_pop_via_edge(cursor).unwrap_or(crate::gss::GSS_NODE_NONE);
+                let pred_id = self
+                    .cursor_gss_pop_via_edge(cursor)
+                    .unwrap_or(crate::gss::GSS_NODE_NONE);
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.apply_pop_body_to_cursor(
-                    cursor, pred_id, popped_symbol, &weight, new_state, tokens,
+                    cursor,
+                    pred_id,
+                    popped_symbol,
+                    &weight,
+                    new_state,
+                    tokens,
                 );
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::ConsumeAndReplace { symbol, weight, new_state } => {
-                let _ = self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
+                let _ =
+                    self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
-            WpdaStepAction::ConsumeIdentAndReplace {
-                symbol,
-                weight,
-                new_state,
-                start_scope,
-            } => {
+            },
+            WpdaStepAction::ConsumeIdentAndReplace { symbol, weight, new_state, start_scope } => {
                 if tokens.peek_kind(cursor.pos).is_some() {
                     let text = tokens.peek_text(cursor.pos).unwrap_or("");
                     if start_scope {
@@ -6672,19 +6649,25 @@ where
                     let pos = cursor.pos;
                     self.emit_push_ident(cursor, text, pos);
                 }
-                let _ = self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
+                let _ =
+                    self.cursor_gss_replace_top_auto(cursor, symbol, cursor.pos, weight.clone());
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::ReplaceAndPush {
                 replace_symbol,
                 push_symbol,
                 weight,
                 new_state,
             } => {
-                let _ = self.cursor_gss_replace_top_auto(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_replace_top_auto(
+                    cursor,
+                    replace_symbol,
+                    cursor.pos,
+                    weight.clone(),
+                );
                 // B9 / Class 2 (2026-05-08): apply emit_push_side_effects
                 // BEFORE pushing the symbol — for CollectionMarker, this
                 // allocates an accumulator id and patches symbol.bp =
@@ -6700,15 +6683,10 @@ where
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
-            WpdaStepAction::ParsePredicate {
-                replace_symbol,
-                weight,
-                new_state,
-            } => {
-                let parsed_pred = crate::parser::predicate::parse_predicate_via_token_source(
-                    tokens, cursor.pos,
-                );
+            },
+            WpdaStepAction::ParsePredicate { replace_symbol, weight, new_state } => {
+                let parsed_pred =
+                    crate::parser::predicate::parse_predicate_via_token_source(tokens, cursor.pos);
                 match parsed_pred {
                     Ok((pred, new_pos)) => {
                         self.emit_push_predicate(cursor, Arc::new(pred));
@@ -6719,14 +6697,19 @@ where
                         if self.deterministic {
                             self.pos = new_pos;
                         }
-                    }
+                    },
                     Err(_msg) => return CursorOutcome::Drop,
                 }
-                let _ = self.cursor_gss_replace_top_auto(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ = self.cursor_gss_replace_top_auto(
+                    cursor,
+                    replace_symbol,
+                    cursor.pos,
+                    weight.clone(),
+                );
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::Fork { mut branches, consume_trigger } => {
                 // Phase F.13 walker-stats (2026-05-20): count Fork firings
                 // and per-branch composition by ForkActionKind variant +
@@ -6739,11 +6722,11 @@ where
                             ForkActionKind::Push { .. } => {
                                 self.stats.fork_kind_push =
                                     self.stats.fork_kind_push.saturating_add(1);
-                            }
+                            },
                             ForkActionKind::OptGroupAbsent { .. } => {
                                 self.stats.fork_kind_opt_group_absent =
                                     self.stats.fork_kind_opt_group_absent.saturating_add(1);
-                            }
+                            },
                             ForkActionKind::LexAlt { .. }
                             | ForkActionKind::LexAltPrefixOp { .. }
                             | ForkActionKind::LexAltPostfixOp { .. }
@@ -6751,7 +6734,7 @@ where
                             | ForkActionKind::LexAltMixfixOp { .. } => {
                                 self.stats.fork_kind_lex_alt_family =
                                     self.stats.fork_kind_lex_alt_family.saturating_add(1);
-                            }
+                            },
                             ForkActionKind::Consume { .. }
                             | ForkActionKind::ConsumeAndReplace { .. }
                             | ForkActionKind::ConsumeIdentAndReplace { .. }
@@ -6761,15 +6744,17 @@ where
                             | ForkActionKind::ConsumeIdentAndPop { .. } => {
                                 self.stats.fork_kind_consume_family =
                                     self.stats.fork_kind_consume_family.saturating_add(1);
-                            }
+                            },
                             _ => {
                                 self.stats.fork_kind_other =
                                     self.stats.fork_kind_other.saturating_add(1);
-                            }
+                            },
                         }
                         if matches!(&b.new_state, WpdaState::CrossCatDelegate { .. }) {
-                            self.stats.fork_cross_cat_projection_branches =
-                                self.stats.fork_cross_cat_projection_branches.saturating_add(1);
+                            self.stats.fork_cross_cat_projection_branches = self
+                                .stats
+                                .fork_cross_cat_projection_branches
+                                .saturating_add(1);
                         }
                     }
                     // Phase F.13 chain_10000 Exp 11 Substage 0 (2026-05-26):
@@ -6798,34 +6783,23 @@ where
                             | ForkActionKind::LexAltPostfixOp { .. }
                             | ForkActionKind::LexAltInfixOp { .. }
                             | ForkActionKind::LexAltMixfixOp { .. } => 0,
-                            _ if matches!(
-                                &b.new_state,
-                                WpdaState::CrossCatDelegate { .. }
-                            ) =>
-                            {
-                                1
-                            }
+                            _ if matches!(&b.new_state, WpdaState::CrossCatDelegate { .. }) => 1,
                             _ => 2,
                         };
-                        counts_per_class[class] =
-                            counts_per_class[class].saturating_add(1);
+                        counts_per_class[class] = counts_per_class[class].saturating_add(1);
                         if class < dominant_class {
                             dominant_class = class;
                         }
                     }
-                    self.stats.fork_total_by_class[dominant_class] = self
-                        .stats
-                        .fork_total_by_class[dominant_class]
-                        .saturating_add(1);
+                    self.stats.fork_total_by_class[dominant_class] =
+                        self.stats.fork_total_by_class[dominant_class].saturating_add(1);
                     for c in 0..4 {
-                        self.stats.fork_branches_by_class[c] = self
-                            .stats
-                            .fork_branches_by_class[c]
+                        self.stats.fork_branches_by_class[c] = self.stats.fork_branches_by_class[c]
                             .saturating_add(counts_per_class[c]);
                     }
                 }
-                // Phase 5.6-tail-C (2026-05-12): Hack #7 prologue + Phase 5.5
-                // cursor.builder refresh DELETED.
+                // Phase 5.6-tail-C (2026-05-12): legacy prologue and Phase
+                // 5.5 cursor.builder refresh deleted.
                 //
                 // Pre-tail the prologue seeded `cursor.collection_slots_allocated`,
                 // `cursor.collection_stack`, and `cursor.builder` from `self.builder`'s
@@ -6889,13 +6863,24 @@ where
                 // dispatch (Tomita-GLR / GLL call-graph sharing): when
                 // N cursors call the same sub-parse, run sub-parse ONCE
                 // and fan out ALL N return contexts at pop time. This
-                // requires walker refactoring beyond a single-hypothesis
-                // scope; deferred to a future research session.
+                // requires an explicit GSS-aware batch implementation.
                 //
                 // dispatch_branch_seen field retained for any future
                 // diagnostic use; field is unused in this branch.
                 let recovery_dispatch_config: Option<PackedDispatchConfig> = if is_recovery {
-                    extract_recovery_dispatch_config(cursor, &self.gss)
+                    match extract_recovery_dispatch_config(cursor, &self.gss) {
+                        Ok(config) => config,
+                        Err(pos) => {
+                            let msg = format!(
+                                "recovery dispatch position {} exceeds the {}-bit packed-key \
+                                 domain — refusing recovery dispatch",
+                                pos,
+                                PackedDispatchConfig::POS_BITS,
+                            );
+                            self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
+                            return CursorOutcome::Drop;
+                        },
+                    }
                 } else {
                     None
                 };
@@ -6907,10 +6892,7 @@ where
                              unrecoverable parse; refusing further recovery dispatch",
                             max_depth, cursor.pos, cursor.recovery_depth,
                         );
-                        self.set_cursor_inner_state(
-                            cursor,
-                            WpdaState::Error { message: msg },
-                        );
+                        self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
                         return CursorOutcome::Drop;
                     }
                     if let Some(key) = recovery_dispatch_config {
@@ -6921,26 +6903,24 @@ where
                                  refusing to re-dispatch (cursor cycle defense)",
                                 pos, cat_src, cur_bp,
                             );
-                            self.set_cursor_inner_state(
-                                cursor,
-                                WpdaState::Error { message: msg },
-                            );
+                            self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
                             return CursorOutcome::Drop;
                         }
                     }
                     let base_pos = cursor.pos;
                     let pre_count = branches.len();
-                    branches.retain(|b| forward_progress_or_insert(b, base_pos));
+                    branches.retain(|b| {
+                        forward_progress_or_insert(b, base_pos)
+                            && recovery_effect_target_matches_branch_state(b)
+                    });
                     if branches.is_empty() {
                         let msg = format!(
-                            "all {} recovery branches at pos {} violate forward-progress invariant — \
+                            "all {} recovery branches at pos {} violate forward-progress or \
+                             target-position invariant — \
                              bounded recovery refusing to dispatch",
                             pre_count, base_pos,
                         );
-                        self.set_cursor_inner_state(
-                            cursor,
-                            WpdaState::Error { message: msg },
-                        );
+                        self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
                         return CursorOutcome::Drop;
                     }
                 }
@@ -6980,12 +6960,11 @@ where
                 // `sppf_stack_id`: a no-progress re-entry (parens) reproduces
                 // it → caught; a productive SPPF-fold (chaining) advances it
                 // → allowed.
-                let parent_proj_descriptor: Option<ProjDescriptorKey> =
-                    if is_recovery {
-                        None
-                    } else {
-                        extract_proj_descriptor(cursor, &self.gss)
-                    };
+                let parent_proj_descriptor: Option<ProjDescriptorKey> = if is_recovery {
+                    None
+                } else {
+                    extract_proj_descriptor(cursor, &self.gss)
+                };
                 let parent_in_visited: bool = parent_proj_descriptor
                     .map(|d| cursor.visited_proj_descriptors.contains(&d))
                     .unwrap_or(false);
@@ -6994,8 +6973,7 @@ where
                 // below, leaving zero children. Drop the entire cursor
                 // here as a single optimization (algebraically equivalent
                 // to per-branch dropping all branches).
-                let is_pure_projection_fork =
-                    !is_recovery && is_projection_fork(&branches);
+                let is_pure_projection_fork = !is_recovery && is_projection_fork(&branches);
                 if is_pure_projection_fork && parent_in_visited {
                     if let Some(desc) = parent_proj_descriptor {
                         let msg = format!(
@@ -7004,13 +6982,9 @@ where
                              cat_src={}, cur_bp={}) — refusing to \
                              re-dispatch projection Fork (Sig-B GLL \
                              descriptor cycle defense)",
-                            desc.gss_node, desc.sppf_stack, desc.cat_src,
-                            desc.cur_bp,
+                            desc.gss_node, desc.sppf_stack, desc.cat_src, desc.cur_bp,
                         );
-                        self.set_cursor_inner_state(
-                            cursor,
-                            WpdaState::Error { message: msg },
-                        );
+                        self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
                         return CursorOutcome::Drop;
                     }
                 }
@@ -7064,7 +7038,10 @@ where
                 // via Arc::clone (cheap) + optional Arc::make_mut for
                 // CoW insertion. The first child whose mutation diverges
                 // from parent allocates; subsequent children share.
-                let (child_visited_recovery, child_recovery_depth): (im::OrdSet<PackedDispatchConfig>, u8) = if is_recovery {
+                let (child_visited_recovery, child_recovery_depth): (
+                    im::OrdSet<PackedDispatchConfig>,
+                    u8,
+                ) = if is_recovery {
                     let depth = cursor.recovery_depth.saturating_add(1);
                     let mut set = cursor.visited_recovery.clone();
                     if let Some(key) = recovery_dispatch_config {
@@ -7094,7 +7071,8 @@ where
                 // (chaining) re-enters at an ADVANCED StackId → distinct
                 // descriptor → allowed. `parent_proj_descriptor` was computed
                 // once at the Site-2 block above and is reused here.
-                let child_visited_proj_descriptors: im::OrdSet<ProjDescriptorKey> = if !is_recovery {
+                let child_visited_proj_descriptors: im::OrdSet<ProjDescriptorKey> = if !is_recovery
+                {
                     let mut set = cursor.visited_proj_descriptors.clone();
                     if let Some(desc) = parent_proj_descriptor {
                         set.insert(desc);
@@ -7107,8 +7085,7 @@ where
                 // B14 C5: parallel tracker — for each child pushed below,
                 // record whether its originating branch was CrossCatDelegate.
                 // Used post-loop for per-child visited_dispatch insertion.
-                let mut child_came_from_cross_cat: Vec<bool> =
-                    Vec::with_capacity(branches.len());
+                let mut child_came_from_cross_cat: Vec<bool> = Vec::with_capacity(branches.len());
                 let branches_count = branches.len() as u32;
                 for (branch_idx, branch) in branches.into_iter().enumerate() {
                     // B14 C5 per-branch gate (Sig-B GLL-descriptor #9, M1
@@ -7124,10 +7101,7 @@ where
                     // (the `&& is_cross_cat_delegate_branch` guard is retained).
                     let is_cross_cat_delegate_branch =
                         matches!(&branch.new_state, WpdaState::CrossCatDelegate { .. });
-                    if !is_recovery
-                        && parent_in_visited
-                        && is_cross_cat_delegate_branch
-                    {
+                    if !is_recovery && parent_in_visited && is_cross_cat_delegate_branch {
                         continue;
                     }
                     // Stage 3.12 Fix 2(ii) (2026-05-02): Fork-source-order
@@ -7166,15 +7140,19 @@ where
                                 child_visited_recovery.clone(),
                                 child_visited_dispatch.clone(),
                                 child_visited_proj_descriptors.clone(),
+                                None,
                                 child_source_priority,
                             );
                             for child in new_children {
                                 children.push(child);
                                 // L0 (2026-05-27): lazy-thunk created (Push arm — chain-interior dominant).
-                                crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::PUSH);
+                                crate::stats_thunk_created!(
+                                    self,
+                                    crate::walker_stats::fork_kind_index::PUSH
+                                );
                                 child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
                             }
-                        }
+                        },
                         ForkActionKind::OptGroupAbsent { replace_symbol } => {
                             // Stage 3.12 / Class A.i (2026-05-01): SKIP
                             // branch. Mirrors `apply_action_to_cursor::OptGroupAbsent`
@@ -7278,9 +7256,12 @@ where
                             );
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         // Stage 3.16 (Cluster 1, Mechanism γ, 2026-05-05) —
                         // payload-carrying action variants. Each arm mirrors
@@ -7364,9 +7345,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::Consume => {
                             let mut child = BranchCursor {
@@ -7436,9 +7420,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::ConsumeIdentAndReplace { start_scope } => {
                             let mut child = BranchCursor {
@@ -7510,9 +7497,7 @@ where
                             // produce a stuck/dropped configuration via downstream
                             // dispatch (no panic — the lex-min winner is among the
                             // surviving cursors).
-                            let text = tokens
-                                .peek_text(child.pos)
-                                .unwrap_or("");
+                            let text = tokens.peek_text(child.pos).unwrap_or("");
                             // L12 follow-up (B1, 2026-05-07): emit_push_ident MUST
                             // run unconditionally — emit_start_binder_scope pushes
                             // BinderHandle to binder_scopes, but the action body's
@@ -7524,10 +7509,7 @@ where
                             // skipped → action body's Ident parameter missing →
                             // malformed AST (e.g. Term::TVar instead of Term::Lam).
                             if start_scope {
-                                self.emit_start_binder_scope(
-                                    &mut child,
-                                    vec![text.to_string()],
-                                );
+                                self.emit_start_binder_scope(&mut child, vec![text.to_string()]);
                             }
                             let pos_now = child.pos;
                             self.emit_push_ident(&mut child, text, pos_now);
@@ -7540,9 +7522,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::Pop => {
                             let mut child = BranchCursor {
@@ -7609,8 +7594,7 @@ where
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
                             };
-                            let popped_symbol =
-                                self.gss.node(child.node).map(|n| n.symbol);
+                            let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
                             let pred_id = self
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
@@ -7624,9 +7608,12 @@ where
                             );
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::ConsumeAndPop => {
                             let mut child = BranchCursor {
@@ -7693,8 +7680,7 @@ where
                                 // SPPF-symbol → AST memo via Arc bump (O(1)).
                                 // First write in this child triggers Arc::make_mut.
                             };
-                            let popped_symbol =
-                                self.gss.node(child.node).map(|n| n.symbol);
+                            let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
                             let pred_id = self
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
@@ -7709,9 +7695,12 @@ where
                             );
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::ConsumeAndReplaceWithEffect { effect } => {
                             let mut child = BranchCursor {
@@ -7797,9 +7786,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::LexAlt { alt_idx, kind, text, next_pos, rule_idx } => {
                             // M6c.3 (2026-05-14): proper literal-rule
@@ -7934,9 +7926,12 @@ where
                             child.pos = next_pos;
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::LexAltPrefixOp {
                             alt_idx,
@@ -8062,9 +8057,7 @@ where
                             // never surfacing the `Neg(Fact(NumLit(3))) →
                             // -6` derivation.
                             if let Some(kind) = tokens.peek_kind(child.pos) {
-                                let text = tokens
-                                    .peek_text(child.pos)
-                                    .unwrap_or("");
+                                let text = tokens.peek_text(child.pos).unwrap_or("");
                                 let trigger_pos = child.pos;
                                 self.emit_push_trigger_terminal(
                                     &mut child,
@@ -8089,39 +8082,75 @@ where
                             child.pos = next_pos;
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
-                        ForkActionKind::LexAltPostfixOp { .. } => {
-                            // M6c.6.4.a (2026-05-14): stub. Activated
-                            // at M6c.6.4.e when postfix lex-Fork
-                            // emission is wired in
-                            // `emit_lex_fork_at_infix_loop`.
-                            unreachable!(
-                                "M6c.6.4.a: LexAltPostfixOp not yet wired (M6c.6.4.e)"
-                            );
+                        ForkActionKind::LexAltPostfixOp {
+                            alt_idx,
+                            trigger: _,
+                            rule_idx,
+                            next_pos,
+                            l_bp: _,
+                            result_src_idx: _,
                         }
-
-                        ForkActionKind::LexAltInfixOp { .. } => {
-                            // M6c.6.4.a (2026-05-14): stub. Activated
-                            // at M6c.6.4.e.
-                            unreachable!(
-                                "M6c.6.4.a: LexAltInfixOp not yet wired (M6c.6.4.e)"
-                            );
+                        | ForkActionKind::LexAltInfixOp {
+                            alt_idx,
+                            trigger: _,
+                            rule_idx,
+                            next_pos,
+                            l_bp: _,
+                            r_bp: _,
+                            result_src_idx: _,
+                            source_cat_src_idx: _,
                         }
-
-                        ForkActionKind::LexAltMixfixOp { .. } => {
-                            // M6c.6.4.a (2026-05-14): stub. Activated
-                            // at M6c.6.4.e.
-                            unreachable!(
-                                "M6c.6.4.a: LexAltMixfixOp not yet wired (M6c.6.4.e)"
+                        | ForkActionKind::LexAltMixfixOp {
+                            alt_idx,
+                            trigger: _,
+                            rule_idx,
+                            next_pos,
+                            l_bp: _,
+                            result_src_idx: _,
+                        } => {
+                            let lex_fork_stamp = LexForkStamp {
+                                pos: cursor.pos as u32,
+                                alt_idx,
+                                src_idx: branch.symbol.category_src_idx,
+                                rule_idx,
+                            };
+                            let push_branch = ForkBranch {
+                                symbol: branch.symbol,
+                                weight: branch.weight,
+                                new_state: branch.new_state,
+                                action_kind: ForkActionKind::Push,
+                            };
+                            let new_children = self.allocate_fork_push_child(
+                                &cursor,
+                                push_branch,
+                                next_pos,
+                                child_recovery_depth,
+                                child_visited_recovery.clone(),
+                                child_visited_dispatch.clone(),
+                                child_visited_proj_descriptors.clone(),
+                                Some(lex_fork_stamp),
+                                child_source_priority,
                             );
-                        }
+                            for child in new_children {
+                                children.push(child);
+                                crate::stats_thunk_created!(
+                                    self,
+                                    crate::walker_stats::fork_kind_index::OTHER
+                                );
+                                child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
+                            }
+                        },
 
                         ForkActionKind::ConsumeAndCaptureAndPush => {
-                            // Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ,
-                            // 2026-05-05): atomic literal multi-arm Fork
+                            // Stage 3.16 atomic-literal fork branch (Cluster
+                            // 2, Mechanism gamma, 2026-05-05). Multi-arm Fork
                             // branch. Mirrors WpdaStepAction::ConsumeAndPush
                             // with capture_token=true (prefix.rs Pass-1
                             // emission). Captures the trigger token onto the
@@ -8200,9 +8229,7 @@ where
                             // Capture the token at child.pos BEFORE advancing
                             // (mirrors live ConsumeAndPush at line 2086-2099).
                             if let Some(kind) = tokens.peek_kind(child.pos) {
-                                let text = tokens
-                                    .peek_text(child.pos)
-                                    .unwrap_or("");
+                                let text = tokens.peek_text(child.pos).unwrap_or("");
                                 let pos_now = child.pos;
                                 self.emit_push_token(&mut child, kind, text, pos_now);
                             }
@@ -8217,13 +8244,16 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsumeAndReplace { expected_text } => {
                             // Stage 3.20 / L12 Commit F (2026-05-06):
-                            // Cluster 1/6 hack #4/#5 closure. Single-branch
+                            // Cluster 1/6 guard closure. Single-branch
                             // Fork with `peek_text == expected_text` guard.
                             // Pass → ConsumeAndReplace semantics. Fail →
                             // skip child allocation (the only surviving
@@ -8254,13 +8284,16 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsumeIdentAndReplace { start_scope } => {
                             // Stage 3.20 / L12 Commit F (2026-05-06):
-                            // Cluster 1/6 hack #6/4th closure. Single-branch
+                            // Cluster 1/6 ident-guard closure. Single-branch
                             // Fork with `peek_kind == Ident` guard. Pass →
                             // ConsumeIdentAndReplace { start_scope }
                             // semantics. Fail → skip child allocation.
@@ -8281,19 +8314,14 @@ where
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            let text = tokens
-                                .peek_text(child.pos)
-                                .unwrap_or("");
+                            let text = tokens.peek_text(child.pos).unwrap_or("");
                             // L12 follow-up (B1, 2026-05-07): emit_push_ident MUST
                             // run unconditionally — see twin fix at line ~2920 in
                             // the in-Fork ConsumeIdentAndReplace arm. Mirrors
                             // canonical WpdaStepAction::ConsumeIdentAndReplace at
                             // line ~2521.
                             if start_scope {
-                                self.emit_start_binder_scope(
-                                    &mut child,
-                                    vec![text.to_string()],
-                                );
+                                self.emit_start_binder_scope(&mut child, vec![text.to_string()]);
                             }
                             let pos_now = child.pos;
                             self.emit_push_ident(&mut child, text, pos_now);
@@ -8306,9 +8334,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsume { expected_text } => {
                             // L12 follow-up B2 (2026-05-07): peek_text
@@ -8337,9 +8368,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsumeAndReplaceWithEffect {
                             expected_text,
@@ -8390,9 +8424,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::ConsumeIdentAndPop { start_scope: _ } => {
                             // B8 / Issue C followup (2026-05-09): consume
@@ -8427,15 +8464,10 @@ where
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            let text = tokens
-                                .peek_text(child.pos)
-                                .unwrap_or("")
-                                .to_string();
+                            let text = tokens.peek_text(child.pos).unwrap_or("").to_string();
                             self.emit_extend_binder_scope(&mut child, text);
                             // Capture popped_symbol before pop.
-                            let popped_symbol = self.gss
-                                .node(child.node)
-                                .map(|n| n.symbol);
+                            let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
                             let pred_id = self
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
@@ -8450,9 +8482,12 @@ where
                             );
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsumeBinderIdentAndReplace { start_scope } => {
                             // B8 / Issue 3 fix (2026-05-10): consume Ident
@@ -8480,15 +8515,9 @@ where
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            let text = tokens
-                                .peek_text(child.pos)
-                                .unwrap_or("")
-                                .to_string();
+                            let text = tokens.peek_text(child.pos).unwrap_or("").to_string();
                             if start_scope {
-                                self.emit_start_binder_scope(
-                                    &mut child,
-                                    vec![text.clone()],
-                                );
+                                self.emit_start_binder_scope(&mut child, vec![text.clone()]);
                             } else {
                                 self.emit_extend_binder_scope(&mut child, text.clone());
                             }
@@ -8502,9 +8531,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsumeBinderIdentAndReplaceWithEffect {
                             start_scope,
@@ -8541,15 +8573,9 @@ where
                                 branch.new_state.clone(),
                                 child_source_priority,
                             );
-                            let text = tokens
-                                .peek_text(child.pos)
-                                .unwrap_or("")
-                                .to_string();
+                            let text = tokens.peek_text(child.pos).unwrap_or("").to_string();
                             if start_scope {
-                                self.emit_start_binder_scope(
-                                    &mut child,
-                                    vec![text.clone()],
-                                );
+                                self.emit_start_binder_scope(&mut child, vec![text.clone()]);
                             } else {
                                 self.emit_extend_binder_scope(&mut child, text.clone());
                             }
@@ -8568,9 +8594,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsumeAndPopWithEffect {
                             expected_text,
@@ -8609,9 +8638,7 @@ where
                                 Arc::make_mut(&mut child.recovery_deltas).push(effect);
                             }
                             // Capture popped_symbol before pop.
-                            let popped_symbol = self.gss
-                                .node(child.node)
-                                .map(|n| n.symbol);
+                            let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
                             let pred_id = self
                                 .cursor_gss_pop_via_edge(&mut child)
                                 .unwrap_or(crate::gss::GSS_NODE_NONE);
@@ -8626,9 +8653,12 @@ where
                             );
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::ReplaceAndPush { replace_symbol } => {
                             // B8 / Issue C followup (2026-05-09): Class 3
@@ -8664,9 +8694,12 @@ where
                             );
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
 
                         ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
                             expected_text,
@@ -8709,9 +8742,12 @@ where
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             children.push(child);
                             // L0 (2026-05-27): lazy-thunk created counter.
-                            crate::stats_thunk_created!(self, crate::walker_stats::fork_kind_index::OTHER);
+                            crate::stats_thunk_created!(
+                                self,
+                                crate::walker_stats::fork_kind_index::OTHER
+                            );
                             child_came_from_cross_cat.push(is_cross_cat_delegate_branch);
-                        }
+                        },
                     }
                 }
                 // Phase F.11 R7 hoist (2026-05-19): the per-child post-loop
@@ -8799,7 +8835,7 @@ where
                 // so the count reflects post-gating survivors.
                 crate::stats_add!(self, cursors_created_via_fork, children.len() as u64);
                 CursorOutcome::ForkInto(children)
-            }
+            },
             WpdaStepAction::Accept => {
                 // Stage 3.5b (2026-05-01): mirror live apply_action::Accept
                 // by transitioning cursor.inner_state to Accepted.
@@ -8807,21 +8843,14 @@ where
                 // walker self.state is mirrored to Accepted in deterministic mode.
                 self.set_cursor_inner_state(cursor, WpdaState::Accepted);
                 CursorOutcome::Resolved
-            }
+            },
             WpdaStepAction::Error(message) => {
                 // Stage 3.9 / ι Phase 4 (2026-05-01): mirror live state via
                 // helper so deterministic-mode self.state becomes Error too.
-                self.set_cursor_inner_state(
-                    cursor,
-                    WpdaState::Error { message },
-                );
+                self.set_cursor_inner_state(cursor, WpdaState::Error { message });
                 CursorOutcome::Drop
-            }
-            WpdaStepAction::OptGroupAbsent {
-                replace_symbol,
-                weight,
-                new_state,
-            } => {
+            },
+            WpdaStepAction::OptGroupAbsent { replace_symbol, weight, new_state } => {
                 // Stage 3.8 / ι Phase 3 (2026-05-01): cursor-side Opt-Group
                 // skip path. Mirrors the live `apply_action::OptGroupAbsent`
                 // arm (line ~1712 above) but delegates the live-builder
@@ -8854,16 +8883,13 @@ where
                         self.top_node = Some(sentinel);
                     }
                 }
-                let _ = self.cursor_gss_push_auto(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ =
+                    self.cursor_gss_push_auto(cursor, replace_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
-            WpdaStepAction::OptGroupFinalize {
-                replace_symbol,
-                weight,
-                new_state,
-            } => {
+            },
+            WpdaStepAction::OptGroupFinalize { replace_symbol, weight, new_state } => {
                 // Stage 3.8 / ι Phase 3 (2026-05-01): cursor-side Opt-Group
                 // take-path finalize. Mirrors the live arm but uses helpers
                 // for mode-aware mutation.
@@ -8892,11 +8918,12 @@ where
                         self.top_node = Some(sentinel);
                     }
                 }
-                let _ = self.cursor_gss_push_auto(cursor, replace_symbol, cursor.pos, weight.clone());
+                let _ =
+                    self.cursor_gss_push_auto(cursor, replace_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
-            }
+            },
             WpdaStepAction::Idle => {
                 // Stage 3.5b (2026-05-01): WPDS-correct EOI parking.
                 //
@@ -8936,98 +8963,14 @@ where
                 let at_eoi = self.is_logical_eoi(cursor.pos, tokens);
                 let resolved_shape = matches!(
                     cursor.inner_state,
-                    WpdaState::InfixLoop { .. }
-                        | WpdaState::Accepted
-                        | WpdaState::Unwinding
+                    WpdaState::InfixLoop { .. } | WpdaState::Accepted | WpdaState::Unwinding
                 );
                 if (at_eoi && resolved_shape) || popped_past_root {
                     CursorOutcome::Resolved
                 } else {
                     CursorOutcome::Drop
                 }
-            }
-        }
-    }
-
-    /// After `apply_action_to_cursor` updates `cursor.inner_state`, classify
-    /// whether the cursor has reached a "branch is done" state that signals
-    /// `Resolved` to the fanout driver. Otherwise return `Alive`.
-    ///
-    /// "Branch is done" states (per Plan agent F5 §4): `InfixLoop`,
-    /// `Accepted`, `Unwinding`. These are the states where a forked branch
-    /// has rejoined the main parse trunk — safe to commit the winning
-    /// branch's accumulated recovery_deltas and resume there.
-    /// Phase F.13 Stage L3.2 (2026-05-25): step a cohort frame for one
-    /// fanout iteration. L3.2 stub always materializes the cohort into
-    /// N concrete cursors, runs the same per-cursor step logic as the
-    /// existing Concrete arm, and returns a `Vec<Frame<W>>` of the
-    /// outcomes (Alive/ForkInto children/Resolved cursors wrapped in
-    /// `Frame::Concrete`; Drop'd cursors omitted).
-    ///
-    /// L3.4 will introduce the ObsInvariant fast path: instead of
-    /// materializing, classify the action via
-    /// `DivergenceClass::classify(&action)` and either bulk-apply to
-    /// the shell (returning a single `Frame::Cohort(cf_updated)`) or
-    /// fall through to materialize for ObsDivergent actions.
-    ///
-    /// L3.5 will introduce the DispatchResolved broadcast path that
-    /// short-circuits before classification when `cf.dispatch_result`
-    /// is populated by the H12 cache.
-    ///
-    /// L3.2 is a pure no-op behaviorally because no caller constructs
-    /// `Frame::Cohort` yet — the dispatch arm in `step_fanout`'s drain
-    /// loop is dead code that will become live in L3.4. This stage's
-    /// purpose is purely to wire the routing infrastructure so L3.4 is
-    /// a localized addition rather than a refactor.
-    fn step_cohort_frame(
-        &mut self,
-        cf: Box<crate::cohort_lazy::CohortFrame<W>>,
-        tokens: &dyn WpdaTokenSource,
-    ) -> Vec<crate::cohort_lazy::Frame<W>> {
-        // Phase F.13 Stage L3.4 (2026-05-25): classifier-driven dispatch.
-        // Compute a representative action by stepping the engine over the
-        // shell's `(inner_state, pos)` (shell-invariant by ~_obs def, so
-        // the result represents the action ALL members would take).
-        let frontier_top = self.gss.node(cf.shell.node).cloned();
-        let action = self.engine.step(
-            &cf.shell.inner_state,
-            &self.gss,
-            frontier_top.as_ref(),
-            cf.shell.pos,
-            tokens,
-        );
-        match crate::cohort_lazy::DivergenceClass::classify(&action) {
-            crate::cohort_lazy::DivergenceClass::ObsInvariant => {
-                // Try to apply to shell in-place. L3.4 supports `Advance`
-                // only; other invariant variants (Accept/Error/Idle) fall
-                // through to materialize (L3.4b expands this).
-                let mut cf = cf;
-                match crate::cohort_lazy::apply_obs_invariant_to_shell(&mut cf, action) {
-                    Ok(()) => {
-                        // Shell-only mutation succeeded; cohort survives as a
-                        // single Frame::Cohort. Members observe the shell
-                        // update through the shared Arc.
-                        return vec![crate::cohort_lazy::Frame::Cohort(cf)];
-                    }
-                    Err(action_back) => {
-                        // Variant not yet supported; fall through to
-                        // materialize using the recovered action.
-                        return self.cohort_materialize_and_step(cf, action_back, tokens);
-                    }
-                }
-            }
-            crate::cohort_lazy::DivergenceClass::ObsDivergent => {
-                return self.cohort_materialize_and_step(cf, action, tokens);
-            }
-            crate::cohort_lazy::DivergenceClass::DispatchResolved => {
-                // L3.5 will populate cf.dispatch_result before calling
-                // step_cohort_frame for the broadcast path; classify()
-                // itself never returns this variant.
-                unreachable!(
-                    "L3.4: DivergenceClass::classify never returns DispatchResolved \
-                     (caller short-circuits via cf.dispatch_result.is_some())"
-                );
-            }
+            },
         }
     }
 
@@ -9079,10 +9022,7 @@ where
     /// `Ambiguous` alternate; an already-covered one merges (no
     /// double-count). The `-3!` ladder / `wpda_parity_*` /
     /// `h3_chain_correctness` invariants are preserved.
-    fn revive_orphaned_cohort_members_once(
-        &mut self,
-        tokens: &dyn WpdaTokenSource,
-    ) -> usize
+    fn revive_orphaned_cohort_members_once(&mut self, tokens: &dyn WpdaTokenSource) -> usize
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
     {
@@ -9109,9 +9049,8 @@ where
         //      op-suites + edge_case produce ZERO. These NEED revival to
         //      surface a term-bearing / promoted-category derivation (e.g.
         //      `"42"` → `Int` rather than bare `NumLit`; `float(x)`,
-        //      `int(a > b == c)`), and that parse does NOT yet have an
-        //      accepting, REALIZABLE winner on the frontier — revival is
-        //      the only way to reach one.
+        //      `int(a > b == c)`). In these cases, revival is the route to
+        //      an accepting, realizable winner.
         //
         //  (2) DEEP-PARENTHESIZED-MIXFIX SPURIOUS blowup: one cross-cat
         //      dispatch per nesting level, so the orphan set scales with
@@ -9166,10 +9105,10 @@ where
                     .filter_map(|frame| match frame {
                         crate::cohort_lazy::Frame::Concrete(c)
                             if self.is_logical_eoi(c.pos, tokens)
-                                && self.is_accepting_config(c) =>
+                                && self.is_accepting_config(c, tokens) =>
                         {
                             self.sppf_stack_arena.top(c.sppf_stack_id)
-                        }
+                        },
                         _ => None,
                     })
                     .filter(|&sid| sid != crate::sppf::SPPF_ID_NONE)
@@ -9223,56 +9162,20 @@ where
                 crate::cohort_lazy::Frame::Concrete(_) => materialized.push(frame),
                 crate::cohort_lazy::Frame::Cohort(cf) => {
                     materialized.extend(crate::cohort_lazy::materialize_cohort_to_frames(*cf));
-                }
+                },
             }
         }
         self.branch_cursors = materialized;
     }
 
-    /// Phase F.13 Stage L3.4 (2026-05-25): materialize a cohort frame
-    /// and run the per-cursor step body. Factored out of the L3.2 stub
-    /// so the L3.4 ObsInvariant fast-path can share the fallback path
-    /// when an invariant variant isn't yet supported.
+    /// After `apply_action_to_cursor` updates `cursor.inner_state`, classify
+    /// whether the cursor has reached a "branch is done" state that signals
+    /// `Resolved` to the fanout driver. Otherwise return `Alive`.
     ///
-    /// Skips re-running engine.step inside the per-cursor loop — the
-    /// representative action has already been computed by the caller
-    /// and is identical across members (shell-invariant). Each
-    /// materialized cursor applies the cloned action via
-    /// `apply_action_to_cursor`.
-    fn cohort_materialize_and_step(
-        &mut self,
-        cf: Box<crate::cohort_lazy::CohortFrame<W>>,
-        action: WpdaStepAction<W>,
-        tokens: &dyn WpdaTokenSource,
-    ) -> Vec<crate::cohort_lazy::Frame<W>> {
-        let materialized: Vec<crate::cohort_lazy::Frame<W>> =
-            crate::cohort_lazy::materialize_cohort_to_frames(*cf);
-        let mut produced: Vec<crate::cohort_lazy::Frame<W>> =
-            Vec::with_capacity(materialized.len());
-        let action_template = action;
-        for frame in materialized {
-            let mut cursor = frame.into_concrete();
-            let action = action_template.clone();
-            let outcome = self.apply_action_to_cursor(&mut cursor, action, tokens);
-            match outcome {
-                CursorOutcome::Drop => {
-                    // discard
-                }
-                CursorOutcome::Alive | CursorOutcome::Resolved => {
-                    produced.push(crate::cohort_lazy::Frame::Concrete(cursor));
-                }
-                CursorOutcome::ForkInto(children) => {
-                    produced.extend(
-                        children
-                            .into_iter()
-                            .map(crate::cohort_lazy::Frame::Concrete),
-                    );
-                }
-            }
-        }
-        produced
-    }
-
+    /// "Branch is done" states (per Plan agent F5 §4): `InfixLoop`,
+    /// `Accepted`, `Unwinding`. These are the states where a forked branch
+    /// has rejoined the main parse trunk — safe to commit the winning
+    /// branch's accumulated recovery_deltas and resume there.
     fn cursor_resolution_check(&self, cursor: &BranchCursor<W>) -> CursorOutcome<W> {
         // Phase 5.5 (2026-05-12): cursors that hit Error state mid-step
         // (e.g., emit_fire_action's eager fire underflow) are Dropped so
@@ -9282,9 +9185,7 @@ where
         }
         if matches!(
             cursor.inner_state,
-            WpdaState::InfixLoop { .. }
-                | WpdaState::Accepted
-                | WpdaState::Unwinding
+            WpdaState::InfixLoop { .. } | WpdaState::Accepted | WpdaState::Unwinding
         ) {
             CursorOutcome::Resolved
         } else {
@@ -9292,13 +9193,11 @@ where
         }
     }
 
-    /// Sig-B Blocker-3 M7.0 (2026-06-01, pgmcp experiment #9, INERT): a
-    /// throwaway `BranchCursor` for the read-only `[C7-3]`/`[C7-5]`
-    /// transient-fire probe. `fire_action_via_transient`'s
-    /// `reconstruct_action_arg` Symbol arm reads `sppf_symbol_terms` by
-    /// SppfId (walker-global), NOT cursor fields, so a default-shaped cursor
-    /// is sufficient context. Used ONLY by `sigb_m70_span_diagnostic`;
-    /// removed before merge.
+    /// Construct a minimal cursor for read-only transient action firing.
+    ///
+    /// `fire_action_via_transient` reconstructs Symbol args from the
+    /// walker-global `sppf_symbol_terms`, so the cursor only needs a neutral
+    /// GSS/root/state shape. Used by span-anchored coercion interposition.
     fn make_probe_cursor(&self) -> BranchCursor<W> {
         BranchCursor::seed_from_live(
             crate::gss::GSS_NODE_NONE,
@@ -9306,361 +9205,6 @@ where
             W::one_ref(),
             WpdaState::Ready { min_bp: 0 },
         )
-    }
-
-    /// Sig-B Blocker-3 M7.0 DIAGNOSTIC-CONFIRM (2026-06-01, pgmcp experiment
-    /// #9, INERT/temporary). Reproduces the six `[C7-n]` predicates of the
-    /// span-anchored design §1 at the EOI/pre-Error drop boundary — PURELY
-    /// READ-ONLY, NO behavioral change. Extends the M6.0 survey with the
-    /// SPPF SPAN print (`(lo_pos, hi_pos)`) AND the SPAN-ANCHORED pairing
-    /// scan (`R.span_lo == K_sib.pos`) that the M6.0 survey did NOT do (it
-    /// only checked SAME-pos pairings, `K_sib.pos == R.pos_at_dispatch` —
-    /// which is precisely why M6.0 R1 never saw the cross-pos full-span body).
-    ///
-    /// For each Resolved entry `R` it prints `self.sppf.node(R.symbol_id)`'s
-    /// `(lo_pos, hi_pos)` SPAN alongside `R.pos_at_dispatch` (the KEY pos).
-    /// Then it scans for span-anchored category-compatible pairings:
-    ///
-    ///   - `[C7-2]` — does a Resolved `R` exist whose SPPF span `[lo,hi]`
-    ///     satisfies `lo == K_sib.pos` (a paused outer-cast member) AND
-    ///     `body_cat` is category-compatible with the member's arg cat
-    ///     (`tgt_cat = K_sib.source_src_idx`)? The existence proof is
-    ///     `sym=91 span=[2,9] cat=7` against `K_sib{pos:2,src:7}`.
-    ///   - `[C7-3]` — fire the candidate over `R.symbol_id` via the existing
-    ///     `fire_action_via_transient` (read-only) and report whether it
-    ///     returns `Some(_)` with `output_cat == Int` (the cast's result) +
-    ///     pos-alignment (member.pos → R.span_hi consumes `)`).
-    ///   - `[C7-4]`/`[C7-5]` — the Float family: report `outer_cast_revival`
-    ///     candidate counts + whether `single_hop_coercion(Float,Proc)≠∅` +
-    ///     fire the `ProcFloat`-coerced inner Float.
-    ///   - `[C7-6]` — `min_terminal_span` per-rule counts.
-    ///
-    /// Gated by `SIGB_CROSSWRAP`; removed before merge.
-    fn sigb_m70_span_diagnostic(&self, tokens: &dyn WpdaTokenSource) {
-        use crate::dispatch_cohort::DispatchCacheEntry;
-        let _ = tokens;
-        // ── §0. [C7-6] min_terminal_span backstop counts for the key cast
-        //    rules (Bool→Int = (1, 11=BoolToInt); FloatBin = cat Float=6;
-        //    ProcFloat = (0, 8)). Confirms the token-soundness realize filter
-        //    is the EVIDENCE backstop (unchanged). Static engine lookup.
-        eprintln!(
-            "[SIGB_M70] [C7-6] min_terminal_span: BoolToInt(1,11)={} FloatBin-fold(6,?)... ProcFloat(0,8)={} ProcInt(0,9)={}",
-            self.engine.min_terminal_span(1, 11),
-            self.engine.min_terminal_span(0, 8),
-            self.engine.min_terminal_span(0, 9),
-        );
-        // ── §A. Resolved-entry survey: print KEY pos AND the SPPF SPAN
-        //    (lo_pos, hi_pos) + body_cat. This is the [C7-2]/[C7-4](a) data.
-        eprintln!(
-            "[SIGB_M70] ── Resolved-entry survey (KEY pos_at_dispatch vs SPPF span [lo,hi]) ──"
-        );
-        let mut resolved_count = 0usize;
-        // (R.symbol_id, span_lo, span_hi, body_cat, pos_at_dispatch, members)
-        let mut resolved_rows: Vec<(crate::sppf::SppfId, u32, u32, u16, u32, usize)> = Vec::new();
-        for (key, entry) in self.dispatch_cohort_cache.entries.iter() {
-            if let DispatchCacheEntry::Resolved {
-                symbol_id,
-                hi_pos: _cohort_hi,
-                pos_at_dispatch,
-                worker_snapshots,
-                pending_members,
-                ..
-            } = entry
-            {
-                resolved_count += 1;
-                let body_cat = match self.sppf.node(*symbol_id) {
-                    Some(crate::sppf::SppfNode::Symbol {
-                        non_terminal_tag, ..
-                    }) => Some(*non_terminal_tag),
-                    _ => None,
-                };
-                let span_lo = self.sppf.span_lo(*symbol_id);
-                let span_hi = self.sppf.span_hi(*symbol_id);
-                let live = worker_snapshots
-                    .iter()
-                    .filter(|s| !s.worker_inner_state.is_terminal())
-                    .count();
-                eprintln!(
-                    "[SIGB_M70]   R key{{pos:{},src:{},bp:{},wrap:({},{})}} sym={} \
-                     SPPF_span=[{:?},{:?}] body_cat={:?} pos_at_dispatch={} live_snaps={} members={}",
-                    key.pos,
-                    key.source_src_idx,
-                    key.inner_cur_bp,
-                    key.wrap_cat,
-                    key.wrap_rule,
-                    symbol_id,
-                    span_lo,
-                    span_hi,
-                    body_cat,
-                    pos_at_dispatch,
-                    live,
-                    pending_members.len(),
-                );
-                if let (Some(lo), Some(hi), Some(bc)) = (span_lo, span_hi, body_cat) {
-                    if live > 0 {
-                        resolved_rows.push((*symbol_id, lo, hi, bc as u16, *pos_at_dispatch, live));
-                    }
-                }
-            }
-        }
-        eprintln!("[SIGB_M70] resolved_total={}", resolved_count);
-
-        // ── §A'. InFlight-entry survey: print every InFlight key with its
-        //    pending_members count. This is the OTHER half of the paused-
-        //    member population (the span scan iterates these as K_sib). The
-        //    genuine outer-cast member may be InFlight (worker still pending)
-        //    rather than Resolved — this reveals whether the (1,11)=BoolToInt
-        //    member is paused-with-members at the drop boundary.
-        let mut inflight_count = 0usize;
-        let mut inflight_with_members = 0usize;
-        for (key, entry) in self.dispatch_cohort_cache.entries.iter() {
-            if let DispatchCacheEntry::InFlight {
-                pending_members,
-                cohort_size,
-                worker_snapshots,
-                ..
-            } = entry
-            {
-                inflight_count += 1;
-                if !pending_members.is_empty() {
-                    inflight_with_members += 1;
-                }
-                // Only print InFlight entries that are paused-member-bearing
-                // (the span-scan-eligible ones) to bound output.
-                if !pending_members.is_empty() {
-                    eprintln!(
-                        "[SIGB_M70]   IF key{{pos:{},src:{},bp:{},wrap:({},{})}} \
-                         cohort_size={} snaps={} members={}",
-                        key.pos,
-                        key.source_src_idx,
-                        key.inner_cur_bp,
-                        key.wrap_cat,
-                        key.wrap_rule,
-                        cohort_size,
-                        worker_snapshots.len(),
-                        pending_members.len(),
-                    );
-                }
-            }
-        }
-        eprintln!(
-            "[SIGB_M70] inflight_total={} inflight_with_members={}",
-            inflight_count, inflight_with_members
-        );
-
-        // ── §B. SPAN-ANCHORED pairing scan (THE [C7-2]/[C7-3] core, NEW vs
-        //    M6.0). For each Resolved `R` with SPPF span [lo,hi] and each
-        //    paused member key `K_sib` (non-empty pending_members), test the
-        //    span anchor `R.span_lo == K_sib.pos` + category compat
-        //    `body_cat == tgt_cat || single_hop_coercion(body_cat,tgt_cat)≠∅`
-        //    where `tgt_cat = K_sib.source_src_idx`. If compatible, fire the
-        //    cast/coercion over R via the read-only transient probe.
-        eprintln!(
-            "[SIGB_M70] ── SPAN-ANCHORED (R.span_lo == K_sib.pos) pairing scan + [C7-3]/[C7-5] fire ──"
-        );
-        let probe_cursor = self.make_probe_cursor();
-        let mut span_pairs = 0usize;
-        let mut span_cat_compat = 0usize;
-        let mut span_fire_ok = 0usize;
-        let mut span_pos_aligned = 0usize;
-        for &(r_symbol_id, lo, hi, body_cat, _r_pos_at_dispatch, _r_live) in resolved_rows.iter() {
-            let r_equiv_src; // computed per resolved key below
-            // recover the resolved key's equiv from any entry that owns this
-            // symbol_id (cheap: scan once). We only need source/bp for the
-            // EquivKey read-only narrow check.
-            let r_key_opt = self
-                .dispatch_cohort_cache
-                .entries
-                .iter()
-                .find_map(|(k, e)| match e {
-                    DispatchCacheEntry::Resolved { symbol_id, .. } if *symbol_id == r_symbol_id => {
-                        Some(k.clone())
-                    }
-                    _ => None,
-                });
-            r_equiv_src = r_key_opt.map(|k| k.equiv());
-            for (k_sib, entry) in self.dispatch_cohort_cache.entries.iter() {
-                let sib_members = match entry {
-                    DispatchCacheEntry::InFlight {
-                        pending_members, ..
-                    } if !pending_members.is_empty() => pending_members.len(),
-                    DispatchCacheEntry::Resolved {
-                        hi_pos: sib_hi,
-                        pending_members,
-                        ..
-                    } if *sib_hi < hi && !pending_members.is_empty() => pending_members.len(),
-                    _ => continue,
-                };
-                // Span anchor (clause 3 of §2.4a): the body starts where the
-                // member delegated.
-                if k_sib.pos != lo {
-                    continue;
-                }
-                // EquivKey narrow read (clause 2, R5): report it but DON'T
-                // gate the scan on it — we want to SEE whether the genuine
-                // pairing is equiv-matched (it should be: same source cat).
-                let equiv_match = r_equiv_src
-                    .map(|e| e == k_sib.equiv())
-                    .unwrap_or(false);
-                span_pairs += 1;
-                let tgt_cat = k_sib.source_src_idx;
-                let coercions = self.engine.single_hop_coercion(body_cat, tgt_cat);
-                let cat_compatible = body_cat == tgt_cat || !coercions.is_empty();
-                if cat_compatible {
-                    span_cat_compat += 1;
-                }
-                // [C7-3]/[C7-5]: fire over R.symbol_id. When body_cat ==
-                // tgt_cat fire the CAST directly (the member's own wrap rule);
-                // else interpose the coercion then the cast fires next step.
-                // For the diagnostic we fire (a) the member's OWN cast over
-                // the raw body when direct, and (b) the coercion over the body
-                // when coerced (proving the wrapped body downcasts).
-                let fire_report: String;
-                if body_cat == tgt_cat {
-                    // Direct: fire the member's wrap rule (K_sib.wrap_cat,
-                    // K_sib.wrap_rule) over [R.symbol_id].
-                    let cast_symbol = crate::wpda_runtime::StackSymbolV2::rule_at(
-                        k_sib.wrap_cat,
-                        k_sib.wrap_rule,
-                        0,
-                        None,
-                    );
-                    match self.fire_action_via_transient(
-                        &probe_cursor,
-                        cast_symbol,
-                        &[r_symbol_id],
-                    ) {
-                        Some((_arc, output_cat, _drains)) => {
-                            span_fire_ok += 1;
-                            // pos-alignment: the member's next pos becomes
-                            // R.span_hi (=hi); the cast consumes `)` there.
-                            span_pos_aligned += 1;
-                            fire_report = format!(
-                                "DIRECT cast({},{}) → fire Some output_cat={:?} | member.pos={} → R.span_hi={} (consumes `)` at {})",
-                                k_sib.wrap_cat, k_sib.wrap_rule, output_cat, k_sib.pos, hi, hi
-                            );
-                        }
-                        None => {
-                            fire_report = format!(
-                                "DIRECT cast({},{}) → fire ELIDE (None)",
-                                k_sib.wrap_cat, k_sib.wrap_rule
-                            );
-                        }
-                    }
-                } else if let Some(&(coerce_cat, coerce_rule)) = coercions.first() {
-                    let coercion_symbol = crate::wpda_runtime::StackSymbolV2::rule_at(
-                        coerce_cat, coerce_rule, 0, None,
-                    );
-                    match self.fire_action_via_transient(
-                        &probe_cursor,
-                        coercion_symbol,
-                        &[r_symbol_id],
-                    ) {
-                        Some((_arc, output_cat, _drains)) => {
-                            let ok = output_cat == Some(tgt_cat);
-                            if ok {
-                                span_fire_ok += 1;
-                                span_pos_aligned += 1;
-                            }
-                            fire_report = format!(
-                                "COERCE via ({},{}) → fire Some output_cat={:?} matches_tgt={} | member.pos={} → R.span_hi={}",
-                                coerce_cat, coerce_rule, output_cat, ok, k_sib.pos, hi
-                            );
-                        }
-                        None => {
-                            fire_report = format!(
-                                "COERCE via ({},{}) → fire ELIDE (None)",
-                                coerce_cat, coerce_rule
-                            );
-                        }
-                    }
-                } else {
-                    fire_report = "NO single-hop coercion (cat-incompatible)".to_string();
-                }
-                eprintln!(
-                    "[SIGB_M70]   SPAN-PAIR R{{sym={},span=[{},{}],body_cat={}}} | \
-                     K_sib{{pos:{},src:{},bp:{},wrap:({},{}),members={}}} tgt_cat={} \
-                     equiv_match={} cat_compatible={} coercions={:?} | {}",
-                    r_symbol_id,
-                    lo,
-                    hi,
-                    body_cat,
-                    k_sib.pos,
-                    k_sib.source_src_idx,
-                    k_sib.inner_cur_bp,
-                    k_sib.wrap_cat,
-                    k_sib.wrap_rule,
-                    sib_members,
-                    tgt_cat,
-                    equiv_match,
-                    cat_compatible,
-                    coercions,
-                    fire_report,
-                );
-            }
-        }
-        eprintln!(
-            "[SIGB_M70] SPAN-SUMMARY span_anchored_pairs={} cat_compatible={} fire_ok={} pos_aligned={}",
-            span_pairs, span_cat_compat, span_fire_ok, span_pos_aligned,
-        );
-
-        // ── §C. [C7-4](a): how many Resolved entries have NO span-anchored
-        //    paused member at all (the Float-family no-cohort-entry signal)?
-        //    Count Resolved entries whose span_lo has NO paused member key.
-        let mut resolved_with_paused_member = 0usize;
-        for &(_sym, lo, _hi, _bc, _pad, _live) in resolved_rows.iter() {
-            let has_member = self.dispatch_cohort_cache.entries.iter().any(|(k, e)| {
-                k.pos == lo
-                    && matches!(
-                        e,
-                        DispatchCacheEntry::InFlight { pending_members, .. }
-                            if !pending_members.is_empty()
-                    )
-            });
-            if has_member {
-                resolved_with_paused_member += 1;
-            }
-        }
-        eprintln!(
-            "[SIGB_M70] C7-4 resolved_rows={} with_span_anchored_paused_member={}",
-            resolved_rows.len(),
-            resolved_with_paused_member,
-        );
-
-        // ── §D. [C7-4](b) FULL-SPPF scan (NOT just cohort cache). The Float
-        //    family's inner FloatBin result may be a pure SPPF Symbol that is
-        //    never a cohort Resolved entry. Scan the whole arena for Symbol
-        //    nodes and report their (non_terminal_tag, lo, hi). This tells us
-        //    whether a [2,7]-inner / [2,10]-outer Float Symbol EXISTS in the
-        //    SPPF even though it is not a cohort entry — the d-i (cohort) vs
-        //    d-ii (pure-Pratt forward) discriminator for the Float family.
-        let arena_len = self.sppf.len();
-        let mut sppf_symbol_hist: std::collections::BTreeMap<(u32, u32, u32), usize> =
-            std::collections::BTreeMap::new();
-        for sid in 0..arena_len {
-            let sid = sid as crate::sppf::SppfId;
-            if let Some(crate::sppf::SppfNode::Symbol {
-                non_terminal_tag,
-                lo_pos,
-                hi_pos,
-                ..
-            }) = self.sppf.node(sid)
-            {
-                *sppf_symbol_hist
-                    .entry((*non_terminal_tag, *lo_pos, *hi_pos))
-                    .or_default() += 1;
-            }
-        }
-        eprintln!(
-            "[SIGB_M70] C7-4(b) FULL-SPPF symbol histogram (cat, lo, hi) x count [arena_len={}]:",
-            arena_len
-        );
-        for ((cat, lo, hi), n) in sppf_symbol_hist.iter() {
-            eprintln!(
-                "[SIGB_M70]   SPPF-SYM cat={} span=[{},{}] count={}",
-                cat, lo, hi, n
-            );
-        }
     }
 
     /// Step 3 (Fork plan F6): per-step driver for `WpdaState::AmbiguityFanout`.
@@ -9695,9 +9239,8 @@ where
         // grows linearly in chain depth (the super-linear root cause).
         #[cfg(feature = "walker-stats")]
         {
-            let mut step_distinct: rustc_hash::FxHashSet<
-                crate::dispatch_cohort::DispatchKey,
-            > = rustc_hash::FxHashSet::default();
+            let mut step_distinct: rustc_hash::FxHashSet<crate::dispatch_cohort::DispatchKey> =
+                rustc_hash::FxHashSet::default();
             for frame in &self.branch_cursors {
                 let cohort_origin = match frame {
                     crate::cohort_lazy::Frame::Concrete(c) => &c.cohort_origin,
@@ -9715,10 +9258,8 @@ where
                 .stats
                 .cohort_origin_distinct_per_step_sum
                 .saturating_add(count);
-            self.stats.cohort_origin_per_step_samples = self
-                .stats
-                .cohort_origin_per_step_samples
-                .saturating_add(1);
+            self.stats.cohort_origin_per_step_samples =
+                self.stats.cohort_origin_per_step_samples.saturating_add(1);
         }
         // Phase F.13 Stage L3.1 (2026-05-25): containers now hold Frame<W>
         // (Concrete-only before L3.4 enables cohort variants).
@@ -9751,9 +9292,7 @@ where
         for frame in &drained_pre_tomita {
             match frame {
                 crate::cohort_lazy::Frame::Concrete(c) => {
-                    let edge_top = self
-                        .incoming_edge_stack_arena
-                        .top(c.incoming_edge_stack_id);
+                    let edge_top = self.incoming_edge_stack_arena.top(c.incoming_edge_stack_id);
                     let key = crate::tomita_frontier::TomitaKey::new(
                         c.inner_state.clone(),
                         c.node,
@@ -9768,7 +9307,7 @@ where
                     // identities collapse via LexicographicWeight::plus.
                     self.tomita_frontier_map
                         .register_arc_with_aggregation(key, shell, arc);
-                }
+                },
                 crate::cohort_lazy::Frame::Cohort(cf) => {
                     // Materialize each member of the H12 cohort, then
                     // ingest each materialized cursor as a separate arc.
@@ -9777,9 +9316,8 @@ where
                     // pause_cohort_member); the resulting cursors are
                     // independently sound for Tomita ingest.
                     for member in &cf.members {
-                        let cursor = crate::cohort_lazy::materialize_branch_cursor(
-                            &cf.shell, member,
-                        );
+                        let cursor =
+                            crate::cohort_lazy::materialize_branch_cursor(&cf.shell, member);
                         let edge_top = self
                             .incoming_edge_stack_arena
                             .top(cursor.incoming_edge_stack_id);
@@ -9790,17 +9328,13 @@ where
                             edge_top,
                             cursor.collection_stack_depth,
                         );
-                        let shell = crate::tomita_frontier::TomitaShell::from_cursor(
-                            &cursor,
-                        );
-                        let arc = crate::tomita_frontier::FrontierArc::from_cursor(
-                            &cursor,
-                        );
+                        let shell = crate::tomita_frontier::TomitaShell::from_cursor(&cursor);
+                        let arc = crate::tomita_frontier::FrontierArc::from_cursor(&cursor);
                         // Substage 6: ⊕-aggregation on TomitaKey collision.
                         self.tomita_frontier_map
                             .register_arc_with_aggregation(key, shell, arc);
                     }
-                }
+                },
             }
         }
         drop(drained_pre_tomita);
@@ -9853,12 +9387,7 @@ where
             // win: 28.9 M edge_stack_arena nodes at chain_500 collapse
             // to ~500 (one per chain element, shared across all arcs at
             // the same TomitaKey).
-            if let WpdaStepAction::Push {
-                ref symbol,
-                ref weight,
-                ref new_state,
-            } = action
-            {
+            if let WpdaStepAction::Push { ref symbol, ref weight, ref new_state } = action {
                 let kind = crate::gss::EdgeKind::from_symbol(symbol);
                 // Substage 5 graduated scope: InfixContinuation (chain-
                 // interior dominant) + PrefixRuleEntry (RuleAt push for
@@ -9925,13 +9454,8 @@ where
                     // descriptor carries the arc's `sppf_stack_id` (the GLL
                     // `w`) so a no-progress broadcast re-entry is caught while
                     // a productive fold advances the StackId and survives.
-                    let needs_b12_defense = matches!(
-                        kind,
-                        crate::gss::EdgeKind::CategoryEntryRoot
-                    ) && matches!(
-                        new_state,
-                        WpdaState::CrossCatDelegate { .. }
-                    );
+                    let needs_b12_defense = matches!(kind, crate::gss::EdgeKind::CategoryEntryRoot)
+                        && matches!(new_state, WpdaState::CrossCatDelegate { .. });
                     let mut b12_dropped_indices: Vec<usize> = Vec::new();
                     if needs_b12_defense {
                         for (idx, arc) in node.arcs.iter_mut().enumerate() {
@@ -9948,9 +9472,7 @@ where
                                     &node.shell,
                                     &*arc,
                                 );
-                            if let Some(desc) =
-                                extract_proj_descriptor(&temp_cursor, &self.gss)
-                            {
+                            if let Some(desc) = extract_proj_descriptor(&temp_cursor, &self.gss) {
                                 if arc.visited_proj_descriptors.contains(&desc) {
                                     b12_dropped_indices.push(idx);
                                 } else {
@@ -9961,8 +9483,7 @@ where
                     }
 
                     // Shell-level GSS push (once, shared across all arcs).
-                    let predecessor = if node.shell.node == 0
-                        && self.gss.node(0).is_none()
+                    let predecessor = if node.shell.node == 0 && self.gss.node(0).is_none()
                         || node.shell.node == crate::gss::GSS_NODE_NONE
                     {
                         // Synthesize root sentinel — same logic as
@@ -9976,17 +9497,13 @@ where
                     } else {
                         node.shell.node
                     };
-                    let new_node_id =
-                        self.gss.get_or_create_node(crate::gss::WpdaGssNode {
-                            pos: node.shell.pos,
-                            symbol: symbol.clone(),
-                        });
-                    let edge_id = self.gss.add_edge_kind(
-                        new_node_id,
-                        predecessor,
-                        weight.clone(),
-                        kind,
-                    );
+                    let new_node_id = self.gss.get_or_create_node(crate::gss::WpdaGssNode {
+                        pos: node.shell.pos,
+                        symbol: symbol.clone(),
+                    });
+                    let edge_id =
+                        self.gss
+                            .add_edge_kind(new_node_id, predecessor, weight.clone(), kind);
                     let new_stack_id = self
                         .incoming_edge_stack_arena
                         .intern_push(node.shell.incoming_edge_stack_id, edge_id);
@@ -9999,8 +9516,7 @@ where
                     }
                     for arc in &mut node.arcs {
                         arc.weight = arc.weight.times_ref(weight);
-                        arc.pending_packing_weight =
-                            arc.pending_packing_weight.times_ref(weight);
+                        arc.pending_packing_weight = arc.pending_packing_weight.times_ref(weight);
                     }
                     // Materialize each arc; route via cursor_resolution_check
                     // (skip apply_action_to_cursor — the action is fully
@@ -10010,27 +9526,27 @@ where
                         if b12_dropped_indices.binary_search(&idx).is_ok() {
                             continue;
                         }
-                        let cursor =
-                            crate::tomita_frontier::materialize_branch_cursor_from_arc(
-                                &node.shell,
-                                arc,
-                            );
+                        let cursor = crate::tomita_frontier::materialize_branch_cursor_from_arc(
+                            &node.shell,
+                            arc,
+                        );
                         let outcome = self.cursor_resolution_check(&cursor);
                         match outcome {
-                            CursorOutcome::Drop => { /* discard */ }
+                            CursorOutcome::Drop => { /* discard */ },
                             CursorOutcome::Alive => {
                                 new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
-                            }
+                            },
                             CursorOutcome::Resolved => {
                                 resolved_indices.push(new_cursors.len());
                                 new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
-                            }
-                            CursorOutcome::ForkInto(_) => {
-                                panic!(
-                                    "Substage 5: cursor_resolution_check returned ForkInto — \
-                                     unreachable for the post-shell-broadcast Push fast path."
+                            },
+                            CursorOutcome::ForkInto(children) => {
+                                new_cursors.extend(
+                                    children
+                                        .into_iter()
+                                        .map(crate::cohort_lazy::Frame::Concrete),
                                 );
-                            }
+                            },
                         }
                     }
                     continue;
@@ -10039,22 +9555,19 @@ where
             // Classify the action; for ObsInvariantOverArcs (Advance /
             // Accept / Error / Idle), apply to the shell once before
             // materializing arcs.
-            let divergence =
-                crate::cohort_lazy::DivergenceClass::classify_for_tomita(&action);
+            let divergence = crate::cohort_lazy::DivergenceClass::classify_for_tomita(&action);
             let action_for_arcs = if divergence
                 == crate::tomita_frontier::TomitaDivergence::ObsInvariantOverArcs
             {
-                let _ = crate::cohort_lazy::apply_obs_invariant_to_frontier(
-                    &mut node, action.clone(),
-                );
+                let _ =
+                    crate::cohort_lazy::apply_obs_invariant_to_frontier(&mut node, action.clone());
                 action.clone()
             } else {
                 action.clone()
             };
             for arc in &node.arcs {
-                let cursor = crate::tomita_frontier::materialize_branch_cursor_from_arc(
-                    &node.shell, arc,
-                );
+                let cursor =
+                    crate::tomita_frontier::materialize_branch_cursor_from_arc(&node.shell, arc);
                 drained.push((cursor, action_for_arcs.clone()));
             }
         }
@@ -10068,9 +9581,7 @@ where
         #[cfg(feature = "walker-stats")]
         {
             for (c, _action) in &drained {
-                let edge_top = self
-                    .incoming_edge_stack_arena
-                    .top(c.incoming_edge_stack_id);
+                let edge_top = self.incoming_edge_stack_arena.top(c.incoming_edge_stack_id);
                 let key = crate::walker_stats::TomitaKey {
                     state: c.inner_state.clone(),
                     node: c.node,
@@ -10083,9 +9594,9 @@ where
         }
         // Phase F.13 chain_10000 Exp 14 Substage 3+4 (2026-05-27): the
         // Tomita ingest+drain flattens all frames to Concrete arcs;
-        // cohort routing via step_cohort_frame is bypassed because every
-        // arc carries its own per-arc heavy fields. The cached
-        // `action_template` from the drain stage means the per-cursor
+        // cohort frames materialize at ingest because every arc carries
+        // its own per-arc heavy fields. The cached action from the drain
+        // stage means the per-cursor
         // loop NO LONGER calls engine.step (one call per frontier shell
         // instead of one per arc — main Substage 4 win).
         //
@@ -10108,9 +9619,10 @@ where
         // cached action; successor frames are accumulated in `new_cursors`
         // (NOT re-enqueued in the same step — they ingest at the next
         // step_fanout call per the step-boundary protocol).
-        let mut continuation_queue: std::collections::VecDeque<
-            (BranchCursor<W>, WpdaStepAction<W>),
-        > = std::collections::VecDeque::with_capacity(drained.len());
+        let mut continuation_queue: std::collections::VecDeque<(
+            BranchCursor<W>,
+            WpdaStepAction<W>,
+        )> = std::collections::VecDeque::with_capacity(drained.len());
         for entry in drained {
             continuation_queue.push_back(entry);
         }
@@ -10221,10 +9733,10 @@ where
                     // Phase F.13 walker-stats (2026-05-20): count outcome-Drop sink.
                     crate::stats_inc!(self, cursors_dropped_via_outcome_drop);
                     /* discard */
-                }
+                },
                 CursorOutcome::Alive => {
                     new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
-                }
+                },
                 // **Tiebreak chain link 4 (load-bearing).** `extend` preserves
                 // the source-order of `children` produced by Fork. Combined
                 // with: (1) `vec![take, skip]` codegen at binder.rs:973-980,
@@ -10235,12 +9747,14 @@ where
                 // Opt-Group Forks. Reordering or replacing with `insert`/`push`
                 // breaks the invariant.
                 CursorOutcome::ForkInto(children) => new_cursors.extend(
-                    children.into_iter().map(crate::cohort_lazy::Frame::Concrete),
+                    children
+                        .into_iter()
+                        .map(crate::cohort_lazy::Frame::Concrete),
                 ),
                 CursorOutcome::Resolved => {
                     resolved_indices.push(new_cursors.len());
                     new_cursors.push(crate::cohort_lazy::Frame::Concrete(cursor));
-                }
+                },
             }
         }
         // Phase F.13 H12 Stage 1.5 (2026-05-21): end-of-step cohort
@@ -10265,8 +9779,8 @@ where
                     // M×N × ~3.2 KB to M × (~3.2 KB + N × ~76 B).
                     //
                     // Single-member groups (N=1) degrade to Frame::Concrete
-                    // — no shell sharing benefit, and avoids the
-                    // step_cohort_frame indirection.
+                    // — no shell sharing benefit, and it keeps the Tomita
+                    // ingest path on a concrete cursor.
                     for snap in &snapshots {
                         // Filter terminal-state snapshots: workers that
                         // ended in Error wouldn't have produced a
@@ -10299,11 +9813,8 @@ where
                             .collect();
                         if revived.len() == 1 {
                             // Single-member: degrade to concrete.
-                            let single =
-                                revived.into_iter().next().expect("len==1");
-                            new_cursors.push(
-                                crate::cohort_lazy::Frame::Concrete(single),
-                            );
+                            let single = revived.into_iter().next().expect("len==1");
+                            new_cursors.push(crate::cohort_lazy::Frame::Concrete(single));
                         } else {
                             // Multi-member: build cohort frame. The
                             // shell is constructed from the FIRST
@@ -10333,9 +9844,7 @@ where
                                     ),
                                 );
                             }
-                            new_cursors.push(crate::cohort_lazy::Frame::Cohort(
-                                Box::new(cf),
-                            ));
+                            new_cursors.push(crate::cohort_lazy::Frame::Cohort(Box::new(cf)));
                         }
                     }
                 }
@@ -10452,13 +9961,6 @@ where
         // `feedback_never_disambiguate_early` memo.
 
         if self.branch_cursors.is_empty() {
-            // Sig-B Blocker-3 M7.0 DIAGNOSTIC-CONFIRM (2026-06-01, INERT):
-            // reproduce the six [C7-n] predicates at this pre-Error drop
-            // boundary. READ-ONLY; printed BEFORE the retention so the verdict
-            // reflects the un-revived cache state. Gated by SIGB_CROSSWRAP.
-            if sigb_m70_trace() {
-                self.sigb_m70_span_diagnostic(tokens);
-            }
             // Sig-B Blocker-3 §2.4a (2026-06-01, pgmcp experiment #9): the
             // SPAN-ANCHORED outer-cast PRE-ERROR retention. The frontier has
             // collapsed (all forks dropped), but a sound derivation may EXIST
@@ -10582,7 +10084,7 @@ where
     ///   structurally-identical content at the same position get the
     ///   same SppfId.
     /// - Exception: `intern_predicate` and `intern_collection_id`
-    ///   placeholders are walker-arena-keyed, not content-keyed. Cursors
+    ///   leaves are walker-arena-keyed, not content-keyed. Cursors
     ///   that independently constructed predicate/collection state at the
     ///   same ConfigKey may have differing SppfIds for those leaves.
     ///   Predicate dedup is a follow-up improvement (post-C12); the
@@ -10660,14 +10162,11 @@ where
                     deferred_continuations,
                     ..
                 } => {
-                    pending_sum =
-                        pending_sum.saturating_add(pending_members.len() as u64);
-                    snap_sum =
-                        snap_sum.saturating_add(worker_snapshots.len() as u64);
-                    cont_sum = cont_sum
-                        .saturating_add(deferred_continuations.len() as u64);
-                }
-                crate::dispatch_cohort::DispatchCacheEntry::Failed => {}
+                    pending_sum = pending_sum.saturating_add(pending_members.len() as u64);
+                    snap_sum = snap_sum.saturating_add(worker_snapshots.len() as u64);
+                    cont_sum = cont_sum.saturating_add(deferred_continuations.len() as u64);
+                },
+                crate::dispatch_cohort::DispatchCacheEntry::Failed => {},
             }
         }
         if pending_sum > self.stats.mem_attr_cache_pending_members_sum_max {
@@ -10676,9 +10175,7 @@ where
         if snap_sum > self.stats.mem_attr_cache_worker_snapshots_sum_max {
             self.stats.mem_attr_cache_worker_snapshots_sum_max = snap_sum;
         }
-        if cont_sum
-            > self.stats.mem_attr_cache_deferred_continuations_sum_max
-        {
+        if cont_sum > self.stats.mem_attr_cache_deferred_continuations_sum_max {
             self.stats.mem_attr_cache_deferred_continuations_sum_max = cont_sum;
         }
         let sppf_stack_nodes = self.sppf_stack_arena.node_count() as u64;
@@ -10686,11 +10183,8 @@ where
             self.stats.mem_attr_sppf_stack_arena_nodes_max = sppf_stack_nodes;
         }
         let edge_stack_nodes = self.incoming_edge_stack_arena.node_count() as u64;
-        if edge_stack_nodes
-            > self.stats.mem_attr_incoming_edge_stack_arena_nodes_max
-        {
-            self.stats.mem_attr_incoming_edge_stack_arena_nodes_max =
-                edge_stack_nodes;
+        if edge_stack_nodes > self.stats.mem_attr_incoming_edge_stack_arena_nodes_max {
+            self.stats.mem_attr_incoming_edge_stack_arena_nodes_max = edge_stack_nodes;
         }
         let sppf_nodes = self.sppf.node_count_diag() as u64;
         if sppf_nodes > self.stats.mem_attr_sppf_nodes_max {
@@ -10723,15 +10217,12 @@ where
         // is still `Arc<...>` and retains the Arc-pointer dedup path.
         let mut vd_total_entries: u64 = 0;
         let mut vd_concrete_cursors: u64 = 0;
-        let mut rd_unique: std::collections::HashSet<*const _> =
-            std::collections::HashSet::new();
+        let mut rd_unique: std::collections::HashSet<*const _> = std::collections::HashSet::new();
         for frame in &self.branch_cursors {
             if let crate::cohort_lazy::Frame::Concrete(c) = frame {
-                vd_total_entries = vd_total_entries
-                    .saturating_add(c.visited_dispatch.len() as u64);
+                vd_total_entries = vd_total_entries.saturating_add(c.visited_dispatch.len() as u64);
                 vd_concrete_cursors = vd_concrete_cursors.saturating_add(1);
-                let rd_ptr = std::sync::Arc::as_ptr(&c.recovery_deltas)
-                    as *const _;
+                let rd_ptr = std::sync::Arc::as_ptr(&c.recovery_deltas) as *const _;
                 rd_unique.insert(rd_ptr);
             }
         }
@@ -10740,11 +10231,8 @@ where
         if vd_unique_count > self.stats.mem_attr_visited_dispatch_unique_arcs_max {
             self.stats.mem_attr_visited_dispatch_unique_arcs_max = vd_unique_count;
         }
-        if vd_total_entries
-            > self.stats.mem_attr_visited_dispatch_total_entries_max
-        {
-            self.stats.mem_attr_visited_dispatch_total_entries_max =
-                vd_total_entries;
+        if vd_total_entries > self.stats.mem_attr_visited_dispatch_total_entries_max {
+            self.stats.mem_attr_visited_dispatch_total_entries_max = vd_total_entries;
         }
         if rd_unique_count > self.stats.mem_attr_recovery_deltas_unique_arcs_max {
             self.stats.mem_attr_recovery_deltas_unique_arcs_max = rd_unique_count;
@@ -10763,33 +10251,24 @@ where
         if (text_idx as u64) > self.stats.mem_attr_sppf_text_index_count_max {
             self.stats.mem_attr_sppf_text_index_count_max = text_idx as u64;
         }
-        if (dedup_pack_b as u64)
-            > self.stats.mem_attr_sppf_dedup_packing_children_bytes_max
-        {
-            self.stats.mem_attr_sppf_dedup_packing_children_bytes_max =
-                dedup_pack_b as u64;
+        if (dedup_pack_b as u64) > self.stats.mem_attr_sppf_dedup_packing_children_bytes_max {
+            self.stats.mem_attr_sppf_dedup_packing_children_bytes_max = dedup_pack_b as u64;
         }
         if (dedup_sym as u64) > self.stats.mem_attr_sppf_dedup_symbol_count_max {
             self.stats.mem_attr_sppf_dedup_symbol_count_max = dedup_sym as u64;
         }
-        if (dedup_term as u64)
-            > self.stats.mem_attr_sppf_dedup_terminal_count_max
-        {
+        if (dedup_term as u64) > self.stats.mem_attr_sppf_dedup_terminal_count_max {
             self.stats.mem_attr_sppf_dedup_terminal_count_max = dedup_term as u64;
         }
         // sppf_collection_arena per-cursor dedup. Arc<Vec<Vec<SppfId>>>.
-        let mut splice_arcs: std::collections::HashSet<*const _> =
-            std::collections::HashSet::new();
+        let mut splice_arcs: std::collections::HashSet<*const _> = std::collections::HashSet::new();
         let mut splice_total_entries: u64 = 0;
-        let mut lex_arcs: std::collections::HashSet<*const _> =
-            std::collections::HashSet::new();
+        let mut lex_arcs: std::collections::HashSet<*const _> = std::collections::HashSet::new();
         let mut lex_total_entries: u64 = 0;
-        let mut binder_arcs: std::collections::HashSet<*const _> =
-            std::collections::HashSet::new();
+        let mut binder_arcs: std::collections::HashSet<*const _> = std::collections::HashSet::new();
         for frame in &self.branch_cursors {
             if let crate::cohort_lazy::Frame::Concrete(c) = frame {
-                let sp_ptr = std::sync::Arc::as_ptr(&c.sppf_collection_arena)
-                    as *const _;
+                let sp_ptr = std::sync::Arc::as_ptr(&c.sppf_collection_arena) as *const _;
                 if splice_arcs.insert(sp_ptr) {
                     splice_total_entries = splice_total_entries.saturating_add(
                         c.sppf_collection_arena
@@ -10798,46 +10277,30 @@ where
                             .sum(),
                     );
                 }
-                let lf_ptr =
-                    std::sync::Arc::as_ptr(&c.lex_fork_path) as *const _;
+                let lf_ptr = std::sync::Arc::as_ptr(&c.lex_fork_path) as *const _;
                 if lex_arcs.insert(lf_ptr) {
-                    lex_total_entries = lex_total_entries
-                        .saturating_add(c.lex_fork_path.len() as u64);
+                    lex_total_entries =
+                        lex_total_entries.saturating_add(c.lex_fork_path.len() as u64);
                 }
                 // binder_scope_marks is Vec, not Arc — count by .as_ptr()
                 let bs_ptr = c.binder_scope_marks.as_ptr() as *const _;
                 binder_arcs.insert(bs_ptr);
             }
         }
-        if (splice_arcs.len() as u64)
-            > self.stats.mem_attr_sppf_collection_arena_unique_arcs_max
-        {
-            self.stats.mem_attr_sppf_collection_arena_unique_arcs_max =
-                splice_arcs.len() as u64;
+        if (splice_arcs.len() as u64) > self.stats.mem_attr_sppf_collection_arena_unique_arcs_max {
+            self.stats.mem_attr_sppf_collection_arena_unique_arcs_max = splice_arcs.len() as u64;
         }
-        if splice_total_entries
-            > self.stats.mem_attr_sppf_collection_arena_total_entries_max
-        {
-            self.stats.mem_attr_sppf_collection_arena_total_entries_max =
-                splice_total_entries;
+        if splice_total_entries > self.stats.mem_attr_sppf_collection_arena_total_entries_max {
+            self.stats.mem_attr_sppf_collection_arena_total_entries_max = splice_total_entries;
         }
-        if (lex_arcs.len() as u64)
-            > self.stats.mem_attr_lex_fork_path_unique_arcs_max
-        {
-            self.stats.mem_attr_lex_fork_path_unique_arcs_max =
-                lex_arcs.len() as u64;
+        if (lex_arcs.len() as u64) > self.stats.mem_attr_lex_fork_path_unique_arcs_max {
+            self.stats.mem_attr_lex_fork_path_unique_arcs_max = lex_arcs.len() as u64;
         }
-        if lex_total_entries
-            > self.stats.mem_attr_lex_fork_path_total_entries_max
-        {
-            self.stats.mem_attr_lex_fork_path_total_entries_max =
-                lex_total_entries;
+        if lex_total_entries > self.stats.mem_attr_lex_fork_path_total_entries_max {
+            self.stats.mem_attr_lex_fork_path_total_entries_max = lex_total_entries;
         }
-        if (binder_arcs.len() as u64)
-            > self.stats.mem_attr_binder_scope_marks_unique_arcs_max
-        {
-            self.stats.mem_attr_binder_scope_marks_unique_arcs_max =
-                binder_arcs.len() as u64;
+        if (binder_arcs.len() as u64) > self.stats.mem_attr_binder_scope_marks_unique_arcs_max {
+            self.stats.mem_attr_binder_scope_marks_unique_arcs_max = binder_arcs.len() as u64;
         }
     }
 
@@ -10863,21 +10326,21 @@ where
             .entries
             .values()
             .filter_map(|e| match e {
-                crate::dispatch_cohort::DispatchCacheEntry::Resolved {
-                    symbol_id,
-                    ..
-                } => self.sppf.span_lo(*symbol_id),
+                crate::dispatch_cohort::DispatchCacheEntry::Resolved { symbol_id, .. } => {
+                    self.sppf.span_lo(*symbol_id)
+                },
                 _ => None,
             })
             .min()
             .unwrap_or(u32::MAX);
-        let min_pos = (frontier_min as u32).min(cache_min);
+        let frontier_min_u32 = u32::try_from(frontier_min).unwrap_or(u32::MAX);
+        let min_pos = frontier_min_u32.min(cache_min);
         // 3. SPPF reclaim candidates count.
         let (cand, total) = self.sppf.count_symbols_below_hi(min_pos);
         // 4. Update samples + cache_pinned counter.
         self.stats.sppf_reclaim_window_samples =
             self.stats.sppf_reclaim_window_samples.saturating_add(1);
-        if cache_min < frontier_min as u32 {
+        if cache_min < frontier_min_u32 {
             self.stats.sppf_reclaim_cache_pinned_samples = self
                 .stats
                 .sppf_reclaim_cache_pinned_samples
@@ -10905,17 +10368,13 @@ where
             .unwrap_or(0)
             .max(1);
         let window_bucket = ((min_pos as usize * 16) / chain_len).min(15);
-        self.stats.sppf_reclaim_window_histogram[window_bucket] = self
-            .stats
-            .sppf_reclaim_window_histogram[window_bucket]
-            .saturating_add(1);
+        self.stats.sppf_reclaim_window_histogram[window_bucket] =
+            self.stats.sppf_reclaim_window_histogram[window_bucket].saturating_add(1);
         // 6. Candidate-fraction histogram: (cand / total) * 10.
         if total > 0 {
-            let cand_bucket =
-                ((cand as usize * 10) / total as usize).min(9);
+            let cand_bucket = ((cand as usize * 10) / total as usize).min(9);
             self.stats.sppf_reclaimable_nodes_pct_histogram[cand_bucket] =
-                self.stats.sppf_reclaimable_nodes_pct_histogram[cand_bucket]
-                    .saturating_add(1);
+                self.stats.sppf_reclaimable_nodes_pct_histogram[cand_bucket].saturating_add(1);
         }
     }
 
@@ -10974,12 +10433,9 @@ where
                     // LexProvenance trait methods (default impl returns 0
                     // for non-Lex weights). Inherited via the walker's
                     // W: ... + LexProvenance bound at line ~2317.
-                    let lex_alt_idx_diff =
-                        a.weight.lex_alt_idx() != b.weight.lex_alt_idx();
-                    let weight_src_idx_diff =
-                        a.weight.lex_src_idx() != b.weight.lex_src_idx();
-                    let weight_rule_idx_diff =
-                        a.weight.lex_rule_idx() != b.weight.lex_rule_idx();
+                    let lex_alt_idx_diff = a.weight.lex_alt_idx() != b.weight.lex_alt_idx();
+                    let weight_src_idx_diff = a.weight.lex_src_idx() != b.weight.lex_src_idx();
+                    let weight_rule_idx_diff = a.weight.lex_rule_idx() != b.weight.lex_rule_idx();
                     let a_lex_stamp = a.lex_fork_path.last().copied();
                     let b_lex_stamp = b.lex_fork_path.last().copied();
                     let lex_fork_stamp_diff = a_lex_stamp != b_lex_stamp;
@@ -10993,8 +10449,10 @@ where
                         + (weight_src_idx_diff as u8)
                         + (weight_rule_idx_diff as u8)
                         + (lex_fork_stamp_diff as u8);
-                    self.stats.merge_miss_pairs_considered_total =
-                        self.stats.merge_miss_pairs_considered_total.saturating_add(1);
+                    self.stats.merge_miss_pairs_considered_total = self
+                        .stats
+                        .merge_miss_pairs_considered_total
+                        .saturating_add(1);
                     if diff_count == 0 {
                         // Identical key; would merge — not a miss.
                     } else if diff_count >= 2 {
@@ -11016,8 +10474,7 @@ where
                         for (k, &b_diff) in bools.iter().enumerate() {
                             if b_diff {
                                 self.stats.merge_miss_multi_participation[k] =
-                                    self.stats.merge_miss_multi_participation[k]
-                                        .saturating_add(1);
+                                    self.stats.merge_miss_multi_participation[k].saturating_add(1);
                             }
                         }
                         // Phase F.13 chain_10000 Exp 10 Substage 0
@@ -11035,12 +10492,9 @@ where
                                 if !bools[j] {
                                     continue;
                                 }
-                                let idx =
-                                    crate::walker_stats::lower_triangle_index(i, j);
-                                self.stats.merge_miss_pair_participation[idx] = self
-                                    .stats
-                                    .merge_miss_pair_participation[idx]
-                                    .saturating_add(1);
+                                let idx = crate::walker_stats::lower_triangle_index(i, j);
+                                self.stats.merge_miss_pair_participation[idx] =
+                                    self.stats.merge_miss_pair_participation[idx].saturating_add(1);
                             }
                         }
                     } else if state_diff {
@@ -11053,71 +10507,77 @@ where
                         // (2026-05-26): classify the node_only outlier
                         // by cursor context. First-match rule: cohort
                         // → InfixLoop → recovery → other.
-                        let ctx_idx: usize = if a.cohort_origin.is_some()
-                            || b.cohort_origin.is_some()
-                        {
-                            0
-                        } else if matches!(
-                            &a.inner_state,
-                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
-                        ) || matches!(
-                            &b.inner_state,
-                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
-                        ) {
-                            1
-                        } else if a.recovery_depth > 0 || b.recovery_depth > 0 {
-                            2
-                        } else {
-                            3
-                        };
+                        let ctx_idx: usize =
+                            if a.cohort_origin.is_some() || b.cohort_origin.is_some() {
+                                0
+                            } else if matches!(
+                                &a.inner_state,
+                                crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                            ) || matches!(
+                                &b.inner_state,
+                                crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                            ) {
+                                1
+                            } else if a.recovery_depth > 0 || b.recovery_depth > 0 {
+                                2
+                            } else {
+                                3
+                            };
                         self.stats.merge_miss_node_only_by_context[ctx_idx] =
-                            self.stats.merge_miss_node_only_by_context[ctx_idx]
-                                .saturating_add(1);
+                            self.stats.merge_miss_node_only_by_context[ctx_idx].saturating_add(1);
                     } else if edge_diff {
                         self.stats.merge_miss_edge_diff_total =
                             self.stats.merge_miss_edge_diff_total.saturating_add(1);
                         // Same context classification, edge_only path.
-                        let ctx_idx: usize = if a.cohort_origin.is_some()
-                            || b.cohort_origin.is_some()
-                        {
-                            0
-                        } else if matches!(
-                            &a.inner_state,
-                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
-                        ) || matches!(
-                            &b.inner_state,
-                            crate::wpda_runtime::WpdaState::InfixLoop { .. }
-                        ) {
-                            1
-                        } else if a.recovery_depth > 0 || b.recovery_depth > 0 {
-                            2
-                        } else {
-                            3
-                        };
+                        let ctx_idx: usize =
+                            if a.cohort_origin.is_some() || b.cohort_origin.is_some() {
+                                0
+                            } else if matches!(
+                                &a.inner_state,
+                                crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                            ) || matches!(
+                                &b.inner_state,
+                                crate::wpda_runtime::WpdaState::InfixLoop { .. }
+                            ) {
+                                1
+                            } else if a.recovery_depth > 0 || b.recovery_depth > 0 {
+                                2
+                            } else {
+                                3
+                            };
                         self.stats.merge_miss_edge_only_by_context[ctx_idx] =
-                            self.stats.merge_miss_edge_only_by_context[ctx_idx]
-                                .saturating_add(1);
+                            self.stats.merge_miss_edge_only_by_context[ctx_idx].saturating_add(1);
                     } else if depth_diff {
                         self.stats.merge_miss_depth_diff_total =
                             self.stats.merge_miss_depth_diff_total.saturating_add(1);
                     } else if cohort_origin_diff {
-                        self.stats.merge_miss_cohort_origin_diff_total =
-                            self.stats.merge_miss_cohort_origin_diff_total.saturating_add(1);
+                        self.stats.merge_miss_cohort_origin_diff_total = self
+                            .stats
+                            .merge_miss_cohort_origin_diff_total
+                            .saturating_add(1);
                     } else if sppf_top_diff {
                         self.stats.merge_miss_sppf_top_diff_total =
                             self.stats.merge_miss_sppf_top_diff_total.saturating_add(1);
                     } else if lex_alt_idx_diff {
-                        self.stats.merge_miss_lex_alt_idx_diff_total =
-                            self.stats.merge_miss_lex_alt_idx_diff_total.saturating_add(1);
+                        self.stats.merge_miss_lex_alt_idx_diff_total = self
+                            .stats
+                            .merge_miss_lex_alt_idx_diff_total
+                            .saturating_add(1);
                     } else if weight_src_idx_diff {
-                        self.stats.merge_miss_weight_src_idx_diff_total =
-                            self.stats.merge_miss_weight_src_idx_diff_total.saturating_add(1);
+                        self.stats.merge_miss_weight_src_idx_diff_total = self
+                            .stats
+                            .merge_miss_weight_src_idx_diff_total
+                            .saturating_add(1);
                     } else if weight_rule_idx_diff {
-                        self.stats.merge_miss_weight_rule_idx_diff_total =
-                            self.stats.merge_miss_weight_rule_idx_diff_total.saturating_add(1);
+                        self.stats.merge_miss_weight_rule_idx_diff_total = self
+                            .stats
+                            .merge_miss_weight_rule_idx_diff_total
+                            .saturating_add(1);
                     } else if lex_fork_stamp_diff {
-                        self.stats.merge_miss_lex_fork_stamp_diff_total =
-                            self.stats.merge_miss_lex_fork_stamp_diff_total.saturating_add(1);
+                        self.stats.merge_miss_lex_fork_stamp_diff_total = self
+                            .stats
+                            .merge_miss_lex_fork_stamp_diff_total
+                            .saturating_add(1);
                     }
                     // Phase F.13 H13 Step 0: check if the pair would
                     // merge under EdgeKind-relaxed equivalence. Compute
@@ -11129,15 +10589,18 @@ where
                         let b_kind = b_edge.and_then(|e| self.gss.edge_kind(e));
                         let kinds_match = match (&a_kind, &b_kind) {
                             (None, None) => true,
-                            (Some(crate::gss::EdgeKind::CrossCatProjection {
-                                source_src_idx: a_s,
-                                inner_cur_bp: a_b,
-                                ..
-                            }), Some(crate::gss::EdgeKind::CrossCatProjection {
-                                source_src_idx: b_s,
-                                inner_cur_bp: b_b,
-                                ..
-                            })) => a_s == b_s && a_b == b_b,
+                            (
+                                Some(crate::gss::EdgeKind::CrossCatProjection {
+                                    source_src_idx: a_s,
+                                    inner_cur_bp: a_b,
+                                    ..
+                                }),
+                                Some(crate::gss::EdgeKind::CrossCatProjection {
+                                    source_src_idx: b_s,
+                                    inner_cur_bp: b_b,
+                                    ..
+                                }),
+                            ) => a_s == b_s && a_b == b_b,
                             // M4 (2026-05-30): DELIBERATELY ignores
                             // wrap_cat/wrap_rule here (via `..`) — this is the
                             // cohort-MERGE comparison, which must stay at the
@@ -11148,8 +10611,10 @@ where
                             _ => false,
                         };
                         if kinds_match {
-                            self.stats.merge_miss_pairs_edge_kind_equivalent =
-                                self.stats.merge_miss_pairs_edge_kind_equivalent.saturating_add(1);
+                            self.stats.merge_miss_pairs_edge_kind_equivalent = self
+                                .stats
+                                .merge_miss_pairs_edge_kind_equivalent
+                                .saturating_add(1);
                         }
                     }
                     // Phase F.13 Stage 3.A Lead #1 gate: (pred,
@@ -11175,20 +10640,20 @@ where
                             // Generic-kinded edges keep identity (matches
                             // Stage B's Identity arm for Generic); other
                             // kinds match by (pred, kind) projection.
-                            let is_generic_a = matches!(
-                                a_kind, Some(crate::gss::EdgeKind::Generic));
-                            let is_generic_b = matches!(
-                                b_kind, Some(crate::gss::EdgeKind::Generic));
-                            if !is_generic_a && !is_generic_b
+                            let is_generic_a =
+                                matches!(a_kind, Some(crate::gss::EdgeKind::Generic));
+                            let is_generic_b =
+                                matches!(b_kind, Some(crate::gss::EdgeKind::Generic));
+                            if !is_generic_a
+                                && !is_generic_b
                                 && a_pred == b_pred
                                 && a_kind == b_kind
                                 && a_pred.is_some()
                             {
-                                self.stats
-                                    .merge_miss_pairs_pred_edge_class_equivalent =
-                                    self.stats
-                                        .merge_miss_pairs_pred_edge_class_equivalent
-                                        .saturating_add(1);
+                                self.stats.merge_miss_pairs_pred_edge_class_equivalent = self
+                                    .stats
+                                    .merge_miss_pairs_pred_edge_class_equivalent
+                                    .saturating_add(1);
                             }
                         }
                     }
@@ -11204,9 +10669,9 @@ where
         }
         // Phase F.13 Stage L5.a (2026-05-25): let cohort frames pass
         // through merge unchanged. Pre-L5.a, L3.6 force-materialized
-        // cohorts at this entry; L5.a defers materialization until
-        // step_cohort_frame's next iteration (or until EOI/commit/
-        // prune force-materialize). Cohort frames have a single
+        // cohorts at this entry; current fanout materializes cohort
+        // members during Tomita ingest (or earlier at EOI/commit/prune
+        // force-materialization points). Cohort frames have a single
         // shell-representative ConfigKey by ~_obs def; if a concrete
         // cursor shares that ConfigKey, L5.b (future) absorbs it into
         // the cohort. Until then, distinct cursors retain their own
@@ -11262,10 +10727,7 @@ where
                 // same (source_src_idx, inner_cur_bp) now share a
                 // ConfigKey bucket — collapses the per-step cohort
                 // from O(N) to O(grammar size).
-                cohort_origin: cursor
-                    .cohort_origin
-                    .as_ref()
-                    .map(|k| k.equiv()),
+                cohort_origin: cursor.cohort_origin.as_ref().map(|k| k.equiv()),
                 // Phase F.13 H12 Stage 1.5.3-Alt#1 (2026-05-21): GLL
                 // descriptor completion. Two cursors with distinct
                 // sppf_stack tops represent semantically distinct
@@ -11298,7 +10760,7 @@ where
                 std::collections::hash_map::Entry::Vacant(v) => {
                     v.insert(merged.len());
                     merged.push(cursor);
-                }
+                },
                 std::collections::hash_map::Entry::Occupied(o) => {
                     // Phase F.13 walker-stats (2026-05-20): count each
                     // cursor collapsed by merge.
@@ -11315,8 +10777,7 @@ where
                     // observationally-equivalent cursors' shared SPPF root).
                     let combined = merged[idx].weight.plus_ref(&cursor.weight);
                     let weight_strict_win = combined != merged[idx].weight;
-                    let weight_tied = !weight_strict_win
-                        && combined == cursor.weight;
+                    let weight_tied = !weight_strict_win && combined == cursor.weight;
                     // Stage 3.12 Fix 2(ii) (2026-05-02): on weight tie, the
                     // FINAL tiebreak is `source_priority` (lower wins —
                     // Fork-source order). This guarantees right-associative
@@ -11338,8 +10799,7 @@ where
                     // is a valid live state). The weight + source_priority
                     // chain is the sole tiebreak.
                     let cursor_wins = weight_strict_win
-                        || (weight_tied
-                            && cursor.source_priority < merged[idx].source_priority);
+                        || (weight_tied && cursor.source_priority < merged[idx].source_priority);
                     if cursor_wins {
                         // Phase F.2 (2026-05-18): SPPF-side mirror —
                         // ConfigKey already includes collection_depth so
@@ -11347,8 +10807,7 @@ where
                         // bucketing; this debug_assert is structural
                         // defense-in-depth.
                         debug_assert_eq!(
-                            merged[idx].collection_stack_depth,
-                            cursor.collection_stack_depth,
+                            merged[idx].collection_stack_depth, cursor.collection_stack_depth,
                             "merge_equivalent_cursors: cursors at the same \
                              configuration must have matching collection-stack \
                              depths (operational state shape)"
@@ -11367,9 +10826,7 @@ where
                         {
                             let sppf_len = self.sppf.len() as u32;
                             let mut scratch_cursor: Vec<crate::sppf::SppfId> =
-                                Vec::with_capacity(
-                                    self.sppf_stack_arena.len(cursor.sppf_stack_id),
-                                );
+                                Vec::with_capacity(self.sppf_stack_arena.len(cursor.sppf_stack_id));
                             for &sid in self
                                 .sppf_stack_arena
                                 .slice_at(cursor.sppf_stack_id, &mut scratch_cursor)
@@ -11379,27 +10836,24 @@ where
                                     sid < sppf_len,
                                     "merge_equivalent_cursors: cursor.sppf_stack \
                                      contains stale SppfId {} (sppf.len() = {})",
-                                    sid, sppf_len
+                                    sid,
+                                    sppf_len
                                 );
                             }
-                            let mut scratch_winner: Vec<crate::sppf::SppfId> =
-                                Vec::with_capacity(
-                                    self.sppf_stack_arena
-                                        .len(merged[idx].sppf_stack_id),
-                                );
+                            let mut scratch_winner: Vec<crate::sppf::SppfId> = Vec::with_capacity(
+                                self.sppf_stack_arena.len(merged[idx].sppf_stack_id),
+                            );
                             for &sid in self
                                 .sppf_stack_arena
-                                .slice_at(
-                                    merged[idx].sppf_stack_id,
-                                    &mut scratch_winner,
-                                )
+                                .slice_at(merged[idx].sppf_stack_id, &mut scratch_winner)
                                 .iter()
                             {
                                 debug_assert!(
                                     sid < sppf_len,
                                     "merge_equivalent_cursors: winner.sppf_stack \
                                      contains stale SppfId {} (sppf.len() = {})",
-                                    sid, sppf_len
+                                    sid,
+                                    sppf_len
                                 );
                             }
                         }
@@ -11412,7 +10866,7 @@ where
                         // update weight (idempotent on tie).
                         merged[idx].weight = combined;
                     }
-                }
+                },
             }
         }
         // Phase F.13 Stage L3.1 (2026-05-25): wrap merged BranchCursors in
@@ -11420,8 +10874,10 @@ where
         // Phase F.13 Stage L5.a (2026-05-25): re-attach the cohort frames
         // that were partitioned aside above. Cohorts survive merge and
         // re-enter step_fanout next iteration (or hit a force-mat site).
-        self.branch_cursors =
-            merged.into_iter().map(crate::cohort_lazy::Frame::Concrete).collect();
+        self.branch_cursors = merged
+            .into_iter()
+            .map(crate::cohort_lazy::Frame::Concrete)
+            .collect();
         self.branch_cursors.extend(cohort_frames);
     }
 
@@ -11523,8 +10979,7 @@ where
         // donated the winning cursor's Arc to `self.builder` is gone.
         // The winner's SPPF-side state (sppf_stack, sppf_collection_arena,
         // sppf_symbol_terms, etc.) is moved into the post-commit
-        // singleton below. self.builder remains as a stub (F.3c.5
-        // deletes).
+        // singleton below.
         // Phase 5.6-tail-E (2026-05-12): replay loop is now recovery-only
         // by construction. winner.recovery_deltas holds ONLY the 5 recovery
         // variants (gated by is_recovery_delta in Step D). Non-recovery
@@ -11535,6 +10990,7 @@ where
         // Phase F.13 Stage L4.2 (2026-05-25): unwrap Arc — winner is
         // consumed; try_unwrap moves the Vec out if refcount is 1,
         // else deep-clones via Arc::unwrap_or_clone.
+        let mut token_source_mutated = false;
         for delta in std::sync::Arc::unwrap_or_clone(winner.recovery_deltas) {
             match delta {
                 // Non-recovery variants (StartBinderScope, EndBinderScope,
@@ -11551,12 +11007,8 @@ where
                         "non-recovery BuilderDelta reached commit_winner replay \
                          — is_recovery_delta gate violated"
                     );
-                }
-                BuilderDelta::RecoveryEvent {
-                    action_kind,
-                    pos,
-                    cost_tropical,
-                } => {
+                },
+                BuilderDelta::RecoveryEvent { action_kind, pos, cost_tropical } => {
                     // Stage 3.20 / L12 (Commit 4, 2026-05-06): record the
                     // recovery event for the wrapper to surface as a
                     // RecoveryAttempt. RecoveryEvent is a pure descriptor;
@@ -11567,14 +11019,13 @@ where
                         pos,
                         cost_tropical,
                     ));
-                }
+                },
                 BuilderDelta::SubstituteToken { pos, kind, text } => {
                     // Stage 3.20 / L12 (Commit B, 2026-05-06): live replay.
                     // Mutates the token source via WpdaMutableTokenSource::
                     // substitute_token AND records the recovery event. If
-                    // no mutable source is threaded, panic loudly — per
-                    // `feedback_no_stubs_timebombs.md`, "applied: false"
-                    // graceful-degradation is forbidden.
+                    // no mutable source is threaded, panic loudly; silent
+                    // graceful-degradation would hide a replay contract bug.
                     let raw = self.mutable_token_source.expect(
                         "BuilderDelta::SubstituteToken replayed without a \
                          mutable token source — caller must thread one via \
@@ -11585,11 +11036,14 @@ where
                     // pointee is alive until clear/reset/Drop.
                     let src = unsafe { &mut *raw };
                     src.substitute_token(pos, kind.clone(), text.clone())
-                        .expect("substitute_token: byte-span lookup or \
-                                replace_range failed");
+                        .expect(
+                            "substitute_token: byte-span lookup or \
+                                replace_range failed",
+                        );
+                    token_source_mutated = true;
                     self.recovery_events
                         .push(RecoveryEvent::substitute(pos, kind, text));
-                }
+                },
                 BuilderDelta::InsertToken { pos, kind, text } => {
                     // Stage 3.20 / L12 (Commit B, 2026-05-06): same pattern
                     // as SubstituteToken — live replay or panic.
@@ -11599,39 +11053,54 @@ where
                          walker.set_mutable_token_source() before driving",
                     );
                     let src = unsafe { &mut *raw };
-                    src.insert_token(pos, kind.clone(), text.clone())
-                        .expect("insert_token: byte-span lookup or \
-                                replace_range failed");
+                    src.insert_token(pos, kind.clone(), text.clone()).expect(
+                        "insert_token: byte-span lookup or \
+                                replace_range failed",
+                    );
+                    token_source_mutated = true;
                     self.recovery_events
                         .push(RecoveryEvent::insert(pos, kind, text));
-                }
-                BuilderDelta::CommitLexAlternative {
-                    pos,
-                    alt_idx,
-                    kind,
-                    text,
-                } => {
-                    // Stage 3.14 / Hack #12 + Stage 3.20 / L12 (Commit B,
-                    // 2026-05-06): live replay. Calls
+                },
+                BuilderDelta::SwapTokens { pos_a, pos_b, cost_tropical } => {
+                    let raw = self.mutable_token_source.expect(
+                        "BuilderDelta::SwapTokens replayed without a \
+                         mutable token source — caller must thread one via \
+                         walker.set_mutable_token_source() before driving",
+                    );
+                    let src = unsafe { &mut *raw };
+                    src.swap_tokens(pos_a, pos_b)
+                        .expect("swap_tokens: adjacent-token replay failed");
+                    token_source_mutated = true;
+                    self.recovery_events.push(RecoveryEvent::from_action_kind(
+                        4,
+                        pos_a.min(pos_b),
+                        cost_tropical,
+                    ));
+                },
+                BuilderDelta::CommitLexAlternative { pos, alt_idx, kind, text } => {
+                    // Stage 3.14 lex alternative replay + Stage 3.20 / L12
+                    // (Commit B, 2026-05-06): live replay. Calls
                     // MutableMultiTokenSource::commit_alternative which
                     // rewrites the lex stream's primary alt at `pos` AND
-                    // records the recovery event. Panic if no mutable
-                    // source — per the strict no-graceful-degradation rule.
+                    // records the recovery event. Panic if no mutable source
+                    // is available; lex-fork replay requires mutable token
+                    // source threading.
                     let raw = self.mutable_token_source.expect(
                         "BuilderDelta::CommitLexAlternative replayed without \
-                         a mutable token source — Hack #12 lex-fork emission \
-                         requires WpdaMutableTokenSource threading",
+                         a mutable token source — lex-fork replay requires \
+                         WpdaMutableTokenSource threading",
                     );
                     let src = unsafe { &mut *raw };
                     src.commit_alternative(pos, alt_idx)
                         .expect("commit_alternative: bounds check failed");
-                    self.recovery_events.push(RecoveryEvent::lex_commit(
-                        pos, alt_idx, kind, text,
-                    ));
-                }
+                    token_source_mutated = true;
+                    self.recovery_events
+                        .push(RecoveryEvent::lex_commit(pos, alt_idx, kind, text));
+                },
                 BuilderDelta::ApplyRecoverySequence {
                     actions,
                     base_pos,
+                    target_pos,
                     total_cost_tropical,
                 } => {
                     // Stage 3.20 / L12 (Commit B, 2026-05-06): atomic
@@ -11647,89 +11116,68 @@ where
                     let mut cur_pos = base_pos;
                     for action in actions.iter() {
                         match action {
-                            crate::recovery::RepairAction::SkipToSync {
-                                skip_count,
-                                ..
-                            } => {
-                                cur_pos += *skip_count as usize;
-                                self.recovery_events.push(
-                                    RecoveryEvent::from_action_kind(
-                                        0,
-                                        cur_pos,
-                                        total_cost_tropical,
-                                    ),
-                                );
-                            }
-                            crate::recovery::RepairAction::DeleteToken => {
-                                cur_pos += 1;
-                                self.recovery_events.push(
-                                    RecoveryEvent::from_action_kind(
-                                        1,
-                                        cur_pos,
-                                        total_cost_tropical,
-                                    ),
-                                );
-                            }
-                            crate::recovery::RepairAction::InsertToken {
-                                token,
-                            } => {
-                                let kind =
-                                    TokenKind::Fixed(format!("{}", token));
-                                let text = format!("{}", token);
-                                src.insert_token(
+                            ResolvedRepairAction::SkipToSync { skip_count } => {
+                                cur_pos += *skip_count;
+                                self.recovery_events.push(RecoveryEvent::from_action_kind(
+                                    0,
                                     cur_pos,
-                                    kind.clone(),
-                                    text.clone(),
-                                )
-                                .expect(
-                                    "insert_token: in ApplyRecoverySequence",
-                                );
-                                self.recovery_events.push(
-                                    RecoveryEvent::insert(cur_pos, kind, text),
-                                );
-                            }
-                            crate::recovery::RepairAction::SubstituteToken {
-                                replacement,
-                            } => {
-                                let kind = TokenKind::Fixed(format!(
-                                    "{}",
-                                    replacement
+                                    total_cost_tropical,
                                 ));
-                                let text = format!("{}", replacement);
-                                src.substitute_token(
+                            },
+                            ResolvedRepairAction::DeleteToken => {
+                                cur_pos += 1;
+                                self.recovery_events.push(RecoveryEvent::from_action_kind(
+                                    1,
+                                    cur_pos,
+                                    total_cost_tropical,
+                                ));
+                            },
+                            ResolvedRepairAction::InsertToken { kind, text } => {
+                                src.insert_token(cur_pos, kind.clone(), text.clone())
+                                    .expect("insert_token: in ApplyRecoverySequence");
+                                token_source_mutated = true;
+                                self.recovery_events.push(RecoveryEvent::insert(
                                     cur_pos,
                                     kind.clone(),
                                     text.clone(),
-                                )
-                                .expect(
-                                    "substitute_token: in ApplyRecoverySequence",
-                                );
-                                self.recovery_events.push(
-                                    RecoveryEvent::substitute(
-                                        cur_pos, kind, text,
-                                    ),
-                                );
+                                ));
+                            },
+                            ResolvedRepairAction::SubstituteToken { kind, text } => {
+                                src.substitute_token(cur_pos, kind.clone(), text.clone())
+                                    .expect("substitute_token: in ApplyRecoverySequence");
+                                token_source_mutated = true;
+                                self.recovery_events.push(RecoveryEvent::substitute(
+                                    cur_pos,
+                                    kind.clone(),
+                                    text.clone(),
+                                ));
                                 cur_pos += 1;
-                            }
-                            crate::recovery::RepairAction::SwapTokens { .. }
-                            | crate::recovery::RepairAction::Composite {
-                                ..
-                            }
-                            | crate::recovery::RepairAction::CategorySwitch {
-                                ..
-                            } => {
-                                panic!(
-                                    "ApplyRecoverySequence: nested \
-                                     SwapTokens/Composite/CategorySwitch \
-                                     not supported — codegen invariant \
-                                     violated"
-                                );
-                            }
+                            },
+                            ResolvedRepairAction::SwapTokens { pos_a, pos_b } => {
+                                let abs_a = base_pos + pos_a;
+                                let abs_b = base_pos + pos_b;
+                                src.swap_tokens(abs_a, abs_b)
+                                    .expect("swap_tokens: in ApplyRecoverySequence");
+                                token_source_mutated = true;
+                                self.recovery_events.push(RecoveryEvent::from_action_kind(
+                                    4,
+                                    abs_a.min(abs_b),
+                                    total_cost_tropical,
+                                ));
+                                cur_pos = cur_pos.max(abs_a.max(abs_b) + 1);
+                            },
                         }
                     }
-                    self.pos = cur_pos;
-                }
+                    debug_assert_eq!(
+                        cur_pos, target_pos,
+                        "ApplyRecoverySequence replay cursor position must match target_pos",
+                    );
+                    self.pos = target_pos;
+                },
             }
+        }
+        if token_source_mutated {
+            self.invalidate_token_dependent_caches_after_token_source_change();
         }
         self.top_node = Some(winner.node);
         self.pos = winner.pos;
@@ -11833,7 +11281,7 @@ where
             self.force_materialize_cohort_frames();
         }
         match self.bounding_mode {
-            crate::wpda_runtime::CursorBoundingMode::Unbounded => {}
+            crate::wpda_runtime::CursorBoundingMode::Unbounded => {},
             crate::wpda_runtime::CursorBoundingMode::BeamSize(k) => {
                 if self.branch_cursors.len() <= k {
                     return;
@@ -11861,7 +11309,7 @@ where
                     }
                 });
                 self.branch_cursors.truncate(k);
-            }
+            },
             crate::wpda_runtime::CursorBoundingMode::AmbiguityBudget(n) => {
                 let actual = self.branch_cursors.len();
                 if actual <= n {
@@ -11878,7 +11326,7 @@ where
                         n, actual, self.pos,
                     ),
                 };
-            }
+            },
         }
     }
 
@@ -11915,6 +11363,7 @@ where
             BuilderDelta::RecoveryEvent { .. }
                 | BuilderDelta::SubstituteToken { .. }
                 | BuilderDelta::InsertToken { .. }
+                | BuilderDelta::SwapTokens { .. }
                 | BuilderDelta::CommitLexAlternative { .. }
                 | BuilderDelta::ApplyRecoverySequence { .. }
         )
@@ -11968,7 +11417,7 @@ where
             BuilderDelta::StartBinderScope { names } => {
                 let depth = cursor.binder_scope_marks.len() as u16;
                 cursor.binder_scope_marks.push((depth, names.clone()));
-            }
+            },
             BuilderDelta::EndBinderScope => {
                 if let Some((depth, names)) = cursor.binder_scope_marks.pop() {
                     let sid = self.sppf.intern_binder_scope(&names, depth);
@@ -11978,7 +11427,7 @@ where
                     cursor.sppf_stack_id =
                         self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
                 }
-            }
+            },
             BuilderDelta::StartCollection => {
                 // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The
                 // new slot id is derived from cursor.collection_stack_depth
@@ -11992,9 +11441,8 @@ where
                     arena.push(Vec::new());
                 }
                 arena[new_id].clear();
-                cursor.collection_stack_depth =
-                    cursor.collection_stack_depth.saturating_add(1);
-            }
+                cursor.collection_stack_depth = cursor.collection_stack_depth.saturating_add(1);
+            },
             BuilderDelta::PushCollectionId { id } => {
                 // H4 (2026-05-18): mirror emit_push_collection_id's
                 // sppf_stack push. The builder-side already pushed
@@ -12008,9 +11456,8 @@ where
                 let sid = self.sppf.intern_collection_id(*id as u32, Vec::new());
                 // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                 // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
-                cursor.sppf_stack_id =
-                    self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
-            }
+                cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
+            },
             BuilderDelta::SpliceIntoCollection { id } => {
                 // Phase F.9 (2026-05-19): mirror `emit_splice_into_collection`'s
                 // SPPF-side splice. The prior comment claimed Splice's
@@ -12055,7 +11502,9 @@ where
                     *id as usize <= acc_id,
                     "SpliceIntoCollection: static slot_idx {} exceeds runtime \
                      innermost slot {} (collection_stack_depth = {})",
-                    id, acc_id, cursor.collection_stack_depth,
+                    id,
+                    acc_id,
+                    cursor.collection_stack_depth,
                 );
                 if acc_id < cursor.sppf_collection_arena.len() {
                     // Phase F.13 chain_10000 Plan D E3 Substage 2
@@ -12065,15 +11514,13 @@ where
                     if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
                         cursor.sppf_stack_id =
                             self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
-                        Arc::make_mut(&mut cursor.sppf_collection_arena)
-                            [acc_id]
-                            .push(top);
+                        Arc::make_mut(&mut cursor.sppf_collection_arena)[acc_id].push(top);
                     }
                 }
-            }
+            },
             // Recovery effects: no SPPF mirror here; recovery deltas mutate
             // mutable_token_source / recovery_events, not AST.
-            _ => {}
+            _ => {},
         }
     }
 
@@ -12171,8 +11618,7 @@ where
         );
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
-        cursor.sppf_stack_id =
-            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. The SPPF-side
         // intern_terminal + sppf_stack.push above carries the structural
         // state; emit_fire_action's reconstruct_action_arg reads the
@@ -12215,8 +11661,7 @@ where
         );
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
-        cursor.sppf_stack_id =
-            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
     }
 
     #[inline(always)]
@@ -12234,8 +11679,7 @@ where
         );
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
-        cursor.sppf_stack_id =
-            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Terminal
         // node carries the Ident state. Mirror clears (Ident is non-Term).
         self.clear_action_output_mirror(cursor);
@@ -12254,8 +11698,7 @@ where
         let sid = self.sppf.intern_predicate(handle);
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
-        cursor.sppf_stack_id =
-            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF Predicate
         // node + sppf_predicate_arena carry the payload. Mirror clears.
         self.clear_action_output_mirror(cursor);
@@ -12306,26 +11749,48 @@ where
     /// Read-equivalent of: `cursor.builder.is_accepting_terminal()`.
     /// Replaces line 3686. Plan: §Read → SPPF Mapping.
     #[inline]
-    pub fn is_cursor_accepting_terminal(&self, cursor: &BranchCursor<W>) -> bool {
+    fn cursor_accepting_terminal_root(
+        &self,
+        cursor: &BranchCursor<W>,
+    ) -> Option<Option<crate::sppf::SppfId>> {
         if !cursor.optional_scope_marks.is_empty() {
-            return false;
+            return None;
         }
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // pattern-match on length + arena.top for the [sid] case;
         // arena does not expose a contiguous slice without scratch.
         match self.sppf_stack_arena.len(cursor.sppf_stack_id) {
-            0 => true,
+            0 => Some(None),
             1 => {
                 let sid = self
                     .sppf_stack_arena
                     .top(cursor.sppf_stack_id)
                     .expect("E3 Substage 2: len==1 implies top() is Some");
-                matches!(
-                    self.sppf.node(sid),
-                    Some(crate::sppf::SppfNode::Symbol { .. })
-                )
-            }
-            _ => false,
+                if matches!(self.sppf.node(sid), Some(crate::sppf::SppfNode::Symbol { .. })) {
+                    Some(Some(sid))
+                } else {
+                    None
+                }
+            },
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn is_cursor_accepting_terminal(&self, cursor: &BranchCursor<W>) -> bool {
+        self.cursor_accepting_terminal_root(cursor).is_some()
+    }
+
+    #[inline]
+    pub fn is_cursor_accepting_terminal_at(
+        &self,
+        cursor: &BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) -> bool {
+        match self.cursor_accepting_terminal_root(cursor) {
+            Some(None) => true,
+            Some(Some(root)) => self.semantic_root_accepts_at_cursor(root, cursor.pos, tokens),
+            None => false,
         }
     }
 
@@ -12354,7 +11819,7 @@ where
             .and_then(|sid| match self.sppf.node(sid) {
                 Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
                     Some(*non_terminal_tag)
-                }
+                },
                 _ => None,
             })
     }
@@ -12366,11 +11831,7 @@ where
     /// `emit_splice_into_collection`. Replaces reads at 7446-53.
     /// Plan: §Read → SPPF Mapping.
     #[inline]
-    pub fn cursor_collection_slot_len(
-        &self,
-        cursor: &BranchCursor<W>,
-        acc_id: usize,
-    ) -> usize {
+    pub fn cursor_collection_slot_len(&self, cursor: &BranchCursor<W>, acc_id: usize) -> usize {
         // Phase F.4 (2026-05-18): per-cursor arena read. Pre-F.4 this
         // read `self.sppf_collection_arena`, which captured
         // cross-cursor splices — a parity bug masked by the kv_phase
@@ -12421,10 +11882,7 @@ where
                 };
                 let text_s = self.sppf.text(*text_handle).to_string();
                 if *pushed_via_push_ident {
-                    Some(ActionArg::Ident {
-                        name: text_s,
-                        pos: pos_val,
-                    })
+                    Some(ActionArg::Ident { name: text_s, pos: pos_val })
                 } else {
                     Some(ActionArg::Token {
                         kind: token_kind.clone(),
@@ -12432,7 +11890,7 @@ where
                         pos: pos_val,
                     })
                 }
-            }
+            },
             SppfNode::Symbol { .. } => {
                 // Phase F.13 H1 (2026-05-20): look up in walker-global
                 // memo. SPPF SymbolIds are global (Symbol-dedup at
@@ -12441,13 +11899,11 @@ where
                 // HashMap lookup replaces the per-cursor Vec scan; the
                 // `cursor` parameter is unused for this arm.
                 let _ = cursor;
-                self.sppf_symbol_terms
-                    .get(&sid)
-                    .map(|arc| ActionArg::Term {
-                        value: Arc::clone(arc),
-                        type_name: "F3c2Reconstructed",
-                    })
-            }
+                self.sppf_symbol_terms.get(&sid).map(|arc| ActionArg::Term {
+                    value: Arc::clone(arc),
+                    type_name: "F3c2Reconstructed",
+                })
+            },
             SppfNode::Packing { rule_idx, children, .. }
                 if *rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX =>
             {
@@ -12458,19 +11914,19 @@ where
                     .map(|&c| self.reconstruct_action_arg(cursor, c))
                     .collect();
                 inner.map(|args| ActionArg::Optional(Some(args)))
-            }
+            },
             SppfNode::Packing { .. } => {
                 // Non-OPTIONAL_PRESENT Packing reached as a direct child:
                 // should not happen in well-formed parses — children are
                 // always Terminals or Symbols. Return None defensively.
                 None
-            }
+            },
             SppfNode::Epsilon { .. } => {
                 // Epsilon children are filtered out at the call site
                 // (same as TriggerTerminal); unreachable here but return
                 // None defensively.
                 None
-            }
+            },
             SppfNode::CollectionId { id, .. } => Some(ActionArg::CollectionId(*id as u8)),
             SppfNode::OptAbsent { .. } => Some(ActionArg::Optional(None)),
             SppfNode::Predicate { handle } => self
@@ -12482,15 +11938,117 @@ where
                     .iter()
                     .map(|h| self.sppf.text(*h).to_string())
                     .collect();
-                Some(ActionArg::BinderScope(
-                    crate::wpda_runtime::BinderHandle::new(names, *depth),
-                ))
-            }
+                Some(ActionArg::BinderScope(crate::wpda_runtime::BinderHandle::new(names, *depth)))
+            },
             SppfNode::TriggerTerminal { .. } => {
                 // Filtered out at the call site BEFORE this is invoked
                 // (parallel to realize_packing_call's filter at line 3739).
                 None
+            },
+        }
+    }
+
+    fn collect_collection_ids_from_arg(arg: &ActionArg, seen: &mut [bool; 256], out: &mut Vec<u8>) {
+        match arg {
+            ActionArg::CollectionId(id) => {
+                let idx = *id as usize;
+                if !seen[idx] {
+                    seen[idx] = true;
+                    out.push(*id);
+                }
+            },
+            ActionArg::Optional(Some(inner)) => {
+                for inner_arg in inner {
+                    Self::collect_collection_ids_from_arg(inner_arg, seen, out);
+                }
+            },
+            _ => {},
+        }
+    }
+
+    fn collection_ids_in_args(args: &[ActionArg]) -> Vec<u8> {
+        let mut seen = [false; 256];
+        let mut ids = Vec::new();
+        for arg in args {
+            Self::collect_collection_ids_from_arg(arg, &mut seen, &mut ids);
+        }
+        ids
+    }
+
+    fn preallocate_collection_slots(sb: &mut SemanticBuilder, collection_ids: &[u8]) {
+        if let Some(max_id) = collection_ids.iter().copied().max() {
+            for _ in 0..=max_id as usize {
+                let _ = sb.start_collection();
             }
+        }
+    }
+
+    fn collection_items_for_action_child(
+        &self,
+        sid: crate::sppf::SppfId,
+        target_id: u8,
+    ) -> Option<&[crate::sppf::SppfId]> {
+        match self.sppf.node(sid)? {
+            crate::sppf::SppfNode::CollectionId { id, items } if *id == target_id as u32 => {
+                Some(items.as_slice())
+            },
+            crate::sppf::SppfNode::Packing { children, .. } => {
+                for &child in children {
+                    if let Some(items) = self.collection_items_for_action_child(child, target_id) {
+                        return Some(items);
+                    }
+                }
+                None
+            },
+            _ => None,
+        }
+    }
+
+    fn collection_items_for_action_children(
+        &self,
+        children: &[crate::sppf::SppfId],
+        target_id: u8,
+    ) -> Option<&[crate::sppf::SppfId]> {
+        for &child in children {
+            if let Some(items) = self.collection_items_for_action_child(child, target_id) {
+                return Some(items);
+            }
+        }
+        None
+    }
+
+    fn snapshot_collection_ids_in_child(
+        &mut self,
+        sid: crate::sppf::SppfId,
+        cursor: &BranchCursor<W>,
+    ) -> crate::sppf::SppfId {
+        match self.sppf.node(sid).cloned() {
+            Some(crate::sppf::SppfNode::CollectionId { id, .. }) => {
+                let items = cursor
+                    .sppf_collection_arena
+                    .get(id as usize)
+                    .cloned()
+                    .unwrap_or_default();
+                self.sppf.intern_collection_id(id, items)
+            },
+            Some(crate::sppf::SppfNode::Packing { rule_idx, children, weight }) => {
+                let mut changed = false;
+                let rewritten: Vec<crate::sppf::SppfId> = children
+                    .iter()
+                    .copied()
+                    .map(|child| {
+                        let next = self.snapshot_collection_ids_in_child(child, cursor);
+                        changed |= next != child;
+                        next
+                    })
+                    .collect();
+                if changed {
+                    self.sppf.intern_packing(rule_idx, rewritten, weight)
+                } else {
+                    sid
+                }
+            },
+            _ => sid,
         }
     }
 
@@ -12540,10 +12098,7 @@ where
             .iter()
             .copied()
             .filter(|&c| {
-                !matches!(
-                    self.sppf.node(c),
-                    Some(crate::sppf::SppfNode::TriggerTerminal { .. })
-                )
+                !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
             })
             .collect();
         if action_children.len() != arity {
@@ -12559,64 +12114,50 @@ where
             .collect();
         let args = args?;
 
-        // Build transient SB. Pre-allocate collection slots
-        // 0..=max(CollectionId) — same B.1 fix as realize_packing_call
-        // (line 3866-3876). Without this, monotonic start_collection
-        // returns ids in encounter order, which differs from arrival
-        // order when CollectionId(1) comes before CollectionId(0) in
-        // args.
+        // Build transient SB. Pre-allocate collection slots for every
+        // CollectionId reachable in the action args. CollectionId can be
+        // nested under Optional(Some(...)); the action may still drain
+        // that id from this transient builder.
         let mut sb = SemanticBuilder::new();
-        let max_coll_id: Option<u32> = args
-            .iter()
-            .filter_map(|a| match a {
-                ActionArg::CollectionId(id) => Some(*id as u32),
-                _ => None,
-            })
-            .max();
-        if let Some(max_id) = max_coll_id {
-            for _ in 0..=max_id {
-                let _ = sb.start_collection();
+        let collection_ids = Self::collection_ids_in_args(&args);
+        Self::preallocate_collection_slots(&mut sb, &collection_ids);
+        for id in &collection_ids {
+            if let Some(items) = cursor.sppf_collection_arena.get(*id as usize) {
+                for &item_sid in items {
+                    if let Some(ActionArg::Term { value, .. }) =
+                        self.reconstruct_action_arg(cursor, item_sid)
+                    {
+                        sb.push_term_arc(value);
+                        sb.push_to_collection(*id);
+                    }
+                }
             }
         }
-        // Push args. For CollectionId args, also splice the items from
-        // cursor.sppf_collection_arena[id] into the slot first so
-        // push_to_collection has things to drain.
+        // Push args after collection slots are populated so nested
+        // CollectionId values inside Optional(Some(...)) remain in their
+        // original arg shape while still having a drainable slot.
         for arg in &args {
             match arg {
                 ActionArg::Token { kind, text, pos } => {
                     sb.push_token(kind.clone(), text.clone(), *pos);
-                }
+                },
                 ActionArg::Ident { name, pos } => {
                     sb.push_ident(name.clone(), *pos);
-                }
+                },
                 ActionArg::Term { value, .. } => {
                     sb.push_term_arc(Arc::clone(value));
-                }
+                },
                 ActionArg::CollectionId(id) => {
-                    // Splice items from cursor.sppf_collection_arena
-                    // (NOT winner_collection_arena — at parse-time fire
-                    // we want this cursor's arena, not the post-commit
-                    // singleton's).
-                    if let Some(items) = cursor.sppf_collection_arena.get(*id as usize) {
-                        for &item_sid in items {
-                            if let Some(ActionArg::Term { value, .. }) =
-                                self.reconstruct_action_arg(cursor, item_sid)
-                            {
-                                sb.push_term_arc(value);
-                                sb.push_to_collection(*id);
-                            }
-                        }
-                    }
                     sb.push_collection_id(*id);
-                }
+                },
                 ActionArg::Predicate(p) => {
                     sb.push_predicate_arc(Arc::clone(p));
-                }
+                },
                 ActionArg::Optional(_)
                 | ActionArg::Collection { .. }
                 | ActionArg::BinderScope(_) => {
                     sb.push_raw_arg(arg.clone());
-                }
+                },
             }
         }
 
@@ -12690,8 +12231,7 @@ where
         // rule_idx=0 in both Int and BigInt categories in calc_op).
         let cat_src_idx = symbol.category_src_idx;
         let local_rule_idx = symbol.rule_index_in_category;
-        let global_rule_idx: u32 =
-            ((cat_src_idx as u32) << 16) | (local_rule_idx as u32);
+        let global_rule_idx: u32 = ((cat_src_idx as u32) << 16) | (local_rule_idx as u32);
         let hi_pos = cursor.pos as u32;
         let arity = self
             .engine
@@ -12731,10 +12271,7 @@ where
             let message = format!(
                 "semantic-action arity mismatch at rule (src={}, rule={}): \
                  expected {} args but cursor.sppf_stack held {}",
-                cat_src_idx,
-                local_rule_idx,
-                arity,
-                sppf_stack_len,
+                cat_src_idx, local_rule_idx, arity, sppf_stack_len,
             );
             let err = WpdaState::Error { message };
             cursor.inner_state = err.clone();
@@ -12804,8 +12341,7 @@ where
             let pop_count = sppf_stack_len - split_at;
             drop(scratch);
             for _ in 0..pop_count {
-                cursor.sppf_stack_id =
-                    self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
             }
             // lo_pos: leftmost child's span_lo, or fall back to hi_pos if
             // arity == 0 (epsilon-like reduce). With Phase F.8 the
@@ -12824,42 +12360,17 @@ where
                 .engine
                 .action_for(cat_src_idx, local_rule_idx)
                 .is_some();
-            let transient_result =
-                self.fire_action_via_transient(cursor, symbol, &children);
-            // Collection-accumulation fix (2026-05-29): re-intern each
-            // CollectionId child carrying a SNAPSHOT of the OWNING cursor's
-            // arena slot, so the element SppfIds become derivation-local in
-            // the SPPF. Realize then reads `items` from the node (not the
-            // post-commit `branch_cursors[0]` arena, which truncated
-            // collections belonging to non-winner cursors). Each CollectionId
-            // child is handled independently (multi-slot rules have several).
-            // This does NOT change `lo_pos` (CollectionId nodes have no span)
-            // nor the already-fired transient (which read the arena directly).
-            //
-            // Two-phase to satisfy the borrow checker: first snapshot
-            // (immutable read of `self.sppf` + `cursor.sppf_collection_arena`),
-            // then re-intern (mutable `self.sppf`).
-            let collection_snapshots: Vec<Option<(u32, Vec<crate::sppf::SppfId>)>> =
-                children
-                    .iter()
-                    .map(|&c| match self.sppf.node(c) {
-                        Some(crate::sppf::SppfNode::CollectionId { id, .. }) => {
-                            let slot_id = *id;
-                            let items: Vec<crate::sppf::SppfId> = cursor
-                                .sppf_collection_arena
-                                .get(slot_id as usize)
-                                .cloned()
-                                .unwrap_or_default();
-                            Some((slot_id, items))
-                        }
-                        _ => None,
-                    })
-                    .collect();
+            let transient_result = self.fire_action_via_transient(cursor, symbol, &children);
+            // Collection-accumulation fix (2026-05-29): re-intern every
+            // CollectionId reachable from this action's children with a
+            // snapshot of the owning cursor's arena slot. Optional-present
+            // synthetic packings can wrap CollectionId, so this rewrite is
+            // recursive over Packing children. This does not change `lo_pos`
+            // because CollectionId and synthetic optional packings are
+            // span-transparent for the enclosing symbol.
             let mut children = children;
-            for (slot, snap) in children.iter_mut().zip(collection_snapshots.into_iter()) {
-                if let Some((slot_id, items)) = snap {
-                    *slot = self.sppf.intern_collection_id(slot_id, items);
-                }
+            for child in &mut children {
+                *child = self.snapshot_collection_ids_in_child(*child, cursor);
             }
             match (has_action, transient_result) {
                 (true, None) => {
@@ -12881,7 +12392,7 @@ where
                     self.state = err;
                     cursor.last_action_output_cat = None;
                     return;
-                }
+                },
                 (false, None) => {
                     // No action registered for this rule — no-op fire.
                     // Persistent path (pre-F.3c.3) also treated this as
@@ -12892,7 +12403,7 @@ where
                     // Packing+Symbol below so the SPPF still records
                     // the production.
                     cursor.last_action_output_cat = None;
-                }
+                },
                 (_, Some((result_arc, output_cat, drains_count))) => {
                     // Successful fire. Update mirror + collection depth
                     // from transient's post-fire state.
@@ -12902,17 +12413,12 @@ where
                         .saturating_sub(drains_count as u8);
                     // SPPF intern the Packing+Symbol first to get symbol_id
                     // for the memo key.
-                    let packing_weight = std::mem::replace(
-                        &mut cursor.pending_packing_weight,
-                        W::one_ref(),
-                    );
-                    let packing_id = self.sppf.intern_packing(
-                        global_rule_idx,
-                        children,
-                        packing_weight,
-                    );
-                    let symbol_id =
-                        self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
+                    let packing_weight =
+                        std::mem::replace(&mut cursor.pending_packing_weight, W::one_ref());
+                    let packing_id =
+                        self.sppf
+                            .intern_packing(global_rule_idx, children, packing_weight);
+                    let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
                     self.sppf.link_packing_to_symbol(symbol_id, packing_id);
                     // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                     // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
@@ -12928,16 +12434,14 @@ where
                     // not exist within a single parse session.
                     self.sppf_symbol_terms.insert(symbol_id, result_arc);
                     return;
-                }
+                },
             }
             // Reachable only when (has_action == false, transient_result == None):
             // no-action no-op. Intern the empty Packing+Symbol so the
             // SPPF still records the production shape (consistent with
             // the prior persistent path's behavior).
-            let packing_weight = std::mem::replace(
-                &mut cursor.pending_packing_weight,
-                W::one_ref(),
-            );
+            let packing_weight =
+                std::mem::replace(&mut cursor.pending_packing_weight, W::one_ref());
             let packing_id = self
                 .sppf
                 .intern_packing(global_rule_idx, children, packing_weight);
@@ -12989,8 +12493,7 @@ where
         // helper doesn't push onto the main arg stack).
         let id = cursor.collection_stack_depth;
         self.clear_action_output_mirror(cursor);
-        cursor.collection_stack_depth =
-            cursor.collection_stack_depth.saturating_add(1);
+        cursor.collection_stack_depth = cursor.collection_stack_depth.saturating_add(1);
         // C3 dual-mode: ensure the SPPF-side collection arena has a slot
         // at this id. The builder's allocator monotonically returns ids
         // 0, 1, 2, ... — we mirror by extending when the id exceeds
@@ -13013,9 +12516,9 @@ where
 
     #[inline(always)]
     fn emit_push_collection_id(&mut self, cursor: &mut BranchCursor<W>, id: u8) {
-        // C3 dual-mode: push a CollectionId placeholder onto sppf_stack so
+        // C3 dual-mode: push a CollectionId marker onto sppf_stack so
         // the fire_action arity check matches builder.stack arity.
-        // Collection-accumulation fix (2026-05-29): this placeholder push
+        // Collection-accumulation fix (2026-05-29): this marker push
         // happens BEFORE elements are spliced into the cursor's arena, so it
         // carries EMPTY items here. `emit_fire_action` re-interns each
         // CollectionId child with the snapshot of the owning cursor's arena
@@ -13023,8 +12526,7 @@ where
         let sid = self.sppf.intern_collection_id(id as u32, Vec::new());
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
-        cursor.sppf_stack_id =
-            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF
         // CollectionId node above mirrors the structural state.
         self.clear_action_output_mirror(cursor);
@@ -13043,8 +12545,7 @@ where
             // arena.top + intern_pop replaces Arc::make_mut(&mut sppf_stack).pop.
             // Read top first (since intern_pop discards it), then pop.
             if let Some(top) = self.sppf_stack_arena.top(cursor.sppf_stack_id) {
-                cursor.sppf_stack_id =
-                    self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                 Arc::make_mut(&mut cursor.sppf_collection_arena)[id as usize].push(top);
             }
         }
@@ -13101,11 +12602,7 @@ where
     /// `optional_group_smoke`). Centralizing both here makes the
     /// implicit-side-effect surface auditable in one place.
     #[inline(always)]
-    fn emit_push_side_effects(
-        &mut self,
-        cursor: &mut BranchCursor<W>,
-        symbol: &mut StackSymbolV2,
-    ) {
+    fn emit_push_side_effects(&mut self, cursor: &mut BranchCursor<W>, symbol: &mut StackSymbolV2) {
         match symbol.kind {
             SymbolKind::CollectionMarker => {
                 let id = self.emit_start_collection(cursor);
@@ -13147,7 +12644,7 @@ where
                 ) {
                     self.emit_start_binder_scope(cursor, Vec::new());
                 }
-            }
+            },
             SymbolKind::OptionalGroupAt(sub_pos) if sub_pos == 1 => {
                 // B8 / Issue C followup (2026-05-09); refined under
                 // Issue 2 (2026-05-10): only open an optional scope
@@ -13165,8 +12662,8 @@ where
                 ) {
                     self.emit_start_optional_scope(cursor);
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -13197,8 +12694,7 @@ where
                 let pop_count = cur_len - mark;
                 drop(scratch);
                 for _ in 0..pop_count {
-                    cursor.sppf_stack_id =
-                        self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
+                    cursor.sppf_stack_id = self.sppf_stack_arena.intern_pop(cursor.sppf_stack_id);
                 }
                 // Phase C.1 (2026-05-17): synthetic OPTIONAL_PRESENT always
                 // interns with `W::one_ref()` per the weight semantics table
@@ -13228,8 +12724,7 @@ where
         let sid = self.sppf.intern_opt_absent(cursor.pos as u32);
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
-        cursor.sppf_stack_id =
-            self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
+        cursor.sppf_stack_id = self.sppf_stack_arena.intern_push(cursor.sppf_stack_id, sid);
         // Phase F.3c.4 (2026-05-20): cursor.builder deleted. SPPF OptAbsent
         // node above mirrors the structural state.
         self.clear_action_output_mirror(cursor);
@@ -13263,9 +12758,9 @@ where
     /// silently desynced from the lattice DAG; this fix makes every
     /// advance source-driven.
     ///
-    /// `n` is always 1 in current callers; the parameter is retained
-    /// for symmetry with the pre-M6c.6.1 signature. Iterative calls
-    /// would be needed for `n > 1` but no such callers exist today.
+    /// Advances `n` source-driven steps. Current callers pass 1, but keeping
+    /// the helper total prevents future bulk consumers from falling back to
+    /// linear arithmetic on lattice token sources.
     #[inline(always)]
     fn advance_cursor_pos(
         &mut self,
@@ -13273,9 +12768,9 @@ where
         tokens: &dyn WpdaTokenSource,
         n: usize,
     ) {
-        debug_assert_eq!(n, 1, "advance_cursor_pos n > 1 not yet supported");
-        let new_pos = tokens.next_pos(cursor.pos, 0).unwrap_or(cursor.pos + n);
-        cursor.pos = new_pos;
+        for _ in 0..n {
+            cursor.pos = tokens.next_pos(cursor.pos, 0).unwrap_or(cursor.pos + 1);
+        }
         if self.deterministic {
             self.pos = cursor.pos;
         }
@@ -13365,10 +12860,10 @@ where
                             slot_idx: *slot_idx,
                             kv_phase: new_kv_phase,
                         }
-                    }
+                    },
                     None => state.clone(),
                 }
-            }
+            },
             _ => state.clone(),
         };
         cursor.inner_state = patched_state.clone();
@@ -13379,7 +12874,7 @@ where
 
     /// Phase F.13 H13 Step 0 (2026-05-21): variant of `cursor_gss_push`
     /// that records a specific `EdgeKind` on the new edge. Default
-    /// `cursor_gss_push` uses `EdgeKind::Generic` placeholder.
+    /// `cursor_gss_push` uses the default `EdgeKind::Generic`.
     #[inline(always)]
     fn cursor_gss_push_with_kind(
         &mut self,
@@ -13406,7 +12901,9 @@ where
         } else {
             cursor.node
         };
-        let new_id = self.gss.get_or_create_node(WpdaGssNode { pos, symbol: sym });
+        let new_id = self
+            .gss
+            .get_or_create_node(WpdaGssNode { pos, symbol: sym });
         // Phase F.13 chain_10000 plan-amend Substage 0 (2026-05-26):
         // clone the EdgeKind before move so the projection observer can
         // use it. Cost gated by `walker-stats` feature.
@@ -13449,8 +12946,7 @@ where
     /// Phase F.13 chain_10000 Exp 13 S1.b (2026-05-26): outboard
     /// Earley + Leo chain-region recognizer.
     ///
-    /// **UNREACHABLE in S1.b** — no call sites added; S1.c wires the
-    /// trigger detection in the `IterativeChainAbsorb` arm.
+    /// Called by the `IterativeChainAbsorb` arm after trigger detection.
     ///
     /// Given a cursor positioned at the start of a left-assoc chain
     /// region (atom op atom op atom ...), build an Earley chart over
@@ -13533,20 +13029,17 @@ where
     ) -> Option<crate::sppf::SppfId> {
         let kind = tokens.peek_kind(pos)?;
         let text = tokens.peek_text(pos);
-        let term = self.sppf.intern_terminal(
-            kind,
-            crate::sppf::PosOrSynth::Real(pos as u32),
-            text,
-            false,
-        );
+        let term =
+            self.sppf
+                .intern_terminal(kind, crate::sppf::PosOrSynth::Real(pos as u32), text, false);
         let atom_rule_idx =
             ((spec.atom_cat_src_idx as u32) << 16) | (spec.atom_lit_rule_idx as u32);
         let pack = self
             .sppf
             .intern_packing(atom_rule_idx, vec![term], W::one_ref());
-        let sym = self
-            .sppf
-            .intern_symbol(spec.atom_cat_src_idx as u32, pos as u32, (pos + 1) as u32);
+        let sym =
+            self.sppf
+                .intern_symbol(spec.atom_cat_src_idx as u32, pos as u32, (pos + 1) as u32);
         self.sppf.link_packing_to_symbol(sym, pack);
         Some(sym)
     }
@@ -13614,11 +13107,11 @@ where
         let mut probe = cursor.pos;
         loop {
             match tokens.peek_kind(probe).as_ref() {
-                Some(k) if *k == op_kind => {}
+                Some(k) if *k == op_kind => {},
                 _ => break,
             }
             match tokens.peek_kind(probe + 1).as_ref() {
-                Some(k) if *k == atom_kind => {}
+                Some(k) if *k == atom_kind => {},
                 _ => break,
             }
             atom_positions.push(probe + 1);
@@ -13643,9 +13136,9 @@ where
                     .sppf
                     .span_hi(cur)
                     .expect("synth_binary_chain: acc Symbol must carry hi span");
-                let pack =
-                    self.sppf
-                        .intern_packing(rule_idx, vec![lhs, cur], weight.clone());
+                let pack = self
+                    .sppf
+                    .intern_packing(rule_idx, vec![lhs, cur], weight.clone());
                 let sym = self
                     .sppf
                     .intern_symbol(op_nt_tag, atom_positions[i] as u32, acc_hi);
@@ -13659,9 +13152,9 @@ where
             let lo = atom_positions[0] as u32;
             for i in 1..m {
                 let rhs = self.synth_atom_symbol(atom_positions[i], spec, tokens)?;
-                let pack =
-                    self.sppf
-                        .intern_packing(rule_idx, vec![cur, rhs], weight.clone());
+                let pack = self
+                    .sppf
+                    .intern_packing(rule_idx, vec![cur, rhs], weight.clone());
                 let sym = self
                     .sppf
                     .intern_symbol(op_nt_tag, lo, (atom_positions[i] + 1) as u32);
@@ -13734,7 +13227,7 @@ where
         }
         // The position must be ON the trigger.
         match tokens.peek_text(cursor.pos) {
-            Some(t) if t == trigger => {}
+            Some(t) if t == trigger => {},
             _ => return None,
         }
         // Operand-atom predicate (Some kind, text is neither operator).
@@ -13759,11 +13252,11 @@ where
         let mut then_positions: Vec<usize> = Vec::new();
         let mut cur_cond = head_pos;
         let mut probe = cursor.pos;
-        let mut e_final: usize;
+        let e_final: usize;
         loop {
             // [trigger] at probe
             match tokens.peek_text(probe) {
-                Some(t) if t == trigger => {}
+                Some(t) if t == trigger => {},
                 _ => return None,
             }
             // then-atom t_i at probe+1
@@ -13772,7 +13265,7 @@ where
             }
             // [sep] at probe+2
             match tokens.peek_text(probe + 2) {
-                Some(t) if t == sep => {}
+                Some(t) if t == sep => {},
                 _ => return None,
             }
             // trailing atom at probe+3 (next cond or e_final)
@@ -13787,12 +13280,12 @@ where
                 Some(t) if t == trigger => {
                     cur_cond = probe + 3;
                     probe += 4;
-                }
+                },
                 _ => {
                     e_final = probe + 3;
                     probe += 4;
                     break;
-                }
+                },
             }
         }
         let chain_end = probe;
@@ -13814,11 +13307,9 @@ where
                 .span_hi(cur)
                 .expect("synth_ternary_chain: acc Symbol must carry hi span");
             // EXACTLY 3 children: [cond, then, else]. No `?`/`:` children.
-            let pack = self.sppf.intern_packing(
-                rule_idx,
-                vec![cond_sym, then_sym, cur],
-                weight.clone(),
-            );
+            let pack =
+                self.sppf
+                    .intern_packing(rule_idx, vec![cond_sym, then_sym, cur], weight.clone());
             let sym = self
                 .sppf
                 .intern_symbol(op_nt_tag, cond_positions[i] as u32, acc_hi);
@@ -13873,12 +13364,12 @@ where
         loop {
             // Need an op at probe.
             match tokens.peek_kind(probe).as_ref() {
-                Some(k) if *k == op_kind => {}
+                Some(k) if *k == op_kind => {},
                 _ => break,
             }
             // Need an atom at probe+1.
             match tokens.peek_kind(probe + 1).as_ref() {
-                Some(k) if *k == atom_kind => {}
+                Some(k) if *k == atom_kind => {},
                 _ => break,
             }
             // Consume op + atom.
@@ -13905,8 +13396,7 @@ where
         // chain spans [chain_start, chain_end). Each atom and each op
         // gets a Terminal SppfNode via sppf.intern_terminal.
         let chain_len_tokens = chain_end - chain_start;
-        let mut terminal_sppf_ids: Vec<crate::sppf::SppfId> =
-            Vec::with_capacity(chain_len_tokens);
+        let mut terminal_sppf_ids: Vec<crate::sppf::SppfId> = Vec::with_capacity(chain_len_tokens);
         for offset in 0..chain_len_tokens {
             let pos = chain_start + offset;
             let kind = tokens.peek_kind(pos).expect("chain peek invariant");
@@ -13937,21 +13427,15 @@ where
         chart.add_rule_with_body(
             "chain_base",
             "Chain",
-            vec![crate::earley::RuleItem::NonTerminal {
-                category: "Atom".to_string(),
-            }],
+            vec![crate::earley::RuleItem::NonTerminal { category: "Atom".to_string() }],
         );
         chart.add_rule_with_body(
             "chain_step",
             "Chain",
             vec![
-                crate::earley::RuleItem::NonTerminal {
-                    category: "Chain".to_string(),
-                },
+                crate::earley::RuleItem::NonTerminal { category: "Chain".to_string() },
                 crate::earley::RuleItem::Terminal { tag: op_tag },
-                crate::earley::RuleItem::NonTerminal {
-                    category: "Atom".to_string(),
-                },
+                crate::earley::RuleItem::NonTerminal { category: "Atom".to_string() },
             ],
         );
 
@@ -14022,23 +13506,14 @@ where
         let outer_nt_tag = outer_cat_src_idx as u32;
         let mut rule_label_to_meta = std::collections::HashMap::new();
         // chain_step → maps to the outer InfixOp's rule_idx + cat_tag.
-        rule_label_to_meta.insert(
-            "chain_step".to_string(),
-            (outer_rule_idx as u32, outer_nt_tag),
-        );
+        rule_label_to_meta.insert("chain_step".to_string(), (outer_rule_idx as u32, outer_nt_tag));
         // chain_base → same rule_idx (degenerate single-atom case).
-        rule_label_to_meta.insert(
-            "chain_base".to_string(),
-            (outer_rule_idx as u32, outer_nt_tag),
-        );
+        rule_label_to_meta.insert("chain_base".to_string(), (outer_rule_idx as u32, outer_nt_tag));
         // atom → uses a synthetic atom-rule mapping; in production this
         // would come from grammar metadata. For S1.b standalone we
         // bail if no atom rule is registered with the engine. For the
         // chain test the atom IS the same outer category (Int chain).
-        rule_label_to_meta.insert(
-            "atom".to_string(),
-            (outer_rule_idx as u32, outer_nt_tag),
-        );
+        rule_label_to_meta.insert("atom".to_string(), (outer_rule_idx as u32, outer_nt_tag));
         let mut rule_weights = std::collections::HashMap::new();
         rule_weights.insert("chain_step".to_string(), iter_weight.clone());
         rule_weights.insert("chain_base".to_string(), W::one_ref());
@@ -14098,11 +13573,7 @@ where
     /// `EarleyChart::complete_to_fixpoint` (WALK-S2, 2026-05-28) so the
     /// standalone chart unit tests can drive it without a walker; this
     /// delegate keeps the existing call site stable.
-    fn complete_to_fixpoint(
-        &self,
-        chart: &mut crate::earley::EarleyChart,
-        pos: usize,
-    ) {
+    fn complete_to_fixpoint(&self, chart: &mut crate::earley::EarleyChart, pos: usize) {
         chart.complete_to_fixpoint(pos);
     }
 
@@ -14123,16 +13594,13 @@ where
         // the caller (mirrors `child_visited_dispatch`). Moved into the
         // worker cursor below.
         child_visited_proj_descriptors: im::OrdSet<ProjDescriptorKey>,
+        lex_fork_stamp: Option<LexForkStamp>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
         // Phase F.13 H12 Stage 1.3 (2026-05-21): cohort cache
         // consultation for CrossCatDelegate branches. Resolved/Failed/
         // InflightCollision outcomes short-circuit normal allocation.
-        if let WpdaState::CrossCatDelegate {
-            source_src_idx,
-            inner_cur_bp,
-        } = &branch.new_state
-        {
+        if let WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } = &branch.new_state {
             let s = *source_src_idx;
             let b = *inner_cur_bp;
             // M4 (2026-05-30, re-landed): the WRAPPING rule's (cat, rule)
@@ -14153,9 +13621,8 @@ where
             if self.pos_in_absorbed_chain_interval(pos_after) {
                 return Vec::new();
             }
-            let key = crate::dispatch_cohort::DispatchKey::new(
-                pos_after, s, b, wrap_cat, wrap_rule,
-            );
+            let key =
+                crate::dispatch_cohort::DispatchKey::new(pos_after, s, b, wrap_cat, wrap_rule);
             // COQ-S0 (2026-05-27): track distinct DispatchKey vs
             // EquivKey to confirm the cohort_origin pos discriminator
             // is the super-linear scaling root cause.
@@ -14164,9 +13631,7 @@ where
                 self.stats
                     .cohort_origin_dispatch_keys_seen
                     .insert(key.clone());
-                self.stats
-                    .cohort_origin_equiv_keys_seen
-                    .insert((s, b));
+                self.stats.cohort_origin_equiv_keys_seen.insert((s, b));
             }
             // Stage 1.5.3 (2026-05-21): pass worker's pre-dispatch
             // weight so the cache can recover the per-packing weight
@@ -14179,7 +13644,7 @@ where
             match outcome {
                 RegisterOutcome::WorkerInserted => {
                     // Worker child — fall through to normal allocation.
-                }
+                },
                 RegisterOutcome::InflightCollision => {
                     // Stage 1.5 (2026-05-21): pause cohort member.
                     // If the cache's cap is exceeded
@@ -14187,10 +13652,8 @@ where
                     // returns false; fall through to per-cursor sub-parse
                     // so the cursor is not lost.
                     let member = crate::dispatch_cohort::CohortMember {
-                        return_frame: parent.clone(),
-                        weight_at_dispatch: parent
-                            .weight
-                            .times_ref(&branch.weight),
+                        return_frame: Self::parent_frame_with_lex_stamp(parent, lex_fork_stamp),
+                        weight_at_dispatch: parent.weight.times_ref(&branch.weight),
                     };
                     // Sig-B Blocker-2 §3d (2026-05-31, pgmcp experiment #9):
                     // SYMMETRIC revive-on-pause backstop. The member is
@@ -14211,10 +13674,7 @@ where
                         self.dispatch_cohort_cache
                             .crosswrap_backstop_for_pausing_member(&key, &member)
                     };
-                    if self
-                        .dispatch_cohort_cache
-                        .pause_cohort_member(key, member)
-                    {
+                    if self.dispatch_cohort_cache.pause_cohort_member(key, member) {
                         // Pause succeeded. Revive any §3d backstop jobs and
                         // return them (the member also remains paused so the
                         // forward drain can still fire if a LATER sibling
@@ -14222,18 +13682,17 @@ where
                         let mut revived_backstop: Vec<BranchCursor<W>> =
                             Vec::with_capacity(backstop_jobs.len());
                         for job in backstop_jobs {
-                            let revived = self
-                                .revive_cohort_member_with_snapshot(
-                                    job.member,
-                                    job.symbol_id,
-                                    job.pos_at_dispatch,
-                                    job.hi_pos,
-                                    job.source_src_idx,
-                                    job.inner_cur_bp,
-                                    job.wrap_cat,
-                                    job.wrap_rule,
-                                    &job.snap,
-                                );
+                            let revived = self.revive_cohort_member_with_snapshot(
+                                job.member,
+                                job.symbol_id,
+                                job.pos_at_dispatch,
+                                job.hi_pos,
+                                job.source_src_idx,
+                                job.inner_cur_bp,
+                                job.wrap_cat,
+                                job.wrap_rule,
+                                &job.snap,
+                            );
                             revived_backstop.push(revived);
                         }
                         return revived_backstop;
@@ -14242,7 +13701,7 @@ where
                     // (Drop the backstop jobs; the member will run its own
                     // sub-parse per-cursor, so no soundness loss.)
                     drop(backstop_jobs);
-                }
+                },
                 RegisterOutcome::ResolvedHit {
                     symbol_id,
                     hi_pos,
@@ -14261,21 +13720,16 @@ where
                     // lost from the persistent pending_cohort — they
                     // never receive snap_B's revival in the multi-
                     // packing cross-step case (the `-3!` failure).
-                    let synthetic_weight_at_dispatch =
-                        parent.weight.times_ref(&branch.weight);
-                    let mut revived_cursors = Vec::with_capacity(
-                        worker_snapshots.len(),
-                    );
+                    let synthetic_weight_at_dispatch = parent.weight.times_ref(&branch.weight);
+                    let mut revived_cursors = Vec::with_capacity(worker_snapshots.len());
                     for snap in &worker_snapshots {
                         if snap.worker_inner_state.is_terminal() {
                             continue;
                         }
-                        let synthetic_member =
-                            crate::dispatch_cohort::CohortMember {
-                                return_frame: parent.clone(),
-                                weight_at_dispatch:
-                                    synthetic_weight_at_dispatch.clone(),
-                            };
+                        let synthetic_member = crate::dispatch_cohort::CohortMember {
+                            return_frame: Self::parent_frame_with_lex_stamp(parent, lex_fork_stamp),
+                            weight_at_dispatch: synthetic_weight_at_dispatch.clone(),
+                        };
                         let revived = self.revive_cohort_member_with_snapshot(
                             synthetic_member,
                             symbol_id,
@@ -14295,19 +13749,19 @@ where
                     // (dispatch_cohort.rs:412-432) and honors
                     // MAX_PENDING_COHORT_PER_KEY cap.
                     let future_member = crate::dispatch_cohort::CohortMember {
-                        return_frame: parent.clone(),
+                        return_frame: Self::parent_frame_with_lex_stamp(parent, lex_fork_stamp),
                         weight_at_dispatch: synthetic_weight_at_dispatch,
                     };
                     let _ = self
                         .dispatch_cohort_cache
                         .pause_cohort_member(key, future_member);
                     return revived_cursors;
-                }
+                },
                 RegisterOutcome::FailedHit => {
                     // Failed hit — drop cursor (sub-parse known to
                     // fail; per-cursor path would have failed too).
                     return Vec::new();
-                }
+                },
             }
         }
         // Worker / non-CrossCatDelegate path: allocate normally.
@@ -14339,9 +13793,7 @@ where
             sppf_stack_id: parent.sppf_stack_id,
             optional_scope_marks: parent.optional_scope_marks.clone(),
             binder_scope_marks: parent.binder_scope_marks.clone(),
-            pending_packing_weight: parent
-                .pending_packing_weight
-                .times_ref(&branch.weight),
+            pending_packing_weight: parent.pending_packing_weight.times_ref(&branch.weight),
             collection_stack_depth: parent.collection_stack_depth,
             sppf_collection_arena: Arc::clone(&parent.sppf_collection_arena),
             last_action_output_cat: parent.last_action_output_cat,
@@ -14349,34 +13801,34 @@ where
             cohort_revive_depth: parent.cohort_revive_depth,
             lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
         };
+        if let Some(stamp) = lex_fork_stamp {
+            std::sync::Arc::make_mut(&mut child.lex_fork_path).push(stamp);
+        }
         self.emit_push_side_effects(&mut child, &mut symbol);
-        if let WpdaState::CrossCatDelegate {
-            source_src_idx,
-            inner_cur_bp,
-        } = &branch.new_state
-        {
+        if let WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } = &branch.new_state {
             let kind = crate::gss::EdgeKind::CrossCatProjection {
                 source_src_idx: *source_src_idx,
                 inner_cur_bp: *inner_cur_bp,
                 wrap_cat,
                 wrap_rule,
             };
-            let _ = self.cursor_gss_push_with_kind(
-                &mut child,
-                symbol,
-                pos_after,
-                branch.weight,
-                kind,
-            );
+            let _ =
+                self.cursor_gss_push_with_kind(&mut child, symbol, pos_after, branch.weight, kind);
         } else {
-            let _ = self.cursor_gss_push_auto(
-                &mut child,
-                symbol,
-                pos_after,
-                branch.weight,
-            );
+            let _ = self.cursor_gss_push_auto(&mut child, symbol, pos_after, branch.weight);
         }
         vec![child]
+    }
+
+    fn parent_frame_with_lex_stamp(
+        parent: &BranchCursor<W>,
+        stamp: Option<LexForkStamp>,
+    ) -> BranchCursor<W> {
+        let mut frame = parent.clone();
+        if let Some(stamp) = stamp {
+            std::sync::Arc::make_mut(&mut frame.lex_fork_path).push(stamp);
+        }
+        frame
     }
 
     /// Phase F.13 H12 Stage 1.3 (2026-05-21): revive a paused cohort
@@ -14426,22 +13878,20 @@ where
         // Fire the coercion action over [body_symbol_id] via the read-only
         // transient (the SAME path emit_fire_action uses). A probe cursor
         // suffices — reconstruct_action_arg reads sppf_symbol_terms by sid.
-        let coercion_symbol =
-            StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, None);
+        let coercion_symbol = StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, None);
         let probe = self.make_probe_cursor();
         let (result_arc, _output_cat, _drains) =
             self.fire_action_via_transient(&probe, coercion_symbol, &[body_symbol_id])?;
         // Intern Packing(coercion_rule, [body]) + Symbol(coercion_cat, lo, hi),
         // link, and store the realized Term keyed by the new Symbol id (so a
         // subsequent fire consuming THIS Symbol as a child reconstructs it).
-        let global_rule_idx: u32 =
-            ((coercion_cat as u32) << 16) | (coercion_rule as u32);
+        let global_rule_idx: u32 = ((coercion_cat as u32) << 16) | (coercion_rule as u32);
         let packing_id =
             self.sppf
                 .intern_packing(global_rule_idx, vec![body_symbol_id], W::one_ref());
-        let wrapped_symbol_id =
-            self.sppf.intern_symbol(coercion_cat as u32, lo, hi);
-        self.sppf.link_packing_to_symbol(wrapped_symbol_id, packing_id);
+        let wrapped_symbol_id = self.sppf.intern_symbol(coercion_cat as u32, lo, hi);
+        self.sppf
+            .link_packing_to_symbol(wrapped_symbol_id, packing_id);
         self.sppf_symbol_terms.insert(wrapped_symbol_id, result_arc);
         Some(wrapped_symbol_id)
     }
@@ -14514,8 +13964,8 @@ where
         &mut self,
         member: crate::dispatch_cohort::CohortMember<W>,
         symbol_id: crate::sppf::SppfId,
-        pos_at_dispatch: u32,
-        hi_pos: u32,
+        pos_at_dispatch: usize,
+        hi_pos: usize,
         source_src_idx: u16,
         inner_cur_bp: u8,
         // M4 (2026-05-30, re-landed): wrapping rule (cat, rule) of the
@@ -14551,18 +14001,15 @@ where
         // tropical-delta was falsified empirically).
         let _ = snap.worker_pre_dispatch_weight.clone();
         let symbol_weight_sum = self.sppf.symbol_weight_sum(symbol_id);
-        cursor.weight = member
-            .weight_at_dispatch
-            .times_ref(&symbol_weight_sum);
-        cursor.pending_packing_weight =
-            snap.worker_pending_packing_weight.clone();
+        cursor.weight = member.weight_at_dispatch.times_ref(&symbol_weight_sum);
+        cursor.pending_packing_weight = snap.worker_pending_packing_weight.clone();
         cursor.last_action_output_cat = snap.worker_last_action_output_cat;
         // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
         // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
         cursor.sppf_stack_id = self
             .sppf_stack_arena
             .intern_push(cursor.sppf_stack_id, symbol_id);
-        cursor.pos = hi_pos as usize;
+        cursor.pos = hi_pos;
         let cat_sym = StackSymbolV2::category_entry(source_src_idx);
         let kind = crate::gss::EdgeKind::CrossCatProjection {
             source_src_idx,
@@ -14573,7 +14020,7 @@ where
         let _ = self.cursor_gss_push_with_kind(
             &mut cursor,
             cat_sym,
-            pos_at_dispatch as usize,
+            pos_at_dispatch,
             W::one_ref(),
             kind,
         );
@@ -14727,12 +14174,11 @@ where
         // the OUTER RuleAt pop) will drain the CollectionId arg via
         // CollectionDrain extraction.
         if let Some(symbol) = popped_symbol {
-            let suppress_for_binder_internal =
-                symbol.kind == SymbolKind::CollectionMarker
-                    && self.engine.is_binder_internal_collection(
-                        symbol.category_src_idx,
-                        symbol.rule_index_in_category,
-                    );
+            let suppress_for_binder_internal = symbol.kind == SymbolKind::CollectionMarker
+                && self.engine.is_binder_internal_collection(
+                    symbol.category_src_idx,
+                    symbol.rule_index_in_category,
+                );
             if !suppress_for_binder_internal
                 && matches!(
                     symbol.kind,
@@ -14815,8 +14261,7 @@ where
                 // is stale.
                 //
                 // Phase F.2 (2026-05-18): SPPF-side mirror.
-                let acc_id =
-                    (cursor.collection_stack_depth as usize).saturating_sub(1) as u8;
+                let acc_id = (cursor.collection_stack_depth as usize).saturating_sub(1) as u8;
                 // Phase 2 / Redesign C follow-up (2026-05-11); Phase 4 #2
                 // (2026-05-12): skip splice when pred is a Class-3
                 // binder-internal CollectionMarker (the names accumulator
@@ -14841,8 +14286,7 @@ where
                     );
                 if pred_kind == SymbolKind::CollectionMarker && !skip_for_class3 {
                     let should_splice = match popped_symbol.map(|s| s.kind) {
-                        Some(SymbolKind::CategoryEntry)
-                        | Some(SymbolKind::RuleAt(_)) => true,
+                        Some(SymbolKind::CategoryEntry) | Some(SymbolKind::RuleAt(_)) => true,
                         Some(_) => {
                             // Pratt element-close: simulate one
                             // InfixLoop{cur_bp:0} step. Splice iff
@@ -14851,8 +14295,7 @@ where
                             //
                             // Snapshot the frontier symbol so the
                             // borrow on `self.gss` is short-lived.
-                            let frontier_snap =
-                                self.gss.node(cursor.node).cloned();
+                            let frontier_snap = self.gss.node(cursor.node).cloned();
                             // M4 (2026-05-13): pass `tokens` directly.
                             // CursorViewSource wrap deleted — alt identity
                             // lives in the shared LatticeTokenSource (M3).
@@ -14863,11 +14306,8 @@ where
                                 cursor.pos,
                                 tokens,
                             );
-                            matches!(
-                                test_action,
-                                WpdaStepAction::Advance(WpdaState::Unwinding),
-                            )
-                        }
+                            matches!(test_action, WpdaStepAction::Advance(WpdaState::Unwinding),)
+                        },
                         None => false,
                     };
                     if should_splice {
@@ -14911,19 +14351,14 @@ where
         // INFIX has the OUTER CE in the OPERAND cat while the wrapping
         // Return / builder top are in the RESULT cat.
         if let Some(popped) = popped_symbol {
-            if popped.kind == SymbolKind::Return
-                && pred_id != crate::gss::GSS_NODE_NONE
-            {
-                let new_top_cat_opt = self
-                    .gss
-                    .node(pred_id)
-                    .and_then(|n| {
-                        if n.symbol.kind == SymbolKind::CategoryEntry {
-                            Some(n.symbol.category_src_idx)
-                        } else {
-                            None
-                        }
-                    });
+            if popped.kind == SymbolKind::Return && pred_id != crate::gss::GSS_NODE_NONE {
+                let new_top_cat_opt = self.gss.node(pred_id).and_then(|n| {
+                    if n.symbol.kind == SymbolKind::CategoryEntry {
+                        Some(n.symbol.category_src_idx)
+                    } else {
+                        None
+                    }
+                });
                 if let Some(new_top_cat) = new_top_cat_opt {
                     // Phase F.3b (2026-05-20): consume the walker-maintained
                     // `cursor.last_action_output_cat` mirror set by every
@@ -14934,11 +14369,9 @@ where
                     // across the narrow gauntlet (6139/0). F.3c will
                     // delete cursor.builder entirely; this read is the
                     // mirror's first authoritative consumer.
-                    if let Some(builder_cat) = cursor.last_action_output_cat
-                    {
+                    if let Some(builder_cat) = cursor.last_action_output_cat {
                         if builder_cat != new_top_cat {
-                            let new_sym =
-                                StackSymbolV2::category_entry(builder_cat);
+                            let new_sym = StackSymbolV2::category_entry(builder_cat);
                             let _ = self.cursor_gss_replace_top_auto(
                                 cursor,
                                 new_sym,
@@ -14970,9 +14403,9 @@ where
         // CategoryEntry's cat (preserves pre-D8 behavior for engines
         // that don't override the trait default — test mocks).
         let resolved_new_state = match new_state {
-            WpdaState::GroupingClosePreservingInner {
-                inner_cat_src_idx,
-            } if inner_cat_src_idx == u16::MAX => {
+            WpdaState::GroupingClosePreservingInner { inner_cat_src_idx }
+                if inner_cat_src_idx == u16::MAX =>
+            {
                 // Phase F.3b (2026-05-20): consume the walker-maintained
                 // mirror set by F.3a. Byte-equivalent to the prior
                 // `cursor.builder.top_term_type_name().and_then(...)` —
@@ -14980,15 +14413,9 @@ where
                 // 6139/0 narrow gauntlet. F.3c will delete cursor.builder.
                 let resolved = cursor
                     .last_action_output_cat
-                    .unwrap_or_else(|| {
-                        popped_symbol
-                            .map(|s| s.category_src_idx)
-                            .unwrap_or(0u16)
-                    });
-                WpdaState::GroupingClosePreservingInner {
-                    inner_cat_src_idx: resolved,
-                }
-            }
+                    .unwrap_or_else(|| popped_symbol.map(|s| s.category_src_idx).unwrap_or(0u16));
+                WpdaState::GroupingClosePreservingInner { inner_cat_src_idx: resolved }
+            },
             other => other,
         };
         // Phase 5.5 (2026-05-12): preserve Error state if emit_fire_action's
@@ -15027,7 +14454,9 @@ where
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena.top peeks pre-pop value; arena.intern_pop updates the
         // cursor's StackId to the predecessor chain (or ROOT for empty).
-        let edge_id = self.incoming_edge_stack_arena.top(cursor.incoming_edge_stack_id);
+        let edge_id = self
+            .incoming_edge_stack_arena
+            .top(cursor.incoming_edge_stack_id);
         cursor.incoming_edge_stack_id = self
             .incoming_edge_stack_arena
             .intern_pop(cursor.incoming_edge_stack_id);
@@ -15052,7 +14481,6 @@ where
             {
                 if let Some(node) = self.gss.node(cursor.node) {
                     let dispatch_pos_usize = node.pos;
-                    let dispatch_pos = dispatch_pos_usize as u32;
                     // Phase F.13 chain_10000 Plan D E3 Substage 2
                     // (2026-05-26): arena.top replaces sppf_stack.last().
                     let symbol_id_opt = self.sppf_stack_arena.top(cursor.sppf_stack_id);
@@ -15083,30 +14511,27 @@ where
                             .unwrap_or_else(W::one_ref);
                         let snap = crate::dispatch_cohort::WorkerSnapshot {
                             worker_inner_state: cursor.inner_state.clone(),
-                            worker_last_action_output_cat:
-                                cursor.last_action_output_cat,
-                            worker_pending_packing_weight: cursor
-                                .pending_packing_weight
-                                .clone(),
+                            worker_last_action_output_cat: cursor.last_action_output_cat,
+                            worker_pending_packing_weight: cursor.pending_packing_weight.clone(),
                             worker_weight: cursor.weight.clone(),
                             worker_pre_dispatch_weight: worker_pre,
                         };
                         let outcome = self.dispatch_cohort_cache.resolve(
                             key.clone(),
                             symbol_id,
-                            cursor.pos as u32,
-                            dispatch_pos,
+                            cursor.pos,
+                            dispatch_pos_usize,
                             snap,
                         );
                         match outcome {
                             crate::dispatch_cohort::ResolveOutcome::FirstResolve => {
                                 self.pending_cohort_drain_keys.insert(key);
-                            }
+                            },
                             crate::dispatch_cohort::ResolveOutcome::SnapshotAppended => {
                                 // Drain already scheduled by FirstResolve.
                                 self.pending_cohort_drain_keys.insert(key);
-                            }
-                            crate::dispatch_cohort::ResolveOutcome::NoOp => {}
+                            },
+                            crate::dispatch_cohort::ResolveOutcome::NoOp => {},
                         }
                     }
                 }
@@ -15187,7 +14612,8 @@ where
             .incoming_edge_stack_arena
             .top(cursor.incoming_edge_stack_id);
         let (new_id, edge_id) =
-            self.gss.replace_top_with_edge_id_kind(target, sym, pos, w, cursor_top_edge, kind);
+            self.gss
+                .replace_top_with_edge_id_kind(target, sym, pos, w, cursor_top_edge, kind);
         cursor.node = new_id;
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena.intern_pop + intern_push replace Arc::make_mut + pop + push.
@@ -15225,7 +14651,7 @@ pub use crate::wpda_runtime::WpdaControl as WalkerControl;
 
 /// A no-op step engine that always returns [`WpdaStepAction::Idle`].
 ///
-/// Useful as a placeholder before Stage 6's codegen lands.
+/// Useful for tests and consumers that need an engine with no transitions.
 pub struct IdleEngine;
 
 impl<W: SemiringRef> WpdaEngine<W> for IdleEngine {
@@ -15547,7 +14973,7 @@ fn parse_trace_env() -> u8 {
             "cursors" => bits |= TRACE_CURSORS,
             "merges" => bits |= TRACE_MERGES,
             "drops" => bits |= TRACE_DROPS,
-            _ => {}
+            _ => {},
         }
     }
     bits
@@ -15622,19 +15048,13 @@ impl<W: SemiringRef + std::fmt::Debug> CursorObserver<W> for EnvTracingConsumer 
 
     fn on_cursor_forked(&mut self, parent_idx: usize, children_count: usize) {
         if (self.enabled & TRACE_CURSORS) != 0 {
-            eprintln!(
-                "[wpds-trace] fork parent[{}] -> {} children",
-                parent_idx, children_count
-            );
+            eprintln!("[wpds-trace] fork parent[{}] -> {} children", parent_idx, children_count);
         }
     }
 
     fn on_cursors_merged(&mut self, winner_idx: usize, loser_idx: usize) {
         if (self.enabled & TRACE_MERGES) != 0 {
-            eprintln!(
-                "[wpds-trace] merge winner[{}] absorbs loser[{}]",
-                winner_idx, loser_idx
-            );
+            eprintln!("[wpds-trace] merge winner[{}] absorbs loser[{}]", winner_idx, loser_idx);
         }
     }
 }
@@ -15715,22 +15135,20 @@ where
                 consumer.on_checkpoint(config);
             }
             match consumer.on_event(&event, &self.state) {
-                WpdaControl::Continue => {}
+                WpdaControl::Continue => {},
                 WpdaControl::Checkpoint => {
                     let config = self.current_configuration();
                     consumer.on_checkpoint(&config);
-                }
+                },
                 WpdaControl::Abort => {
-                    self.state = WpdaState::Error {
-                        message: "consumer aborted".to_string(),
-                    };
+                    self.state = WpdaState::Error { message: "consumer aborted".to_string() };
                     consumer.on_complete(&self.state);
                     return self.state.clone();
-                }
+                },
                 WpdaControl::Pause => {
                     // Caller resumes by calling run_with_consumer again later.
                     return self.state.clone();
-                }
+                },
             }
         }
         consumer.on_complete(&self.state);
@@ -15766,8 +15184,7 @@ where
             // run_with_consumer_observed returns the final state; map a
             // non-terminal state at end-of-budget to the exceeded error to
             // keep the call-site signature identical to run_to_end_of_input.
-            let final_state =
-                self.run_with_consumer_observed(&mut env_consumer, max_steps, tokens);
+            let final_state = self.run_with_consumer_observed(&mut env_consumer, max_steps, tokens);
             if final_state.is_terminal() {
                 Ok(())
             } else {
@@ -15807,14 +15224,11 @@ where
         C: WalkerConsumer<W> + CursorObserver<W>,
         W: 'static + std::fmt::Debug,
     {
-        // Phase F.13 Task #117 (2026-05-23): pin recovery cache pointer
-        // for the observed-parse loop too. Mirrors the pin in
+        // Phase F.13 Task #117 (2026-05-23): pin recovery cache/config
+        // for the observed-parse loop too. Mirrors the pins in
         // run_to_end_of_input above.
-        let recovery_cache_ptr = &mut self.recovery_cohort_cache
-            as *mut crate::recovery_cohort::RecoveryCohortCache<W>
-            as *mut ();
-        let _recovery_guard =
-            crate::recovery_cohort::RecoveryCachePinGuard::pin(recovery_cache_ptr);
+        let _recovery_cache_guard = self.pin_recovery_cache();
+        let _recovery_config_guard = self.pin_recovery_config();
         for _ in 0..max_steps {
             // T4 SIGUSR1 hang-dump (2026-05-12): publish per-step snapshot
             // for SIGUSR1 / watchdog dumps. No-op when feature is off.
@@ -15832,21 +15246,19 @@ where
             let snapshot = self.current_snapshot();
             <C as CursorObserver<W>>::on_step_panorama(consumer, &snapshot);
             match <C as WalkerConsumer<W>>::on_event(consumer, &event, &self.state) {
-                WpdaControl::Continue => {}
+                WpdaControl::Continue => {},
                 WpdaControl::Checkpoint => {
                     let config = self.current_configuration();
                     <C as WalkerConsumer<W>>::on_checkpoint(consumer, &config);
-                }
+                },
                 WpdaControl::Abort => {
-                    self.state = WpdaState::Error {
-                        message: "consumer aborted".to_string(),
-                    };
+                    self.state = WpdaState::Error { message: "consumer aborted".to_string() };
                     <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
                     return self.state.clone();
-                }
+                },
                 WpdaControl::Pause => {
                     return self.state.clone();
-                }
+                },
             }
         }
         <C as WalkerConsumer<W>>::on_complete(consumer, &self.state);
@@ -15877,9 +15289,7 @@ mod tests {
 
     impl ScriptedEngine {
         fn new(actions: Vec<WpdaStepAction<LexicographicWeight>>) -> Self {
-            ScriptedEngine {
-                script: RefCell::new(actions),
-            }
+            ScriptedEngine { script: RefCell::new(actions) }
         }
     }
 
@@ -15899,10 +15309,257 @@ mod tests {
         }
     }
 
+    struct ActiveRecoveryPinsProbeEngine;
+
+    impl WpdaEngine<LexicographicWeight> for ActiveRecoveryPinsProbeEngine {
+        fn step(
+            &self,
+            _state: &WpdaState,
+            _gss: &WpdaGss<LexicographicWeight>,
+            _frontier_top: Option<&WpdaGssNode>,
+            _pos: usize,
+            _tokens: &dyn WpdaTokenSource,
+        ) -> WpdaStepAction<LexicographicWeight> {
+            let config_seen = crate::recovery_cohort::with_active_recovery_config(|config| {
+                config.max_recovery_depth == 0
+            })
+            .unwrap_or(false);
+            let cache_seen =
+                crate::recovery_cohort::with_active_cache_typed::<LexicographicWeight, _, _>(
+                    |cache| {
+                        cache.registrations_total = cache.registrations_total.saturating_add(1);
+                        true
+                    },
+                )
+                .unwrap_or(false);
+
+            if config_seen && cache_seen {
+                WpdaStepAction::Accept
+            } else {
+                WpdaStepAction::Error(format!(
+                    "missing active recovery pins: config_seen={config_seen}, \
+                     cache_seen={cache_seen}",
+                ))
+            }
+        }
+    }
+
+    fn recovery_pin_probe_walker() -> WpdaWalker<LexicographicWeight, ActiveRecoveryPinsProbeEngine>
+    {
+        let mut recovery_config = RecoveryConfig::default();
+        recovery_config.max_recovery_depth = 0;
+        WpdaWalker::new(ActiveRecoveryPinsProbeEngine, 0).with_recovery_config(recovery_config)
+    }
+
+    struct ActiveRecoveryPinsProbeConsumer;
+
+    impl WalkerConsumer<LexicographicWeight> for ActiveRecoveryPinsProbeConsumer {
+        fn on_event(
+            &mut self,
+            _event: &WpdaEvent<LexicographicWeight>,
+            _state: &WpdaState,
+        ) -> WpdaControl {
+            WpdaControl::Continue
+        }
+    }
+
+    impl CursorObserver<LexicographicWeight> for ActiveRecoveryPinsProbeConsumer {}
+
     /// Empty token source used by tests that don't inspect input.
     fn empty_tokens() -> crate::wpda_runtime::SliceTokenSource<'static> {
         static EMPTY: [TokenKind; 0] = [];
         crate::wpda_runtime::SliceTokenSource::new(&EMPTY)
+    }
+
+    #[test]
+    fn advance_cursor_pos_supports_multi_step_source_advancement() {
+        static KINDS: [TokenKind; 3] = [TokenKind::Ident, TokenKind::Ident, TokenKind::Ident];
+        let tokens = crate::wpda_runtime::SliceTokenSource::new(&KINDS);
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        let mut cursor = BranchCursor::seed_from_live(
+            crate::gss::GSS_NODE_NONE,
+            0,
+            LexicographicWeight::one_ref(),
+            WpdaState::Ready { min_bp: 0 },
+        );
+
+        walker.advance_cursor_pos(&mut cursor, &tokens, 3);
+
+        assert_eq!(cursor.pos, 3);
+        assert_eq!(walker.position(), 3);
+    }
+
+    fn cursor_with_symbol_root(
+        walker: &mut WpdaWalker<LexicographicWeight, ScriptedEngine>,
+        root_lo: u32,
+        root_hi: u32,
+        cursor_pos: usize,
+    ) -> BranchCursor<LexicographicWeight> {
+        let root = walker.sppf.intern_symbol(0, root_lo, root_hi);
+        let mut cursor = BranchCursor::seed_from_live(
+            0,
+            cursor_pos,
+            LexicographicWeight::one_ref(),
+            WpdaState::Accepted,
+        );
+        cursor.sppf_stack_id = walker
+            .sppf_stack_arena
+            .intern_push(cursor.sppf_stack_id, root);
+        cursor
+    }
+
+    #[test]
+    fn eoi_accepting_terminal_accepts_same_span_root() {
+        static KINDS: [TokenKind; 2] = [TokenKind::Ident, TokenKind::Eof];
+        static TEXTS: [&str; 2] = ["x", ""];
+        let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&KINDS, &TEXTS);
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        let cursor = cursor_with_symbol_root(&mut walker, 0, 1, 1);
+
+        assert!(walker.is_logical_eoi(cursor.pos, &tokens));
+        assert!(walker.is_accepting_config(&cursor, &tokens));
+    }
+
+    #[test]
+    fn eoi_accepting_terminal_accepts_structural_delimiter_window() {
+        let kinds = [
+            TokenKind::Fixed("(".to_string()),
+            TokenKind::Ident,
+            TokenKind::Fixed(")".to_string()),
+            TokenKind::Eof,
+        ];
+        static TEXTS: [&str; 4] = ["(", "x", ")", ""];
+        let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &TEXTS);
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        let cursor = cursor_with_symbol_root(&mut walker, 1, 2, 3);
+
+        assert!(walker.is_logical_eoi(cursor.pos, &tokens));
+        assert!(walker.is_accepting_config(&cursor, &tokens));
+    }
+
+    #[test]
+    fn eoi_accepting_terminal_rejects_nonstructural_prefix_gap() {
+        let kinds = [
+            TokenKind::Ident,
+            TokenKind::Ident,
+            TokenKind::Fixed(")".to_string()),
+            TokenKind::Eof,
+        ];
+        static TEXTS: [&str; 4] = ["bad", "x", ")", ""];
+        let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &TEXTS);
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        let cursor = cursor_with_symbol_root(&mut walker, 1, 2, 3);
+
+        assert!(walker.is_logical_eoi(cursor.pos, &tokens));
+        assert!(!walker.is_accepting_config(&cursor, &tokens));
+    }
+
+    #[test]
+    fn eoi_accepting_terminal_rejects_nonstructural_suffix_gap() {
+        let kinds = [
+            TokenKind::Fixed("(".to_string()),
+            TokenKind::Ident,
+            TokenKind::Ident,
+            TokenKind::Eof,
+        ];
+        static TEXTS: [&str; 4] = ["(", "x", "bad", ""];
+        let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&kinds, &TEXTS);
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        let cursor = cursor_with_symbol_root(&mut walker, 1, 2, 3);
+
+        assert!(walker.is_logical_eoi(cursor.pos, &tokens));
+        assert!(!walker.is_accepting_config(&cursor, &tokens));
+    }
+
+    #[test]
+    fn eoi_accepting_terminal_rejects_cursor_past_linear_source() {
+        static KINDS: [TokenKind; 2] = [TokenKind::Ident, TokenKind::Eof];
+        static TEXTS: [&str; 2] = ["x", ""];
+        let tokens = crate::wpda_runtime::SliceTokenSource::with_texts(&KINDS, &TEXTS);
+        let mut walker = WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        let cursor = cursor_with_symbol_root(&mut walker, 0, 1, 3);
+
+        assert!(walker.is_logical_eoi(cursor.pos, &tokens));
+        assert!(!walker.is_accepting_config(&cursor, &tokens));
+    }
+
+    fn recovery_test_infra_signature() -> crate::recovery_cohort::RecoveryInfraSignature {
+        crate::recovery_cohort::RecoveryInfraSignature {
+            token_ids: Vec::new(),
+            sync_tokens: Vec::new(),
+            config: crate::recovery_cohort::RecoveryConfigSignature::from_config(
+                &RecoveryConfig::default(),
+            ),
+            wfst: crate::recovery_cohort::RecoveryWfstSignature {
+                token_ids: Vec::new(),
+                sync_tokens: Vec::new(),
+                prediction_discounts: Vec::new(),
+                bracket_mismatch_ids: Vec::new(),
+                recursive_category: false,
+            },
+        }
+    }
+
+    fn seed_token_dependent_cache_entries<E: WpdaEngine<LexicographicWeight>>(
+        w: &mut WpdaWalker<LexicographicWeight, E>,
+    ) {
+        let dispatch_key = crate::dispatch_cohort::DispatchKey::new(0, 0, 0, 0, 0);
+        let _ = w
+            .dispatch_cohort_cache
+            .register(dispatch_key.clone(), lex(0.0, 0, 0));
+        w.dispatch_cohort_cache
+            .crosswrap_drained
+            .insert((dispatch_key.clone(), 1));
+        w.pending_cohort_drain_keys.insert(dispatch_key);
+
+        let recovery_key = crate::recovery_cohort::RecoveryDispatchKey::new(
+            0,
+            0,
+            0,
+            0,
+            0,
+            recovery_test_infra_signature(),
+        );
+        w.recovery_cohort_cache
+            .insert(recovery_key, Vec::new(), Some("cached error".to_string()));
+
+        w.chain_earley_cache
+            .insert((0, 0, 0), (1, lex(0.0, 0, 0), 1));
+        w.chain_absorbed_intervals.insert((0, 0), vec![(0, 1)]);
+    }
+
+    fn assert_token_dependent_cache_entries_seeded<E: WpdaEngine<LexicographicWeight>>(
+        w: &WpdaWalker<LexicographicWeight, E>,
+    ) {
+        assert_eq!(w.dispatch_cohort_cache.entries.len(), 1);
+        assert_eq!(w.dispatch_cohort_cache.registrations_total, 1);
+        assert_eq!(w.recovery_cohort_cache.entries.len(), 1);
+        assert_eq!(w.recovery_cohort_cache.registrations_total, 1);
+        assert!(!w.dispatch_cohort_cache.crosswrap_drained.is_empty());
+        assert!(!w.pending_cohort_drain_keys.is_empty());
+        assert!(!w.chain_earley_cache.is_empty());
+        assert!(!w.chain_absorbed_intervals.is_empty());
+    }
+
+    fn assert_token_dependent_caches_invalidated_preserving_diagnostics<
+        E: WpdaEngine<LexicographicWeight>,
+    >(
+        w: &WpdaWalker<LexicographicWeight, E>,
+    ) {
+        assert!(w.dispatch_cohort_cache.entries.is_empty());
+        assert!(w.dispatch_cohort_cache.crosswrap_drained.is_empty());
+        assert_eq!(
+            w.dispatch_cohort_cache.registrations_total, 1,
+            "token mutation invalidation must preserve dispatch diagnostics",
+        );
+        assert!(w.pending_cohort_drain_keys.is_empty());
+        assert!(w.recovery_cohort_cache.entries.is_empty());
+        assert_eq!(
+            w.recovery_cohort_cache.registrations_total, 1,
+            "token mutation invalidation must preserve recovery diagnostics",
+        );
+        assert!(w.chain_earley_cache.is_empty());
+        assert!(w.chain_absorbed_intervals.is_empty());
     }
 
     // ─── Shape tests ────────────────────────────────────────────────────────
@@ -15914,6 +15571,33 @@ mod tests {
         assert_eq!(w.position(), 0);
         assert!(w.gss().is_empty());
         assert_eq!(w.beam_size(), None);
+    }
+
+    #[test]
+    fn token_mutation_invalidates_token_dependent_caches_preserving_diagnostics() {
+        let mut w: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+
+        seed_token_dependent_cache_entries(&mut w);
+        assert_token_dependent_cache_entries_seeded(&w);
+        w.invalidate_token_dependent_caches_after_token_source_change();
+        assert_token_dependent_caches_invalidated_preserving_diagnostics(&w);
+    }
+
+    #[test]
+    fn mutable_token_source_rebind_invalidates_token_dependent_caches_preserving_diagnostics() {
+        let mut w: WpdaWalker<LexicographicWeight, _> =
+            WpdaWalker::new(ScriptedEngine::new(Vec::new()), 0);
+        seed_token_dependent_cache_entries(&mut w);
+        assert_token_dependent_cache_entries_seeded(&w);
+
+        let kinds = [TokenKind::Ident];
+        let texts = ["foo"];
+        let mut source = crate::wpda_runtime::MutableSliceTokenSource::with_texts(&kinds, &texts);
+
+        w.set_mutable_token_source(&mut source);
+        assert_token_dependent_caches_invalidated_preserving_diagnostics(&w);
+        w.clear_mutable_token_source();
     }
 
     #[test]
@@ -15940,15 +15624,17 @@ mod tests {
     #[test]
     fn process_event_step_advances_state_via_engine() {
         // Script (popped from end): Advance(PrefixDispatch) only — fires once.
-        let engine = ScriptedEngine::new(vec![WpdaStepAction::Advance(
-            WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
-        )]);
+        let engine =
+            ScriptedEngine::new(vec![WpdaStepAction::Advance(WpdaState::PrefixDispatch {
+                pos: 0,
+                cur_bp: 0,
+            })]);
         let mut w = WpdaWalker::new(engine, 0);
         let t = w.process_event(WpdaEvent::Step, &empty_tokens());
         match t {
             WpdaTransition::Transition { new_state, .. } => {
                 assert_eq!(new_state, WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 });
-            }
+            },
             other => panic!("expected Transition, got {:?}", other),
         }
         assert_eq!(*w.state(), WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 });
@@ -15957,10 +15643,10 @@ mod tests {
     #[test]
     fn process_event_token_consumed_advances_position() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdaEvent::TokenConsumed {
-            pos: 5,
-            token: TokenKind::Ident,
-        }, &empty_tokens());
+        let t = w.process_event(
+            WpdaEvent::TokenConsumed { pos: 5, token: TokenKind::Ident },
+            &empty_tokens(),
+        );
         assert!(matches!(t, WpdaTransition::Transition { .. }));
         assert_eq!(w.position(), 5);
     }
@@ -15968,15 +15654,15 @@ mod tests {
     #[test]
     fn process_event_branch_forked_enters_ambiguity_fanout() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdaEvent::BranchForked {
-            parent: 0,
-            children: vec![1, 2, 3],
-        }, &empty_tokens());
+        let t = w.process_event(
+            WpdaEvent::BranchForked { parent: 0, children: vec![1, 2, 3] },
+            &empty_tokens(),
+        );
         assert!(matches!(t, WpdaTransition::Transition { .. }));
         match w.state() {
             WpdaState::AmbiguityFanout { branches } => {
                 assert_eq!(branches, &vec![1u32, 2u32, 3u32]);
-            }
+            },
             other => panic!("expected AmbiguityFanout, got {:?}", other),
         }
     }
@@ -15984,17 +15670,17 @@ mod tests {
     #[test]
     fn process_event_branch_resolved_exits_ambiguity_fanout() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
-        let _ = w.process_event(WpdaEvent::BranchForked {
-            parent: 0,
-            children: vec![1, 2],
-        }, &empty_tokens());
-        let t = w.process_event(WpdaEvent::BranchResolved {
-            winner: 1,
-            weight: lex(2.5, 3, 4),
-        }, &empty_tokens());
+        let _ = w.process_event(
+            WpdaEvent::BranchForked { parent: 0, children: vec![1, 2] },
+            &empty_tokens(),
+        );
+        let t = w.process_event(
+            WpdaEvent::BranchResolved { winner: 1, weight: lex(2.5, 3, 4) },
+            &empty_tokens(),
+        );
         assert!(matches!(t, WpdaTransition::Transition { .. }));
         match w.state() {
-            WpdaState::InfixLoop { .. } => {}
+            WpdaState::InfixLoop { .. } => {},
             other => panic!("expected InfixLoop after resolution, got {:?}", other),
         }
         // Cumulative weight should reflect the resolved branch.
@@ -16006,24 +15692,27 @@ mod tests {
     #[test]
     fn process_event_semantic_action_fired_records_trace() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdaEvent::SemanticActionFired {
-            action_id: 42,
-            args: vec![0, 1, 2],
-        }, &empty_tokens());
+        let t = w.process_event(
+            WpdaEvent::SemanticActionFired { action_id: 42, args: vec![0, 1, 2] },
+            &empty_tokens(),
+        );
         assert!(matches!(t, WpdaTransition::Transition { trace: Some(_), .. }));
     }
 
     #[test]
     fn process_event_checkpoint_emits_checkpoint_transition() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
-        let t = w.process_event(WpdaEvent::Checkpoint {
-            reason: crate::wpda_runtime::CheckpointReason::NaturalBoundary,
-        }, &empty_tokens());
+        let t = w.process_event(
+            WpdaEvent::Checkpoint {
+                reason: crate::wpda_runtime::CheckpointReason::NaturalBoundary,
+            },
+            &empty_tokens(),
+        );
         match t {
             WpdaTransition::Checkpoint { config } => {
                 assert_eq!(config.pos, 0);
                 assert_eq!(config.state, WpdaState::Ready { min_bp: 0 });
-            }
+            },
             other => panic!("expected Checkpoint, got {:?}", other),
         }
     }
@@ -16087,7 +15776,7 @@ mod tests {
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push
         let initial_count = w.gss().node_count();
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Replace
-        // Replace adds a new node (replace_top creates rather than mutates).
+                                                                   // Replace adds a new node (replace_top creates rather than mutates).
         assert!(w.gss().node_count() > initial_count);
     }
 
@@ -16124,7 +15813,7 @@ mod tests {
         match w.state() {
             WpdaState::AmbiguityFanout { branches } => {
                 assert_eq!(branches.len(), 2);
-            }
+            },
             other => panic!("expected AmbiguityFanout after Fork, got {:?}", other),
         }
     }
@@ -16199,25 +15888,21 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
-        // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution. The
-        // walker drives cursors until parked, then resolves to the
-        // lex-min winner at end-of-input (vs the prior mid-stream commit
-        // which prematurely collapsed the cursor frontier). This
-        // synthetic test's script has no Term-pushing actions (only Pop
-        // transitions), so resolve returns ParseError "empty result"
-        // — but commit_winner_at_eoi DID fire and set walker.state +
-        // walker.weight from the lex-min winner. The test verifies the
-        // selection logic via state/weight inspection.
+                                                                   // Stage 3.5b (2026-05-01): WPDS-correct EOI resolution. The
+                                                                   // walker drives cursors until parked, then resolves to the
+                                                                   // lex-min winner at end-of-input (vs the prior mid-stream commit
+                                                                   // which prematurely collapsed the cursor frontier). This
+                                                                   // synthetic test's script has no Term-pushing actions (only Pop
+                                                                   // transitions), so resolve returns ParseError "empty result"
+                                                                   // — but commit_winner_at_eoi DID fire and set walker.state +
+                                                                   // walker.weight from the lex-min winner. The test verifies the
+                                                                   // selection logic via state/weight inspection.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
         // commit_winner_at_eoi sets self.state = winner.inner_state
         // (Accepted in this scripted test) and self.weight via times.
-        assert_eq!(
-            *w.state(),
-            WpdaState::Accepted,
-            "post-resolve walker state must be Accepted",
-        );
+        assert_eq!(*w.state(), WpdaState::Accepted, "post-resolve walker state must be Accepted",);
         let final_weight = w.weight();
         assert_eq!(
             final_weight.rule_idx, 0,
@@ -16377,7 +16062,7 @@ mod tests {
                     "expected 'all fork branches dropped' message, got: {}",
                     message
                 );
-            }
+            },
             other => panic!("expected Error state, got {:?}", other),
         }
     }
@@ -16426,10 +16111,10 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
-        // Stage 3.5b (2026-05-01): use new EOI-aware resolution API.
-        // Synthetic test (no Term push) — resolve returns ParseError
-        // but commit_winner_at_eoi DID fire and set walker.state from
-        // the winner's inner_state.
+                                                                   // Stage 3.5b (2026-05-01): use new EOI-aware resolution API.
+                                                                   // Synthetic test (no Term push) — resolve returns ParseError
+                                                                   // but commit_winner_at_eoi DID fire and set walker.state from
+                                                                   // the winner's inner_state.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
@@ -16465,14 +16150,44 @@ mod tests {
     }
 
     #[test]
+    fn process_event_pins_recovery_cache_and_config() {
+        let mut walker = recovery_pin_probe_walker();
+        let transition = walker.process_event(WpdaEvent::Step, &empty_tokens());
+
+        assert!(
+            matches!(transition, WpdaTransition::Done { state: WpdaState::Accepted }),
+            "process_event must expose both recovery cache and active config to engine.step; \
+             got {transition:?}",
+        );
+        assert_eq!(
+            walker.recovery_cohort_cache.registrations_total, 1,
+            "probe engine must have observed and touched the pinned recovery cache",
+        );
+    }
+
+    #[test]
+    fn run_to_completion_pins_recovery_cache_and_config() {
+        let mut walker = recovery_pin_probe_walker();
+        let final_state = walker.run_to_completion(2, &empty_tokens());
+
+        assert_eq!(final_state, WpdaState::Accepted);
+        assert_eq!(
+            walker.recovery_cohort_cache.registrations_total, 1,
+            "run_to_completion must expose the pinned recovery cache to engine.step",
+        );
+    }
+
+    #[test]
     fn run_to_saturation_errors_on_idle_in_non_terminal_state() {
         // B6 (2026-04-28): when the engine returns Idle in a non-terminal
         // state, the walker surfaces the stall as Error rather than
         // silently exiting (which would let callers think parse "completed"
         // when it actually got stuck mid-derivation).
-        let engine = ScriptedEngine::new(vec![
-            WpdaStepAction::Advance(WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 }),
-        ]);
+        let engine =
+            ScriptedEngine::new(vec![WpdaStepAction::Advance(WpdaState::PrefixDispatch {
+                pos: 0,
+                cur_bp: 0,
+            })]);
         let mut w = WpdaWalker::new(engine, 0);
         let s = w.run_to_saturation(100, &empty_tokens());
         match s {
@@ -16482,9 +16197,21 @@ mod tests {
                     "expected stall-Error message; got: {}",
                     message,
                 );
-            }
+            },
             other => panic!("expected Error after Idle in non-terminal state; got {:?}", other),
         }
+    }
+
+    #[test]
+    fn run_to_saturation_pins_recovery_cache_and_config() {
+        let mut walker = recovery_pin_probe_walker();
+        let final_state = walker.run_to_saturation(10, &empty_tokens());
+
+        assert_eq!(final_state, WpdaState::Accepted);
+        assert_eq!(
+            walker.recovery_cohort_cache.registrations_total, 1,
+            "run_to_saturation must expose the pinned recovery cache to engine.step",
+        );
     }
 
     #[test]
@@ -16499,6 +16226,33 @@ mod tests {
     }
 
     #[test]
+    fn run_to_end_of_input_pins_recovery_cache_and_config() {
+        let mut walker = recovery_pin_probe_walker();
+        walker
+            .run_to_end_of_input(2, &empty_tokens())
+            .expect("accepted probe should terminate on the following loop iteration");
+
+        assert_eq!(walker.state, WpdaState::Accepted);
+        assert_eq!(
+            walker.recovery_cohort_cache.registrations_total, 1,
+            "run_to_end_of_input must expose the pinned recovery cache to engine.step",
+        );
+    }
+
+    #[test]
+    fn run_with_consumer_observed_pins_recovery_cache_and_config() {
+        let mut walker = recovery_pin_probe_walker();
+        let mut consumer = ActiveRecoveryPinsProbeConsumer;
+        let final_state = walker.run_with_consumer_observed(&mut consumer, 2, &empty_tokens());
+
+        assert_eq!(final_state, WpdaState::Accepted);
+        assert_eq!(
+            walker.recovery_cohort_cache.registrations_total, 1,
+            "run_with_consumer_observed must expose the pinned recovery cache to engine.step",
+        );
+    }
+
+    #[test]
     fn current_configuration_snapshot_captures_position_and_weight() {
         let engine = ScriptedEngine::new(vec![WpdaStepAction::Push {
             symbol: StackSymbolV2::rule_at(0, 0, 0, None),
@@ -16506,10 +16260,10 @@ mod tests {
             new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
         }]);
         let mut w = WpdaWalker::new(engine, 7);
-        let _ = w.process_event(WpdaEvent::TokenConsumed {
-            pos: 4,
-            token: TokenKind::Ident,
-        }, &empty_tokens());
+        let _ = w.process_event(
+            WpdaEvent::TokenConsumed { pos: 4, token: TokenKind::Ident },
+            &empty_tokens(),
+        );
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cfg = w.current_configuration();
         assert_eq!(cfg.pos, 4);
@@ -16676,16 +16430,12 @@ mod tests {
                 WpdaState::Ready { min_bp } => WpdaStepAction::Push {
                     symbol: StackSymbolV2::category_entry(0),
                     weight: LexicographicWeight::from_cost(0.0, 0, 0),
-                    new_state: WpdaState::PrefixDispatch {
-                        pos: 0,
-                        cur_bp: *min_bp,
-                    },
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: *min_bp },
                 },
                 WpdaState::PrefixDispatch { pos, cur_bp } => {
                     if let Some(TokenKind::Integer) = tokens.peek_kind(*pos) {
                         WpdaStepAction::ConsumeAndPush {
-                            symbol: StackSymbolV2::rule_at(0, 0, 0, None)
-                                .with_kind_return(),
+                            symbol: StackSymbolV2::rule_at(0, 0, 0, None).with_kind_return(),
                             weight: LexicographicWeight::from_cost(0.0, 0, 0),
                             new_state: WpdaState::Unwinding,
                             trigger_mode: TriggerMode::CaptureForBuilder,
@@ -16694,7 +16444,7 @@ mod tests {
                         let _ = cur_bp;
                         WpdaStepAction::Error("expected Integer".into())
                     }
-                }
+                },
                 WpdaState::Unwinding => match frontier_top.map(|n| n.symbol.kind) {
                     Some(SymbolKind::Return) => WpdaStepAction::Pop {
                         weight: LexicographicWeight::one(),
@@ -16739,8 +16489,7 @@ mod tests {
         let tokens = [TokenKind::Integer];
         let texts = ["42"];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
-        let mut walker: WpdaWalker<LexicographicWeight, _> =
-            WpdaWalker::new(AtomicIntEngine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
         let final_state = walker.run_to_saturation(50, &token_src);
         assert_eq!(final_state, WpdaState::Accepted, "walker reaches Accepted");
         // Phase F.3c.1 (2026-05-20): use the production extraction path
@@ -16754,7 +16503,7 @@ mod tests {
             WpdaResolveResult::Accepted { mut terms, .. } => {
                 assert_eq!(terms.len(), 1, "expected single unambiguous parse");
                 terms.pop().expect("Accepted with non-empty terms")
-            }
+            },
             other => panic!("expected Accepted, got {:?}", other),
         };
         let result_i64 = term_arc
@@ -16770,8 +16519,7 @@ mod tests {
         let tokens = [TokenKind::Ident];
         let texts = ["foo"];
         let token_src = SliceTokenSource::with_texts(&tokens, &texts);
-        let mut walker: WpdaWalker<LexicographicWeight, _> =
-            WpdaWalker::new(AtomicIntEngine, 0);
+        let mut walker: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(AtomicIntEngine, 0);
         let final_state = walker.run_to_saturation(50, &token_src);
         match final_state {
             WpdaState::Error { message } => assert!(message.contains("expected Integer")),
@@ -16849,7 +16597,10 @@ mod tests {
             _pos: usize,
             _tokens: &dyn WpdaTokenSource,
         ) -> WpdaStepAction<LexicographicWeight> {
-            self.script.borrow_mut().pop().unwrap_or(WpdaStepAction::Idle)
+            self.script
+                .borrow_mut()
+                .pop()
+                .unwrap_or(WpdaStepAction::Idle)
         }
         fn action_for(&self, src_idx: u16, rule_idx: u16) -> Option<&ActionEntry> {
             match (src_idx, rule_idx) {
@@ -16952,18 +16703,15 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // outer Fork
-        // Stage 3.5b (2026-05-01): nested Fork lex-min winner is now
-        // selected at end-of-input via resolve_at_end_of_input.
-        // Synthetic test (no Term push) — resolve returns ParseError
-        // but commit_winner_at_eoi DID fire and set walker.state.
+                                                                   // Stage 3.5b (2026-05-01): nested Fork lex-min winner is now
+                                                                   // selected at end-of-input via resolve_at_end_of_input.
+                                                                   // Synthetic test (no Term push) — resolve returns ParseError
+                                                                   // but commit_winner_at_eoi DID fire and set walker.state.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
         assert_eq!(*w.state(), WpdaState::Accepted);
-        assert_eq!(
-            w.weight().rule_idx, 0,
-            "expected lex-min grandchild (rule_idx=0) to win",
-        );
+        assert_eq!(w.weight().rule_idx, 0, "expected lex-min grandchild (rule_idx=0) to win",);
     }
 
     /// Cleanup 1 + Option A core: a Fork branch opens an empty collection
@@ -17022,13 +16770,17 @@ mod tests {
             },
         ]);
         let mut w = WpdaWalker::new(engine, 0);
-        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
-        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
-        // Stage 3.5b (2026-05-01): the finalize action's Term result
-        // surfaces via WpdaResolveResult::Accepted, not via builder.take_result.
-        w.run_to_end_of_input(100, &empty_tokens())
+        let token_kinds = [TokenKind::Fixed(")".to_string()), TokenKind::Eof];
+        let token_texts = [")", ""];
+        let token_src =
+            crate::wpda_runtime::SliceTokenSource::with_texts(&token_kinds, &token_texts);
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // entry
+        let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork
+                                                              // Stage 3.5b (2026-05-01): the finalize action's Term result
+                                                              // surfaces via WpdaResolveResult::Accepted, not via builder.take_result.
+        w.run_to_end_of_input(100, &token_src)
             .expect("max_steps not exceeded");
-        let result = w.resolve_at_end_of_input(&empty_tokens());
+        let result = w.resolve_at_end_of_input(&token_src);
         match result {
             WpdaResolveResult::Accepted { terms, .. } => {
                 let term = terms.into_iter().next().expect("≥1 term required");
@@ -17036,13 +16788,13 @@ mod tests {
                     .downcast::<usize>()
                     .expect("expected usize Term from finalize action");
                 assert_eq!(val, 0, "expected drain_collection(0) to yield 0 elements");
-            }
+            },
             other => panic!("expected Accepted; got {:?}", other),
         }
     }
 
-    /// Cleanup 4: nested Fork while a cursor has opened a collection (but
-    /// not yet pushed elements). Verifies `BranchCursor::clone` succeeds —
+    /// Cleanup 4: nested Fork while a cursor has opened a collection (before
+    /// pushing elements). Verifies `BranchCursor::clone` succeeds —
     /// the empty `collection_stack` debug_assert holds.
     #[test]
     fn cursor_local_collection_in_nested_fork() {
@@ -17100,11 +16852,11 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // outer Fork
-        // Stage 3.5b (2026-05-01): drive — must NOT panic on
-        // collection_stack debug_assert during the nested Fork's clone
-        // path. (The cursor opened a collection but accumulator 0 is
-        // empty when the inner Fork fires.) Under the new EOI semantics,
-        // commit happens via resolve_at_end_of_input.
+                                                                   // Stage 3.5b (2026-05-01): drive — must NOT panic on
+                                                                   // collection_stack debug_assert during the nested Fork's clone
+                                                                   // path. (The cursor opened a collection but accumulator 0 is
+                                                                   // empty when the inner Fork fires.) Under the new EOI semantics,
+                                                                   // commit happens via resolve_at_end_of_input.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         // Post-B13d-R (Candidate H, 2026-05-08): scripted cursors that
@@ -17149,10 +16901,8 @@ mod tests {
     fn losing_branch_with_deltas_no_live_side_effect() {
         let token_kinds = [TokenKind::Integer];
         let token_texts = ["42"];
-        let token_src = crate::wpda_runtime::SliceTokenSource::with_texts(
-            &token_kinds,
-            &token_texts,
-        );
+        let token_src =
+            crate::wpda_runtime::SliceTokenSource::with_texts(&token_kinds, &token_texts);
         let engine = ScriptedEngine::new(vec![
             // Pops for 2 cursors (LIFO).
             WpdaStepAction::Pop {
@@ -17203,8 +16953,8 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         let _ = w.process_event(WpdaEvent::Step, &token_src); // entry
         let _ = w.process_event(WpdaEvent::Step, &token_src); // Fork
-        // Drive until parked at EOI. Both cursors reach pos=1=EOI in
-        // InfixLoop after their Pop.
+                                                              // Drive until parked at EOI. Both cursors reach pos=1=EOI in
+                                                              // InfixLoop after their Pop.
         w.run_to_end_of_input(100, &token_src).expect("max_steps");
         // Resolve fires commit_winner_at_eoi(0) on the lex-min winner.
         // The winner's recovery_deltas replays exactly once; the
@@ -17322,14 +17072,14 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // entry
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
-        // Phase 5.5 (2026-05-12): emit_fire_action now eagerly fires the
-        // action_fn on cursor.builder during the Pop step. The arity
-        // underflow detected in fire_action_for_on_builder sets
-        // walker.state = WpdaState::Error directly (rather than waiting
-        // for commit_winner replay). Capture state BEFORE the subsequent
-        // run_to_end_of_input/resolve loop, which may transition the
-        // walker through dead-cursor cleanup and overwrite the live
-        // state with a recovery value.
+                                                                   // Phase 5.5 (2026-05-12): emit_fire_action now eagerly fires the
+                                                                   // action_fn on cursor.builder during the Pop step. The arity
+                                                                   // underflow detected in fire_action_for_on_builder sets
+                                                                   // walker.state = WpdaState::Error directly (rather than waiting
+                                                                   // for commit_winner replay). Capture state BEFORE the subsequent
+                                                                   // run_to_end_of_input/resolve loop, which may transition the
+                                                                   // walker through dead-cursor cleanup and overwrite the live
+                                                                   // state with a recovery value.
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Pop with underflow
         let post_pop_state = w.state().clone();
         // resolve_at_end_of_input still runs to ensure no spurious
@@ -17350,16 +17100,16 @@ mod tests {
         match post_pop_state {
             WpdaState::Error { ref message } => {
                 assert!(
-                    message.contains("arity") || message.contains("under")
+                    message.contains("arity")
+                        || message.contains("under")
                         || message.contains("dropped"),
                     "expected arity / underflow / dropped error; got: {}",
                     message,
                 );
-            }
-            ref other => panic!(
-                "expected Error after arity underflow at Pop step; got {:?}",
-                other,
-            ),
+            },
+            ref other => {
+                panic!("expected Error after arity underflow at Pop step; got {:?}", other,)
+            },
         }
     }
 
@@ -17385,10 +17135,7 @@ mod tests {
         assert!(w.deterministic(), "starts deterministic");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1, "singleton cursor at construction");
-        assert!(
-            cursors[0].recovery_deltas.is_empty(),
-            "recovery_deltas empty at construction"
-        );
+        assert!(cursors[0].recovery_deltas.is_empty(), "recovery_deltas empty at construction");
     }
 
     /// First Fork flips deterministic from true to false.
@@ -17512,10 +17259,7 @@ mod tests {
         assert!(w.deterministic(), "no Fork → still deterministic");
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
-        assert!(
-            cursors[0].recovery_deltas.is_empty(),
-            "no deltas to replay"
-        );
+        assert!(cursors[0].recovery_deltas.is_empty(), "no deltas to replay");
         assert_eq!(*w.state(), WpdaState::Accepted);
     }
 
@@ -17582,7 +17326,7 @@ mod tests {
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork → nondeterministic
         assert!(!w.deterministic());
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push (under fanout)
-        // The cursor must show an open optional scope.
+                                                                   // The cursor must show an open optional scope.
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
         // Phase F.3c.1 (2026-05-20): inspect the SPPF-side mirror
@@ -17789,11 +17533,7 @@ mod tests {
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
         let cursors = w.branch_cursors_for_test();
         assert_eq!(cursors.len(), 1);
-        assert_eq!(
-            cursors[0].pos,
-            pos_before + 1,
-            "ConsumeAndPop must advance pos by 1",
-        );
+        assert_eq!(cursors[0].pos, pos_before + 1, "ConsumeAndPop must advance pos by 1",);
         assert!(
             matches!(cursors[0].inner_state, WpdaState::Unwinding),
             "ConsumeAndPop must transition to new_state",
@@ -17842,14 +17582,153 @@ mod tests {
         // of `cursor.builder.current_binder_scope()` (deleted F.3c.4).
         // StartBinderScope pushes a new (depth, names) tuple via the
         // emit_start_binder_scope helper / apply_effect_to_cursor.
-        let scope = cursors[0]
-            .binder_scope_marks
-            .last()
-            .expect("ConsumeAndReplaceWithEffect with StartBinderScope effect must \
-                     push onto binder_scope_marks");
+        let scope = cursors[0].binder_scope_marks.last().expect(
+            "ConsumeAndReplaceWithEffect with StartBinderScope effect must \
+                     push onto binder_scope_marks",
+        );
         assert!(
             scope.1.is_empty(),
             "Opened scope must have the empty names from the StartBinderScope effect",
+        );
+    }
+
+    #[test]
+    fn fork_action_lex_alt_postfix_op_pushes_and_advances() {
+        let engine = ScriptedEngine::new(vec![
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(0, 7, 0, Some(3)).with_kind_return(),
+                    weight: lex(0.0, 0, 7),
+                    new_state: WpdaState::Unwinding,
+                    action_kind: ForkActionKind::LexAltPostfixOp {
+                        alt_idx: 2,
+                        trigger: "!".to_string(),
+                        rule_idx: 7,
+                        next_pos: 11,
+                        l_bp: 5,
+                        result_src_idx: 0,
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdaStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdaState::InfixLoop { cur_bp: 3 },
+            },
+        ]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].pos, 11);
+        assert!(matches!(cursors[0].inner_state, WpdaState::Unwinding));
+        assert_eq!(
+            cursors[0].lex_fork_path.last().copied(),
+            Some(LexForkStamp {
+                pos: 0,
+                alt_idx: 2,
+                src_idx: 0,
+                rule_idx: 7
+            }),
+        );
+    }
+
+    #[test]
+    fn fork_action_lex_alt_infix_op_pushes_and_advances() {
+        let engine = ScriptedEngine::new(vec![
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::rule_at(1, 9, 0, Some(4)).with_kind_return(),
+                    weight: lex(0.0, 1, 9),
+                    new_state: WpdaState::PrefixDispatch { pos: 13, cur_bp: 6 },
+                    action_kind: ForkActionKind::LexAltInfixOp {
+                        alt_idx: 3,
+                        trigger: "+".to_string(),
+                        rule_idx: 9,
+                        next_pos: 13,
+                        l_bp: 4,
+                        r_bp: 6,
+                        result_src_idx: 1,
+                        source_cat_src_idx: 1,
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdaStepAction::Push {
+                symbol: StackSymbolV2::category_entry(1),
+                weight: lex(0.0, 1, 0),
+                new_state: WpdaState::InfixLoop { cur_bp: 4 },
+            },
+        ]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].pos, 13);
+        assert!(matches!(
+            cursors[0].inner_state,
+            WpdaState::PrefixDispatch { pos: 13, cur_bp: 6 }
+        ));
+        assert_eq!(
+            cursors[0].lex_fork_path.last().copied(),
+            Some(LexForkStamp {
+                pos: 0,
+                alt_idx: 3,
+                src_idx: 1,
+                rule_idx: 9
+            }),
+        );
+    }
+
+    #[test]
+    fn fork_action_lex_alt_mixfix_op_pushes_and_advances() {
+        let engine = ScriptedEngine::new(vec![
+            WpdaStepAction::Accept,
+            WpdaStepAction::Fork {
+                branches: vec![ForkBranch {
+                    symbol: StackSymbolV2::mixfix_marker(2, 5, 0),
+                    weight: lex(0.0, 2, 5),
+                    new_state: WpdaState::PrefixDispatch { pos: 17, cur_bp: 0 },
+                    action_kind: ForkActionKind::LexAltMixfixOp {
+                        alt_idx: 4,
+                        trigger: "?".to_string(),
+                        rule_idx: 5,
+                        next_pos: 17,
+                        l_bp: 2,
+                        result_src_idx: 2,
+                    },
+                }],
+                consume_trigger: false,
+            },
+            WpdaStepAction::Push {
+                symbol: StackSymbolV2::category_entry(2),
+                weight: lex(0.0, 2, 0),
+                new_state: WpdaState::InfixLoop { cur_bp: 2 },
+            },
+        ]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens());
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].pos, 17);
+        assert!(matches!(
+            cursors[0].inner_state,
+            WpdaState::PrefixDispatch { pos: 17, cur_bp: 0 }
+        ));
+        assert_eq!(
+            cursors[0].lex_fork_path.last().copied(),
+            Some(LexForkStamp {
+                pos: 0,
+                alt_idx: 4,
+                src_idx: 2,
+                rule_idx: 5
+            }),
         );
     }
 
@@ -17929,15 +17808,11 @@ mod tests {
         let final_state = w.run_to_saturation(50, &token_src);
         match final_state {
             WpdaState::Error { message } => assert!(
-                message.contains("all fork branches dropped")
-                    || message.contains("dropped"),
+                message.contains("all fork branches dropped") || message.contains("dropped"),
                 "expected 'all fork branches dropped'-style Error, got: {}",
                 message,
             ),
-            other => panic!(
-                "expected Error after guard-fail single-branch Fork, got {:?}",
-                other,
-            ),
+            other => panic!("expected Error after guard-fail single-branch Fork, got {:?}", other,),
         }
     }
 
@@ -18017,10 +17892,7 @@ mod tests {
                 "expected 'all fork branches dropped'-style Error, got: {}",
                 message,
             ),
-            other => panic!(
-                "expected Error after Ident guard-fail, got {:?}",
-                other,
-            ),
+            other => panic!("expected Error after Ident guard-fail, got {:?}", other,),
         }
     }
 
@@ -18048,9 +17920,7 @@ mod tests {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(0.0, 0, 0),
             new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
-            action_kind: ForkActionKind::GuardedConsumeIdentAndReplace {
-                start_scope: true,
-            },
+            action_kind: ForkActionKind::GuardedConsumeIdentAndReplace { start_scope: true },
         };
         assert!(
             !is_recovery_fork(&[guarded_ident]),
@@ -18120,11 +17990,53 @@ mod tests {
     #[test]
     fn bp_tier_constants_strictly_increasing() {
         use crate::automata::lex_weight::{
-            BP_TIER_INFIX, BP_TIER_CROSSCAT_LHS, BP_TIER_POSTFIX, BP_TIER_MIXFIX,
+            BP_TIER_CROSSCAT_LHS, BP_TIER_INFIX, BP_TIER_MIXFIX, BP_TIER_POSTFIX,
         };
         assert!(BP_TIER_INFIX < BP_TIER_CROSSCAT_LHS);
         assert!(BP_TIER_CROSSCAT_LHS < BP_TIER_POSTFIX);
         assert!(BP_TIER_POSTFIX < BP_TIER_MIXFIX);
+    }
+
+    #[test]
+    fn packed_dispatch_config_roundtrips_largest_representable_valid_position() {
+        let max_valid_u64 = u64::try_from(usize::MAX)
+            .unwrap_or(u64::MAX)
+            .min(PackedDispatchConfig::POS_LIMIT - 1);
+        let max_valid =
+            usize::try_from(max_valid_u64).expect("representable position converts to usize");
+        let packed = PackedDispatchConfig::pack(max_valid, u16::MAX, u8::MAX);
+        assert_eq!(packed.unpack(), (max_valid, u16::MAX, u8::MAX));
+        assert_eq!(
+            PackedDispatchConfig::try_pack(max_valid, 17, 23)
+                .expect("max valid position must pack")
+                .unpack(),
+            (max_valid, 17, 23),
+        );
+    }
+
+    #[test]
+    fn packed_dispatch_config_try_pack_rejects_overflow_position_when_representable() {
+        if let Ok(first_invalid) = usize::try_from(PackedDispatchConfig::POS_LIMIT) {
+            assert!(
+                PackedDispatchConfig::try_pack(first_invalid, 0, 0).is_none(),
+                "try_pack must reject positions outside the 40-bit formal domain",
+            );
+        } else {
+            let max_representable_pos = u64::try_from(usize::MAX).unwrap_or(u64::MAX);
+            assert!(
+                max_representable_pos < PackedDispatchConfig::POS_LIMIT,
+                "if the formal overflow boundary is not representable, every usize position is valid",
+            );
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    #[should_panic(expected = "overflows 40 bits")]
+    fn packed_dispatch_config_pack_panics_on_overflow_position_when_representable() {
+        let first_invalid =
+            usize::try_from(PackedDispatchConfig::POS_LIMIT).expect("40-bit pos fits usize");
+        let _ = PackedDispatchConfig::pack(first_invalid, 0, 0);
     }
 
     /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): `is_recovery_fork`
@@ -18195,7 +18107,8 @@ mod tests {
 
     /// Bounded recovery (Stage 3.20 / L12, 2026-05-06): the
     /// `forward_progress_or_insert` filter accepts branches that either
-    /// advance pos past `base_pos` OR carry an `InsertToken` effect.
+    /// advance pos past `base_pos` OR carry an insert-bearing recovery
+    /// effect.
     /// Branches that meet neither criterion are dropped — they would
     /// re-fire the same recovery dispatch at the same configuration.
     #[test]
@@ -18250,6 +18163,182 @@ mod tests {
             "branch with new_state.pos==base_pos AND InsertToken effect must \
              pass filter (synthetic splice — live stream mutates at commit)"
         );
+
+        let non_advancing_insert_sequence: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 3, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::ApplyRecoverySequence {
+                    actions: std::sync::Arc::from(
+                        vec![ResolvedRepairAction::InsertToken {
+                            kind: TokenKind::Fixed(")".into()),
+                            text: ")".into(),
+                        }]
+                        .into_boxed_slice(),
+                    ),
+                    base_pos: 3,
+                    target_pos: 3,
+                    total_cost_tropical: 2.0,
+                },
+            },
+        };
+        assert!(
+            forward_progress_or_insert(&non_advancing_insert_sequence, 3),
+            "non-advancing ApplyRecoverySequence with an InsertToken must \
+             pass the walker-side mirror of the synthesis filter"
+        );
+
+        let non_advancing_delete_sequence: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 3, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::ApplyRecoverySequence {
+                    actions: std::sync::Arc::from(
+                        vec![ResolvedRepairAction::DeleteToken].into_boxed_slice(),
+                    ),
+                    base_pos: 3,
+                    target_pos: 3,
+                    total_cost_tropical: 2.0,
+                },
+            },
+        };
+        assert!(
+            !forward_progress_or_insert(&non_advancing_delete_sequence, 3),
+            "non-advancing ApplyRecoverySequence without an insert must still \
+             be dropped as a recovery loop"
+        );
+    }
+
+    #[test]
+    fn bounded_recovery_target_position_filter() {
+        let matching_substitute: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(1.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 4, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::SubstituteToken {
+                    pos: 3,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        assert!(
+            recovery_effect_target_matches_branch_state(&matching_substitute),
+            "SubstituteToken at pos 3 must target PrefixDispatch pos 4",
+        );
+
+        let mismatched_substitute: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(1.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 5, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::SubstituteToken {
+                    pos: 3,
+                    kind: TokenKind::Fixed(")".into()),
+                    text: ")".into(),
+                },
+            },
+        };
+        assert!(
+            !recovery_effect_target_matches_branch_state(&mismatched_substitute),
+            "SubstituteToken target mismatch must be rejected even if it advances",
+        );
+
+        let matching_sequence: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 7, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::ApplyRecoverySequence {
+                    actions: std::sync::Arc::from(
+                        vec![ResolvedRepairAction::DeleteToken].into_boxed_slice(),
+                    ),
+                    base_pos: 6,
+                    target_pos: 7,
+                    total_cost_tropical: 1.0,
+                },
+            },
+        };
+        assert!(recovery_effect_target_matches_branch_state(&matching_sequence));
+
+        let mismatched_sequence: ForkBranch<LexicographicWeight> = ForkBranch {
+            symbol: StackSymbolV2::category_entry(0),
+            weight: lex(2.0, 0, 0),
+            new_state: WpdaState::PrefixDispatch { pos: 8, cur_bp: 0 },
+            action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                effect: BuilderDelta::ApplyRecoverySequence {
+                    actions: std::sync::Arc::from(
+                        vec![ResolvedRepairAction::DeleteToken].into_boxed_slice(),
+                    ),
+                    base_pos: 6,
+                    target_pos: 7,
+                    total_cost_tropical: 1.0,
+                },
+            },
+        };
+        assert!(
+            !recovery_effect_target_matches_branch_state(&mismatched_sequence),
+            "ApplyRecoverySequence target_pos must mirror branch.new_state.pos",
+        );
+    }
+
+    #[test]
+    fn bounded_recovery_rejects_mismatched_target_branch() {
+        let recovery_fork = WpdaStepAction::Fork {
+            branches: vec![
+                ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(1.0, 0, 0),
+                    new_state: WpdaState::PrefixDispatch { pos: 2, cur_bp: 0 },
+                    action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                        effect: BuilderDelta::SubstituteToken {
+                            pos: 0,
+                            kind: TokenKind::Fixed(")".into()),
+                            text: ")".into(),
+                        },
+                    },
+                },
+                ForkBranch {
+                    symbol: StackSymbolV2::category_entry(0),
+                    weight: lex(2.0, 0, 0),
+                    new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
+                    action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
+                        effect: BuilderDelta::InsertToken {
+                            pos: 0,
+                            kind: TokenKind::Fixed(";".into()),
+                            text: ";".into(),
+                        },
+                    },
+                },
+            ],
+            consume_trigger: false,
+        };
+        let engine = ScriptedEngine::new(vec![
+            recovery_fork,
+            WpdaStepAction::Push {
+                symbol: StackSymbolV2::category_entry(0),
+                weight: lex(0.0, 0, 0),
+                new_state: WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            },
+        ]);
+        let mut w = WpdaWalker::new(engine, 0);
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Push entry
+        let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Recovery Fork
+
+        let cursors = w.branch_cursors_for_test();
+        assert_eq!(
+            cursors.len(),
+            1,
+            "mismatched substitute branch must be filtered before child allocation",
+        );
+        assert_eq!(
+            cursors[0].inner_state,
+            WpdaState::PrefixDispatch { pos: 0, cur_bp: 0 },
+            "only the target-valid InsertToken branch should survive",
+        );
     }
 
     /// Stage 3.20 / L12 Commit D (2026-05-06) — bounded recovery: a cursor
@@ -18262,19 +18351,20 @@ mod tests {
     /// expecting the 4th to error out per the bound.
     #[test]
     fn bounded_recovery_depth_cap_terminates_cursor() {
-        // Synthetic recovery Fork: single branch with InsertToken
-        // effect (qualifies as recovery per is_recovery_fork) and a
-        // `new_state.pos > base_pos` so forward-progress filter
-        // accepts it. Each dispatch bumps recovery_depth by 1.
+        // Synthetic recovery Fork: single branch with a cursor-only
+        // RecoveryEvent effect (qualifies as recovery per is_recovery_fork)
+        // and a `new_state.pos > base_pos` so the forward-progress and
+        // target-position filters accept it. Each dispatch bumps
+        // recovery_depth by 1.
         let recovery_branch = || ForkBranch {
             symbol: StackSymbolV2::category_entry(0),
             weight: lex(1.0, 0, 0),
             new_state: WpdaState::PrefixDispatch { pos: 1, cur_bp: 0 },
             action_kind: ForkActionKind::ConsumeAndReplaceWithEffect {
-                effect: BuilderDelta::InsertToken {
+                effect: BuilderDelta::RecoveryEvent {
+                    action_kind: 1,
                     pos: 0,
-                    kind: TokenKind::Fixed(")".into()),
-                    text: ")".into(),
+                    cost_tropical: 1.0,
                 },
             },
         };
@@ -18313,7 +18403,7 @@ mod tests {
                      (cursor depths: {:?})",
                     other, depths,
                 );
-            }
+            },
         }
     }
 
@@ -18379,10 +18469,7 @@ mod tests {
                 "expected visited-set / cycle-defense / cap Error, got: {}",
                 message,
             ),
-            other => panic!(
-                "expected Error after re-dispatch at same config, got {:?}",
-                other,
-            ),
+            other => panic!("expected Error after re-dispatch at same config, got {:?}", other,),
         }
     }
 
@@ -18399,14 +18486,10 @@ mod tests {
     // whitespace-tokenizing fake_lex (mirroring wpda_runtime.rs:1810).
     // ════════════════════════════════════════════════════════════════════════
 
-    use crate::recovery::RepairAction;
-    use crate::token_id::TokenId;
     use crate::wpda_runtime::MutableMultiTokenSource;
 
     /// Helper: trivial whitespace-tokenizing lexer for replay tests.
-    fn fake_lex_for_replay(
-        input: &str,
-    ) -> Result<crate::lexer_types::LexStream, String> {
+    fn fake_lex_for_replay(input: &str) -> Result<crate::lexer_types::LexStream, String> {
         let mut entries = Vec::new();
         let bytes = input.as_bytes();
         let mut i = 0usize;
@@ -18444,8 +18527,9 @@ mod tests {
     /// mutates `mutable_src` but the test only asserts on
     /// `walker.recovery_trace()`, not on the source state, so the split
     /// is invisible to the assertions.
-    fn drive_recovery_replay(
+    fn drive_recovery_replay_internal(
         recovery_effect: BuilderDelta,
+        seed_caches_before_resolve: bool,
     ) -> Vec<RecoveryEvent> {
         let mut mutable_src =
             MutableMultiTokenSource::new("foo bar baz".to_string(), fake_lex_for_replay)
@@ -18489,9 +18573,20 @@ mod tests {
         // then resolve to fire commit_winner_at_eoi which replays the winner's
         // recovery_deltas onto walker.recovery_events.
         let _ = w.run_to_end_of_input(50, &read_src);
+        if seed_caches_before_resolve {
+            seed_token_dependent_cache_entries(&mut w);
+            assert_token_dependent_cache_entries_seeded(&w);
+        }
         let _ = w.resolve_at_end_of_input(&read_src);
+        if seed_caches_before_resolve {
+            assert_token_dependent_caches_invalidated_preserving_diagnostics(&w);
+        }
         w.clear_mutable_token_source();
         w.recovery_trace().to_vec()
+    }
+
+    fn drive_recovery_replay(recovery_effect: BuilderDelta) -> Vec<RecoveryEvent> {
+        drive_recovery_replay_internal(recovery_effect, false)
     }
 
     /// Stage 3.20 / L12 Commit G follow-up — `ApplyRecoverySequence` with a
@@ -18499,15 +18594,13 @@ mod tests {
     /// at the post-skip position.
     #[test]
     fn replay_apply_recovery_sequence_skip_to_sync() {
-        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
-            RepairAction::SkipToSync {
-                skip_count: 2,
-                sync_token: TokenId::MAX,
-            },
-        ].into_boxed_slice());
+        let actions: std::sync::Arc<[ResolvedRepairAction]> = std::sync::Arc::from(
+            vec![ResolvedRepairAction::SkipToSync { skip_count: 2 }].into_boxed_slice(),
+        );
         let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
             actions,
             base_pos: 0,
+            target_pos: 2,
             total_cost_tropical: 0.5,
         });
         assert_eq!(trace.len(), 1, "SkipToSync must produce 1 RecoveryEvent");
@@ -18519,12 +18612,12 @@ mod tests {
     /// `DeleteToken` step replays as action_kind=1 with cur_pos+=1.
     #[test]
     fn replay_apply_recovery_sequence_delete_token() {
-        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
-            RepairAction::DeleteToken,
-        ].into_boxed_slice());
+        let actions: std::sync::Arc<[ResolvedRepairAction]> =
+            std::sync::Arc::from(vec![ResolvedRepairAction::DeleteToken].into_boxed_slice());
         let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
             actions,
             base_pos: 0,
+            target_pos: 1,
             total_cost_tropical: 1.0,
         });
         assert_eq!(trace.len(), 1, "DeleteToken must produce 1 RecoveryEvent");
@@ -18537,12 +18630,17 @@ mod tests {
     /// `src.insert_token` AND logs RecoveryEvent::insert (action_kind=2).
     #[test]
     fn replay_apply_recovery_sequence_insert_token() {
-        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
-            RepairAction::InsertToken { token: 0u16 as TokenId },
-        ].into_boxed_slice());
+        let actions: std::sync::Arc<[ResolvedRepairAction]> = std::sync::Arc::from(
+            vec![ResolvedRepairAction::InsertToken {
+                kind: TokenKind::Fixed(";".into()),
+                text: ";".into(),
+            }]
+            .into_boxed_slice(),
+        );
         let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
             actions,
             base_pos: 0,
+            target_pos: 0,
             total_cost_tropical: 2.0,
         });
         assert_eq!(trace.len(), 1, "InsertToken must produce 1 RecoveryEvent");
@@ -18553,18 +18651,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn replay_token_mutation_invalidates_token_dependent_caches() {
+        let actions: std::sync::Arc<[ResolvedRepairAction]> = std::sync::Arc::from(
+            vec![ResolvedRepairAction::InsertToken {
+                kind: TokenKind::Fixed(";".into()),
+                text: ";".into(),
+            }]
+            .into_boxed_slice(),
+        );
+        let trace = drive_recovery_replay_internal(
+            BuilderDelta::ApplyRecoverySequence {
+                actions,
+                base_pos: 0,
+                target_pos: 0,
+                total_cost_tropical: 2.0,
+            },
+            true,
+        );
+        assert_eq!(trace.len(), 1, "InsertToken must produce 1 RecoveryEvent");
+        assert_eq!(trace[0].action_kind, 2, "InsertToken → action_kind=2");
+    }
+
     /// Stage 3.20 / L12 Commit G follow-up — `ApplyRecoverySequence` with a
     /// `SubstituteToken` step replays as a token substitution via
     /// `src.substitute_token` AND logs RecoveryEvent::substitute
     /// (action_kind=3) with cur_pos+=1.
     #[test]
     fn replay_apply_recovery_sequence_substitute_token() {
-        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
-            RepairAction::SubstituteToken { replacement: 0u16 as TokenId },
-        ].into_boxed_slice());
+        let actions: std::sync::Arc<[ResolvedRepairAction]> = std::sync::Arc::from(
+            vec![ResolvedRepairAction::SubstituteToken {
+                kind: TokenKind::Fixed(";".into()),
+                text: ";".into(),
+            }]
+            .into_boxed_slice(),
+        );
         let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
             actions,
             base_pos: 0,
+            target_pos: 1,
             total_cost_tropical: 1.5,
         });
         assert_eq!(trace.len(), 1, "SubstituteToken must produce 1 RecoveryEvent");
@@ -18582,16 +18707,17 @@ mod tests {
     /// with the correct action_kind sequence and accumulating cur_pos.
     #[test]
     fn replay_apply_recovery_sequence_multi_step_in_order() {
-        let actions: std::sync::Arc<[RepairAction]> = std::sync::Arc::from(vec![
-            RepairAction::DeleteToken,
-            RepairAction::SkipToSync {
-                skip_count: 1,
-                sync_token: TokenId::MAX,
-            },
-        ].into_boxed_slice());
+        let actions: std::sync::Arc<[ResolvedRepairAction]> = std::sync::Arc::from(
+            vec![
+                ResolvedRepairAction::DeleteToken,
+                ResolvedRepairAction::SkipToSync { skip_count: 1 },
+            ]
+            .into_boxed_slice(),
+        );
         let trace = drive_recovery_replay(BuilderDelta::ApplyRecoverySequence {
             actions,
             base_pos: 0,
+            target_pos: 2,
             total_cost_tropical: 1.5,
         });
         assert_eq!(trace.len(), 2, "2-step sequence must produce 2 RecoveryEvents");
@@ -18600,7 +18726,8 @@ mod tests {
         assert!(
             trace[0].pos < trace[1].pos,
             "cur_pos must advance monotonically across multi-step replay (got {} → {})",
-            trace[0].pos, trace[1].pos,
+            trace[0].pos,
+            trace[1].pos,
         );
     }
 }

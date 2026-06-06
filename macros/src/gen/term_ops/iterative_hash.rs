@@ -42,9 +42,8 @@
 //!   iterative Hash engine
 //! - `impl Hash for Cat`: delegates to `hash_iterative`
 
-use mettail_ast::language::LanguageDef;
-use mettail_ast::types::CollectionType;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -207,7 +206,7 @@ fn generate_hash_variant_arm(
             quote! {
                 #category::#label => {}
             }
-        }
+        },
 
         VariantKind::Literal { label } => {
             // Literal: hash payload
@@ -216,7 +215,7 @@ fn generate_hash_variant_arm(
                     std::hash::Hash::hash(v, state);
                 }
             }
-        }
+        },
 
         VariantKind::Var { label } => {
             // Var: hash OrdVar
@@ -225,28 +224,28 @@ fn generate_hash_variant_arm(
                     std::hash::Hash::hash(v, state);
                 }
             }
-        }
+        },
 
         VariantKind::Regular { label, fields } => {
             generate_hash_regular_arm(category, label, fields, language)
-        }
+        },
 
-        VariantKind::Collection { label, coll_type, .. } => {
+        VariantKind::Collection { label, coll_type: _, .. } => {
             // Collection: delegate to collection's own Hash (re-entrant)
             quote! {
                 #category::#label(coll) => {
                     std::hash::Hash::hash(coll, state);
                 }
             }
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_hash_binder_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             generate_hash_multi_binder_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
     }
 }
 
@@ -258,27 +257,6 @@ fn generate_hash_regular_arm(
     _language: &LanguageDef,
 ) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
-
-    let hash_stmts: Vec<TokenStream> = fields
-        .iter()
-        .zip(field_names.iter())
-        .map(|(field, name)| {
-            if field.is_collection {
-                // Collection field: delegate to collection's own Hash (re-entrant)
-                quote! {
-                    std::hash::Hash::hash(#name, state);
-                }
-            } else {
-                // Box<T> field: push hash task for child (reversed for LIFO ordering,
-                // but hash order must be consistent, so we push in reverse and process
-                // left-to-right)
-                let task_variant = format_ident!("Hash{}", field.category);
-                quote! {
-                    stack.push(HashTask::#task_variant(&**#name as *const _));
-                }
-            }
-        })
-        .collect();
 
     // Push Box<T> tasks in reverse order so they are processed left-to-right.
     // Collection fields are hashed eagerly inline.
@@ -334,7 +312,8 @@ fn generate_hash_regular_arm(
     // - Box<T> fields before collections must be hashed eagerly (re-entrant)
     // - Trailing Box<T> fields (after last collection) can be deferred
     //
-    // This is exactly what we do in cmp. Let me implement it the same way.
+    // This mirrors the comparison trampoline: eager prefix through the last
+    // collection, then deferred boxed fields in LIFO-safe reverse order.
 
     let last_coll_idx = fields.iter().rposition(|f| f.is_collection);
     let eager_end = last_coll_idx.map(|i| i + 1).unwrap_or(0);
@@ -392,11 +371,7 @@ fn generate_hash_regular_arm(
     }
 
     // Trailing Box<T> fields after last collection: push in reverse order
-    let deferred: Vec<(usize, &FieldInfo)> = fields
-        .iter()
-        .enumerate()
-        .skip(eager_end)
-        .collect();
+    let deferred: Vec<(usize, &FieldInfo)> = fields.iter().enumerate().skip(eager_end).collect();
 
     for &(i, field) in deferred.iter().rev() {
         let name = &field_names[i];

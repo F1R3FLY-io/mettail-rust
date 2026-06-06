@@ -228,7 +228,7 @@ pub enum SppfNode<W: SemiringRef> {
     /// `items` directly (no per-cursor side-table), so each derivation keeps
     /// its own elements.
     CollectionId {
-        /// The slot index this placeholder mirrors (still used by the action
+        /// The slot index this marker mirrors (still used by the action
         /// reconstruction to thread `ActionArg::CollectionId(id)`).
         id: u32,
         /// The derivation-local collected element SppfIds. Snapshot of the
@@ -557,12 +557,7 @@ impl<W: SemiringRef> Sppf<W> {
     /// Goodman-style aggregation: two cursors reducing the same production
     /// at the same span via different lex-Fork branches contribute their
     /// branch weights additively.
-    pub fn intern_packing(
-        &mut self,
-        rule_idx: u32,
-        children: Vec<SppfId>,
-        weight: W,
-    ) -> SppfId {
+    pub fn intern_packing(&mut self, rule_idx: u32, children: Vec<SppfId>, weight: W) -> SppfId {
         // Phase C R6: full-list key, no hash truncation.
         let key = (rule_idx, children.clone());
         if let Some(&id) = self.dedup_packing.get(&key) {
@@ -573,11 +568,8 @@ impl<W: SemiringRef> Sppf<W> {
             return id;
         }
         let id = self.nodes.len() as SppfId;
-        self.nodes.push(SppfNode::Packing {
-            rule_idx,
-            children,
-            weight,
-        });
+        self.nodes
+            .push(SppfNode::Packing { rule_idx, children, weight });
         self.dedup_packing.insert(key, id);
         id
     }
@@ -593,7 +585,7 @@ impl<W: SemiringRef> Sppf<W> {
         id
     }
 
-    /// Intern a `CollectionId` placeholder for slot `id` carrying its
+    /// Intern a `CollectionId` marker for slot `id` carrying its
     /// derivation-local collected `items`.
     ///
     /// Collection-accumulation fix (2026-05-29): NO dedup-by-id. Distinct
@@ -652,8 +644,7 @@ impl<W: SemiringRef> Sppf<W> {
         if let Some(&id) = self.dedup_binder_scope.get(&key) {
             return id;
         }
-        let names_text: Vec<TextHandle> =
-            names.iter().map(|n| self.intern_text(n)).collect();
+        let names_text: Vec<TextHandle> = names.iter().map(|n| self.intern_text(n)).collect();
         let id = self.nodes.len() as SppfId;
         self.nodes.push(SppfNode::BinderScope { names_text, depth });
         self.dedup_binder_scope.insert(key, id);
@@ -843,7 +834,7 @@ impl<W: SemiringRef> Sppf<W> {
                     return Some(match pos {
                         PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
                     });
-                }
+                },
                 // Phase F.8: TriggerTerminal carries a real input position;
                 // span_lo returns that position so the parent rule's
                 // interned Symbol receives `lo = trigger_pos`.
@@ -851,13 +842,13 @@ impl<W: SemiringRef> Sppf<W> {
                     return Some(match pos {
                         PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
                     });
-                }
+                },
                 SppfNode::Symbol { lo_pos, .. } => return Some(*lo_pos),
                 SppfNode::Epsilon { pos } => return Some(*pos),
                 SppfNode::OptAbsent { pos } => return Some(*pos),
                 SppfNode::Packing { children, .. } => {
                     cur = *children.first()?;
-                }
+                },
                 // CollectionId, Predicate, BinderScope are walker-arena
                 // references / metadata without an intrinsic span.
                 SppfNode::CollectionId { .. }
@@ -878,7 +869,7 @@ impl<W: SemiringRef> Sppf<W> {
                         PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
                     };
                     return Some(p + 1);
-                }
+                },
                 // Phase F.8: TriggerTerminal spans exactly one token (the
                 // consumed trigger literal): hi = pos + 1.
                 SppfNode::TriggerTerminal { pos, .. } => {
@@ -886,13 +877,13 @@ impl<W: SemiringRef> Sppf<W> {
                         PosOrSynth::Real(p) | PosOrSynth::Synthesized(p) => *p,
                     };
                     return Some(p + 1);
-                }
+                },
                 SppfNode::Symbol { hi_pos, .. } => return Some(*hi_pos),
                 SppfNode::Epsilon { pos } => return Some(*pos),
                 SppfNode::OptAbsent { pos } => return Some(*pos),
                 SppfNode::Packing { children, .. } => {
                     cur = *children.last()?;
-                }
+                },
                 SppfNode::CollectionId { .. }
                 | SppfNode::Predicate { .. }
                 | SppfNode::BinderScope { .. } => return None,
@@ -1116,12 +1107,12 @@ impl<W: SemiringRef> Sppf<W> {
                             }
                         }
                     }
-                }
+                },
                 Some(SppfNode::Packing { children, .. }) => {
                     for &c in children {
                         dfs_stack.push(c);
                     }
-                }
+                },
                 Some(SppfNode::CollectionId { .. })
                 | Some(SppfNode::Terminal { .. })
                 | Some(SppfNode::TriggerTerminal { .. })
@@ -1131,7 +1122,7 @@ impl<W: SemiringRef> Sppf<W> {
                 | Some(SppfNode::BinderScope { .. })
                 | None => {
                     // Leaves / non-Symbol — no out-edges in the Symbol graph.
-                }
+                },
             }
         }
         // Build the adjacency list for the Symbol-only graph.
@@ -1272,10 +1263,7 @@ impl<W: SemiringRef> Sppf<W> {
     ) -> PackingFactored<W> {
         let (weight, children) = match self.node(packing_id) {
             Some(SppfNode::Packing { weight, children, .. }) => (weight.clone(), children),
-            _ => panic!(
-                "factor_scc_packing: SppfId {} is not a Packing",
-                packing_id
-            ),
+            _ => panic!("factor_scc_packing: SppfId {} is not a Packing", packing_id),
         };
         let mut outside_product = weight;
         let mut in_scc_children = Vec::new();
@@ -1352,7 +1340,8 @@ mod tests {
     fn intern_terminal_real_and_synth_dont_collide() {
         let mut s: Sppf<W> = Sppf::new();
         let real = s.intern_terminal(TokenKind::Ident, PosOrSynth::Real(5), Some("x"), false);
-        let synth = s.intern_terminal(TokenKind::Ident, PosOrSynth::Synthesized(5), Some("x"), false);
+        let synth =
+            s.intern_terminal(TokenKind::Ident, PosOrSynth::Synthesized(5), Some("x"), false);
         assert_ne!(real, synth);
         assert_eq!(s.len(), 2);
     }
@@ -1364,7 +1353,7 @@ mod tests {
         match s.node(id) {
             Some(SppfNode::Terminal { text_handle, .. }) => {
                 assert_eq!(s.text(*text_handle), "foo");
-            }
+            },
             _ => panic!("expected Terminal"),
         }
     }
@@ -1377,7 +1366,7 @@ mod tests {
             Some(SppfNode::Terminal { text_handle, .. }) => {
                 assert_eq!(*text_handle, TEXT_HANDLE_NONE);
                 assert_eq!(s.text(*text_handle), "");
-            }
+            },
             _ => panic!("expected Terminal"),
         }
     }
@@ -1421,7 +1410,7 @@ mod tests {
         match s.node(id) {
             Some(SppfNode::Symbol { weight_sum, .. }) => {
                 assert!(weight_sum.is_zero_ref());
-            }
+            },
             _ => panic!("expected Symbol"),
         }
     }
@@ -1475,7 +1464,7 @@ mod tests {
         match s.node(pid) {
             Some(SppfNode::Packing { weight, .. }) => {
                 assert_eq!(weight, &w0);
-            }
+            },
             _ => panic!("expected Packing"),
         }
     }
@@ -1494,7 +1483,7 @@ mod tests {
         match s.node(p1) {
             Some(SppfNode::Packing { weight, .. }) => {
                 assert_eq!(weight, &w0.plus_ref(&w0));
-            }
+            },
             _ => panic!("expected Packing"),
         }
     }
@@ -1573,7 +1562,7 @@ mod tests {
             Some(SppfNode::Symbol { weight_sum, .. }) => {
                 let expected = W::zero_ref().plus_ref(&w0).plus_ref(&w0);
                 assert_eq!(weight_sum, &expected);
-            }
+            },
             _ => panic!("expected Symbol"),
         }
     }
@@ -1621,12 +1610,9 @@ mod tests {
         let t = s.intern_terminal(k_fixed("x"), PosOrSynth::Real(0), None, false);
         let sym = s.intern_symbol(0, 0, 1);
         let identity_before = match s.node(sym) {
-            Some(SppfNode::Symbol {
-                non_terminal_tag,
-                lo_pos,
-                hi_pos,
-                ..
-            }) => (*non_terminal_tag, *lo_pos, *hi_pos),
+            Some(SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
+                (*non_terminal_tag, *lo_pos, *hi_pos)
+            },
             _ => panic!("expected Symbol"),
         };
         let p1 = s.intern_packing(0, vec![t], one());
@@ -1634,12 +1620,9 @@ mod tests {
         s.link_packing_to_symbol(sym, p1);
         s.link_packing_to_symbol(sym, p2);
         let identity_after = match s.node(sym) {
-            Some(SppfNode::Symbol {
-                non_terminal_tag,
-                lo_pos,
-                hi_pos,
-                ..
-            }) => (*non_terminal_tag, *lo_pos, *hi_pos),
+            Some(SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
+                (*non_terminal_tag, *lo_pos, *hi_pos)
+            },
             _ => panic!("expected Symbol"),
         };
         assert_eq!(identity_before, identity_after);
@@ -1838,8 +1821,18 @@ mod tests {
         let mut s1: Sppf<W> = Sppf::new();
         let mut s2: Sppf<W> = Sppf::new();
         for i in 0..16u32 {
-            let t1 = s1.intern_terminal(TokenKind::Ident, PosOrSynth::Real(i), Some(&format!("v{}", i)), false);
-            let t2 = s2.intern_terminal(TokenKind::Ident, PosOrSynth::Real(i), Some(&format!("v{}", i)), false);
+            let t1 = s1.intern_terminal(
+                TokenKind::Ident,
+                PosOrSynth::Real(i),
+                Some(&format!("v{}", i)),
+                false,
+            );
+            let t2 = s2.intern_terminal(
+                TokenKind::Ident,
+                PosOrSynth::Real(i),
+                Some(&format!("v{}", i)),
+                false,
+            );
             assert_eq!(t1, t2);
             let p1 = s1.intern_packing(0, vec![t1], one());
             let p2 = s2.intern_packing(0, vec![t2], one());
@@ -1948,7 +1941,7 @@ mod tests {
             Some(SppfNode::Symbol { weight_sum, .. }) => {
                 // false ⊕ true ⊕ false = true (since true OR false = true).
                 assert_eq!(*weight_sum, BooleanWeight::one_ref());
-            }
+            },
             _ => panic!("expected Symbol"),
         }
     }

@@ -8,23 +8,20 @@
 //!
 //! Dead rules (from WFST analysis) are annotated with `#[ignore]`.
 
-use mettail_ast::grammar::GrammarRule;
-use mettail_ast::language::LanguageDef;
 use crate::gen::native::native_type_to_string;
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use crate::gen::term_ops::subst::{FieldInfo, VariantKind};
+use crate::gen::{generate_literal_label, generate_var_label};
+use mettail_ast::language::LanguageDef;
 use mettail_prattail::PipelineAnalysis;
-use std::collections::HashSet;
 
 /// Generate per-constructor unit tests for all categories.
 ///
 /// Returns a string of `#[test]` functions to be spliced into the generated
 /// test file.
-pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) -> String {
+pub fn generate_unit_tests(language: &LanguageDef, _pipeline: &PipelineAnalysis) -> String {
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let _lang_struct = format!("{}Language", lang_name);
-    let dead_rules = &pipeline.dead_rule_labels;
 
     let mut out = String::with_capacity(8192);
 
@@ -36,14 +33,7 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
         // Include the category so that shared labels (e.g. `Err` / `CastErrInt`
         // defined on BigRat, Int, UInt32, ...) don't collide in the generated
         // test module.
-        let test_name = format!(
-            "unit_{}_{}_{}",
-            lang_name_lower,
-            cat_lower,
-            label.to_lowercase()
-        );
-
-        let is_dead = dead_rules.contains(&label);
+        let test_name = format!("unit_{}_{}_{}", lang_name_lower, cat_lower, label.to_lowercase());
 
         // Determine the variant kind to generate appropriate construction code
         let variant = crate::gen::term_ops::subst::rule_to_variant_kind(rule, language);
@@ -62,7 +52,7 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                      \x20   }}\n",
                     cat, lbl_str, lbl_str, cat, lbl_str
                 ))
-            }
+            },
             VariantKind::Literal { label: lbl } => {
                 let lbl_str = lbl.to_string();
                 // U1: spec-derived — Literal variants are emitted only
@@ -100,7 +90,7 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                      \x20   }}\n",
                     construct, lbl_str, cat, lbl_str
                 ))
-            }
+            },
             VariantKind::Var { label: lbl } => {
                 let lbl_str = lbl.to_string();
                 // U2: spec-derived var name; replaces hard-coded "x".
@@ -118,7 +108,7 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                      \x20   assert!(!displayed.is_empty(), \"Display should produce non-empty output for {}\");\n",
                     cat, lbl_str, var_name, lbl_str
                 ))
-            }
+            },
             VariantKind::Regular { label: lbl, fields } => {
                 let lbl_str = lbl.to_string();
                 // Try to construct using leaf values for each field
@@ -148,7 +138,9 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                     // AST's display IS in the parser's alt set. This is
                     // the principled contract: the parser preserves all
                     // interpretations (per `feedback_never_disambiguate_early.md`).
-                    let assertion = if crate::gen::constructor_admits_atomic_lex_collision(rule, language) {
+                    let assertion = if crate::gen::constructor_admits_atomic_lex_collision(
+                        rule, language,
+                    ) {
                         format!(
                             "    if let Ok(alts) = {}::parse_via_wpda_all(&displayed) {{\n\
                              \x20       let alt_displays: Vec<String> = alts.iter().map(|a| format!(\"{{}}\", a)).collect();\n\
@@ -187,8 +179,10 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                 } else {
                     None // Too complex to construct statically
                 }
-            }
-            VariantKind::Binder { label: lbl, pre_scope_fields, body_cat, .. } => {
+            },
+            VariantKind::Binder {
+                label: lbl, pre_scope_fields, body_cat, ..
+            } => {
                 let lbl_str = lbl.to_string();
                 // Try to construct pre-scope fields
                 let pre_scope_constructions: Vec<Option<String>> = pre_scope_fields
@@ -235,19 +229,19 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
                 } else {
                     None // Too complex
                 }
-            }
+            },
             VariantKind::Collection { label: lbl, .. } => {
                 // Skip collection constructors — they need non-trivial setup
                 let lbl_str = lbl.to_string();
                 let _ = lbl_str;
                 None
-            }
+            },
             VariantKind::MultiBinder { label: lbl, .. } => {
                 // Skip multi-binders — they need Vec<Binder> which is too complex
                 let lbl_str = lbl.to_string();
                 let _ = lbl_str;
                 None
-            }
+            },
         };
 
         if let Some(body_code) = body {
@@ -281,12 +275,8 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
         // parseable (mirrors synthetic.rs:231-249).
         if crate::gen::category_emits_parseable_auto_var(&lang_type.name, language) {
             let var_label = generate_var_label(&lang_type.name).to_string();
-            let test_name = format!(
-                "unit_{}_auto_{}_{}",
-                lang_name_lower,
-                cat_lower,
-                var_label.to_lowercase()
-            );
+            let test_name =
+                format!("unit_{}_auto_{}_{}", lang_name_lower, cat_lower, var_label.to_lowercase());
             // U2: spec-derived var name; replaces hard-coded "x".
             let var_name = crate::gen::spec_admitted_var_name(language);
             out.push_str("#[test]\n");
@@ -315,7 +305,9 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
         // and no explicit literal rule. Predicate just unifies the
         // condition with the auto-Var side.)
         if crate::gen::category_emits_parseable_auto_literal(&lang_type.name, language) {
-            let native_type = lang_type.native_type.as_ref()
+            let native_type = lang_type
+                .native_type
+                .as_ref()
                 .expect("category_emits_parseable_auto_literal requires native_type");
             let lit_label = generate_literal_label(native_type).to_string();
             {
@@ -375,14 +367,14 @@ pub fn generate_unit_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) 
 /// still a safe wrapper-trait call that any T: Default supports.
 fn default_value_for_native_type(language: &LanguageDef, native_type: &str) -> String {
     match native_type {
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" => {
             // Spec-derived integer literal projected onto the
             // language's effective Integer pattern, with the native
             // suffix appended so the emitted Rust source has the
             // correct type.
             format!("{}{}", crate::gen::spec_admitted_integer_default(language), native_type)
-        }
+        },
         "f32" => "0.0f32".to_string(),
         "f64" => "0.0f64".to_string(),
         "bool" => "false".to_string(),
@@ -392,7 +384,9 @@ fn default_value_for_native_type(language: &LanguageDef, native_type: &str) -> S
         "HashMapLit" | "HashMap" => "mettail_runtime::HashMapLit::new()".to_string(),
         nt if nt.ends_with("BigInt") => "mettail_runtime::CanonicalBigInt::default()".to_string(),
         nt if nt.ends_with("BigRat") => "mettail_runtime::CanonicalBigRat::default()".to_string(),
-        nt if nt.ends_with("FixedPoint") => "mettail_runtime::CanonicalFixedPoint::default()".to_string(),
+        nt if nt.ends_with("FixedPoint") => {
+            "mettail_runtime::CanonicalFixedPoint::default()".to_string()
+        },
         // Trait-method fallback — `T::default()` is always safe and
         // semantically equivalent to "the spec-admitted default
         // value" for any T: Default.
@@ -402,7 +396,7 @@ fn default_value_for_native_type(language: &LanguageDef, native_type: &str) -> S
 
 /// Try to construct a leaf value for a field (Box<Cat> or collection).
 fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<String> {
-    // Phase 3A: guard slots use BehavioralPred::Top as trivial placeholder.
+    // Phase 3A: guard slots use BehavioralPred::Top as the neutral predicate.
     // Top is always satisfied regardless of the fact snapshot, enabling
     // structural coverage of guarded constructors without guard evaluation.
     if field.is_predicate {
@@ -418,34 +412,27 @@ fn construct_leaf_value(field: &FieldInfo, language: &LanguageDef) -> Option<Str
     }
     if field.is_collection {
         // For collection fields, construct an empty collection
-        let cat_str = field.category.to_string();
-        let _is_known = language
-            .types
-            .iter()
-            .any(|t| t.name == field.category);
+        let _is_known = language.types.iter().any(|t| t.name == field.category);
         match field.coll_type {
-            Some(mettail_ast::types::CollectionType::Vec) => {
-                Some(format!("vec![]"))
-            }
+            Some(mettail_ast::types::CollectionType::Vec) => Some(format!("vec![]")),
             Some(mettail_ast::types::CollectionType::HashBag) => {
                 Some(format!("mettail_runtime::HashBag::new()"))
-            }
+            },
             // Phase 4 #5b (2026-05-12): HashMap binder field — use
             // HashMapLit::default() for empty construction.
             Some(mettail_ast::types::CollectionType::HashMap) => {
                 Some(format!("mettail_runtime::HashMapLit::default()"))
-            }
+            },
             Some(mettail_ast::types::CollectionType::HashSet) => {
                 Some(format!("mettail_runtime::HashSet::new()"))
-            }
-            None => {
-                Some(format!("vec![]"))
-            }
+            },
+            None => Some(format!("vec![]")),
         }
     } else {
         // For Box<Cat> fields, try to find a leaf value for the category
         let cat_str = field.category.to_string();
-        construct_leaf_for_category(&cat_str, language).map(|leaf| format!("std::sync::Arc::new({})", leaf))
+        construct_leaf_for_category(&cat_str, language)
+            .map(|leaf| format!("std::sync::Arc::new({})", leaf))
     }
 }
 
@@ -492,10 +479,7 @@ fn construct_leaf_for_category(cat: &str, language: &LanguageDef) -> Option<Stri
     // `None` and let the caller treat this as "no static leaf available"
     // (caller already handles `None` gracefully — see the call site at
     // line ~219-222).
-    let lang_type = language
-        .types
-        .iter()
-        .find(|t| t.name.to_string() == cat)?;
+    let lang_type = language.types.iter().find(|t| t.name.to_string() == cat)?;
     if !crate::gen::category_emits_parseable_auto_var(&lang_type.name, language) {
         return None;
     }

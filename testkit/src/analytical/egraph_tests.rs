@@ -50,10 +50,7 @@ pub fn check_egraph_joinability(metadata: &dyn LanguageMetadata) -> EGraphResult
             discovered_equivalence_count: 0,
             converged: true,
             iterations: 0,
-            summary: format!(
-                "{}: no rewrite rules, e-graph analysis trivial",
-                metadata.name()
-            ),
+            summary: format!("{}: no rewrite rules, e-graph analysis trivial", metadata.name()),
         };
     }
 
@@ -90,10 +87,7 @@ pub fn check_egraph_joinability(metadata: &dyn LanguageMetadata) -> EGraphResult
     let confluence_analysis = confluence::check_confluence(&rules, 100);
 
     // Configure e-graph with reasonable limits for language-level analysis.
-    let config = EGraphConfig {
-        max_nodes: 5_000,
-        max_iterations: 20,
-    };
+    let config = EGraphConfig { max_nodes: 5_000, max_iterations: 20 };
 
     // Run e-graph TRS analysis.
     let egraph_analysis: EGraphTrsAnalysis =

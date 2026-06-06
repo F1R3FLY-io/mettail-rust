@@ -16,6 +16,15 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::LitStr;
 
+fn collection_type_name(coll_type: &CollectionType) -> &'static str {
+    match coll_type {
+        CollectionType::HashBag => "HashBag",
+        CollectionType::HashSet => "HashSet",
+        CollectionType::Vec => "Vec",
+        CollectionType::HashMap => "HashMap",
+    }
+}
+
 /// Generate metadata struct and impl for a language
 pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
     let name = &language.name;
@@ -218,7 +227,7 @@ fn term_to_user_syntax(rule: &GrammarRule, _language: &LanguageDef) -> String {
                 }
             },
             GrammarItem::Binder { category } => {
-                // Use lowercase category name as placeholder
+                // Use lowercase category name as a synthetic binder label.
                 parts.push(category.to_string().to_lowercase());
             },
         }
@@ -425,9 +434,7 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
         .enumerate()
         .filter_map(|(i, item)| {
             match item {
-                GrammarItem::NonTerminal { ident: nt, kind }
-                    if !kind.is_builtin() =>
-                {
+                GrammarItem::NonTerminal { ident: nt, kind } if !kind.is_builtin() => {
                     let name_str = format!("f{}", i);
                     let ty_str = nt.to_string();
                     let name_lit = LitStr::new(&name_str, Span::call_site());
@@ -442,16 +449,7 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                 },
                 GrammarItem::Collection { element_type, coll_type, .. } => {
                     let name_str = format!("f{}", i);
-                    let ty_str = format!(
-                        "{}({})",
-                        match coll_type {
-                            CollectionType::HashBag | CollectionType::HashMap => "HashBag",
-                            CollectionType::HashSet => "HashSet",
-                            CollectionType::Vec => "Vec",
-                            CollectionType::HashMap => "HashMap",
-                        },
-                        element_type
-                    );
+                    let ty_str = format!("{}({})", collection_type_name(coll_type), element_type);
                     let name_lit = LitStr::new(&name_str, Span::call_site());
                     let ty_lit = LitStr::new(&ty_str, Span::call_site());
                     Some(quote! {
@@ -463,7 +461,7 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                     })
                 },
                 GrammarItem::Binder { category } => {
-                    // Use lowercase category as placeholder name
+                    // Use lowercase category as a synthetic field name.
                     let name_str = category.to_string().to_lowercase();
                     let ty_str = category.to_string();
                     let name_lit = LitStr::new(&name_str, category.span());
@@ -489,12 +487,7 @@ fn type_expr_to_string(ty: &TypeExpr) -> String {
     match ty {
         TypeExpr::Base(id) => id.to_string(),
         TypeExpr::Collection { coll_type, element } => {
-            let coll_name = match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap => "HashBag",
-                CollectionType::HashSet => "HashSet",
-                CollectionType::Vec => "Vec",
-                CollectionType::HashMap => "HashMap",
-            };
+            let coll_name = collection_type_name(coll_type);
             format!("{}({})", coll_name, type_expr_to_string(element))
         },
         TypeExpr::Map { key, value } => {
@@ -548,7 +541,11 @@ fn premise_to_display_string(p: &Premise) -> String {
             // simulator metadata bridge.
             format!("guard({})", behavioral_pred_to_display(pred))
         },
-        Premise::SyntheticInjGuard { inner_var, source_category, excluded_variants } => {
+        Premise::SyntheticInjGuard {
+            inner_var,
+            source_category,
+            excluded_variants,
+        } => {
             // Phase A (2026-05-16): synthetic-injection guard display.
             let variants: Vec<_> = excluded_variants.iter().map(|v| v.to_string()).collect();
             format!(
@@ -599,31 +596,19 @@ fn behavioral_pred_to_display(pred: &BehavioralPred) -> String {
             } else {
                 call
             }
-        }
+        },
         BehavioralPred::And(a, b) => {
-            format!(
-                "{} ∧ {}",
-                wrap_if_binary(a),
-                wrap_if_binary(b),
-            )
-        }
+            format!("{} ∧ {}", wrap_if_binary(a), wrap_if_binary(b),)
+        },
         BehavioralPred::Or(a, b) => {
-            format!(
-                "{} ∨ {}",
-                wrap_if_binary(a),
-                wrap_if_binary(b),
-            )
-        }
+            format!("{} ∨ {}", wrap_if_binary(a), wrap_if_binary(b),)
+        },
         BehavioralPred::Not(inner) => {
             format!("¬{}", wrap_if_binary(inner))
-        }
+        },
         BehavioralPred::Implies(a, b) => {
-            format!(
-                "{} ⟹ {}",
-                wrap_if_binary(a),
-                wrap_if_binary(b),
-            )
-        }
+            format!("{} ⟹ {}", wrap_if_binary(a), wrap_if_binary(b),)
+        },
         BehavioralPred::Quantified { quantifier, var, domain, bound, body } => {
             let q = match quantifier {
                 Quantifier::ForAll => "∀",
@@ -635,21 +620,15 @@ fn behavioral_pred_to_display(pred: &BehavioralPred) -> String {
                 (None, Some(k)) => format!(" _{{k={}}}", k),
                 (None, None) => String::new(),
             };
-            format!(
-                "{}{}{}. {}",
-                q,
-                var,
-                domain_str,
-                behavioral_pred_to_display(body),
-            )
-        }
+            format!("{}{}{}. {}", q, var, domain_str, behavioral_pred_to_display(body),)
+        },
         BehavioralPred::AcMatch { bag, elements, rest } => {
             let mut elems: Vec<String> = elements.iter().map(|e| e.to_string()).collect();
             if let Some(r) = rest {
                 elems.push(format!("...{}", r));
             }
             format!("ac_match({}, {{{}}})", bag, elems.join(", "))
-        }
+        },
         BehavioralPred::Top => "⊤".to_string(),
     }
 }
@@ -660,11 +639,9 @@ fn behavioral_pred_to_display(pred: &BehavioralPred) -> String {
 /// depth in the rendered output.
 fn wrap_if_binary(pred: &BehavioralPred) -> String {
     match pred {
-        BehavioralPred::And(_, _)
-        | BehavioralPred::Or(_, _)
-        | BehavioralPred::Implies(_, _) => {
+        BehavioralPred::And(_, _) | BehavioralPred::Or(_, _) | BehavioralPred::Implies(_, _) => {
             format!("({})", behavioral_pred_to_display(pred))
-        }
+        },
         _ => behavioral_pred_to_display(pred),
     }
 }
@@ -1000,7 +977,7 @@ fn build_syntax_from_grammar(
                 }
             },
             GrammarItem::Binder { category } => {
-                // Use lowercase category as placeholder
+                // Use lowercase category as a synthetic binder label.
                 result.push_str(&category.to_string().to_lowercase());
             },
         }
@@ -1326,4 +1303,26 @@ fn generate_connective_defs(language: &LanguageDef) -> TokenStream {
         .collect();
 
     quote! { &[#(#defs),*] }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proc_macro2::Span;
+
+    #[test]
+    fn collection_type_name_distinguishes_hashmap_from_hashbag() {
+        assert_eq!(collection_type_name(&CollectionType::HashBag), "HashBag");
+        assert_eq!(collection_type_name(&CollectionType::HashMap), "HashMap");
+    }
+
+    #[test]
+    fn type_expr_to_string_renders_hashmap_collection() {
+        let elem = syn::Ident::new("Proc", Span::call_site());
+        let ty = TypeExpr::Collection {
+            coll_type: CollectionType::HashMap,
+            element: Box::new(TypeExpr::Base(elem)),
+        };
+        assert_eq!(type_expr_to_string(&ty), "HashMap(Proc)");
+    }
 }

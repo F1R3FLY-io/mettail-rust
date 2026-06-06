@@ -18,9 +18,9 @@
 //! lowering: the `PredicateParser` in `mettail-prattail` produces the
 //! runtime type directly from user source tokens, not from a syn AST.
 //!
-//! So this lowering is currently an infrastructure placeholder —
-//! correct and tested, but not wired into the Comm rule generator
-//! until per-relation specialization (Phase 8) is implemented.
+//! So this lowering is correct and tested infrastructure for embedding
+//! compile-time predicates; the Comm rule generator uses the runtime parser
+//! path for current source-level predicates.
 //!
 //! ## Phase R — AST moved
 //!
@@ -29,9 +29,7 @@
 //! was `crate::ast::language::BehavioralPred` — those imports have
 //! all been rewritten.
 
-use mettail_ast::language::{
-    BehavioralPred as AstPred, PredArg as AstArg, Quantifier as AstQ,
-};
+use mettail_ast::language::{BehavioralPred as AstPred, PredArg as AstArg, Quantifier as AstQ};
 use proc_macro2::TokenStream;
 use quote::quote;
 
@@ -40,11 +38,7 @@ use quote::quote;
 /// at macro-expansion time.
 pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
     match pred {
-        AstPred::RelationQuery {
-            relation_name,
-            args,
-            negated,
-        } => {
+        AstPred::RelationQuery { relation_name, args, negated } => {
             let name_str = relation_name.to_string();
             let arg_exprs: Vec<TokenStream> = args.iter().map(lower_arg_expr).collect();
             let neg = *negated;
@@ -55,14 +49,8 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                     negated: #neg,
                 }
             }
-        }
-        AstPred::Quantified {
-            quantifier,
-            var,
-            domain,
-            bound,
-            body,
-        } => {
+        },
+        AstPred::Quantified { quantifier, var, domain, bound, body } => {
             let q_expr = match quantifier {
                 AstQ::ForAll => quote! { mettail_runtime::Quantifier::ForAll },
                 AstQ::Exists => quote! { mettail_runtime::Quantifier::Exists },
@@ -79,13 +67,13 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                     quote! {
                         Some(mettail_runtime::QuantifiedDomain::Bounded(#k))
                     }
-                }
+                },
                 (Some(n), None) => {
                     let s = n.to_string();
                     quote! {
                         Some(mettail_runtime::QuantifiedDomain::Named(#s.to_string()))
                     }
-                }
+                },
                 (None, Some(k)) => quote! {
                     Some(mettail_runtime::QuantifiedDomain::Bounded(#k))
                 },
@@ -100,7 +88,7 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                     body: Box::new(#body_expr),
                 }
             }
-        }
+        },
         AstPred::And(a, b) => {
             let ae = lower_pred_expr(a);
             let be = lower_pred_expr(b);
@@ -110,7 +98,7 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                     Box::new(#be),
                 )
             }
-        }
+        },
         AstPred::Or(a, b) => {
             let ae = lower_pred_expr(a);
             let be = lower_pred_expr(b);
@@ -120,13 +108,13 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                     Box::new(#be),
                 )
             }
-        }
+        },
         AstPred::Not(inner) => {
             let ie = lower_pred_expr(inner);
             quote! {
                 mettail_runtime::BehavioralPred::Not(Box::new(#ie))
             }
-        }
+        },
         AstPred::Implies(p, c) => {
             let pe = lower_pred_expr(p);
             let ce = lower_pred_expr(c);
@@ -136,12 +124,8 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                     Box::new(#ce),
                 )
             }
-        }
-        AstPred::AcMatch {
-            bag,
-            elements,
-            rest,
-        } => {
+        },
+        AstPred::AcMatch { bag, elements, rest } => {
             let bag_str = bag.to_string();
             let bag_expr = quote! {
                 mettail_runtime::PredArg::Var(#bag_str.to_string())
@@ -160,7 +144,7 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                 Some(r) => {
                     let s = r.to_string();
                     quote! { Some(#s.to_string()) }
-                }
+                },
             };
             quote! {
                 mettail_runtime::BehavioralPred::AcMatch {
@@ -169,10 +153,10 @@ pub fn lower_pred_expr(pred: &AstPred) -> TokenStream {
                     rest: #rest_expr,
                 }
             }
-        }
+        },
         AstPred::Top => {
             quote! { mettail_runtime::BehavioralPred::Top }
-        }
+        },
     }
 }
 
@@ -185,7 +169,7 @@ fn lower_arg_expr(arg: &AstArg) -> TokenStream {
             quote! {
                 mettail_runtime::PredArg::Var(#s.to_string())
             }
-        }
+        },
         AstArg::Constant(c) => {
             // Currently the AST PredArg::Constant carries an `Ident`,
             // not a ground term. We stringify it and pass as a
@@ -197,7 +181,7 @@ fn lower_arg_expr(arg: &AstArg) -> TokenStream {
             quote! {
                 mettail_runtime::PredArg::Var(#s.to_string())
             }
-        }
+        },
     }
 }
 

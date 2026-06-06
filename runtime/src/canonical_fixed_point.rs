@@ -69,7 +69,6 @@ impl Default for CanonicalFixedPoint {
 }
 
 impl CanonicalFixedPoint {
-
     /// Align both operands to `P = max(places_a, places_b)`; returns scaled unscaled values.
     fn align_pair(a: Self, b: Self) -> (BigInt, BigInt, u32) {
         let p = a.places.max(b.places);

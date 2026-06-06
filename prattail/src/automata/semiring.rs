@@ -307,7 +307,6 @@ pub trait LexProvenance: SemiringRef {
     }
 }
 
-
 // ══════════════════════════════════════════════════════════════════════════════
 // matrix_star_ref — Lehmann's algorithm (1977) for closed semirings,
 // SemiringRef variant
@@ -457,9 +456,7 @@ pub fn solve_scc_weights_newton<W: StarSemiringRef>(
     // LINEAR FAST-PATH: every packing has in_scc_children.len() ≤ 1.
     // Differential is constant in Y → first Newton iteration = exact
     // closed form via single-shot Lehmann.
-    let is_linear = packings
-        .iter()
-        .all(|p| p.in_scc_children.len() <= 1);
+    let is_linear = packings.iter().all(|p| p.in_scc_children.len() <= 1);
     if is_linear {
         // Build A matrix (constant; no dependence on Y).
         let mut a = vec![vec![W::zero_ref(); scc_size]; scc_size];
@@ -1129,18 +1126,12 @@ impl<S1: Semiring + Eq + std::hash::Hash, S2: Semiring + Eq + std::hash::Hash> S
 {
     #[inline]
     fn zero() -> Self {
-        ProductWeight {
-            left: S1::zero(),
-            right: S2::zero(),
-        }
+        ProductWeight { left: S1::zero(), right: S2::zero() }
     }
 
     #[inline]
     fn one() -> Self {
-        ProductWeight {
-            left: S1::one(),
-            right: S2::one(),
-        }
+        ProductWeight { left: S1::one(), right: S2::one() }
     }
 
     #[inline]
@@ -1188,7 +1179,9 @@ impl<S1: Semiring + Ord, S2: Semiring + Ord> PartialOrd for ProductWeight<S1, S2
 /// the parse with the best tropical weight; ties are broken by edit distance.
 impl<S1: Semiring + Ord, S2: Semiring + Ord> Ord for ProductWeight<S1, S2> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.left.cmp(&other.left).then_with(|| self.right.cmp(&other.right))
+        self.left
+            .cmp(&other.left)
+            .then_with(|| self.right.cmp(&other.right))
     }
 }
 
@@ -1211,21 +1204,24 @@ impl<S1: Semiring + fmt::Display, S2: Semiring + fmt::Display> fmt::Display
 
 impl<S1: Semiring, S2: Semiring> Default for ProductWeight<S1, S2> {
     fn default() -> Self {
-        ProductWeight {
-            left: S1::one(),
-            right: S2::one(),
-        }
+        ProductWeight { left: S1::one(), right: S2::one() }
     }
 }
 
-impl<S1: DetectableZero, S2: DetectableZero> DetectableZero for ProductWeight<S1, S2>
-where ProductWeight<S1, S2>: Semiring {}
+impl<S1: DetectableZero, S2: DetectableZero> DetectableZero for ProductWeight<S1, S2> where
+    ProductWeight<S1, S2>: Semiring
+{
+}
 
-impl<S1: IdempotentSemiring, S2: IdempotentSemiring> IdempotentSemiring for ProductWeight<S1, S2>
-where ProductWeight<S1, S2>: Semiring {}
+impl<S1: IdempotentSemiring, S2: IdempotentSemiring> IdempotentSemiring for ProductWeight<S1, S2> where
+    ProductWeight<S1, S2>: Semiring
+{
+}
 
-impl<S1: CompleteSemiring, S2: CompleteSemiring> CompleteSemiring for ProductWeight<S1, S2>
-where ProductWeight<S1, S2>: Semiring {}
+impl<S1: CompleteSemiring, S2: CompleteSemiring> CompleteSemiring for ProductWeight<S1, S2> where
+    ProductWeight<S1, S2>: Semiring
+{
+}
 
 impl<S1: StarSemiring + Eq + std::hash::Hash, S2: StarSemiring + Eq + std::hash::Hash> StarSemiring
     for ProductWeight<S1, S2>
@@ -1773,10 +1769,7 @@ impl EntropyWeight {
     /// expectation gives H = -Σ pᵢ ln(pᵢ).
     #[inline]
     pub const fn from_arc_weight(weight: f64) -> Self {
-        EntropyWeight {
-            weight,
-            expectation: weight,
-        }
+        EntropyWeight { weight, expectation: weight }
     }
 
     /// Get the weight component.
@@ -1820,19 +1813,13 @@ impl Semiring for EntropyWeight {
     /// Zero = (∞, 0.0): no paths, zero expectation.
     #[inline]
     fn zero() -> Self {
-        EntropyWeight {
-            weight: f64::INFINITY,
-            expectation: 0.0,
-        }
+        EntropyWeight { weight: f64::INFINITY, expectation: 0.0 }
     }
 
     /// One = (0.0, 0.0): single zero-cost path, zero expectation.
     #[inline]
     fn one() -> Self {
-        EntropyWeight {
-            weight: 0.0,
-            expectation: 0.0,
-        }
+        EntropyWeight { weight: 0.0, expectation: 0.0 }
     }
 
     /// Plus = combine parallel paths.
@@ -1887,8 +1874,7 @@ impl Semiring for EntropyWeight {
             let r_self = (-diff_self).exp(); // relative probability of self
             let r_other = (-diff_other).exp(); // relative probability of other
             let denom = r_self + r_other;
-            let new_expectation =
-                (r_self * self.expectation + r_other * other.expectation) / denom;
+            let new_expectation = (r_self * self.expectation + r_other * other.expectation) / denom;
 
             EntropyWeight {
                 weight: new_weight,
@@ -1935,11 +1921,7 @@ impl fmt::Debug for EntropyWeight {
         if self.is_zero() {
             write!(f, "EntropyWeight(inf, 0)")
         } else {
-            write!(
-                f,
-                "EntropyWeight({:.4}, {:.4})",
-                self.weight, self.expectation
-            )
+            write!(f, "EntropyWeight({:.4}, {:.4})", self.weight, self.expectation)
         }
     }
 }
@@ -2113,10 +2095,7 @@ impl<const N: usize> NbestWeight<N> {
     /// Create an empty N-best weight (zero element).
     #[inline]
     pub const fn empty() -> Self {
-        NbestWeight {
-            entries: [None; N],
-            len: 0,
-        }
+        NbestWeight { entries: [None; N], len: 0 }
     }
 
     /// Create an N-best weight with a single entry.
@@ -2222,10 +2201,7 @@ impl<const N: usize> NbestWeight<N> {
             }
         }
 
-        NbestWeight {
-            entries: merged,
-            len: count,
-        }
+        NbestWeight { entries: merged, len: count }
     }
 
     /// Cross-product of two N-best lists: combine each pair (add weights,
@@ -2284,8 +2260,7 @@ impl<const N: usize> Semiring for NbestWeight<N> {
 
     #[inline]
     fn is_one(&self) -> bool {
-        self.len == 1
-            && self.entries[0].map_or(false, |e| e.path_id == 0 && e.weight.is_one())
+        self.len == 1 && self.entries[0].map_or(false, |e| e.path_id == 0 && e.weight.is_one())
     }
 
     fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
@@ -2298,8 +2273,8 @@ impl<const N: usize> Semiring for NbestWeight<N> {
                     if a.path_id != b.path_id || !a.weight.approx_eq(&b.weight, epsilon) {
                         return false;
                     }
-                }
-                (None, None) => {}
+                },
+                (None, None) => {},
                 _ => return false,
             }
         }
@@ -3076,8 +3051,7 @@ impl Semiring for AmplitudeWeight {
     }
 
     fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
-        (self.0.re - other.0.re).abs() <= epsilon
-            && (self.0.im - other.0.im).abs() <= epsilon
+        (self.0.re - other.0.re).abs() <= epsilon && (self.0.im - other.0.im).abs() <= epsilon
     }
 }
 
@@ -3123,7 +3097,7 @@ impl Ord for AmplitudeWeight {
                     Ordering::Equal => self.0.im.total_cmp(&other.0.im),
                     ord => ord,
                 }
-            }
+            },
             ord => ord,
         }
     }
@@ -4098,12 +4072,7 @@ mod tests {
 
             let lhs = a.times(&b.plus(&c));
             let rhs = a.times(&b).plus(&a.times(&c));
-            assert!(
-                lhs.approx_eq(&rhs, 1e-8),
-                "distributivity failed: {:?} vs {:?}",
-                lhs,
-                rhs
-            );
+            assert!(lhs.approx_eq(&rhs, 1e-8), "distributivity failed: {:?} vs {:?}", lhs, rhs);
         }
 
         #[test]
@@ -4196,10 +4165,7 @@ mod tests {
         assert_eq!(merged.len(), 3);
         // Best should be path 4 (weight 0.5)
         assert_eq!(merged.best().expect("has best").path_id, 4);
-        assert_eq!(
-            merged.best().expect("has best").weight,
-            TropicalWeight::new(0.5)
-        );
+        assert_eq!(merged.best().expect("has best").weight, TropicalWeight::new(0.5));
     }
 
     #[test]
@@ -4211,10 +4177,7 @@ mod tests {
         let merged = a.plus(&b);
         assert_eq!(merged.len(), 1);
         // Should keep the better (lower) weight
-        assert_eq!(
-            merged.best().expect("has best").weight,
-            TropicalWeight::new(2.0)
-        );
+        assert_eq!(merged.best().expect("has best").weight, TropicalWeight::new(2.0));
     }
 
     #[test]
@@ -4225,10 +4188,8 @@ mod tests {
 
         let prod = a.times(&b);
         assert_eq!(prod.len(), 1);
-        assert_eq!(
-            prod.best().expect("has best").weight,
-            TropicalWeight::new(4.0)
-        ); // 1 + 3 = 4
+        assert_eq!(prod.best().expect("has best").weight, TropicalWeight::new(4.0));
+        // 1 + 3 = 4
     }
 
     #[test]
@@ -4245,10 +4206,7 @@ mod tests {
         assert!(prod.len() <= 4);
         assert!(prod.len() >= 2);
         // Best should be path combining (1, 10) with weight 1.0 + 0.5 = 1.5
-        assert_eq!(
-            prod.best().expect("has best").weight,
-            TropicalWeight::new(1.5)
-        );
+        assert_eq!(prod.best().expect("has best").weight, TropicalWeight::new(1.5));
     }
 
     #[test]
@@ -4268,10 +4226,7 @@ mod tests {
         assert!(one.is_one());
         assert_eq!(one.len(), 1);
         assert_eq!(one.best().expect("has best").path_id, 0);
-        assert_eq!(
-            one.best().expect("has best").weight,
-            TropicalWeight::one()
-        );
+        assert_eq!(one.best().expect("has best").weight, TropicalWeight::one());
     }
 
     #[test]
@@ -4887,11 +4842,7 @@ mod tests {
         // Cycle: 0→1→2→0
         let f = BooleanWeight::new(false);
         let t = BooleanWeight::new(true);
-        let adj = vec![
-            vec![f, t, f],
-            vec![f, f, t],
-            vec![t, f, f],
-        ];
+        let adj = vec![vec![f, t, f], vec![f, f, t], vec![t, f, f]];
         let closure = matrix_star(&adj);
         // Everything reachable from everything (cycle)
         for i in 0..3 {
@@ -5094,7 +5045,7 @@ mod tests {
         fn test_amplitude_ord_higher_probability_is_better() {
             let high = AmplitudeWeight::new(0.9, 0.0); // |z|² = 0.81
             let low = AmplitudeWeight::new(0.3, 0.0); // |z|² = 0.09
-            // Higher norm_sqr should be "less" (better) in Ord
+                                                      // Higher norm_sqr should be "less" (better) in Ord
             assert!(high < low);
         }
 
@@ -5304,11 +5255,7 @@ mod tests {
     );
 
     // CountingWeight: (N, +, *, 0, 1) with saturating arithmetic
-    semiring_law_tests!(
-        counting_laws,
-        CountingWeight,
-        (0u64..1000).prop_map(CountingWeight::new)
-    );
+    semiring_law_tests!(counting_laws, CountingWeight, (0u64..1000).prop_map(CountingWeight::new));
 
     // BooleanWeight: ({false, true}, or, and, false, true)
     semiring_law_tests!(
@@ -5319,18 +5266,15 @@ mod tests {
 
     // EditWeight: (N union {inf}, min, +, inf, 0)
     // Capped at 50 to avoid overflow in saturating_add for 3-element products.
-    semiring_law_tests!(
-        edit_laws,
-        EditWeight,
-        (0u32..50).prop_map(EditWeight::new)
-    );
+    semiring_law_tests!(edit_laws, EditWeight, (0u32..50).prop_map(EditWeight::new));
 
     // ContextWeight: (P(Labels), union, intersection, empty, U)
     // Using small bitsets to keep tests fast.
     semiring_law_tests!(
         context_laws,
         ContextWeight,
-        (any::<u64>(), any::<u64>()).prop_map(|(lo, hi)| ContextWeight::new(lo as u128 | ((hi as u128) << 64)))
+        (any::<u64>(), any::<u64>())
+            .prop_map(|(lo, hi)| ContextWeight::new(lo as u128 | ((hi as u128) << 64)))
     );
 
     // ComplexityWeight: (N union {inf}, min, max, inf, 0)
@@ -5344,11 +5288,7 @@ mod tests {
     // ViterbiWeight: ([0,1], max, *, 0, 1)
     // Probabilities in [0,1]. Distributivity: a * max(b,c) = max(a*b, a*c)
     // holds for non-negative a.
-    semiring_law_tests!(
-        viterbi_laws,
-        ViterbiWeight,
-        (0.0f64..=1.0).prop_map(ViterbiWeight::new)
-    );
+    semiring_law_tests!(viterbi_laws, ViterbiWeight, (0.0f64..=1.0).prop_map(ViterbiWeight::new));
 
     // ArcticWeight: (R union {-inf}, max, +, -inf, 0)
     // Uses finite non-positive values for star convergence compatibility,
@@ -5362,11 +5302,7 @@ mod tests {
     // FuzzyWeight: ([0,1], max, min, 0, 1)
     // Possibilistic semiring. Distributivity: min(a, max(b,c)) = max(min(a,b), min(a,c))
     // holds (lattice distributivity).
-    semiring_law_tests!(
-        fuzzy_laws,
-        FuzzyWeight,
-        (0.0f64..=1.0).prop_map(FuzzyWeight::new)
-    );
+    semiring_law_tests!(fuzzy_laws, FuzzyWeight, (0.0f64..=1.0).prop_map(FuzzyWeight::new));
 
     // ProductWeight<TropicalWeight, EditWeight>: component-wise operations
     // Tests that the product of two valid semirings is itself a valid semiring.
@@ -6110,18 +6046,12 @@ mod tests {
 
         #[test]
         fn test_blanket_zero_ref_matches_zero() {
-            assert_eq!(
-                <BooleanWeight as SemiringRef>::zero_ref(),
-                BooleanWeight::zero(),
-            );
+            assert_eq!(<BooleanWeight as SemiringRef>::zero_ref(), BooleanWeight::zero(),);
         }
 
         #[test]
         fn test_blanket_one_ref_matches_one() {
-            assert_eq!(
-                <BooleanWeight as SemiringRef>::one_ref(),
-                BooleanWeight::one(),
-            );
+            assert_eq!(<BooleanWeight as SemiringRef>::one_ref(), BooleanWeight::one(),);
         }
 
         #[test]
@@ -6194,18 +6124,12 @@ mod tests {
 
         #[test]
         fn test_blanket_zero_ref_matches_zero() {
-            assert_eq!(
-                <TropicalWeight as SemiringRef>::zero_ref(),
-                TropicalWeight::zero(),
-            );
+            assert_eq!(<TropicalWeight as SemiringRef>::zero_ref(), TropicalWeight::zero(),);
         }
 
         #[test]
         fn test_blanket_one_ref_matches_one() {
-            assert_eq!(
-                <TropicalWeight as SemiringRef>::one_ref(),
-                TropicalWeight::one(),
-            );
+            assert_eq!(<TropicalWeight as SemiringRef>::one_ref(), TropicalWeight::one(),);
         }
 
         #[test]
@@ -6264,22 +6188,13 @@ mod tests {
             assert_eq!(a.plus_ref(&b), b.plus_ref(&a));
 
             // Associativity of plus
-            assert_eq!(
-                a.plus_ref(&b).plus_ref(&c),
-                a.plus_ref(&b.plus_ref(&c)),
-            );
+            assert_eq!(a.plus_ref(&b).plus_ref(&c), a.plus_ref(&b.plus_ref(&c)),);
 
             // Associativity of times
-            assert_eq!(
-                a.times_ref(&b).times_ref(&c),
-                a.times_ref(&b.times_ref(&c)),
-            );
+            assert_eq!(a.times_ref(&b).times_ref(&c), a.times_ref(&b.times_ref(&c)),);
 
             // Left distributivity: a * (b + c) = (a * b) + (a * c)
-            assert_eq!(
-                a.times_ref(&b.plus_ref(&c)),
-                a.times_ref(&b).plus_ref(&a.times_ref(&c)),
-            );
+            assert_eq!(a.times_ref(&b.plus_ref(&c)), a.times_ref(&b).plus_ref(&a.times_ref(&c)),);
 
             // Idempotent plus
             assert_eq!(a.plus_ref(&a), a);
@@ -6300,11 +6215,7 @@ mod tests {
         let f = BooleanWeight::new(false);
         let t = BooleanWeight::new(true);
         // Same DAG as test_matrix_star_boolean_dag: 0→1→2.
-        let adj = vec![
-            vec![f, t, f],
-            vec![f, f, t],
-            vec![f, f, f],
-        ];
+        let adj = vec![vec![f, t, f], vec![f, f, t], vec![f, f, f]];
         let star_val = matrix_star(&adj);
         let star_ref = matrix_star_ref(&adj);
         assert_eq!(
@@ -6332,10 +6243,7 @@ mod tests {
                 if v.is_infinite() {
                     assert!(r.is_infinite(), "({i},{j}): val=inf, ref={r}");
                 } else {
-                    assert!(
-                        (v - r).abs() < 1e-12,
-                        "({i},{j}): val={v}, ref={r}"
-                    );
+                    assert!((v - r).abs() < 1e-12, "({i},{j}): val={v}, ref={r}");
                 }
             }
         }
@@ -6348,11 +6256,7 @@ mod tests {
     fn csch_7_matrix_star_ref_cyclic_boolean() {
         let f = BooleanWeight::new(false);
         let t = BooleanWeight::new(true);
-        let adj = vec![
-            vec![f, t, f],
-            vec![f, f, t],
-            vec![t, f, f],
-        ];
+        let adj = vec![vec![f, t, f], vec![f, f, t], vec![t, f, f]];
         let star_ref = matrix_star_ref(&adj);
         // Cycle → everything reachable from everything.
         for i in 0..3 {
@@ -6408,8 +6312,7 @@ mod tests {
         // Diagonal entries should be `one` (a* collapses; identity).
         for i in 0..3 {
             assert_eq!(
-                closure[i][i],
-                one,
+                closure[i][i], one,
                 "diagonal at ({i},{i}) should be one under idempotent star"
             );
         }
@@ -6485,15 +6388,15 @@ mod tests {
     fn mcsl_3_differential_arity3() {
         // Set up Y values that distinguish positions.
         let y = vec![
-            CountingWeight::one(),    // Y[0]
-            CountingWeight::new(2),   // Y[1] = j
-            CountingWeight::new(3),   // Y[2] = k
-            CountingWeight::new(5),   // Y[3] = l
+            CountingWeight::one(),  // Y[0]
+            CountingWeight::new(2), // Y[1] = j
+            CountingWeight::new(3), // Y[2] = k
+            CountingWeight::new(5), // Y[3] = l
         ];
         let packings = vec![PackingFactored::<CountingWeight> {
             target_i: 0,
             outside_product: CountingWeight::one(), // weight = 1
-            in_scc_children: vec![1, 2, 3], // [S_j, S_k, S_l]
+            in_scc_children: vec![1, 2, 3],         // [S_j, S_k, S_l]
         }];
         let df = build_differential_matrix(&y, &packings, 4);
         // Df[0][1] = ∂f/∂Y_j = Y_k · Y_l · outside = 3 · 5 · 1 = 15

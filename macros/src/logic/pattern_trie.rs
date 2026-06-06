@@ -10,15 +10,14 @@
 //! ```text
 //! Equation/Rewrite patterns
 //!   → pattern_to_debruijn_bytes()    (Sprint 6b: pattern_codec.rs)
-//!   → PatternIndex (PathMap + BloomFilter)
+//!   → PatternIndex (PathMap over LHS bytes + constructor metadata)
 //!   → compute_fine_dependency_groups()   (union-find over constructor labels)
 //!   → find_alpha_equivalent_groups()     (collision classes in LHS trie)
 //!   → detect_subsumption()               (prefix + matching queries)
 //! ```
 
-use mettail_ast::language::LanguageDef;
-use crate::logic::bloom_filter::BloomFilter;
 use crate::logic::pattern_codec::pattern_to_debruijn_bytes;
+use mettail_ast::language::LanguageDef;
 use pathmap::ring::{AlgebraicResult, Lattice, COUNTER_IDENT, SELF_IDENT};
 use pathmap::zipper::{ZipperIteration, ZipperValues};
 use pathmap::PathMap;
@@ -94,10 +93,6 @@ unsafe impl Sync for RuleIdSet {}
 pub struct PatternIndex {
     /// LHS patterns → Vec<RuleId>
     pub lhs_trie: PathMap<RuleIdSet>,
-    /// RHS patterns → Vec<RuleId>
-    pub rhs_trie: PathMap<RuleIdSet>,
-    /// Bloom filter over LHS pattern bytes for O(1) negative rejection
-    pub lhs_bloom: BloomFilter,
     /// Constructor labels referenced per rule
     pub constructor_sets: HashMap<RuleId, HashSet<String>>,
     /// De Bruijn bytes per rule (for diagnostics and subsumption)
@@ -114,19 +109,13 @@ impl PatternIndex {
         let total = eq_count + rw_count;
 
         let mut lhs_trie = PathMap::<RuleIdSet>::new();
-        let mut rhs_trie = PathMap::<RuleIdSet>::new();
-        let mut lhs_bloom = BloomFilter::new(total.max(1));
-        let mut constructor_sets: HashMap<RuleId, HashSet<String>> =
-            HashMap::with_capacity(total);
+        let mut constructor_sets: HashMap<RuleId, HashSet<String>> = HashMap::with_capacity(total);
         let mut lhs_bytes_map: HashMap<RuleId, Vec<u8>> = HashMap::with_capacity(total);
 
         // Index equations
         for (i, eq) in language.equations.iter().enumerate() {
             let id = RuleId::Equation(i);
             let lhs_b = pattern_to_debruijn_bytes(&eq.left);
-            let rhs_b = pattern_to_debruijn_bytes(&eq.right);
-
-            lhs_bloom.insert_bytes(&lhs_b);
 
             // Insert into LHS trie
             match lhs_trie.get_mut(&lhs_b) {
@@ -135,23 +124,10 @@ impl PatternIndex {
                         set.0.push(id);
                         set.0.sort();
                     }
-                }
+                },
                 None => {
                     lhs_trie.set_val_at(&lhs_b, RuleIdSet(vec![id]));
-                }
-            }
-
-            // Insert into RHS trie
-            match rhs_trie.get_mut(&rhs_b) {
-                Some(set) => {
-                    if !set.0.contains(&id) {
-                        set.0.push(id);
-                        set.0.sort();
-                    }
-                }
-                None => {
-                    rhs_trie.set_val_at(&rhs_b, RuleIdSet(vec![id]));
-                }
+                },
             }
 
             let mut labels = HashSet::new();
@@ -165,9 +141,6 @@ impl PatternIndex {
         for (i, rw) in language.rewrites.iter().enumerate() {
             let id = RuleId::Rewrite(i);
             let lhs_b = pattern_to_debruijn_bytes(&rw.left);
-            let rhs_b = pattern_to_debruijn_bytes(&rw.right);
-
-            lhs_bloom.insert_bytes(&lhs_b);
 
             match lhs_trie.get_mut(&lhs_b) {
                 Some(set) => {
@@ -175,22 +148,10 @@ impl PatternIndex {
                         set.0.push(id);
                         set.0.sort();
                     }
-                }
+                },
                 None => {
                     lhs_trie.set_val_at(&lhs_b, RuleIdSet(vec![id]));
-                }
-            }
-
-            match rhs_trie.get_mut(&rhs_b) {
-                Some(set) => {
-                    if !set.0.contains(&id) {
-                        set.0.push(id);
-                        set.0.sort();
-                    }
-                }
-                None => {
-                    rhs_trie.set_val_at(&rhs_b, RuleIdSet(vec![id]));
-                }
+                },
             }
 
             let mut labels = HashSet::new();
@@ -202,8 +163,6 @@ impl PatternIndex {
 
         PatternIndex {
             lhs_trie,
-            rhs_trie,
-            lhs_bloom,
             constructor_sets,
             lhs_bytes: lhs_bytes_map,
             rule_count: total,
@@ -247,7 +206,7 @@ impl UnionFind {
             std::cmp::Ordering::Equal => {
                 self.parent[rb] = ra;
                 self.rank[ra] += 1;
-            }
+            },
         }
     }
 }
@@ -286,10 +245,10 @@ pub fn compute_fine_dependency_groups(index: &PatternIndex) -> Vec<Vec<RuleId>> 
             match label_to_first.get(label.as_str()) {
                 Some(&first_idx) => {
                     uf.union(rule_idx, first_idx);
-                }
+                },
                 None => {
                     label_to_first.insert(label, rule_idx);
-                }
+                },
             }
         }
     }
@@ -372,15 +331,9 @@ pub fn detect_subsumption(index: &PatternIndex) -> Vec<SubsumptionPair> {
             let (&id_b, bytes_b) = all_rules[j];
 
             if is_pattern_generalization(bytes_a, bytes_b) {
-                pairs.push(SubsumptionPair {
-                    general: id_a,
-                    specific: id_b,
-                });
+                pairs.push(SubsumptionPair { general: id_a, specific: id_b });
             } else if is_pattern_generalization(bytes_b, bytes_a) {
-                pairs.push(SubsumptionPair {
-                    general: id_b,
-                    specific: id_a,
-                });
+                pairs.push(SubsumptionPair { general: id_b, specific: id_a });
             }
         }
     }
@@ -553,7 +506,7 @@ fn skip_pattern_element(bytes: &[u8], pos: &mut usize) {
                     }
                 }
             }
-        }
+        },
         0x46 => {
             // Map: tag + n_params + param slots + collection + body
             *pos += 1;
@@ -563,18 +516,18 @@ fn skip_pattern_element(bytes: &[u8], pos: &mut usize) {
                 skip_pattern_element(bytes, pos); // collection
                 skip_pattern_element(bytes, pos); // body
             }
-        }
+        },
         0x47 => {
             // Zip: tag + first + second
             *pos += 1;
             skip_pattern_element(bytes, pos);
             skip_pattern_element(bytes, pos);
-        }
+        },
         0x48 => {
             // Lambda: tag + slot + body
             *pos += 2;
             skip_pattern_element(bytes, pos);
-        }
+        },
         0x49 => {
             // MultiLambda: tag + n_binders + binder slots + body
             *pos += 1;
@@ -583,13 +536,13 @@ fn skip_pattern_element(bytes: &[u8], pos: &mut usize) {
                 *pos += 1 + n;
                 skip_pattern_element(bytes, pos);
             }
-        }
+        },
         0x4A => {
             // Subst: tag + var_slot + term + replacement
             *pos += 2;
             skip_pattern_element(bytes, pos);
             skip_pattern_element(bytes, pos);
-        }
+        },
         0x4B => {
             // MultiSubst: tag + n_replacements + scope + replacements
             *pos += 1;
@@ -601,52 +554,19 @@ fn skip_pattern_element(bytes: &[u8], pos: &mut usize) {
                     skip_pattern_element(bytes, pos);
                 }
             }
-        }
+        },
         _ => {
             // Unknown tag — advance by 1
             *pos += 1;
-        }
+        },
     }
-}
-
-// ── Diagnostic Helpers ─────────────────────────────────────────────────────
-
-/// Summarize pattern index statistics for diagnostic output.
-pub fn index_summary(index: &PatternIndex) -> String {
-    let dep_groups = compute_fine_dependency_groups(index);
-    let alpha_groups = find_alpha_equivalent_groups(index);
-    let subsumptions = detect_subsumption(index);
-
-    format!(
-        "PatternIndex: {} rules, {} dependency groups ({} independent), \
-         {} alpha-equiv groups, {} subsumptions detected",
-        index.rule_count,
-        dep_groups.len(),
-        dep_groups.iter().filter(|g| g.len() == 1).count(),
-        alpha_groups.len(),
-        subsumptions.len(),
-    )
-}
-
-/// Get the categories involved in a dependency group.
-pub fn group_categories(
-    group: &[RuleId],
-    index: &PatternIndex,
-) -> HashSet<String> {
-    let mut cats = HashSet::new();
-    for id in group {
-        if let Some(labels) = index.constructor_sets.get(id) {
-            cats.extend(labels.iter().cloned());
-        }
-    }
-    cats
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::pattern::{Pattern, PatternTerm};
     use crate::logic::pattern_codec::pattern_to_debruijn_bytes;
+    use mettail_ast::pattern::{Pattern, PatternTerm};
     use proc_macro2::{Ident, Span};
 
     fn var(name: &str) -> Pattern {
@@ -709,10 +629,8 @@ mod tests {
     fn test_apply_arg_generalization() {
         // (Add x y) subsumes (Add (Lit a) y) — x is more general than (Lit a)
         let general = pattern_to_debruijn_bytes(&apply("Add", vec![var("x"), var("y")]));
-        let specific = pattern_to_debruijn_bytes(&apply(
-            "Add",
-            vec![apply("Lit", vec![var("a")]), var("y")],
-        ));
+        let specific =
+            pattern_to_debruijn_bytes(&apply("Add", vec![apply("Lit", vec![var("a")]), var("y")]));
         assert!(
             is_pattern_generalization(&general, &specific),
             "Variable arg should subsume constructor arg"
@@ -730,17 +648,17 @@ mod tests {
                 assert!(merged.0.contains(&RuleId::Equation(0)));
                 assert!(merged.0.contains(&RuleId::Equation(1)));
                 assert!(merged.0.contains(&RuleId::Rewrite(0)));
-            }
+            },
             other => panic!("Expected Element, got {:?}", other),
         }
 
         match a.pmeet(&b) {
             AlgebraicResult::Element(intersection) => {
                 assert_eq!(intersection.0, vec![RuleId::Equation(1)]);
-            }
+            },
             AlgebraicResult::Identity(_) => {
                 // Also valid if intersection equals one of them
-            }
+            },
             other => panic!("Expected Element or Identity, got {:?}", other),
         }
     }

@@ -25,11 +25,6 @@ pub fn generate_cross_cat_ambiguity_section(language: &LanguageDef) -> TokenStre
     let cat_count = collect_categories(language).len();
     let baseline = baseline_tests(&lang_name, cat_count);
     quote! {
-        #![allow(non_snake_case, unused_imports, dead_code)]
-        //! Auto-generated cross-category ambiguity tests for #lang_name.
-        //!
-        //! W7 Stage 9 — see prattail/docs/design/wpds-migration-survey.md.
-
         use mettail_prattail::automata::lex_weight::LexicographicWeight;
         use mettail_prattail::automata::semiring::Semiring;
         use mettail_prattail::wpda_runtime::{StackSymbolV2, WpdaState};

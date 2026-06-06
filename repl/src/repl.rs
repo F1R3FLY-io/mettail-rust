@@ -27,7 +27,11 @@ fn extract_parsed_input(line: &str) -> &str {
     if let Some(eq_pos) = line.find('=') {
         let before = &line[..eq_pos];
         // Only treat as assignment if before '=' is a simple identifier
-        if before.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
+        if before
+            .trim()
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+        {
             return line[eq_pos + 1..].trim();
         }
     }
@@ -175,8 +179,9 @@ impl Repl {
                             // command prefix like "exec " or "step "). Parser error positions
                             // are relative to this substring, not the full command line.
                             let term_input = extract_parsed_input(line);
-                            let display =
-                                crate::pretty::format_parse_error_with_context(term_input, &error_str);
+                            let display = crate::pretty::format_parse_error_with_context(
+                                term_input, &error_str,
+                            );
                             eprintln!("{}", display);
                         } else {
                             eprintln!("{} {}", "Error:".red().bold(), error_str);
@@ -1117,8 +1122,7 @@ impl Repl {
 
             // CEK evaluation: decompose AST into frames, drive to normal form
             {
-                let mut evaluator =
-                    mettail_runtime::CekEvaluator::new(format!("{}", term));
+                let mut evaluator = mettail_runtime::CekEvaluator::new(format!("{}", term));
                 if language.decompose_into_cek(term.as_ref(), &mut evaluator) {
                     let start = Instant::now();
                     let mut obs = mettail_runtime::NullEvalObserver;
@@ -1129,21 +1133,14 @@ impl Repl {
                             println!("Time taken: {:?}", elapsed);
                             if let Ok(result_term) = language.parse_term(&result_str) {
                                 let result_id = result_term.term_id();
-                                let results =
-                                    AscentResults::from_single_term(result_term.as_ref());
+                                let results = AscentResults::from_single_term(result_term.as_ref());
                                 println!("{}", "Done!".green());
                                 println!();
                                 println!("{}", "Current term (result):".bold());
-                                println!(
-                                    "{}",
-                                    format_term_pretty(&result_str).cyan()
-                                );
+                                println!("{}", format_term_pretty(&result_str).cyan());
                                 println!();
-                                self.state.set_term_with_id(
-                                    result_term,
-                                    results,
-                                    result_id,
-                                )?;
+                                self.state
+                                    .set_term_with_id(result_term, results, result_id)?;
                                 return Ok(());
                             }
                         },

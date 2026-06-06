@@ -118,7 +118,12 @@ fn test_generate_parser_code_size() {
     // For a simple calculator, generated code should be compact
     // (much less than LALRPOP's ~1,000 lines for Calculator).
     let limit = 500;
-    assert!(lines < limit, "generated code should be compact, got ~{} lines (limit {})", lines, limit);
+    assert!(
+        lines < limit,
+        "generated code should be compact, got ~{} lines (limit {})",
+        lines,
+        limit
+    );
 }
 
 // Stage 10.5r migration (2026-05-04): `test_generate_parser_two_categories`
@@ -214,10 +219,7 @@ fn test_generate_parser_with_optional() {
     // states (see `wpda_codegen/tables.rs`). The Optional-syntax FEATURE survives
     // via Walker emission and is asserted in `macros/src/gen/runtime/wpda_codegen/tests/*`.
     // Pipeline still emits the KwIf Token (lexer side).
-    assert!(
-        code_str.contains("KwIf"),
-        "should contain KwIf token dispatch for IfExpr rule"
-    );
+    assert!(code_str.contains("KwIf"), "should contain KwIf token dispatch for IfExpr rule");
 }
 
 // Stage 10.5r migration (2026-05-04): the following 3 tests MOVED to
@@ -260,18 +262,9 @@ fn test_no_lazy_parsers_or_context_sensitive_lex_infra() {
     let code_str = code.to_string();
 
     // Lazy parsers and context-sensitive lex infrastructure should never be emitted
-    assert!(
-        !code_str.contains("parse_Int_lazy"),
-        "should NOT emit parse_Cat_lazy"
-    );
-    assert!(
-        !code_str.contains("struct Lexer"),
-        "should NOT emit Lexer struct"
-    );
-    assert!(
-        !code_str.contains("struct LexerAdapter"),
-        "should NOT emit LexerAdapter"
-    );
+    assert!(!code_str.contains("parse_Int_lazy"), "should NOT emit parse_Cat_lazy");
+    assert!(!code_str.contains("struct Lexer"), "should NOT emit Lexer struct");
+    assert!(!code_str.contains("struct LexerAdapter"), "should NOT emit LexerAdapter");
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -574,18 +567,11 @@ mod wfst_lexer_weight_tests {
         // Verify the naming components are lowercase.
         let cat = "Float";
         let variant = "KwFloat";
-        let fn_name = format!(
-            "nfa_try_cold_{}_{}",
-            cat.to_lowercase(),
-            variant.to_lowercase()
-        );
+        let fn_name = format!("nfa_try_cold_{}_{}", cat.to_lowercase(), variant.to_lowercase());
         assert_eq!(fn_name, "nfa_try_cold_float_kwfloat");
 
-        let a1_fn_name = format!(
-            "nfa_try_cold_a1_{}_{}",
-            cat.to_lowercase(),
-            variant.to_lowercase()
-        );
+        let a1_fn_name =
+            format!("nfa_try_cold_a1_{}_{}", cat.to_lowercase(), variant.to_lowercase());
         assert_eq!(a1_fn_name, "nfa_try_cold_a1_float_kwfloat");
     }
 
@@ -661,7 +647,8 @@ mod wfst_lexer_weight_tests {
         assert!(
             code_str.contains("mettail_prattail :: lattice :: TokenSource"),
             "lex_lattice should return mettail_prattail::lattice::TokenSource, got: {}",
-            &code_str[code_str.find("lex_lattice").unwrap_or(0)..][..200.min(code_str.len() - code_str.find("lex_lattice").unwrap_or(0))]
+            &code_str[code_str.find("lex_lattice").unwrap_or(0)..]
+                [..200.min(code_str.len() - code_str.find("lex_lattice").unwrap_or(0))]
         );
     }
 
@@ -827,9 +814,7 @@ mod wfst_lexer_weight_tests {
                 RuleSpec::classified(
                     "IVar",
                     "Int",
-                    vec![SyntaxItemSpec::IdentCapture {
-                        param_name: "v".to_string(),
-                    }],
+                    vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
                     &cat_names,
                 ),
                 // Float rules — identical structure to Int
@@ -853,9 +838,7 @@ mod wfst_lexer_weight_tests {
                 RuleSpec::classified(
                     "FVar",
                     "Float",
-                    vec![SyntaxItemSpec::IdentCapture {
-                        param_name: "v".to_string(),
-                    }],
+                    vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
                     &cat_names,
                 ),
             ],
@@ -886,10 +869,7 @@ mod wfst_lexer_weight_tests {
 
             // Action maps should have entries for both categories
             let action_map = &analysis.isomorphic_action_maps[0];
-            assert!(
-                !action_map.is_empty(),
-                "Action map should be populated for isomorphic group"
-            );
+            assert!(!action_map.is_empty(), "Action map should be populated for isomorphic group");
         }
         // Note: isomorphism depends on WFST construction details (literal types, etc.)
         // which may differentiate Int (integer literal) from Float (no literal pattern).

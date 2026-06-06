@@ -207,11 +207,7 @@ pub fn build_cfg<W: Semiring>(wpds: &Wpds<W>) -> ControlFlowGraph<W> {
 
     for rule in &wpds.rules {
         match rule {
-            WpdsRule::Replace {
-                from_gamma,
-                to_gamma,
-                weight,
-            } => {
+            WpdsRule::Replace { from_gamma, to_gamma, weight } => {
                 let from = symbol_to_node
                     .get(from_gamma)
                     .copied()
@@ -225,7 +221,7 @@ pub fn build_cfg<W: Semiring>(wpds: &Wpds<W>) -> ControlFlowGraph<W> {
                     to: CfgNode(to),
                     weight: *weight,
                 });
-            }
+            },
             WpdsRule::Pop { from_gamma, weight } => {
                 let from = symbol_to_node
                     .get(from_gamma)
@@ -236,7 +232,7 @@ pub fn build_cfg<W: Semiring>(wpds: &Wpds<W>) -> ControlFlowGraph<W> {
                     to: CfgNode(exit_node),
                     weight: *weight,
                 });
-            }
+            },
             WpdsRule::Push {
                 from_gamma,
                 to_gamma_bottom,
@@ -269,7 +265,7 @@ pub fn build_cfg<W: Semiring>(wpds: &Wpds<W>) -> ControlFlowGraph<W> {
                     to: CfgNode(return_site),
                     weight: W::one(),
                 });
-            }
+            },
         }
     }
 
@@ -330,10 +326,7 @@ pub fn tarjan_decompose<W: StarSemiring>(cfg: &ControlFlowGraph<W>) -> Vec<Vec<C
             continue;
         }
 
-        let mut work_stack: Vec<TarjanFrame> = vec![TarjanFrame {
-            node: start,
-            successor_idx: 0,
-        }];
+        let mut work_stack: Vec<TarjanFrame> = vec![TarjanFrame { node: start, successor_idx: 0 }];
 
         while let Some(frame) = work_stack.last_mut() {
             let v = frame.node;
@@ -356,10 +349,7 @@ pub fn tarjan_decompose<W: StarSemiring>(cfg: &ControlFlowGraph<W>) -> Vec<Vec<C
                     // Unvisited successor: push frame for it, but first
                     // advance our own successor_idx so we resume correctly.
                     frame.successor_idx += 1;
-                    work_stack.push(TarjanFrame {
-                        node: w,
-                        successor_idx: 0,
-                    });
+                    work_stack.push(TarjanFrame { node: w, successor_idx: 0 });
                     pushed_child = true;
                     break;
                 } else if on_stack[w] {
@@ -620,12 +610,11 @@ pub fn path_expression<W: StarSemiring>(cfg: &ControlFlowGraph<W>) -> PathExpr<W
 
             // After elimination, only edges involving the header remain.
             // The header self-loop gives the SCC's loop body.
-            let loop_star =
-                if let Some(loop_body) = local_edges.remove(&(header, header)) {
-                    PathExpr::star(loop_body)
-                } else {
-                    PathExpr::One
-                };
+            let loop_star = if let Some(loop_body) = local_edges.remove(&(header, header)) {
+                PathExpr::star(loop_body)
+            } else {
+                PathExpr::One
+            };
 
             // Outgoing edges from the header to non-SCC nodes.
             let mut header_combined = PathExpr::Zero;
@@ -664,10 +653,8 @@ pub fn path_expression<W: StarSemiring>(cfg: &ControlFlowGraph<W>) -> PathExpr<W
                 }
                 // Apply any self-loop.
                 if let Some(&self_w) = edge_map.get(&(v, v)) {
-                    v_combined = PathExpr::seq(
-                        PathExpr::Star(Box::new(PathExpr::Atom(self_w))),
-                        v_combined,
-                    );
+                    v_combined =
+                        PathExpr::seq(PathExpr::Star(Box::new(PathExpr::Atom(self_w))), v_combined);
                 }
                 if !matches!(v_combined, PathExpr::Zero) {
                     node_expr[v] = Some(v_combined);
@@ -677,9 +664,7 @@ pub fn path_expression<W: StarSemiring>(cfg: &ControlFlowGraph<W>) -> PathExpr<W
     }
 
     // Return the path expression for the entry node.
-    node_expr[entry]
-        .take()
-        .unwrap_or(PathExpr::Zero)
+    node_expr[entry].take().unwrap_or(PathExpr::Zero)
 }
 
 // ==============================================================================
@@ -721,31 +706,31 @@ pub fn evaluate<W: StarSemiring>(expr: &PathExpr<W>) -> W {
                     // Push b first so a is evaluated first (stack is LIFO).
                     work.push(Op::Eval(b));
                     work.push(Op::Eval(a));
-                }
+                },
                 PathExpr::Alt(a, b) => {
                     work.push(Op::CombineAlt);
                     work.push(Op::Eval(b));
                     work.push(Op::Eval(a));
-                }
+                },
                 PathExpr::Star(inner) => {
                     work.push(Op::CombineStar);
                     work.push(Op::Eval(inner));
-                }
+                },
             },
             Op::CombineSeq => {
                 let b = value_stack.pop().expect("value stack underflow (Seq rhs)");
                 let a = value_stack.pop().expect("value stack underflow (Seq lhs)");
                 value_stack.push(a.times(&b));
-            }
+            },
             Op::CombineAlt => {
                 let b = value_stack.pop().expect("value stack underflow (Alt rhs)");
                 let a = value_stack.pop().expect("value stack underflow (Alt lhs)");
                 value_stack.push(a.plus(&b));
-            }
+            },
             Op::CombineStar => {
                 let a = value_stack.pop().expect("value stack underflow (Star)");
                 value_stack.push(a.star());
-            }
+            },
         }
     }
 
@@ -890,10 +875,7 @@ pub fn interprocedural_analyze<W: StarSemiring>(icfg: &InterproceduralCfg<W>) ->
             if indices[start] != usize::MAX {
                 continue;
             }
-            let mut work: Vec<Frame> = vec![Frame {
-                node: start,
-                succ_idx: 0,
-            }];
+            let mut work: Vec<Frame> = vec![Frame { node: start, succ_idx: 0 }];
 
             while let Some(frame) = work.last_mut() {
                 let v = frame.node;
@@ -910,10 +892,7 @@ pub fn interprocedural_analyze<W: StarSemiring>(icfg: &InterproceduralCfg<W>) ->
                     let w = call_adj[v][frame.succ_idx];
                     if indices[w] == usize::MAX {
                         frame.succ_idx += 1;
-                        work.push(Frame {
-                            node: w,
-                            succ_idx: 0,
-                        });
+                        work.push(Frame { node: w, succ_idx: 0 });
                         pushed = true;
                         break;
                     } else if on_stack[w] {
@@ -968,8 +947,7 @@ pub fn interprocedural_analyze<W: StarSemiring>(icfg: &InterproceduralCfg<W>) ->
 
                 // Compose: caller_summary ⊕= call_weight ⊗ callee_summary
                 let callee_contribution = ce.call_weight.times(&summaries[ce.callee_proc]);
-                summaries[ce.caller_proc] =
-                    summaries[ce.caller_proc].plus(&callee_contribution);
+                summaries[ce.caller_proc] = summaries[ce.caller_proc].plus(&callee_contribution);
             }
 
             // Check convergence.
@@ -1028,9 +1006,7 @@ pub struct AlgebraicSummary {
 ///
 /// * `wpds_analysis` — WPDS analysis result containing the call graph and cycle
 ///   classification.
-pub fn analyze_from_bundle(
-    wpds_analysis: &crate::wpds::WpdsAnalysis,
-) -> AlgebraicSummary {
+pub fn analyze_from_bundle(wpds_analysis: &crate::wpds::WpdsAnalysis) -> AlgebraicSummary {
     let sccs = &wpds_analysis.call_graph.sccs;
     let scc_count = sccs.len();
 
@@ -1052,15 +1028,9 @@ pub fn analyze_from_bundle(
                     && c.categories[0] == *cat
             });
             if is_recursive {
-                scc_summaries.push(format!(
-                    "SCC [{}]: directly recursive",
-                    cat,
-                ));
+                scc_summaries.push(format!("SCC [{}]: directly recursive", cat,));
             } else {
-                scc_summaries.push(format!(
-                    "SCC [{}]: non-recursive leaf",
-                    cat,
-                ));
+                scc_summaries.push(format!("SCC [{}]: non-recursive leaf", cat,));
             }
         } else {
             // Mutual recursion SCC.
@@ -1071,15 +1041,10 @@ pub fn analyze_from_bundle(
                     && c.categories == *scc
             });
             if has_left_rec {
-                scc_summaries.push(format!(
-                    "SCC [{}]: mutually recursive (left-recursive)",
-                    members,
-                ));
+                scc_summaries
+                    .push(format!("SCC [{}]: mutually recursive (left-recursive)", members,));
             } else {
-                scc_summaries.push(format!(
-                    "SCC [{}]: mutually recursive",
-                    members,
-                ));
+                scc_summaries.push(format!("SCC [{}]: mutually recursive", members,));
             }
         }
     }
@@ -1132,10 +1097,7 @@ mod tests {
         // Expected: 3.0 + 2.0 = 5.0 (tropical times = addition)
         let cfg = make_cfg(
             3,
-            &[
-                (0, 1, TropicalWeight::new(3.0)),
-                (1, 2, TropicalWeight::new(2.0)),
-            ],
+            &[(0, 1, TropicalWeight::new(3.0)), (1, 2, TropicalWeight::new(2.0))],
             0,
             2,
         );
@@ -1154,10 +1116,7 @@ mod tests {
         // Expected: true && true = true (boolean times = AND)
         let cfg = make_cfg(
             3,
-            &[
-                (0, 1, BooleanWeight::new(true)),
-                (1, 2, BooleanWeight::new(true)),
-            ],
+            &[(0, 1, BooleanWeight::new(true)), (1, 2, BooleanWeight::new(true))],
             0,
             2,
         );
@@ -1172,20 +1131,13 @@ mod tests {
         // Expected: false && true = false (unreachable)
         let cfg = make_cfg(
             3,
-            &[
-                (0, 1, BooleanWeight::new(false)),
-                (1, 2, BooleanWeight::new(true)),
-            ],
+            &[(0, 1, BooleanWeight::new(false)), (1, 2, BooleanWeight::new(true))],
             0,
             2,
         );
 
         let result = analyze(&cfg);
-        assert_eq!(
-            result,
-            BooleanWeight::new(false),
-            "linear boolean: unreachable"
-        );
+        assert_eq!(result, BooleanWeight::new(false), "linear boolean: unreachable");
     }
 
     #[test]
@@ -1337,10 +1289,7 @@ mod tests {
         // star(1.0) = 0.0 for tropical.  Result = 0.0 + 2.0 = 2.0
         let cfg = make_cfg(
             2,
-            &[
-                (0, 0, TropicalWeight::new(1.0)),
-                (0, 1, TropicalWeight::new(2.0)),
-            ],
+            &[(0, 0, TropicalWeight::new(1.0)), (0, 1, TropicalWeight::new(2.0))],
             0,
             1,
         );
@@ -1360,10 +1309,7 @@ mod tests {
         // A(0) --> B(1) --> C(2): three singleton SCCs
         let cfg = make_cfg(
             3,
-            &[
-                (0, 1, TropicalWeight::new(1.0)),
-                (1, 2, TropicalWeight::new(1.0)),
-            ],
+            &[(0, 1, TropicalWeight::new(1.0)), (1, 2, TropicalWeight::new(1.0))],
             0,
             2,
         );
@@ -1400,10 +1346,7 @@ mod tests {
         // Node 0 has a self-loop.  Still a singleton SCC (but with self-edge).
         let cfg = make_cfg(
             2,
-            &[
-                (0, 0, TropicalWeight::new(1.0)),
-                (0, 1, TropicalWeight::new(1.0)),
-            ],
+            &[(0, 0, TropicalWeight::new(1.0)), (0, 1, TropicalWeight::new(1.0))],
             0,
             1,
         );
@@ -1475,21 +1418,9 @@ mod tests {
 
         // Build adjacency matrix manually and compare.
         let adj = vec![
-            vec![
-                TropicalWeight::zero(),
-                TropicalWeight::new(3.0),
-                TropicalWeight::new(10.0),
-            ],
-            vec![
-                TropicalWeight::zero(),
-                TropicalWeight::zero(),
-                TropicalWeight::new(2.0),
-            ],
-            vec![
-                TropicalWeight::zero(),
-                TropicalWeight::zero(),
-                TropicalWeight::zero(),
-            ],
+            vec![TropicalWeight::zero(), TropicalWeight::new(3.0), TropicalWeight::new(10.0)],
+            vec![TropicalWeight::zero(), TropicalWeight::zero(), TropicalWeight::new(2.0)],
+            vec![TropicalWeight::zero(), TropicalWeight::zero(), TropicalWeight::zero()],
         ];
         let expected = matrix_star(&adj);
 
@@ -1554,11 +1485,7 @@ mod tests {
         let expr = path_expression(&cfg);
         let result = evaluate(&expr);
         // Entry == exit → should be Zero since n=0 triggers early return.
-        assert!(
-            result.is_zero(),
-            "empty cfg: expected zero, got {:?}",
-            result
-        );
+        assert!(result.is_zero(), "empty cfg: expected zero, got {:?}", result);
     }
 
     #[test]
@@ -1567,11 +1494,7 @@ mod tests {
         let cfg = make_cfg::<TropicalWeight>(1, &[], 0, 0);
 
         let result = analyze(&cfg);
-        assert!(
-            result.is_one(),
-            "single node (entry=exit): expected one, got {:?}",
-            result
-        );
+        assert!(result.is_one(), "single node (entry=exit): expected one, got {:?}", result);
     }
 
     #[test]
@@ -1593,11 +1516,7 @@ mod tests {
         let cfg = make_cfg::<TropicalWeight>(3, &[(0, 1, TropicalWeight::new(1.0))], 0, 2);
 
         let result = analyze(&cfg);
-        assert!(
-            result.is_zero(),
-            "disconnected: expected zero (unreachable), got {:?}",
-            result
-        );
+        assert!(result.is_zero(), "disconnected: expected zero (unreachable), got {:?}", result);
     }
 
     #[test]
@@ -1606,10 +1525,7 @@ mod tests {
         // Tropical: min(3.0, 5.0) = 3.0
         let cfg = make_cfg(
             2,
-            &[
-                (0, 1, TropicalWeight::new(3.0)),
-                (0, 1, TropicalWeight::new(5.0)),
-            ],
+            &[(0, 1, TropicalWeight::new(3.0)), (0, 1, TropicalWeight::new(5.0))],
             0,
             1,
         );
@@ -1660,14 +1576,8 @@ mod tests {
 
     #[test]
     fn evaluate_zero_one() {
-        assert_eq!(
-            evaluate(&PathExpr::<TropicalWeight>::Zero),
-            TropicalWeight::zero()
-        );
-        assert_eq!(
-            evaluate(&PathExpr::<TropicalWeight>::One),
-            TropicalWeight::one()
-        );
+        assert_eq!(evaluate(&PathExpr::<TropicalWeight>::Zero), TropicalWeight::zero());
+        assert_eq!(evaluate(&PathExpr::<TropicalWeight>::One), TropicalWeight::one());
     }
 
     #[test]
@@ -1707,18 +1617,8 @@ mod tests {
     #[test]
     fn interprocedural_no_calls() {
         // Two independent procedures, no call edges.
-        let proc0 = make_cfg(
-            2,
-            &[(0, 1, TropicalWeight::new(3.0))],
-            0,
-            1,
-        );
-        let proc1 = make_cfg(
-            2,
-            &[(0, 1, TropicalWeight::new(5.0))],
-            0,
-            1,
-        );
+        let proc0 = make_cfg(2, &[(0, 1, TropicalWeight::new(3.0))], 0, 1);
+        let proc1 = make_cfg(2, &[(0, 1, TropicalWeight::new(5.0))], 0, 1);
 
         let icfg = InterproceduralCfg {
             procedures: vec![proc0, proc1],
@@ -1748,18 +1648,8 @@ mod tests {
         // Proc 1 summary = 3.0
         // Proc 0 summary = intraprocedural(2.0) ⊕ (1.0 ⊗ 3.0) = min(2.0, 4.0) = 2.0
 
-        let proc0 = make_cfg(
-            2,
-            &[(0, 1, TropicalWeight::new(2.0))],
-            0,
-            1,
-        );
-        let proc1 = make_cfg(
-            2,
-            &[(0, 1, TropicalWeight::new(3.0))],
-            0,
-            1,
-        );
+        let proc0 = make_cfg(2, &[(0, 1, TropicalWeight::new(2.0))], 0, 1);
+        let proc1 = make_cfg(2, &[(0, 1, TropicalWeight::new(3.0))], 0, 1);
 
         let icfg = InterproceduralCfg {
             procedures: vec![proc0, proc1],
@@ -1801,18 +1691,8 @@ mod tests {
         // Proc 0: 0 → 1 (true)
         // Proc 1: 0 → 1 (true)
         // Call: proc 0 calls proc 1 with weight true
-        let proc0 = make_cfg(
-            2,
-            &[(0, 1, BooleanWeight::new(true))],
-            0,
-            1,
-        );
-        let proc1 = make_cfg(
-            2,
-            &[(0, 1, BooleanWeight::new(true))],
-            0,
-            1,
-        );
+        let proc0 = make_cfg(2, &[(0, 1, BooleanWeight::new(true))], 0, 1);
+        let proc1 = make_cfg(2, &[(0, 1, BooleanWeight::new(true))], 0, 1);
 
         let icfg = InterproceduralCfg {
             procedures: vec![proc0, proc1],
@@ -1877,7 +1757,9 @@ mod tests {
         assert_eq!(cfg.edges.len(), 1);
         assert_eq!(cfg.edges[0].from, CfgNode(0));
         assert_eq!(cfg.edges[0].to, CfgNode(1));
-        assert!(cfg.edges[0].weight.approx_eq(&TropicalWeight::new(2.0), 1e-10));
+        assert!(cfg.edges[0]
+            .weight
+            .approx_eq(&TropicalWeight::new(2.0), 1e-10));
     }
 
     // ── Multi-node SCC with exit tests ───────────────────────────────────
@@ -1939,27 +1821,16 @@ mod tests {
         // 0 → 1 (true), 1 → 2 (true), no 0→2 direct
         let cfg = make_cfg(
             3,
-            &[
-                (0, 1, BooleanWeight::new(true)),
-                (1, 2, BooleanWeight::new(true)),
-            ],
+            &[(0, 1, BooleanWeight::new(true)), (1, 2, BooleanWeight::new(true))],
             0,
             2,
         );
 
         let result = all_pairs_analysis(&cfg);
         // 0 can reach 2 transitively.
-        assert_eq!(
-            result[0][2],
-            BooleanWeight::new(true),
-            "0→2 transitively reachable"
-        );
+        assert_eq!(result[0][2], BooleanWeight::new(true), "0→2 transitively reachable");
         // 2 cannot reach 0.
-        assert_eq!(
-            result[2][0],
-            BooleanWeight::new(false),
-            "2→0 not reachable"
-        );
+        assert_eq!(result[2][0], BooleanWeight::new(false), "2→0 not reachable");
     }
 
     // ── Longer chain test ────────────────────────────────────────────────

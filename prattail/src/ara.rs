@@ -98,13 +98,17 @@ impl AraWeight {
             if m.nrows() != dim {
                 return Err(format!(
                     "AraWeight::new: basis matrix {} has {} rows, expected {}",
-                    i, m.nrows(), dim
+                    i,
+                    m.nrows(),
+                    dim
                 ));
             }
             if m.ncols() != dim {
                 return Err(format!(
                     "AraWeight::new: basis matrix {} has {} cols, expected {}",
-                    i, m.ncols(), dim
+                    i,
+                    m.ncols(),
+                    dim
                 ));
             }
         }
@@ -118,10 +122,7 @@ impl AraWeight {
     /// This is the additive identity. Combining any weight with zero yields
     /// that weight unchanged (the union with an empty set is the original set).
     pub fn zero(dim: usize) -> Self {
-        AraWeight {
-            bases: Vec::new(),
-            dim,
-        }
+        AraWeight { bases: Vec::new(), dim }
     }
 
     /// Create the one weight: vector space spanned by the identity matrix.
@@ -165,7 +166,12 @@ impl AraWeight {
     /// // [2  0  5]   (x_1 = 2*x_0 + 5)
     /// // [0  0  1]   (homogeneous row)
     /// ```
-    pub fn from_assignment(var_idx: usize, coefficients: &[f64], constant: f64, dim: usize) -> Result<Self, String> {
+    pub fn from_assignment(
+        var_idx: usize,
+        coefficients: &[f64],
+        constant: f64,
+        dim: usize,
+    ) -> Result<Self, String> {
         let n = dim - 1;
         if var_idx >= n {
             return Err(format!(
@@ -176,7 +182,8 @@ impl AraWeight {
         if coefficients.len() != n {
             return Err(format!(
                 "AraWeight::from_assignment: coefficients length {} must equal n={}",
-                coefficients.len(), n
+                coefficients.len(),
+                n
             ));
         }
 
@@ -187,10 +194,7 @@ impl AraWeight {
         }
         m[(var_idx, n)] = constant;
 
-        Ok(AraWeight {
-            bases: vec![m],
-            dim,
-        })
+        Ok(AraWeight { bases: vec![m], dim })
     }
 
     /// Combine (oplus): join of two vector spaces = span(union of bases).
@@ -208,10 +212,7 @@ impl AraWeight {
         combined.extend(self.bases.iter().cloned());
         combined.extend(other.bases.iter().cloned());
 
-        let mut result = AraWeight {
-            bases: combined,
-            dim: self.dim,
-        };
+        let mut result = AraWeight { bases: combined, dim: self.dim };
         result.basis_reduce();
         result
     }
@@ -246,10 +247,7 @@ impl AraWeight {
             }
         }
 
-        let mut result = AraWeight {
-            bases: products,
-            dim: self.dim,
-        };
+        let mut result = AraWeight { bases: products, dim: self.dim };
         result.basis_reduce();
         result
     }
@@ -427,7 +425,8 @@ impl AraWeight {
             let constant = r[n];
 
             // Skip trivial relations (all components zero)
-            let norm_sq: f64 = coefficients.iter().map(|c| c * c).sum::<f64>() + constant * constant;
+            let norm_sq: f64 =
+                coefficients.iter().map(|c| c * c).sum::<f64>() + constant * constant;
             if norm_sq < ARA_EPSILON * ARA_EPSILON {
                 continue;
             }
@@ -438,10 +437,7 @@ impl AraWeight {
                 continue;
             }
 
-            relations.push(AffineRelation {
-                coefficients,
-                constant,
-            });
+            relations.push(AffineRelation { coefficients, constant });
         }
 
         relations
@@ -528,10 +524,7 @@ impl HeapSemiring for AraWeight {
     fn zero() -> Self {
         // Dimension is unknown without context; use dim=1 as a sentinel.
         // Callers should use `AraWeight::zero(dim)` when the dimension is known.
-        AraWeight {
-            bases: Vec::new(),
-            dim: 1,
-        }
+        AraWeight { bases: Vec::new(), dim: 1 }
     }
 
     fn one() -> Self {
@@ -622,11 +615,7 @@ fn matrix_approx_eq(a: &DMatrix<f64>, b: &DMatrix<f64>, epsilon: f64) -> bool {
 ///
 /// For each matrix in `subset`, flatten it and check if it can be expressed
 /// as a linear combination of the flattened `space` basis vectors.
-fn subspace_contains_all(
-    space: &[DMatrix<f64>],
-    subset: &[DMatrix<f64>],
-    epsilon: f64,
-) -> bool {
+fn subspace_contains_all(space: &[DMatrix<f64>], subset: &[DMatrix<f64>], epsilon: f64) -> bool {
     if subset.is_empty() {
         return true;
     }
@@ -907,8 +896,8 @@ pub fn analyze_from_bundle(
     wpds_analysis: &crate::wpds::WpdsAnalysis,
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
 ) -> AraAnalysis {
-    use std::collections::HashSet;
     use crate::SyntaxItemSpec;
+    use std::collections::HashSet;
 
     // Count unique variable positions (IdentCapture + Binder items) across all
     // rules. Each unique (category, param_name) pair represents one program
@@ -923,30 +912,30 @@ pub fn analyze_from_bundle(
         match item {
             SyntaxItemSpec::IdentCapture { param_name } => {
                 positions.insert((category.to_string(), param_name.clone()));
-            }
+            },
             SyntaxItemSpec::Binder { param_name, .. } => {
                 positions.insert((category.to_string(), param_name.clone()));
-            }
+            },
             SyntaxItemSpec::BinderCollection { param_name, .. } => {
                 positions.insert((category.to_string(), param_name.clone()));
-            }
+            },
             SyntaxItemSpec::Optional { inner } => {
                 for sub in inner {
                     collect_vars(sub, category, positions);
                 }
-            }
+            },
             SyntaxItemSpec::Map { body_items } => {
                 for sub in body_items {
                     collect_vars(sub, category, positions);
                 }
-            }
+            },
             SyntaxItemSpec::Sep { body, .. } => {
                 collect_vars(body, category, positions);
-            }
+            },
             SyntaxItemSpec::Zip { body, .. } => {
                 collect_vars(body, category, positions);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -1173,7 +1162,9 @@ mod tests {
         let relations = w.extract_affine_relations();
         // The relation x_0 = 5 should be discoverable.
         // We check that at least one relation involves x_0 with a non-zero coefficient.
-        let has_x0_relation = relations.iter().any(|r| r.coefficients[0].abs() > ARA_EPSILON);
+        let has_x0_relation = relations
+            .iter()
+            .any(|r| r.coefficients[0].abs() > ARA_EPSILON);
         assert!(
             has_x0_relation,
             "Should discover a relation involving x_0 after constant assignment. Got: {:?}",
@@ -1326,14 +1317,8 @@ mod tests {
         let b = AraWeight::from_assignment(1, &[0.0, 0.0], 2.0, DIM).expect("valid AraWeight");
 
         let combined = a.combine(&b);
-        assert!(
-            combined.rank() >= a.rank(),
-            "Combining should not decrease rank"
-        );
-        assert!(
-            combined.rank() >= b.rank(),
-            "Combining should not decrease rank"
-        );
+        assert!(combined.rank() >= a.rank(), "Combining should not decrease rank");
+        assert!(combined.rank() >= b.rank(), "Combining should not decrease rank");
     }
 
     // ── HeapSemiring Trait Tests ─────────────────────────────────────────────
@@ -1482,10 +1467,7 @@ mod tests {
     #[test]
     fn test_ara_wpds_rule_pop() {
         let sym = crate::wpds::StackSymbol::category_entry("Expr");
-        let rule = AraWpdsRule::Pop {
-            from_gamma: sym.clone(),
-            weight: one(),
-        };
+        let rule = AraWpdsRule::Pop { from_gamma: sym.clone(), weight: one() };
         assert_eq!(rule.from_gamma(), &sym);
         assert!(rule.weight().is_one());
     }
@@ -1528,10 +1510,7 @@ mod tests {
         m[(0, 0)] = 1e-15;
         m[(1, 1)] = 1e-15;
         let w = AraWeight::new(vec![m], DIM).expect("valid AraWeight");
-        assert!(
-            w.is_zero(),
-            "Near-zero matrix should reduce to zero weight"
-        );
+        assert!(w.is_zero(), "Near-zero matrix should reduce to zero weight");
     }
 
     #[test]
@@ -1544,10 +1523,7 @@ mod tests {
     fn test_approx_eq_different_weights() {
         let a = AraWeight::from_assignment(0, &[1.0, 0.0], 3.0, DIM).expect("valid AraWeight");
         let b = AraWeight::from_assignment(0, &[0.0, 1.0], 3.0, DIM).expect("valid AraWeight");
-        assert!(
-            !a.approx_eq(&b, 1e-8),
-            "Different assignments should not be approx_eq"
-        );
+        assert!(!a.approx_eq(&b, 1e-8), "Different assignments should not be approx_eq");
     }
 
     #[test]
@@ -1582,11 +1558,7 @@ mod tests {
         let w = AraWeight::from_assignment(0, &[2.0, 3.0], -1.0, DIM).expect("valid AraWeight");
         let result = w.combine(&w);
         assert_same_space(&result, &w);
-        assert_eq!(
-            result.rank(),
-            w.rank(),
-            "Idempotent combine should preserve rank"
-        );
+        assert_eq!(result.rank(), w.rank(), "Idempotent combine should preserve rank");
     }
 
     // ── Larger Example: 4 Variables ─────────────────────────────────────────
@@ -1594,10 +1566,12 @@ mod tests {
     #[test]
     fn test_four_variables_composition() {
         let dim = 5; // 4 variables
-        // x_0 = x_1 + x_2
-        let w1 = AraWeight::from_assignment(0, &[0.0, 1.0, 1.0, 0.0], 0.0, dim).expect("valid AraWeight");
+                     // x_0 = x_1 + x_2
+        let w1 = AraWeight::from_assignment(0, &[0.0, 1.0, 1.0, 0.0], 0.0, dim)
+            .expect("valid AraWeight");
         // x_3 = 2*x_0 - x_1
-        let w2 = AraWeight::from_assignment(3, &[2.0, -1.0, 0.0, 0.0], 0.0, dim).expect("valid AraWeight");
+        let w2 = AraWeight::from_assignment(3, &[2.0, -1.0, 0.0, 0.0], 0.0, dim)
+            .expect("valid AraWeight");
 
         let composed = w1.extend(&w2);
         assert_eq!(composed.dim, dim);

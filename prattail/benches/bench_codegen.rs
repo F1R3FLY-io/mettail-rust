@@ -1,10 +1,9 @@
 //! Code generation phase benchmarks.
 //!
-//! Benchmarks the code generation phases:
-//! 1. RD handler generation (per-spec, summed over all RD rules)
-//! 2. Pratt parser generation (per-spec, summed over all categories)
-//! 3. Cross-category dispatch generation
-//! 4. Helper function generation (static, no spec variation)
+//! Benchmarks current parser generation entry points:
+//! 1. Full parser generation
+//! 2. Parser generation with retained pipeline analysis
+//! 3. WFST preparation used by prediction/recovery codegen
 
 mod bench_specs;
 
@@ -12,14 +11,12 @@ use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use mettail_prattail::dispatch::write_category_dispatch;
-use mettail_prattail::pratt::{write_parser_helpers, write_pratt_parser};
-use mettail_prattail::recursive::write_rd_handler;
+use mettail_prattail::{generate_parser, generate_parser_with_analysis};
 
 use bench_specs::{complex_spec, medium_spec, minimal_spec, prepare, prepare_wfst, small_spec};
 
-fn bench_rd_handlers(c: &mut Criterion) {
-    let mut group = c.benchmark_group("codegen/rd_handlers");
+fn bench_full_parser_generation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codegen/full_parser");
     group.warm_up_time(Duration::from_secs(3));
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(200);
@@ -32,22 +29,16 @@ fn bench_rd_handlers(c: &mut Criterion) {
     ];
 
     for (name, spec) in &specs {
-        let prepared = prepare(spec);
-        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
-            b.iter(|| {
-                let mut buf = String::with_capacity(4096);
-                for rd_rule in &prepared.rd_rules {
-                    let _ = write_rd_handler(&mut buf, rd_rule);
-                }
-            });
+        group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
+            b.iter(|| generate_parser(spec));
         });
     }
 
     group.finish();
 }
 
-fn bench_pratt_parser(c: &mut Criterion) {
-    let mut group = c.benchmark_group("codegen/pratt_parser");
+fn bench_parser_with_analysis(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codegen/parser_with_analysis");
     group.warm_up_time(Duration::from_secs(3));
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(200);
@@ -60,99 +51,58 @@ fn bench_pratt_parser(c: &mut Criterion) {
     ];
 
     for (name, spec) in &specs {
-        let prepared = prepare(spec);
-        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
-            b.iter(|| {
-                let mut buf = String::with_capacity(4096);
-                for ppc in &prepared.pratt_configs {
-                    write_pratt_parser(&mut buf, &ppc.config, &prepared.bp_table, &ppc.handlers);
-                }
-            });
+        group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
+            b.iter(|| generate_parser_with_analysis(spec));
         });
     }
 
     group.finish();
 }
 
-fn bench_dispatch(c: &mut Criterion) {
-    let mut group = c.benchmark_group("codegen/dispatch");
+fn bench_analysis_preparation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codegen/analysis_preparation");
     group.warm_up_time(Duration::from_secs(3));
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(200);
 
-    // Only specs with cross-category rules produce dispatch code
+    let specs = [
+        ("minimal", minimal_spec()),
+        ("small", small_spec()),
+        ("medium", medium_spec()),
+        ("complex", complex_spec()),
+    ];
+
+    for (name, spec) in &specs {
+        group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
+            b.iter(|| prepare(spec));
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_wfst_preparation(c: &mut Criterion) {
+    let mut group = c.benchmark_group("codegen/wfst_preparation");
+    group.warm_up_time(Duration::from_secs(3));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(200);
+
     let specs = [("small", small_spec()), ("complex", complex_spec())];
 
     for (name, spec) in &specs {
-        let wfst_prepared = prepare_wfst(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &wfst_prepared,
-            |b, wfst_prepared| {
-                b.iter(|| {
-                    let mut buf = String::with_capacity(4096);
-                    let prepared = &wfst_prepared.base;
-                    for cat in &prepared.categories {
-                        let cat_cross: Vec<_> = prepared
-                            .cross_rules
-                            .iter()
-                            .filter(|r| r.result_category == *cat)
-                            .cloned()
-                            .collect();
-                        if !cat_cross.is_empty() {
-                            // Use the prediction WFST for this category (or a
-                            // dummy empty one if no WFST was built for this cat).
-                            let empty_wfst;
-                            let prediction_wfst = match wfst_prepared.prediction_wfsts.get(cat) {
-                                Some(w) => w,
-                                None => {
-                                    empty_wfst = mettail_prattail::wfst::PredictionWfstBuilder::new(
-                                        cat,
-                                        wfst_prepared.token_id_map.clone(),
-                                    ).build();
-                                    &empty_wfst
-                                }
-                            };
-                            write_category_dispatch(
-                                &mut buf,
-                                cat,
-                                &cat_cross,
-                                &[],
-                                &prepared.overlaps,
-                                &prepared.first_sets,
-                                prediction_wfst,
-                                None,
-                                None,
-                                &mettail_prattail::cost_benefit::OptimizationGates::all_enabled(),
-                                &std::collections::HashSet::new(),
-                                &[],
-                                None,
-                            );
-                        }
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, spec| {
+            b.iter(|| prepare_wfst(spec));
+        });
     }
 
     group.finish();
 }
 
-fn bench_helpers(c: &mut Criterion) {
-    let mut group = c.benchmark_group("codegen/helpers");
-    group.warm_up_time(Duration::from_secs(3));
-    group.measurement_time(Duration::from_secs(5));
-    group.sample_size(200);
-
-    group.bench_function("write_parser_helpers", |b| {
-        b.iter(|| {
-            let mut buf = String::with_capacity(2048);
-            write_parser_helpers(&mut buf);
-        });
-    });
-
-    group.finish();
-}
-
-criterion_group!(benches, bench_rd_handlers, bench_pratt_parser, bench_dispatch, bench_helpers,);
+criterion_group!(
+    benches,
+    bench_full_parser_generation,
+    bench_parser_with_analysis,
+    bench_analysis_preparation,
+    bench_wfst_preparation,
+);
 criterion_main!(benches);

@@ -108,7 +108,10 @@ impl BloomFilter {
     /// This method counts set bits as a rough occupancy measure.
     #[inline]
     pub fn occupancy(&self) -> usize {
-        self.bits.iter().map(|chunk| chunk.count_ones() as usize).sum()
+        self.bits
+            .iter()
+            .map(|chunk| chunk.count_ones() as usize)
+            .sum()
     }
 
     /// Hash bytes with a seed using FxHash.
@@ -137,16 +140,14 @@ mod tests {
     #[test]
     fn test_bloom_filter_no_false_negatives() {
         let mut bloom = BloomFilter::new(1000);
-        let terms: Vec<Vec<u8>> = (0..100).map(|i| format!("term{}", i).into_bytes()).collect();
+        let terms: Vec<Vec<u8>> = (0..100)
+            .map(|i| format!("term{}", i).into_bytes())
+            .collect();
         for term in &terms {
             bloom.insert_bytes(term);
         }
         for term in &terms {
-            assert!(
-                bloom.might_contain_bytes(term),
-                "False negative for: {:?}",
-                term
-            );
+            assert!(bloom.might_contain_bytes(term), "False negative for: {:?}", term);
         }
     }
 
@@ -171,20 +172,38 @@ mod tests {
     #[test]
     fn test_bloom_filter_str_no_false_negatives() {
         let constructors = vec![
-            "Add", "Sub", "Mul", "Div", "Eq", "Ne", "Gt", "Lt", "GtEq", "LtEq",
-            "And", "Or", "Not", "Len", "ConcatStr", "ToInt", "ToFloat", "ToBool",
-            "ToStr", "POutput", "PDrop", "PIf", "PNew", "PPar", "NQuote",
+            "Add",
+            "Sub",
+            "Mul",
+            "Div",
+            "Eq",
+            "Ne",
+            "Gt",
+            "Lt",
+            "GtEq",
+            "LtEq",
+            "And",
+            "Or",
+            "Not",
+            "Len",
+            "ConcatStr",
+            "ToInt",
+            "ToFloat",
+            "ToBool",
+            "ToStr",
+            "POutput",
+            "PDrop",
+            "PIf",
+            "PNew",
+            "PPar",
+            "NQuote",
         ];
         let mut bloom = BloomFilter::new(constructors.len());
         for ctor in &constructors {
             bloom.insert_str(ctor);
         }
         for ctor in &constructors {
-            assert!(
-                bloom.might_contain_str(ctor),
-                "False negative for constructor: {}",
-                ctor
-            );
+            assert!(bloom.might_contain_str(ctor), "False negative for constructor: {}", ctor);
         }
     }
 

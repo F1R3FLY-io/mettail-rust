@@ -15,13 +15,11 @@
 //! new runtime API surface, and lets the codegen specialise the
 //! table to exactly this pattern's shape.
 
-use mettail_prattail::automata::{
-    Dfa, Nfa, StateId, TokenKind, DEAD_STATE,
-};
 use mettail_prattail::automata::minimize::minimize_dfa;
 use mettail_prattail::automata::partition::compute_equivalence_classes;
 use mettail_prattail::automata::regex::compile_regex;
 use mettail_prattail::automata::subset::subset_construction;
+use mettail_prattail::automata::{Nfa, StateId, TokenKind, DEAD_STATE};
 
 /// A compiled pattern ready to emit as a runtime sampler.
 ///
@@ -108,24 +106,33 @@ pub fn emit_pattern_sampler(pattern: &str, fn_name: &str) -> Option<String> {
     let cp = compile_pattern(pattern)?;
 
     // Serialise tables as array literals for emission.
-    let trans_lit = cp.transitions
+    let trans_lit = cp
+        .transitions
         .iter()
-        .map(|s| if *s == DEAD_STATE { "u32::MAX".to_string() } else { s.to_string() })
+        .map(|s| {
+            if *s == DEAD_STATE {
+                "u32::MAX".to_string()
+            } else {
+                s.to_string()
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
-    let accepts_lit = cp.accepts
+    let accepts_lit = cp
+        .accepts
         .iter()
         .map(|a| if *a { "true" } else { "false" })
         .collect::<Vec<_>>()
         .join(", ");
-    let reps_lit = cp.representative_byte
+    let reps_lit = cp
+        .representative_byte
         .iter()
         .map(|b| format!("{}u8", b))
         .collect::<Vec<_>>()
         .join(", ");
 
     let code = format!(
-r#"/// Pattern: {pat_display}
+        r#"/// Pattern: {pat_display}
 /// Generated tape-driven walker for unclassified lexer pattern.
 /// Emits a string that matches this regex.
 #[allow(dead_code)]
@@ -181,8 +188,8 @@ mod tests {
     fn compile_simple_pattern() {
         let cp = compile_pattern("[aeiou]+").expect("compile");
         assert!(cp.num_states >= 2); // start + at least one accept
-        // Representative bytes for the class containing {a,e,i,o,u}
-        // should include one of those chars.
+                                     // Representative bytes for the class containing {a,e,i,o,u}
+                                     // should include one of those chars.
         assert!(cp.representative_byte.iter().any(|b| b"aeiou".contains(b)));
     }
 

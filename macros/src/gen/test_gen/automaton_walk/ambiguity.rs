@@ -161,6 +161,13 @@ mod tests {
     }
 
     #[test]
+    fn float_numeric_boundaries_need_whitespace() {
+        assert!(requires_ws(AdjKind::Float, AdjKind::Int));
+        assert!(requires_ws(AdjKind::Int, AdjKind::Float));
+        assert!(requires_ws(AdjKind::Float, AdjKind::Float));
+    }
+
+    #[test]
     fn int_then_signed_int_needs_whitespace() {
         // `5` + `-3` concatenates to `5-3` which the lexer parses
         // as `Int(5), Minus, Int(3)` under normal Integer regex but
@@ -179,5 +186,23 @@ mod tests {
         assert_eq!(AdjKind::from_terminal("+"), AdjKind::Punct);
         assert_eq!(AdjKind::from_terminal("=="), AdjKind::Punct);
         assert_eq!(AdjKind::from_terminal("("), AdjKind::Punct);
+    }
+
+    #[test]
+    fn canonical_kinds_map_to_adjacency_kinds() {
+        assert_eq!(AdjKind::from_canonical(CanonicalKind::Integer), AdjKind::Int);
+        assert_eq!(AdjKind::from_canonical(CanonicalKind::SignedInt), AdjKind::Int);
+        assert_eq!(AdjKind::from_canonical(CanonicalKind::Float), AdjKind::Float);
+        assert_eq!(AdjKind::from_canonical(CanonicalKind::SignedFloat), AdjKind::Float,);
+        assert_eq!(AdjKind::from_canonical(CanonicalKind::Unclassified), AdjKind::Unknown,);
+    }
+
+    #[test]
+    fn representatives_cover_canonical_token_family_names() {
+        assert_eq!(representative_for("Integer"), "5");
+        assert_eq!(representative_for("SignedFloat"), "1.5");
+        assert_eq!(representative_for("Ident"), "x");
+        assert_eq!(representative_for("StringLit"), "\"hi\"");
+        assert_eq!(representative_for("Unknown"), "");
     }
 }

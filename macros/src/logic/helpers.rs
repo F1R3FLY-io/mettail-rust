@@ -182,28 +182,23 @@ fn generate_regular_constructor_pool_arm(
     // term_context in declaration order; emits one flag per emitted item.
     // Aligns with `convert_term_context_to_items` flattening.
     let optional_flags: Vec<bool> = if let Some(ctx) = &rule.term_context {
-        fn walk(
-            params: &[mettail_ast::grammar::TermParam],
-            in_opt: bool,
-            flags: &mut Vec<bool>,
-        ) {
+        fn walk(params: &[mettail_ast::grammar::TermParam], in_opt: bool, flags: &mut Vec<bool>) {
             use mettail_ast::grammar::TermParam;
             use mettail_ast::types::TypeExpr;
             for p in params {
                 match p {
                     TermParam::Simple { ty, .. } => match ty {
                         TypeExpr::Base(_) | TypeExpr::Collection { .. } => flags.push(in_opt),
-                        _ => {}
+                        _ => {},
                     },
-                    TermParam::Abstraction { ty, .. }
-                    | TermParam::MultiAbstraction { ty, .. } => {
+                    TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                         if let TypeExpr::Arrow { codomain, .. } = ty {
                             if matches!(codomain.as_ref(), TypeExpr::Base(_)) {
                                 flags.push(in_opt);
                             }
                         }
-                    }
-                    TermParam::GuardBody { .. } => {}
+                    },
+                    TermParam::GuardBody { .. } => {},
                     TermParam::Optional { params: inner } => walk(inner, true, flags),
                 }
             }

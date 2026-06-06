@@ -264,13 +264,8 @@ impl fmt::Display for CegarResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CegarResult::Verified { level, log } => {
-                write!(
-                    f,
-                    "VERIFIED at {} level ({} refinement steps)",
-                    level,
-                    log.num_steps()
-                )
-            }
+                write!(f, "VERIFIED at {} level ({} refinement steps)", level, log.num_steps())
+            },
             CegarResult::Refuted { trace, log } => {
                 write!(
                     f,
@@ -278,14 +273,10 @@ impl fmt::Display for CegarResult {
                     trace,
                     log.num_steps()
                 )
-            }
+            },
             CegarResult::Inconclusive(log) => {
-                write!(
-                    f,
-                    "INCONCLUSIVE after {} refinement steps",
-                    log.num_steps()
-                )
-            }
+                write!(f, "INCONCLUSIVE after {} refinement steps", log.num_steps())
+            },
         }
     }
 }
@@ -298,9 +289,7 @@ impl fmt::Display for CegarResult {
 ///
 /// All non-zero weights become `true` (reachable); zero weights stay `false`.
 fn project_wpds_to_boolean(wpds: &Wpds<TropicalWeight>) -> Wpds<BooleanWeight> {
-    let project_weight = |w: &TropicalWeight| -> BooleanWeight {
-        BooleanWeight(!w.is_zero())
-    };
+    let project_weight = |w: &TropicalWeight| -> BooleanWeight { BooleanWeight(!w.is_zero()) };
 
     let rules: Vec<WpdsRule<BooleanWeight>> = wpds
         .rules
@@ -310,11 +299,7 @@ fn project_wpds_to_boolean(wpds: &Wpds<TropicalWeight>) -> Wpds<BooleanWeight> {
                 from_gamma: from_gamma.clone(),
                 weight: project_weight(weight),
             },
-            WpdsRule::Replace {
-                from_gamma,
-                to_gamma,
-                weight,
-            } => WpdsRule::Replace {
+            WpdsRule::Replace { from_gamma, to_gamma, weight } => WpdsRule::Replace {
                 from_gamma: from_gamma.clone(),
                 to_gamma: to_gamma.clone(),
                 weight: project_weight(weight),
@@ -370,11 +355,7 @@ fn project_wpds_to_counting(wpds: &Wpds<TropicalWeight>) -> Wpds<CountingWeight>
                 from_gamma: from_gamma.clone(),
                 weight: project_weight(weight),
             },
-            WpdsRule::Replace {
-                from_gamma,
-                to_gamma,
-                weight,
-            } => WpdsRule::Replace {
+            WpdsRule::Replace { from_gamma, to_gamma, weight } => WpdsRule::Replace {
                 from_gamma: from_gamma.clone(),
                 to_gamma: to_gamma.clone(),
                 weight: project_weight(weight),
@@ -479,11 +460,11 @@ pub fn abstract_check<W: Semiring>(
 /// non-zero weight where q is a final state or can reach a final state via
 /// epsilon-like paths. For single-symbol stack configurations, we just check
 /// if q is directly a final state.
-fn accepts_initial_config<W: Semiring>(
-    automaton: &PAutomaton<W>,
-    symbol: &StackSymbol,
-) -> bool {
-    if let Some(trans_indices) = automaton.transitions_by_source.get(&automaton.initial_state) {
+fn accepts_initial_config<W: Semiring>(automaton: &PAutomaton<W>, symbol: &StackSymbol) -> bool {
+    if let Some(trans_indices) = automaton
+        .transitions_by_source
+        .get(&automaton.initial_state)
+    {
         for &idx in trans_indices {
             let t = &automaton.transitions[idx];
             if t.symbol == *symbol && !t.weight.is_zero() {
@@ -541,10 +522,7 @@ fn extract_trace_from_prestar<W: Semiring>(
         }
     }
 
-    CounterexampleTrace {
-        symbols,
-        description: String::new(),
-    }
+    CounterexampleTrace { symbols, description: String::new() }
 }
 
 /// Check at a specific abstraction level by projecting the concrete WPDS.
@@ -562,20 +540,20 @@ fn abstract_check_at_level(
             let abs_wpds = project_wpds_to_boolean(wpds);
             let abs_bad = project_pautomaton_to_boolean(bad_states);
             abstract_check(&abs_wpds, &abs_bad)
-        }
+        },
         AbstractionLevel::Counting => {
             let abs_wpds = project_wpds_to_counting(wpds);
             let abs_bad = project_pautomaton_to_counting(bad_states);
             abstract_check(&abs_wpds, &abs_bad)
-        }
+        },
         AbstractionLevel::Tropical => {
             // No projection needed -- use the concrete model directly.
             abstract_check(wpds, bad_states)
-        }
+        },
         AbstractionLevel::Custom(_) => {
             // Custom levels are treated as opaque; return Unknown.
             (Verdict::Unknown, None)
-        }
+        },
     }
 }
 
@@ -588,10 +566,7 @@ fn abstract_check_at_level(
 /// The validation works by constructing a P-automaton that accepts exactly the
 /// counterexample trace, then running `prestar` on the concrete WPDS to check
 /// whether the initial configuration can reach the trace's configuration.
-pub fn check_spurious(
-    trace: &CounterexampleTrace,
-    wpds: &Wpds<TropicalWeight>,
-) -> bool {
+pub fn check_spurious(trace: &CounterexampleTrace, wpds: &Wpds<TropicalWeight>) -> bool {
     if trace.symbols.is_empty() {
         // An empty trace is vacuously spurious (no actual counterexample).
         return true;
@@ -677,7 +652,7 @@ pub fn cegar_verify(
                     refinement_action: String::new(),
                 });
                 return CegarResult::Verified { level, log };
-            }
+            },
             Verdict::Violated => {
                 if let Some(trace) = trace {
                     let spurious = check_spurious(&trace, wpds);
@@ -709,7 +684,7 @@ pub fn cegar_verify(
                                 refinement_action: action,
                             });
                             level = next_level;
-                        }
+                        },
                         None => {
                             // Cannot refine further -- this is a real counterexample
                             // at the most precise level.
@@ -721,7 +696,7 @@ pub fn cegar_verify(
                                 refinement_action: "no further refinement available".to_string(),
                             });
                             return CegarResult::Refuted { trace, log };
-                        }
+                        },
                     }
                 } else {
                     // Violated but no trace -- try refining.
@@ -739,7 +714,7 @@ pub fn cegar_verify(
                                 refinement_action: action,
                             });
                             level = next_level;
-                        }
+                        },
                         None => {
                             log.add_step(RefinementStep {
                                 level: level.clone(),
@@ -749,10 +724,10 @@ pub fn cegar_verify(
                                 refinement_action: "no further refinement available".to_string(),
                             });
                             return CegarResult::Inconclusive(log);
-                        }
+                        },
                     }
                 }
-            }
+            },
             Verdict::Unknown => {
                 // Unknown verdict -- try refining to a more precise level.
                 match refine(&level) {
@@ -769,7 +744,7 @@ pub fn cegar_verify(
                             refinement_action: action,
                         });
                         level = next_level;
-                    }
+                    },
                     None => {
                         log.add_step(RefinementStep {
                             level: level.clone(),
@@ -779,9 +754,9 @@ pub fn cegar_verify(
                             refinement_action: "no further refinement available".to_string(),
                         });
                         return CegarResult::Inconclusive(log);
-                    }
+                    },
                 }
-            }
+            },
         }
     }
 
@@ -895,9 +870,7 @@ pub fn adaptive_dead_rule_elimination(
                 // Spurious: Boolean said unreachable but Counting finds a path
                 rejected.push(OptimizationCandidate {
                     target: sym.clone(),
-                    description: format!(
-                        "Boolean reported unreachable but Counting found paths"
-                    ),
+                    description: format!("Boolean reported unreachable but Counting found paths"),
                     identified_at: AbstractionLevel::Boolean,
                     validated: false,
                 });
@@ -905,8 +878,7 @@ pub fn adaptive_dead_rule_elimination(
                 // Confirmed: both Boolean and Counting agree it's unreachable
                 confirmed.push(OptimizationCandidate {
                     target: sym.clone(),
-                    description: "dead rule: confirmed unreachable by Boolean+Counting"
-                        .to_string(),
+                    description: "dead rule: confirmed unreachable by Boolean+Counting".to_string(),
                     identified_at: AbstractionLevel::Counting,
                     validated: true,
                 });
@@ -927,11 +899,7 @@ pub fn adaptive_dead_rule_elimination(
         });
     }
 
-    AdaptiveOptResult {
-        confirmed,
-        rejected,
-        log,
-    }
+    AdaptiveOptResult { confirmed, rejected, log }
 }
 
 /// Analyze dispatch determinism at each rule position via CEGAR.
@@ -977,7 +945,7 @@ pub fn adaptive_dispatch_analysis(
                 } else {
                     DispatchClassification::Ambiguous(n)
                 }
-            }
+            },
         };
 
         results.push((entry.clone(), classification));
@@ -1017,9 +985,7 @@ impl fmt::Display for DispatchClassification {
 /// concrete `Wpds<TropicalWeight>` + bad-state automaton. Here we synthesise
 /// a summary log from the already-computed `WpdsAnalysis` so that pipeline
 /// consumers can inspect the CEGAR trace without re-running the full loop.
-pub fn cegar_from_bundle(
-    wpds_analysis: &crate::wpds::WpdsAnalysis,
-) -> Option<CegarLog> {
+pub fn cegar_from_bundle(wpds_analysis: &crate::wpds::WpdsAnalysis) -> Option<CegarLog> {
     use crate::verify::Verdict;
 
     if wpds_analysis.unreachable_rules.is_empty() {
@@ -1041,10 +1007,7 @@ pub fn cegar_from_bundle(
         wpds_analysis.grammar_name,
     );
 
-    let counterexample = CounterexampleTrace {
-        symbols: cex_symbols,
-        description,
-    };
+    let counterexample = CounterexampleTrace { symbols: cex_symbols, description };
 
     // Step 1: Boolean-level check reports the violation (unreachable rules exist).
     log.add_step(RefinementStep {
@@ -1091,12 +1054,7 @@ mod tests {
         let num_1 = StackSymbol::rule_position("Expr", "Num", 1);
         let bad_sym = StackSymbol::category_entry("BadState");
 
-        let stack_symbols = vec![
-            expr_entry.clone(),
-            num_0.clone(),
-            num_1.clone(),
-            bad_sym.clone(),
-        ];
+        let stack_symbols = vec![expr_entry.clone(), num_0.clone(), num_1.clone(), bad_sym.clone()];
         let symbol_index: HashMap<StackSymbol, usize> = stack_symbols
             .iter()
             .enumerate()
@@ -1142,12 +1100,7 @@ mod tests {
         let mut bad_auto = PAutomaton::new(initial_state);
         let final_state = bad_auto.add_state();
         bad_auto.mark_final(final_state);
-        bad_auto.add_transition(
-            initial_state,
-            bad_sym.clone(),
-            final_state,
-            TropicalWeight::one(),
-        );
+        bad_auto.add_transition(initial_state, bad_sym.clone(), final_state, TropicalWeight::one());
         bad_auto.symbol_to_state.insert(bad_sym, final_state);
 
         (wpds, bad_auto)
@@ -1206,12 +1159,7 @@ mod tests {
         let mut bad_auto = PAutomaton::new(initial_state);
         let final_state = bad_auto.add_state();
         bad_auto.mark_final(final_state);
-        bad_auto.add_transition(
-            initial_state,
-            bad_sym.clone(),
-            final_state,
-            TropicalWeight::one(),
-        );
+        bad_auto.add_transition(initial_state, bad_sym.clone(), final_state, TropicalWeight::one());
         bad_auto.symbol_to_state.insert(bad_sym, final_state);
 
         (wpds, bad_auto)
@@ -1456,12 +1404,7 @@ mod tests {
         let mut bad_auto = PAutomaton::new(initial_state);
         let final_state = bad_auto.add_state();
         bad_auto.mark_final(final_state);
-        bad_auto.add_transition(
-            initial_state,
-            c_sym.clone(),
-            final_state,
-            TropicalWeight::one(),
-        );
+        bad_auto.add_transition(initial_state, c_sym.clone(), final_state, TropicalWeight::one());
         bad_auto.symbol_to_state.insert(c_sym, final_state);
 
         (wpds, bad_auto)
@@ -1585,12 +1528,7 @@ mod tests {
         let mut bad_auto = PAutomaton::new(initial_state);
         let final_state = bad_auto.add_state();
         bad_auto.mark_final(final_state);
-        bad_auto.add_transition(
-            initial_state,
-            bad_sym.clone(),
-            final_state,
-            TropicalWeight::one(),
-        );
+        bad_auto.add_transition(initial_state, bad_sym.clone(), final_state, TropicalWeight::one());
         bad_auto.symbol_to_state.insert(bad_sym, final_state);
 
         (wpds, bad_auto)
@@ -1603,27 +1541,15 @@ mod tests {
         assert_eq!(AbstractionLevel::Boolean.to_string(), "Boolean");
         assert_eq!(AbstractionLevel::Counting.to_string(), "Counting");
         assert_eq!(AbstractionLevel::Tropical.to_string(), "Tropical");
-        assert_eq!(
-            AbstractionLevel::Custom("MyLevel".to_string()).to_string(),
-            "Custom(MyLevel)"
-        );
+        assert_eq!(AbstractionLevel::Custom("MyLevel".to_string()).to_string(), "Custom(MyLevel)");
     }
 
     #[test]
     fn test_refinement_ladder() {
-        assert_eq!(
-            refine(&AbstractionLevel::Boolean),
-            Some(AbstractionLevel::Counting)
-        );
-        assert_eq!(
-            refine(&AbstractionLevel::Counting),
-            Some(AbstractionLevel::Tropical)
-        );
+        assert_eq!(refine(&AbstractionLevel::Boolean), Some(AbstractionLevel::Counting));
+        assert_eq!(refine(&AbstractionLevel::Counting), Some(AbstractionLevel::Tropical));
         assert_eq!(refine(&AbstractionLevel::Tropical), None);
-        assert_eq!(
-            refine(&AbstractionLevel::Custom("X".to_string())),
-            None
-        );
+        assert_eq!(refine(&AbstractionLevel::Custom("X".to_string())), None);
     }
 
     // ---- Projection tests ----
@@ -1656,10 +1582,7 @@ mod tests {
         assert_eq!(count_wpds.rules.len(), wpds.rules.len());
         for rule in &count_wpds.rules {
             let w = rule.weight();
-            assert!(
-                !w.is_zero(),
-                "non-zero tropical weight should project to non-zero counting"
-            );
+            assert!(!w.is_zero(), "non-zero tropical weight should project to non-zero counting");
         }
     }
 
@@ -1700,15 +1623,9 @@ mod tests {
         let (verdict, trace) = abstract_check(&wpds, &bad_auto);
 
         assert_eq!(verdict, Verdict::Violated);
-        assert!(
-            trace.is_some(),
-            "unsafe system should produce a counterexample"
-        );
+        assert!(trace.is_some(), "unsafe system should produce a counterexample");
         let trace = trace.expect("counterexample should be present");
-        assert!(
-            !trace.symbols.is_empty(),
-            "counterexample trace should not be empty"
-        );
+        assert!(!trace.symbols.is_empty(), "counterexample trace should not be empty");
     }
 
     #[test]
@@ -1752,10 +1669,7 @@ mod tests {
             symbols: Vec::new(),
             description: "empty".to_string(),
         };
-        assert!(
-            check_spurious(&empty_trace, &wpds),
-            "empty trace should be spurious"
-        );
+        assert!(check_spurious(&empty_trace, &wpds), "empty trace should be spurious");
     }
 
     #[test]
@@ -1803,22 +1717,10 @@ mod tests {
 
         let result = cegar_verify(&wpds, &bad_auto, &config);
 
-        assert!(
-            result.is_verified(),
-            "safe system should verify, got: {}",
-            result
-        );
+        assert!(result.is_verified(), "safe system should verify, got: {}", result);
         if let CegarResult::Verified { level, log } = &result {
-            assert_eq!(
-                *level,
-                AbstractionLevel::Boolean,
-                "should verify at Boolean level"
-            );
-            assert_eq!(
-                log.num_steps(),
-                1,
-                "should take exactly 1 step (immediate verification)"
-            );
+            assert_eq!(*level, AbstractionLevel::Boolean, "should verify at Boolean level");
+            assert_eq!(log.num_steps(), 1, "should take exactly 1 step (immediate verification)");
             assert!(!log.had_spurious(), "no spurious counterexamples expected");
         }
     }
@@ -1833,16 +1735,9 @@ mod tests {
 
         let result = cegar_verify(&wpds, &bad_auto, &config);
 
-        assert!(
-            result.is_refuted(),
-            "unsafe system should be refuted, got: {}",
-            result
-        );
+        assert!(result.is_refuted(), "unsafe system should be refuted, got: {}", result);
         if let CegarResult::Refuted { trace, .. } = &result {
-            assert!(
-                !trace.symbols.is_empty(),
-                "refutation should have a non-empty trace"
-            );
+            assert!(!trace.symbols.is_empty(), "refutation should have a non-empty trace");
         }
     }
 
@@ -2228,9 +2123,9 @@ mod tests {
 
         for (orig, proj) in wpds.rules.iter().zip(bool_wpds.rules.iter()) {
             match (orig, proj) {
-                (WpdsRule::Pop { .. }, WpdsRule::Pop { .. }) => {}
-                (WpdsRule::Replace { .. }, WpdsRule::Replace { .. }) => {}
-                (WpdsRule::Push { .. }, WpdsRule::Push { .. }) => {}
+                (WpdsRule::Pop { .. }, WpdsRule::Pop { .. }) => {},
+                (WpdsRule::Replace { .. }, WpdsRule::Replace { .. }) => {},
+                (WpdsRule::Push { .. }, WpdsRule::Push { .. }) => {},
                 _ => panic!("projection changed rule type: {:?} -> {:?}", orig, proj),
             }
         }
@@ -2305,14 +2200,8 @@ mod tests {
     #[test]
     fn test_dispatch_classification_display() {
         assert_eq!(DispatchClassification::Dead.to_string(), "dead");
-        assert_eq!(
-            DispatchClassification::Deterministic.to_string(),
-            "deterministic"
-        );
-        assert_eq!(
-            DispatchClassification::Ambiguous(3).to_string(),
-            "ambiguous(3)"
-        );
+        assert_eq!(DispatchClassification::Deterministic.to_string(), "deterministic");
+        assert_eq!(DispatchClassification::Ambiguous(3).to_string(), "ambiguous(3)");
     }
 
     #[test]
@@ -2335,10 +2224,7 @@ mod tests {
         let (wpds, _) = build_safe_wpds();
         let results = adaptive_dispatch_analysis(&wpds);
         // Should classify each category entry
-        assert!(
-            !results.is_empty(),
-            "should have at least one dispatch classification"
-        );
+        assert!(!results.is_empty(), "should have at least one dispatch classification");
     }
 
     #[test]
@@ -2387,12 +2273,14 @@ mod tests {
     #[test]
     fn test_cegar_from_bundle_with_unreachable() {
         let mut wpds_analysis = make_empty_wpds_analysis();
-        wpds_analysis.unreachable_rules.push(crate::wpds::WpdsUnreachableRule {
-            rule_label: "DeadRule".to_string(),
-            category: "Expr".to_string(),
-            missing_contexts: vec!["Main".to_string()],
-            witness_trace: vec!["Main".to_string(), "Expr".to_string()],
-        });
+        wpds_analysis
+            .unreachable_rules
+            .push(crate::wpds::WpdsUnreachableRule {
+                rule_label: "DeadRule".to_string(),
+                category: "Expr".to_string(),
+                missing_contexts: vec!["Main".to_string()],
+                witness_trace: vec!["Main".to_string(), "Expr".to_string()],
+            });
         let result = cegar_from_bundle(&wpds_analysis);
         assert!(result.is_some(), "should return Some(CegarLog) when unreachable rules exist");
     }

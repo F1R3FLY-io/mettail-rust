@@ -242,11 +242,7 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> SymbolicFiniteTransducer<A, B> {
     /// Add a state and return its ID.
     pub fn add_state(&mut self, is_accepting: bool, label: Option<String>) -> usize {
         let id = self.states.len();
-        self.states.push(SftState {
-            id,
-            is_accepting,
-            label,
-        });
+        self.states.push(SftState { id, is_accepting, label });
         if is_accepting {
             self.accepting_states.insert(id);
         }
@@ -279,12 +275,8 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> SymbolicFiniteTransducer<A, B> {
             to,
             self.states.len(),
         );
-        self.transitions.push(SftTransition {
-            from,
-            to,
-            guard,
-            output,
-        });
+        self.transitions
+            .push(SftTransition { from, to, guard, output });
     }
 
     /// Get the number of states.
@@ -325,9 +317,7 @@ impl<A: BooleanAlgebra, B: BooleanAlgebra> SymbolicFiniteTransducer<A, B> {
             let mut next: Vec<(usize, Vec<B::Domain>)> = Vec::new();
             for (state, acc) in &current {
                 for trans in &self.transitions {
-                    if trans.from == *state
-                        && self.input_algebra.evaluate(&trans.guard, elem)
-                    {
+                    if trans.from == *state && self.input_algebra.evaluate(&trans.guard, elem) {
                         let mut new_acc = acc.clone();
                         new_acc.extend(trans.output.apply(elem));
                         next.push((trans.to, new_acc));
@@ -398,10 +388,8 @@ where
         A::Domain: Clone + Into<B::Domain> + Send + Sync + 'static,
         B::Domain: Clone + Into<C::Domain> + Send + Sync + 'static,
     {
-        let mut result = SymbolicFiniteTransducer::new(
-            self.input_algebra.clone(),
-            other.output_algebra.clone(),
-        );
+        let mut result =
+            SymbolicFiniteTransducer::new(self.input_algebra.clone(), other.output_algebra.clone());
 
         // Product state space: (q₁, q₂) → product_state_id
         let mut state_map: HashMap<(usize, usize), usize> = HashMap::new();
@@ -410,8 +398,8 @@ where
         // Create initial product states.
         for &i1 in &self.initial_states {
             for &i2 in &other.initial_states {
-                let is_accepting = self.accepting_states.contains(&i1)
-                    && other.accepting_states.contains(&i2);
+                let is_accepting =
+                    self.accepting_states.contains(&i1) && other.accepting_states.contains(&i2);
                 let label = format!(
                     "({},{})",
                     self.states[i1].label.as_deref().unwrap_or(&i1.to_string()),
@@ -454,7 +442,7 @@ where
                             t1.guard.clone(),
                             OutputFunction::Epsilon,
                         );
-                    }
+                    },
                     OutputFunction::Constant(vals) => {
                         // Constant output: feed vals through other's transitions.
                         self.compose_constant_output(
@@ -467,7 +455,7 @@ where
                             q2,
                             vals,
                         );
-                    }
+                    },
                     OutputFunction::Identity => {
                         // Identity: for each t₂ from q₂, compose if guards compatible.
                         for t2 in &other.transitions {
@@ -479,21 +467,19 @@ where
                             // as B::Domain, we need the input to satisfy both guards.
                             // Conservative: check if t₁'s guard ∧ TRUE is satisfiable.
                             if self.input_algebra.is_satisfiable(&t1.guard)
-                                && other.output_algebra.is_satisfiable(
-                                    &other.output_algebra.true_pred(),
-                                )
+                                && other
+                                    .output_algebra
+                                    .is_satisfiable(&other.output_algebra.true_pred())
                             {
                                 let to_pair = (t1.to, t2.to);
-                                let to_pid =
-                                    *state_map.entry(to_pair).or_insert_with(|| {
-                                        let is_acc =
-                                            self.accepting_states.contains(&t1.to)
-                                                && other.accepting_states.contains(&t2.to);
-                                        let label = format!("({},{})", t1.to, t2.to);
-                                        let pid = result.add_state(is_acc, Some(label));
-                                        worklist.push_back(to_pair);
-                                        pid
-                                    });
+                                let to_pid = *state_map.entry(to_pair).or_insert_with(|| {
+                                    let is_acc = self.accepting_states.contains(&t1.to)
+                                        && other.accepting_states.contains(&t2.to);
+                                    let label = format!("({},{})", t1.to, t2.to);
+                                    let pid = result.add_state(is_acc, Some(label));
+                                    worklist.push_back(to_pair);
+                                    pid
+                                });
                                 // Adapt OutputFunction<B,C> to OutputFunction<A,C>
                                 // via identity: A→B then apply t2's output B→C.
                                 let t2_out = t2.output.clone();
@@ -508,15 +494,10 @@ where
                                             OutputFunction::FlatMap(f) => f(&b_val),
                                         }
                                     }));
-                                result.add_transition(
-                                    from_pid,
-                                    to_pid,
-                                    t1.guard.clone(),
-                                    adapted,
-                                );
+                                result.add_transition(from_pid, to_pid, t1.guard.clone(), adapted);
                             }
                         }
-                    }
+                    },
                     OutputFunction::Map(_) | OutputFunction::FlatMap(_) => {
                         // For computed output functions, conservative approach:
                         // compose with all transitions from q₂ whose guards
@@ -527,16 +508,14 @@ where
                             }
                             if other.input_algebra.is_satisfiable(&t2.guard) {
                                 let to_pair = (t1.to, t2.to);
-                                let to_pid =
-                                    *state_map.entry(to_pair).or_insert_with(|| {
-                                        let is_acc =
-                                            self.accepting_states.contains(&t1.to)
-                                                && other.accepting_states.contains(&t2.to);
-                                        let label = format!("({},{})", t1.to, t2.to);
-                                        let pid = result.add_state(is_acc, Some(label));
-                                        worklist.push_back(to_pair);
-                                        pid
-                                    });
+                                let to_pid = *state_map.entry(to_pair).or_insert_with(|| {
+                                    let is_acc = self.accepting_states.contains(&t1.to)
+                                        && other.accepting_states.contains(&t2.to);
+                                    let label = format!("({},{})", t1.to, t2.to);
+                                    let pid = result.add_state(is_acc, Some(label));
+                                    worklist.push_back(to_pair);
+                                    pid
+                                });
                                 // Composed output: apply self's then other's.
                                 let t1_out = t1.output.clone();
                                 let t2_out = t2.output.clone();
@@ -548,7 +527,7 @@ where
                                 );
                             }
                         }
-                    }
+                    },
                 }
             }
         }
@@ -581,12 +560,7 @@ where
                 worklist.push_back(to_pair);
                 pid
             });
-            result.add_transition(
-                from_pid,
-                to_pid,
-                t1.guard.clone(),
-                OutputFunction::Epsilon,
-            );
+            result.add_transition(from_pid, to_pid, t1.guard.clone(), OutputFunction::Epsilon);
             return;
         }
 
@@ -601,7 +575,7 @@ where
             for t2 in &other.transitions {
                 if t2.from == q2_current && other.input_algebra.evaluate(&t2.guard, val) {
                     match &t2.output {
-                        OutputFunction::Epsilon => {} // produce nothing
+                        OutputFunction::Epsilon => {}, // produce nothing
                         OutputFunction::Constant(c) => all_outputs.extend(c.iter().cloned()),
                         OutputFunction::Identity => all_outputs.push(val.clone().into()),
                         OutputFunction::Map(f) => all_outputs.push(f(val)),
@@ -684,12 +658,10 @@ where
                             pid
                         });
                         result.add_transition(from_pid, to_pid, t_sft.guard.clone());
-                    }
+                    },
                     OutputFunction::Constant(vals) => {
                         // Simulate SFA on the constant output.
-                        if let Some(final_sfa_state) =
-                            simulate_sfa_on_word(acceptor, q_sfa, vals)
-                        {
+                        if let Some(final_sfa_state) = simulate_sfa_on_word(acceptor, q_sfa, vals) {
                             let to_pair = (t_sft.to, final_sfa_state);
                             let to_pid = *state_map.entry(to_pair).or_insert_with(|| {
                                 let is_acc = self.accepting_states.contains(&t_sft.to)
@@ -700,7 +672,7 @@ where
                             });
                             result.add_transition(from_pid, to_pid, t_sft.guard.clone());
                         }
-                    }
+                    },
                     OutputFunction::Identity => {
                         // Identity: output equals input. The SFA guard on B
                         // restricts which outputs are accepted, and since output
@@ -709,59 +681,41 @@ where
                         // with the SFT guard.
                         for t_sfa in &acceptor.transitions {
                             if t_sfa.from == q_sfa {
-                                let sfa_guard_as_a: A::Predicate =
-                                    t_sfa.guard.clone().into();
+                                let sfa_guard_as_a: A::Predicate = t_sfa.guard.clone().into();
                                 let composed_guard =
                                     self.input_algebra.and(&t_sft.guard, &sfa_guard_as_a);
                                 if !self.input_algebra.is_satisfiable(&composed_guard) {
                                     continue;
                                 }
                                 let to_pair = (t_sft.to, t_sfa.to);
-                                let to_pid =
-                                    *state_map.entry(to_pair).or_insert_with(|| {
-                                        let is_acc =
-                                            self.accepting_states.contains(&t_sft.to)
-                                                && acceptor
-                                                    .accepting_states
-                                                    .contains(&t_sfa.to);
-                                        let pid = result.add_state(is_acc, None);
-                                        worklist.push_back(to_pair);
-                                        pid
-                                    });
-                                result.add_transition(
-                                    from_pid,
-                                    to_pid,
-                                    composed_guard,
-                                );
+                                let to_pid = *state_map.entry(to_pair).or_insert_with(|| {
+                                    let is_acc = self.accepting_states.contains(&t_sft.to)
+                                        && acceptor.accepting_states.contains(&t_sfa.to);
+                                    let pid = result.add_state(is_acc, None);
+                                    worklist.push_back(to_pair);
+                                    pid
+                                });
+                                result.add_transition(from_pid, to_pid, composed_guard);
                             }
                         }
-                    }
+                    },
                     OutputFunction::Map(_) | OutputFunction::FlatMap(_) => {
                         // Conservative: for computed outputs, connect to all SFA successors.
                         for t_sfa in &acceptor.transitions {
-                            if t_sfa.from == q_sfa
-                                && acceptor.algebra.is_satisfiable(&t_sfa.guard)
+                            if t_sfa.from == q_sfa && acceptor.algebra.is_satisfiable(&t_sfa.guard)
                             {
                                 let to_pair = (t_sft.to, t_sfa.to);
-                                let to_pid =
-                                    *state_map.entry(to_pair).or_insert_with(|| {
-                                        let is_acc =
-                                            self.accepting_states.contains(&t_sft.to)
-                                                && acceptor
-                                                    .accepting_states
-                                                    .contains(&t_sfa.to);
-                                        let pid = result.add_state(is_acc, None);
-                                        worklist.push_back(to_pair);
-                                        pid
-                                    });
-                                result.add_transition(
-                                    from_pid,
-                                    to_pid,
-                                    t_sft.guard.clone(),
-                                );
+                                let to_pid = *state_map.entry(to_pair).or_insert_with(|| {
+                                    let is_acc = self.accepting_states.contains(&t_sft.to)
+                                        && acceptor.accepting_states.contains(&t_sfa.to);
+                                    let pid = result.add_state(is_acc, None);
+                                    worklist.push_back(to_pair);
+                                    pid
+                                });
+                                result.add_transition(from_pid, to_pid, t_sft.guard.clone());
                             }
                         }
-                    }
+                    },
                 }
             }
         }
@@ -809,8 +763,7 @@ where
                     }
 
                     // Input guard compatibility: t_sfa.guard ∧ t_sft.guard.
-                    let combined_guard =
-                        self.input_algebra.and(&t_sfa.guard, &t_sft.guard);
+                    let combined_guard = self.input_algebra.and(&t_sfa.guard, &t_sft.guard);
                     if !self.input_algebra.is_satisfiable(&combined_guard) {
                         continue;
                     }
@@ -837,18 +790,18 @@ where
                                 self.output_algebra.true_pred(),
                             );
                             continue;
-                        }
+                        },
                         OutputFunction::Identity => {
                             // Identity: output guard = input guard (projected).
                             // Conservative: TRUE.
                             self.output_algebra.true_pred()
-                        }
+                        },
                         OutputFunction::Constant(_)
                         | OutputFunction::Map(_)
                         | OutputFunction::FlatMap(_) => {
                             // Conservative: TRUE.
                             self.output_algebra.true_pred()
-                        }
+                        },
                     };
 
                     result.add_transition(from_pid, to_pid, out_guard);
@@ -864,10 +817,8 @@ where
     where
         A::Domain: Clone + Into<B::Domain>,
     {
-        let mut result = SymbolicFiniteTransducer::new(
-            self.input_algebra.clone(),
-            self.output_algebra.clone(),
-        );
+        let mut result =
+            SymbolicFiniteTransducer::new(self.input_algebra.clone(), self.output_algebra.clone());
 
         let mut state_map: HashMap<(usize, usize), usize> = HashMap::new();
         let mut worklist: VecDeque<(usize, usize)> = VecDeque::new();
@@ -895,8 +846,7 @@ where
                         continue;
                     }
 
-                    let combined_guard =
-                        self.input_algebra.and(&t_sfa.guard, &t_sft.guard);
+                    let combined_guard = self.input_algebra.and(&t_sfa.guard, &t_sft.guard);
                     if !self.input_algebra.is_satisfiable(&combined_guard) {
                         continue;
                     }
@@ -910,12 +860,7 @@ where
                         pid
                     });
 
-                    result.add_transition(
-                        from_pid,
-                        to_pid,
-                        combined_guard,
-                        t_sft.output.clone(),
-                    );
+                    result.add_transition(from_pid, to_pid, combined_guard, t_sft.output.clone());
                 }
             }
         }
@@ -985,7 +930,7 @@ where
         let mut c_vals = Vec::new();
         for b_val in &b_vals {
             match &second {
-                OutputFunction::Epsilon => {} // produce nothing for this b_val
+                OutputFunction::Epsilon => {}, // produce nothing for this b_val
                 OutputFunction::Constant(v) => c_vals.extend(v.iter().cloned()),
                 OutputFunction::Identity => c_vals.push(b_val.clone().into()),
                 OutputFunction::Map(f) => c_vals.push(f(b_val)),
@@ -1051,13 +996,10 @@ where
                     let tj = state_transitions[j];
 
                     // If guards overlap, check if outputs are compatible.
-                    let overlap =
-                        self.input_algebra.and(&ti.guard, &tj.guard);
+                    let overlap = self.input_algebra.and(&ti.guard, &tj.guard);
                     if self.input_algebra.is_satisfiable(&overlap) {
                         // Same target state and structurally identical output?
-                        if ti.to != tj.to
-                            || !output_structurally_equal(&ti.output, &tj.output)
-                        {
+                        if ti.to != tj.to || !output_structurally_equal(&ti.output, &tj.output) {
                             return false;
                         }
                     }
@@ -1168,20 +1110,18 @@ where
                     let overlap = self.input_algebra.and(&ti.guard, &tj.guard);
                     if !self.input_algebra.is_satisfiable(&overlap) {
                         // ...but same output?
-                        if output_structurally_equal(&ti.output, &tj.output)
-                            && ti.to == tj.to
-                        {
+                        if output_structurally_equal(&ti.output, &tj.output) && ti.to == tj.to {
                             // Same output for different inputs → not injective.
                             match (&ti.output, &tj.output) {
                                 (OutputFunction::Constant(a), OutputFunction::Constant(b))
                                     if a == b =>
                                 {
                                     return false;
-                                }
+                                },
                                 (OutputFunction::Epsilon, OutputFunction::Epsilon) => {
                                     return false;
-                                }
-                                _ => {} // Can't determine statically.
+                                },
+                                _ => {}, // Can't determine statically.
                             }
                         }
                     }
@@ -1206,7 +1146,7 @@ fn output_structurally_equal<A: BooleanAlgebra, B: BooleanAlgebra>(
             // Compare constant vectors using Debug representation
             // (since B::Domain doesn't require Eq in general).
             format!("{:?}", va) == format!("{:?}", vb)
-        }
+        },
         _ => false,
     }
 }
@@ -1230,9 +1170,7 @@ pub fn case_fold_sft() -> SymbolicFiniteTransducer<CharClassAlgebra, CharClassAl
         q0,
         q0,
         CharClassPred::Range('A', 'Z'),
-        OutputFunction::Map(Arc::new(|c: &char| {
-            char::from_u32(*c as u32 + 32).unwrap_or(*c)
-        })),
+        OutputFunction::Map(Arc::new(|c: &char| char::from_u32(*c as u32 + 32).unwrap_or(*c))),
     );
 
     // Everything else → identity.
@@ -1253,17 +1191,12 @@ pub fn whitespace_normalize_sft() -> SymbolicFiniteTransducer<CharClassAlgebra, 
 
     // Whitespace characters (tab, CR, FF, VT) → space.
     let ws_chars = CharClassPred::Union(vec![
-        ('\t', '\t'),   // tab
+        ('\t', '\t'),     // tab
         ('\x0B', '\x0B'), // vertical tab
         ('\x0C', '\x0C'), // form feed
-        ('\r', '\r'),   // carriage return
+        ('\r', '\r'),     // carriage return
     ]);
-    sft.add_transition(
-        q0,
-        q0,
-        ws_chars.clone(),
-        OutputFunction::Constant(vec![' ']),
-    );
+    sft.add_transition(q0, q0, ws_chars.clone(), OutputFunction::Constant(vec![' ']));
 
     // Everything else → identity.
     let not_ws = CharClassPred::Not(Box::new(ws_chars));
@@ -1413,12 +1346,7 @@ mod tests {
 
         let q0 = sft.add_state(true, Some("q0".to_string()));
         sft.set_initial(q0);
-        sft.add_transition(
-            q0,
-            q0,
-            IntervalPred::True,
-            OutputFunction::Constant(vec![99]),
-        );
+        sft.add_transition(q0, q0, IntervalPred::True, OutputFunction::Constant(vec![99]));
 
         let results = sft.transduce(&[1, 2, 3]);
         assert_eq!(results.len(), 1);
@@ -1485,12 +1413,7 @@ mod tests {
         let q0 = sft.add_state(true, Some("q0".to_string()));
         sft.set_initial(q0);
         // Only pass through values in [0, 50).
-        sft.add_transition(
-            q0,
-            q0,
-            IntervalPred::Range(0, 50),
-            OutputFunction::Identity,
-        );
+        sft.add_transition(q0, q0, IntervalPred::Range(0, 50), OutputFunction::Identity);
 
         let results = sft.transduce(&[10, 20, 30]);
         assert_eq!(results.len(), 1);
@@ -1508,12 +1431,7 @@ mod tests {
 
         let q0 = sft.add_state(true, Some("q0".to_string()));
         sft.set_initial(q0);
-        sft.add_transition(
-            q0,
-            q0,
-            IntervalPred::Range(0, 50),
-            OutputFunction::Identity,
-        );
+        sft.add_transition(q0, q0, IntervalPred::Range(0, 50), OutputFunction::Identity);
 
         let domain = sft.domain_sfa();
         assert!(domain.accepts(&[10, 20]));
@@ -1530,12 +1448,7 @@ mod tests {
 
         // Two transitions on overlapping guards with different outputs.
         sft.add_transition(q0, q0, IntervalPred::True, OutputFunction::Identity);
-        sft.add_transition(
-            q0,
-            q0,
-            IntervalPred::True,
-            OutputFunction::Constant(vec![0]),
-        );
+        sft.add_transition(q0, q0, IntervalPred::True, OutputFunction::Constant(vec![0]));
 
         let results = sft.transduce(&[42]);
         assert_eq!(results.len(), 2);
@@ -1583,12 +1496,7 @@ mod tests {
         let mut t2 = SymbolicFiniteTransducer::new(alg.clone(), alg);
         let q0 = t2.add_state(true, None);
         t2.set_initial(q0);
-        t2.add_transition(
-            q0,
-            q0,
-            IntervalPred::True,
-            OutputFunction::Constant(vec![42]),
-        );
+        t2.add_transition(q0, q0, IntervalPred::True, OutputFunction::Constant(vec![42]));
 
         let composed = t1.compose(&t2);
         let results = composed.transduce(&[1, 2, 3]);
@@ -1722,12 +1630,7 @@ mod tests {
         let mut sft = SymbolicFiniteTransducer::new(alg.clone(), alg);
         let q0 = sft.add_state(true, None);
         sft.set_initial(q0);
-        sft.add_transition(
-            q0,
-            q0,
-            IntervalPred::True,
-            OutputFunction::Constant(vec![42]),
-        );
+        sft.add_transition(q0, q0, IntervalPred::True, OutputFunction::Constant(vec![42]));
         assert!(sft.is_functional());
     }
 
@@ -1740,12 +1643,7 @@ mod tests {
         sft.set_initial(q0);
         // Two transitions with overlapping guards, different targets.
         sft.add_transition(q0, q0, IntervalPred::True, OutputFunction::Identity);
-        sft.add_transition(
-            q0,
-            q1,
-            IntervalPred::True,
-            OutputFunction::Constant(vec![0]),
-        );
+        sft.add_transition(q0, q1, IntervalPred::True, OutputFunction::Constant(vec![0]));
         assert!(!sft.is_functional());
     }
 
@@ -1800,12 +1698,7 @@ mod tests {
         let q0 = sft.add_state(true, None);
         sft.set_initial(q0);
         // Only accepts [0,50).
-        sft.add_transition(
-            q0,
-            q0,
-            IntervalPred::Range(0, 50),
-            OutputFunction::Identity,
-        );
+        sft.add_transition(q0, q0, IntervalPred::Range(0, 50), OutputFunction::Identity);
         assert!(!sft.is_total());
     }
 
@@ -1849,14 +1742,8 @@ mod tests {
     fn guard_transform_disjoint() {
         let alg = IntervalAlgebra::new(0, 100);
         let rules = vec![
-            (
-                IntervalPred::Range(0, 50),
-                OutputFunction::Constant(vec![0_i64]),
-            ),
-            (
-                IntervalPred::Range(50, 100),
-                OutputFunction::Constant(vec![1_i64]),
-            ),
+            (IntervalPred::Range(0, 50), OutputFunction::Constant(vec![0_i64])),
+            (IntervalPred::Range(50, 100), OutputFunction::Constant(vec![1_i64])),
         ];
         let sft = guard_transform_sft(&rules, &alg);
         assert!(sft.is_functional());
@@ -1874,14 +1761,8 @@ mod tests {
     fn guard_transform_overlapping() {
         let alg = IntervalAlgebra::new(0, 100);
         let rules = vec![
-            (
-                IntervalPred::Range(0, 60),
-                OutputFunction::Constant(vec![0_i64]),
-            ),
-            (
-                IntervalPred::Range(40, 100),
-                OutputFunction::Constant(vec![1_i64]),
-            ),
+            (IntervalPred::Range(0, 60), OutputFunction::Constant(vec![0_i64])),
+            (IntervalPred::Range(40, 100), OutputFunction::Constant(vec![1_i64])),
         ];
         let sft = guard_transform_sft(&rules, &alg);
         assert!(!sft.is_functional()); // Overlapping guards → nondeterministic.

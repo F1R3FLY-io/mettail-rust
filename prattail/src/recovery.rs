@@ -106,8 +106,11 @@ pub mod costs {
 /// Parameterized configuration for error recovery costs and thresholds.
 ///
 /// Grammar authors can tune recovery behavior by adjusting these values.
-/// The `Default` implementation matches the current hardcoded constants in
-/// `costs::*` and `RecoveryContext` multiplier methods.
+/// Search routines observe `normalized_for_recovery_search()`, so negative
+/// or non-finite costs and multipliers fall back to defaults before they can
+/// affect Viterbi cutoffs or posterior analysis. The `Default` implementation
+/// matches the current hardcoded constants in `costs::*` and
+/// `RecoveryContext` multiplier methods.
 ///
 /// ## Cost hierarchy (default)
 ///
@@ -174,9 +177,11 @@ pub struct RecoveryConfig {
     /// Cost penalty per unmatched token when simulation fails (default: 0.2).
     pub simulation_fail_penalty: f64,
 
-    // ── Beam pruning ─────────────────────────────────────────────────────
+    // ── Viterbi search bound ─────────────────────────────────────────────
     /// Beam width for Viterbi recovery (default: Some(3.0)).
-    /// `None` disables beam pruning.
+    /// `None` disables the cutoff. Negative and non-finite values are treated
+    /// as disabled by the search routines so the cutoff cannot prune a cheaper
+    /// path than the best complete repair found so far.
     pub beam_width: Option<f64>,
 
     // ── Cascade prevention ───────────────────────────────────────────────
@@ -211,11 +216,10 @@ pub struct RecoveryConfig {
     /// dispatch would otherwise produce when every Fork branch transitions
     /// back to PrefixDispatch and re-encounters the orphan dead-end.
     /// Default 3 — empirically sufficient for real-world parses while
-    /// keeping post-merge cursor count bounded under the walker's
-    /// `beam_size` cap. Each `apply_action_to_cursor::Fork` arm increments
-    /// the child's `recovery_depth` by 1 when it detects a recovery Fork
-    /// (branches whose BuilderDelta effect is RecoveryEvent / InsertToken /
-    /// SubstituteToken / ApplyRecoverySequence).
+    /// bounding recursive recovery fanout. Each `apply_action_to_cursor::Fork`
+    /// arm increments the child's `recovery_depth` by 1 when it detects a
+    /// recovery Fork (branches whose BuilderDelta effect is RecoveryEvent /
+    /// InsertToken / SubstituteToken / ApplyRecoverySequence).
     pub max_recovery_depth: u8,
 }
 
@@ -252,6 +256,96 @@ impl Default for RecoveryConfig {
 }
 
 impl RecoveryConfig {
+    #[inline]
+    fn normalized_nonnegative(value: f64, fallback: f64) -> f64 {
+        if value.is_finite() && value >= 0.0 {
+            value
+        } else {
+            fallback
+        }
+    }
+
+    /// Return the cost configuration observed by recovery search.
+    ///
+    /// Public callers may construct `RecoveryConfig` values directly or load
+    /// learned weights. The Viterbi cutoff and the forward/backward lattice
+    /// rely on finite, nonnegative edge weights so path extension cannot make
+    /// a candidate cheaper after it has crossed a bound.
+    pub fn normalized_for_recovery_search(&self) -> Self {
+        let default = RecoveryConfig::default();
+        RecoveryConfig {
+            skip_per_token: Self::normalized_nonnegative(
+                self.skip_per_token,
+                default.skip_per_token,
+            ),
+            delete_cost: Self::normalized_nonnegative(self.delete_cost, default.delete_cost),
+            substitute_cost: Self::normalized_nonnegative(
+                self.substitute_cost,
+                default.substitute_cost,
+            ),
+            insert_cost: Self::normalized_nonnegative(self.insert_cost, default.insert_cost),
+            swap_cost: Self::normalized_nonnegative(self.swap_cost, default.swap_cost),
+            max_skip_lookahead: self.max_skip_lookahead,
+            deep_nesting_threshold: self.deep_nesting_threshold,
+            deep_nesting_skip_mult: Self::normalized_nonnegative(
+                self.deep_nesting_skip_mult,
+                default.deep_nesting_skip_mult,
+            ),
+            shallow_depth_threshold: self.shallow_depth_threshold,
+            shallow_depth_skip_mult: Self::normalized_nonnegative(
+                self.shallow_depth_skip_mult,
+                default.shallow_depth_skip_mult,
+            ),
+            low_bp_threshold: self.low_bp_threshold,
+            low_bp_skip_mult: Self::normalized_nonnegative(
+                self.low_bp_skip_mult,
+                default.low_bp_skip_mult,
+            ),
+            collection_insert_mult: Self::normalized_nonnegative(
+                self.collection_insert_mult,
+                default.collection_insert_mult,
+            ),
+            group_insert_mult: Self::normalized_nonnegative(
+                self.group_insert_mult,
+                default.group_insert_mult,
+            ),
+            bracket_insert_mult: Self::normalized_nonnegative(
+                self.bracket_insert_mult,
+                default.bracket_insert_mult,
+            ),
+            mixfix_substitute_mult: Self::normalized_nonnegative(
+                self.mixfix_substitute_mult,
+                default.mixfix_substitute_mult,
+            ),
+            simulation_valid_mult: Self::normalized_nonnegative(
+                self.simulation_valid_mult,
+                default.simulation_valid_mult,
+            ),
+            simulation_fail_penalty: Self::normalized_nonnegative(
+                self.simulation_fail_penalty,
+                default.simulation_fail_penalty,
+            ),
+            beam_width: self
+                .beam_width
+                .filter(|width| width.is_finite() && *width >= 0.0),
+            cascade_window: self.cascade_window,
+            vpa_nesting_ceiling: self.vpa_nesting_ceiling,
+            adaptive_weight_threshold: Self::normalized_nonnegative(
+                self.adaptive_weight_threshold,
+                default.adaptive_weight_threshold,
+            ),
+            deterministic_skip_discount: Self::normalized_nonnegative(
+                self.deterministic_skip_discount,
+                default.deterministic_skip_discount,
+            ),
+            ambiguous_insert_discount: Self::normalized_nonnegative(
+                self.ambiguous_insert_discount,
+                default.ambiguous_insert_discount,
+            ),
+            max_recovery_depth: self.max_recovery_depth,
+        }
+    }
+
     /// Apply trained recovery weights from a `TrainedModel`.
     ///
     /// Overrides the base strategy costs with learned values where present.
@@ -281,6 +375,7 @@ impl RecoveryConfig {
         if let Some(&v) = weights.get("ambiguous_insert_discount") {
             self.ambiguous_insert_discount = v;
         }
+        *self = self.normalized_for_recovery_search();
     }
 }
 
@@ -398,33 +493,27 @@ impl RepairAction {
     /// token IDs to their grammar-level names. This is called on the
     /// error path only; happy-path parsing never invokes it.
     pub fn describe(&self, token_names: &[&str]) -> String {
-        let name = |id: TokenId| -> &str {
-            token_names.get(id as usize).copied().unwrap_or("?")
-        };
+        let name = |id: TokenId| -> &str { token_names.get(id as usize).copied().unwrap_or("?") };
         match self {
             RepairAction::SkipToSync { skip_count, sync_token } => {
                 format!("skip {} token(s) to '{}'", skip_count, name(*sync_token))
-            }
+            },
             RepairAction::InsertToken { token } => {
                 format!("insert missing '{}'", name(*token))
-            }
+            },
             RepairAction::DeleteToken => "delete unexpected token".to_string(),
             RepairAction::SubstituteToken { replacement } => {
                 format!("expected '{}' here", name(*replacement))
-            }
-            RepairAction::SwapTokens { .. } => {
-                "swap adjacent tokens".to_string()
-            }
-            RepairAction::Composite { steps } => {
-                steps
-                    .iter()
-                    .map(|s| s.describe(token_names))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            }
+            },
+            RepairAction::SwapTokens { .. } => "swap adjacent tokens".to_string(),
+            RepairAction::Composite { steps } => steps
+                .iter()
+                .map(|s| s.describe(token_names))
+                .collect::<Vec<_>>()
+                .join(", "),
             RepairAction::CategorySwitch { from_category, to_category } => {
                 format!("try parsing as {} (cast {} → {})", to_category, to_category, from_category)
-            }
+            },
         }
     }
 
@@ -615,7 +704,16 @@ impl RecoveryWfst {
     /// Called after construction to wire in prediction WFST weight data.
     /// Each entry maps a sync token ID to a discount factor in `(0.0, 1.0]`.
     pub fn set_prediction_discounts(&mut self, discounts: std::collections::HashMap<TokenId, f64>) {
-        self.prediction_discounts = discounts;
+        self.prediction_discounts = discounts
+            .into_iter()
+            .filter_map(|(token, discount)| {
+                if discount.is_finite() && discount >= 0.0 {
+                    Some((token, discount))
+                } else {
+                    None
+                }
+            })
+            .collect();
     }
 
     /// B1: Get the prediction discount for a sync token.
@@ -623,14 +721,26 @@ impl RecoveryWfst {
     /// Returns `1.0` (no discount) for tokens without prediction data.
     #[inline]
     pub fn prediction_discount(&self, token_id: TokenId) -> f64 {
-        self.prediction_discounts.get(&token_id).copied().unwrap_or(1.0)
+        self.prediction_discounts
+            .get(&token_id)
+            .copied()
+            .filter(|discount| discount.is_finite() && *discount >= 0.0)
+            .unwrap_or(1.0)
+    }
+
+    /// B1: Return prediction discounts for exact cache signatures and diagnostics.
+    pub fn prediction_discounts(&self) -> &std::collections::HashMap<TokenId, f64> {
+        &self.prediction_discounts
     }
 
     /// A1: Set per-sync-token follow context weights.
     ///
     /// Each entry maps a sync token ID to a `ContextWeight` bitset encoding which
     /// rule indices can reach that sync token. Used for follow-set tightening.
-    pub fn set_follow_contexts(&mut self, contexts: std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight>) {
+    pub fn set_follow_contexts(
+        &mut self,
+        contexts: std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight>,
+    ) {
         self.follow_contexts = contexts;
     }
 
@@ -642,7 +752,11 @@ impl RecoveryWfst {
     /// - The intersection of the sync token's follow context and the dispatch context
     ///   is non-empty (at least one active rule can reach this sync token).
     #[inline]
-    pub fn is_sync_reachable(&self, sync_id: TokenId, dispatch_context: crate::automata::semiring::ContextWeight) -> bool {
+    pub fn is_sync_reachable(
+        &self,
+        sync_id: TokenId,
+        dispatch_context: crate::automata::semiring::ContextWeight,
+    ) -> bool {
         if self.follow_contexts.is_empty() {
             return true; // no context data → all sync tokens valid
         }
@@ -651,7 +765,7 @@ impl RecoveryWfst {
             Some(ctx) => {
                 use crate::automata::semiring::Semiring;
                 !ctx.times(&dispatch_context).is_zero()
-            }
+            },
         }
     }
 
@@ -659,11 +773,16 @@ impl RecoveryWfst {
     ///
     /// Filters the full sync token set, keeping only tokens reachable from the
     /// dispatch context. When no follow contexts are set, returns all sync tokens.
-    pub fn tightened_sync_tokens(&self, dispatch_context: crate::automata::semiring::ContextWeight) -> std::borrow::Cow<'_, BTreeSet<TokenId>> {
+    pub fn tightened_sync_tokens(
+        &self,
+        dispatch_context: crate::automata::semiring::ContextWeight,
+    ) -> std::borrow::Cow<'_, BTreeSet<TokenId>> {
         if self.follow_contexts.is_empty() || dispatch_context.is_one() {
             std::borrow::Cow::Borrowed(&self.sync_tokens)
         } else {
-            let filtered: BTreeSet<TokenId> = self.sync_tokens.iter()
+            let filtered: BTreeSet<TokenId> = self
+                .sync_tokens
+                .iter()
                 .copied()
                 .filter(|&id| self.is_sync_reachable(id, dispatch_context))
                 .collect();
@@ -672,13 +791,25 @@ impl RecoveryWfst {
     }
 
     /// A1: Return the follow context for this recovery WFST (for diagnostics/testing).
-    pub fn follow_contexts(&self) -> &std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight> {
+    pub fn follow_contexts(
+        &self,
+    ) -> &std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight> {
         &self.follow_contexts
+    }
+
+    /// Sprint A2: Return bracket-mismatch token IDs for exact cache signatures.
+    pub fn bracket_mismatch_ids(&self) -> &BTreeSet<TokenId> {
+        &self.bracket_mismatch_ids
     }
 
     /// The category this recovery WFST covers.
     pub fn category(&self) -> &str {
         &self.category
+    }
+
+    /// Token ID map used internally by this recovery WFST.
+    pub fn token_map(&self) -> &TokenIdMap {
+        &self.token_map
     }
 
     /// Find the best recovery action from the given position.
@@ -696,7 +827,7 @@ impl RecoveryWfst {
     ///
     /// Returns `None` if no recovery is possible (e.g., at EOF with no sync tokens).
     pub fn find_best_recovery(&self, token_ids: &[TokenId], pos: usize) -> Option<RepairResult> {
-        let remaining = &token_ids[pos..];
+        let remaining = token_ids.get(pos..)?;
         let mut best: Option<RepairResult> = None;
 
         // Strategy 1: SkipToSync — skip tokens until a sync point
@@ -714,13 +845,12 @@ impl RecoveryWfst {
                     // B1: prediction discount — prefer skipping to high-confidence tokens
                     let pred_discount = self.prediction_discount(token_at);
                     // B2: joint tropical + edit cost
-                    costs::joint(skip as f64 * costs::SKIP_PER_TOKEN.value() * pred_discount, skip as u32)
+                    costs::joint(
+                        skip as f64 * costs::SKIP_PER_TOKEN.value() * pred_discount,
+                        skip as u32,
+                    )
                 };
-                let result = RepairResult {
-                    action,
-                    new_pos: pos + skip,
-                    cost,
-                };
+                let result = RepairResult { action, new_pos: pos + skip, cost };
                 best = Some(pick_better(best, result));
                 // First sync point found — skip further is always worse
                 break;
@@ -746,7 +876,10 @@ impl RecoveryWfst {
             let bracket_mult = self.bracket_mismatch_penalty(sync_id);
             let action = RepairAction::InsertToken { token: sync_id };
             let result = RepairResult {
-                cost: costs::joint_edit(costs::INSERT.value() * pred_discount * bracket_mult, action.edit_cost()),
+                cost: costs::joint_edit(
+                    costs::INSERT.value() * pred_discount * bracket_mult,
+                    action.edit_cost(),
+                ),
                 action,
                 new_pos: pos, // no position change — inserted token is phantom
             };
@@ -760,7 +893,10 @@ impl RecoveryWfst {
                 let pred_discount = self.prediction_discount(sync_id);
                 let action = RepairAction::SubstituteToken { replacement: sync_id };
                 let result = RepairResult {
-                    cost: costs::joint_edit(costs::SUBSTITUTE.value() * pred_discount, action.edit_cost()),
+                    cost: costs::joint_edit(
+                        costs::SUBSTITUTE.value() * pred_discount,
+                        action.edit_cost(),
+                    ),
                     action,
                     new_pos: pos + 1, // consume the substituted token
                 };
@@ -776,10 +912,7 @@ impl RecoveryWfst {
             if self.sync_tokens.contains(&swapped_first) {
                 // B1: prediction discount on the sync token revealed by the swap
                 let pred_discount = self.prediction_discount(swapped_first);
-                let action = RepairAction::SwapTokens {
-                    pos_a: pos,
-                    pos_b: pos + 1,
-                };
+                let action = RepairAction::SwapTokens { pos_a: pos, pos_b: pos + 1 };
                 let result = RepairResult {
                     cost: costs::joint_edit(1.25 * pred_discount, action.edit_cost()), // SWAP cost
                     action,
@@ -849,7 +982,9 @@ impl RecoveryWfst {
     pub fn to_dot(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
-        let safe_cat = self.category.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+        let safe_cat = self
+            .category
+            .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
         writeln!(out, "digraph RecoveryWfst_{} {{", safe_cat).unwrap();
         writeln!(out, "  rankdir=LR;").unwrap();
         writeln!(out, "  node [shape=circle, fontname=\"Helvetica\"];").unwrap();
@@ -857,20 +992,12 @@ impl RecoveryWfst {
         writeln!(out, "  error [shape=doublecircle, label=\"Error\\n(start)\", style=filled, fillcolor=lightyellow];").unwrap();
 
         for (i, &token_id) in self.sync_tokens.iter().enumerate() {
-            let token_name = self
-                .token_map
-                .name(token_id)
-                .unwrap_or("?")
-                .to_string();
+            let token_name = self.token_map.name(token_id).unwrap_or("?").to_string();
             let node_id = format!("sync_{}", i);
 
             // Node: sync token target
-            writeln!(
-                out,
-                "  {} [shape=doublecircle, label=\"Sync\\n{}\"];",
-                node_id, token_name
-            )
-            .unwrap();
+            writeln!(out, "  {} [shape=doublecircle, label=\"Sync\\n{}\"];", node_id, token_name)
+                .unwrap();
 
             // Edge: Error → Sync token, with discount annotation
             let discount = self.prediction_discount(token_id);
@@ -880,12 +1007,8 @@ impl RecoveryWfst {
                 format!("{} (B1 disc={:.2})", token_name, discount)
             };
             let color = if discount < 1.0 { "blue" } else { "black" };
-            writeln!(
-                out,
-                "  error -> {} [label=\"{}\", color={}];",
-                node_id, label, color
-            )
-            .unwrap();
+            writeln!(out, "  error -> {} [label=\"{}\", color={}];", node_id, label, color)
+                .unwrap();
         }
 
         writeln!(out, "}}").unwrap();
@@ -904,6 +1027,21 @@ fn pick_better(existing: Option<RepairResult>, candidate: RepairResult) -> Repai
                 prev
             }
         },
+    }
+}
+
+fn pick_better_if_allowed<F>(
+    existing: Option<RepairResult>,
+    candidate: RepairResult,
+    accept_candidate: &mut F,
+) -> Option<RepairResult>
+where
+    F: FnMut(&RepairResult) -> bool,
+{
+    if accept_candidate(&candidate) {
+        Some(pick_better(existing, candidate))
+    } else {
+        existing
     }
 }
 
@@ -937,18 +1075,29 @@ pub fn viterbi_recovery(
     viterbi_recovery_beam(token_ids, pos, sync_tokens, None)
 }
 
+#[inline]
+fn normalized_recovery_beam_width(beam_width: Option<TropicalWeight>) -> Option<TropicalWeight> {
+    beam_width.filter(|beam| {
+        let value = beam.value();
+        value.is_finite() && value >= 0.0
+    })
+}
+
 /// Find the minimum-cost recovery with optional beam pruning.
 ///
 /// When `beam_width` is `Some(w)`, skip edges whose accumulated cost exceeds
 /// `best_sync_cost + w` are pruned, reducing the search space for wide
-/// lookahead windows.
+/// lookahead windows. Negative and non-finite beam widths are treated as
+/// disabled; otherwise a caller could make the cutoff lower than the current
+/// complete repair and prune a cheaper future path.
 pub fn viterbi_recovery_beam(
     token_ids: &[TokenId],
     pos: usize,
     sync_tokens: &BTreeSet<TokenId>,
     beam_width: Option<TropicalWeight>,
 ) -> Option<RepairResult> {
-    let remaining = &token_ids[pos..];
+    let beam_width = normalized_recovery_beam_width(beam_width);
+    let remaining = token_ids.get(pos..)?;
     let max_lookahead = remaining.len().min(costs::MAX_SKIP_LOOKAHEAD);
 
     if max_lookahead == 0 {
@@ -978,7 +1127,9 @@ pub fn viterbi_recovery_beam(
 
         // Beam pruning: compare tropical component only
         if let Some(beam) = beam_width {
-            if !dist[sink].is_zero() && dist[i].left.value() > dist[sink].left.value() + beam.value() {
+            if !dist[sink].is_zero()
+                && dist[i].left.value() > dist[sink].left.value() + beam.value()
+            {
                 continue;
             }
         }
@@ -1000,7 +1151,9 @@ pub fn viterbi_recovery_beam(
 
             // Beam pruning: compare tropical component only
             if let Some(beam) = beam_width {
-                if !dist[sink].is_zero() && new_cost.left.value() > dist[sink].left.value() + beam.value() {
+                if !dist[sink].is_zero()
+                    && new_cost.left.value() > dist[sink].left.value() + beam.value()
+                {
                     continue;
                 }
             }
@@ -1083,6 +1236,10 @@ pub enum RepairEdgeKind {
 #[derive(Debug, Clone)]
 pub struct RepairSequence {
     /// Ordered sequence of repair actions from error position to sync point.
+    ///
+    /// Position-bearing actions inside a sequence use sequence-local
+    /// coordinates: `0` is the `pos` passed to `viterbi_multi_step`. Replay
+    /// callers add their recovery-window base position exactly once.
     pub actions: Vec<RepairAction>,
     /// New parser position after applying all repairs.
     pub new_pos: usize,
@@ -1120,29 +1277,36 @@ impl fmt::Display for RepairSequence {
 /// Builds a repair lattice with all edge types:
 /// - **Skip**: `i → i+1`, cost `config.skip_per_token`
 /// - **Delete**: `i → i+1`, cost `config.delete_cost`
-/// - **Substitute**: `i → i+1`, cost `config.substitute_cost` (when token is NOT a sync token)
-/// - **Insert**: `i → i` (self-loop), cost `config.insert_cost` (max 1 per position)
+/// - **Substitute**: `i → SINK`, cost `config.substitute_cost`
+///   (when token is NOT a sync token)
+/// - **Insert**: `i → SINK`, cost `config.insert_cost`
+/// - **Swap**: `i → SINK`, cost `config.swap_cost`
+///   (when the second token is a sync token revealed by the swap)
 /// - **Sync**: `i → SINK`, cost 0 (when token at `i` IS a sync token)
 ///
 /// Runs Viterbi forward pass, then backtraces to reconstruct the optimal
 /// repair action sequence.
 ///
-/// Returns `None` if no sync point is reachable within `max_skip_lookahead`.
+/// Returns `None` if no sync point or token-bearing repair target is reachable
+/// within `max_skip_lookahead`.
 pub fn viterbi_multi_step(
     token_ids: &[TokenId],
     pos: usize,
     sync_tokens: &BTreeSet<TokenId>,
     config: &RecoveryConfig,
 ) -> Option<RepairSequence> {
-    let remaining = &token_ids[pos..];
+    let normalized_config = config.normalized_for_recovery_search();
+    let config = &normalized_config;
+    let remaining = token_ids.get(pos..)?;
     let max_lookahead = remaining.len().min(config.max_skip_lookahead);
 
     if max_lookahead == 0 {
         return None;
     }
 
-    // Nodes: 0..max_lookahead are token positions, max_lookahead is the virtual sink.
-    // Additionally, each position has an "inserted" variant at max_lookahead + 1 + i.
+    // Nodes: 0..max_lookahead are real token positions; max_lookahead is the
+    // virtual sink reached only by Sync/Insert/Substitute/Swap completion
+    // edges.
     // B2: Use RecoveryCost (ProductWeight<TropicalWeight, EditWeight>) throughout
     // the multi-step Viterbi lattice. Tropical cost is primary; edit count breaks ties.
     let num_nodes = max_lookahead + 1;
@@ -1155,10 +1319,10 @@ pub fn viterbi_multi_step(
     // pred[i] = (predecessor node, edge kind)
     let mut pred: Vec<Option<(usize, RepairEdgeKind)>> = vec![None; num_nodes];
 
-    // Track whether an insert has been applied at each position (max 1 per position)
+    // Track whether an insert edge has been applied at each position.
     let mut inserted = vec![false; max_lookahead];
 
-    let beam_width = config.beam_width.map(TropicalWeight::new);
+    let beam_width = normalized_recovery_beam_width(config.beam_width.map(TropicalWeight::new));
 
     // B2: Pre-compute edge costs as RecoveryCost
     let skip_edge = costs::joint(config.skip_per_token, 1); // 1 edit per skip
@@ -1175,7 +1339,9 @@ pub fn viterbi_multi_step(
 
         // Beam pruning: compare tropical component only
         if let Some(beam) = beam_width {
-            if !dist[sink].is_zero() && dist[i].left.value() > dist[sink].left.value() + beam.value() {
+            if !dist[sink].is_zero()
+                && dist[i].left.value() > dist[sink].left.value() + beam.value()
+            {
                 continue;
             }
         }
@@ -1192,11 +1358,16 @@ pub fn viterbi_multi_step(
         }
 
         // ── Skip edge: i → i+1, cost skip_per_token ─────────────────
-        if i + 1 < num_nodes {
+        // Skip advances to another real token position. Completion is via
+        // a later Sync/Insert/Substitute/Swap edge into the virtual sink,
+        // never by skipping directly into the sink without a sync point.
+        if i + 1 < max_lookahead {
             let new_cost = dist[i].times(&skip_edge);
 
             if let Some(beam) = beam_width {
-                if !dist[sink].is_zero() && new_cost.left.value() > dist[sink].left.value() + beam.value() {
+                if !dist[sink].is_zero()
+                    && new_cost.left.value() > dist[sink].left.value() + beam.value()
+                {
                     // pruned
                 } else if new_cost < dist[i + 1] {
                     dist[i + 1] = new_cost;
@@ -1209,7 +1380,7 @@ pub fn viterbi_multi_step(
         }
 
         // ── Delete edge: i → i+1, cost delete_cost ───────────────────
-        if i + 1 < num_nodes {
+        if i + 1 < max_lookahead {
             let new_cost = dist[i].times(&delete_edge);
             if new_cost < dist[i + 1] {
                 dist[i + 1] = new_cost;
@@ -1219,23 +1390,24 @@ pub fn viterbi_multi_step(
 
         // ── Substitute edge: i → i+1, cost substitute_cost ──────────
         // Only when the token at i is NOT already a sync token
-        if i + 1 < num_nodes && !sync_tokens.contains(&token_at_i) {
+        if !sync_tokens.contains(&token_at_i) {
             for &sync_id in sync_tokens {
                 let new_cost = dist[i].times(&substitute_edge);
-                if new_cost < dist[i + 1] {
-                    dist[i + 1] = new_cost;
-                    pred[i + 1] = Some((i, RepairEdgeKind::Substitute(sync_id)));
+                if new_cost < dist[sink] {
+                    dist[sink] = new_cost;
+                    pred[sink] = Some((i, RepairEdgeKind::Substitute(sync_id)));
                 }
             }
         }
 
-        // ── Swap edge: i → i+2, cost swap_cost ────────────────────
-        // Only when i+1 exists (two adjacent tokens to swap)
-        if i + 2 <= max_lookahead {
+        // ── Swap edge: i → SINK, cost swap_cost ─────────────────────
+        // A swap is a complete repair only when the second token is a sync
+        // token that becomes first after transposition.
+        if i + 1 < max_lookahead && sync_tokens.contains(&remaining[i + 1]) {
             let new_cost = dist[i].times(&swap_edge);
-            if new_cost < dist[i + 2] {
-                dist[i + 2] = new_cost;
-                pred[i + 2] = Some((i, RepairEdgeKind::Swap));
+            if new_cost < dist[sink] {
+                dist[sink] = new_cost;
+                pred[sink] = Some((i, RepairEdgeKind::Swap));
             }
         }
 
@@ -1259,108 +1431,98 @@ pub fn viterbi_multi_step(
     }
 
     // ── Backtrace: reconstruct the action sequence ───────────────────────
-    let mut actions_reversed: Vec<RepairAction> = Vec::new();
+    let mut path_reversed: Vec<(usize, usize, RepairEdgeKind)> = Vec::new();
     let mut current = sink;
     let mut final_sync_pos = pos; // position where we sync
 
     while let Some((prev, edge_kind)) = pred[current] {
+        if current == sink {
+            final_sync_pos = match edge_kind {
+                RepairEdgeKind::Sync(_) | RepairEdgeKind::Insert(_) => pos + prev,
+                RepairEdgeKind::Substitute(_) => pos + prev + 1,
+                RepairEdgeKind::Swap => pos + prev + 2,
+                RepairEdgeKind::Skip | RepairEdgeKind::Delete => pos + prev,
+            };
+        }
+        path_reversed.push((prev, current, edge_kind));
+        current = prev;
+    }
+
+    if path_reversed.is_empty() {
+        return None;
+    }
+
+    path_reversed.reverse();
+
+    let mut actions: Vec<RepairAction> = Vec::new();
+    let mut pending_skips = 0usize;
+
+    let flush_pending_skips =
+        |actions: &mut Vec<RepairAction>, pending_skips: &mut usize, target_rel: usize| {
+            if *pending_skips == 0 {
+                return true;
+            }
+            let Some(&sync_token) = remaining.get(target_rel) else {
+                return false;
+            };
+            actions.push(RepairAction::SkipToSync { skip_count: *pending_skips, sync_token });
+            *pending_skips = 0;
+            true
+        };
+
+    for (prev, next, edge_kind) in path_reversed {
         match edge_kind {
             RepairEdgeKind::Sync(sync_token) => {
-                // The sync edge itself is free — but record the sync point
-                final_sync_pos = pos + prev;
-                current = prev;
-                // If prev==0 and no more predecessors, we were already at sync
-                if pred[prev].is_none() {
-                    // Already at sync — record SkipToSync with skip_count=0
-                    actions_reversed.push(RepairAction::SkipToSync {
-                        skip_count: 0,
-                        sync_token,
-                    });
-                    break;
+                if !flush_pending_skips(&mut actions, &mut pending_skips, prev) {
+                    return None;
+                }
+                if actions.is_empty() {
+                    actions.push(RepairAction::SkipToSync { skip_count: 0, sync_token });
                 }
             },
             RepairEdgeKind::Skip => {
-                // Skip was part of a skip-to-sync chain
-                // We'll consolidate at the end
-                current = prev;
+                pending_skips += next.saturating_sub(prev);
             },
             RepairEdgeKind::Delete => {
-                actions_reversed.push(RepairAction::DeleteToken);
-                current = prev;
+                if !flush_pending_skips(&mut actions, &mut pending_skips, prev) {
+                    return None;
+                }
+                actions.push(RepairAction::DeleteToken);
             },
             RepairEdgeKind::Substitute(sync_id) => {
-                actions_reversed.push(RepairAction::SubstituteToken { replacement: sync_id });
-                current = prev;
+                if !flush_pending_skips(&mut actions, &mut pending_skips, prev) {
+                    return None;
+                }
+                actions.push(RepairAction::SubstituteToken { replacement: sync_id });
             },
             RepairEdgeKind::Swap => {
-                actions_reversed.push(RepairAction::SwapTokens {
-                    pos_a: pos + prev,
-                    pos_b: pos + prev + 1,
-                });
-                current = prev;
+                if !flush_pending_skips(&mut actions, &mut pending_skips, prev) {
+                    return None;
+                }
+                actions.push(RepairAction::SwapTokens { pos_a: prev, pos_b: prev + 1 });
             },
             RepairEdgeKind::Insert(sync_id) => {
-                actions_reversed.push(RepairAction::InsertToken { token: sync_id });
-                final_sync_pos = pos + prev; // insert doesn't advance
-                current = prev;
-                if pred[prev].is_none() {
-                    break;
+                if !flush_pending_skips(&mut actions, &mut pending_skips, prev) {
+                    return None;
                 }
+                actions.push(RepairAction::InsertToken { token: sync_id });
             },
         }
     }
 
-    // Count consecutive skips from the start of the chain to build SkipToSync
-    // Walk from node 0 forward along pred chain to find skip sequences
-    // Actually, let's rebuild from scratch: walk from 0 forward using a separate approach
-    // The backtrace gives us the actions in reverse. Reverse them.
-    actions_reversed.reverse();
-
-    // If there are no explicit actions but we reached the sink via skips+sync,
-    // compute the skip count
-    if actions_reversed.is_empty() {
-        // Pure skip chain to sync
-        let skip_count = (final_sync_pos - pos).max(0);
-        let sync_token = if final_sync_pos < token_ids.len() {
-            token_ids[final_sync_pos]
-        } else {
-            return None;
-        };
-        actions_reversed.push(RepairAction::SkipToSync {
-            skip_count,
-            sync_token,
-        });
-    }
-
-    // Check if we have a pure skip+sync pattern and consolidate
-    let all_skips_and_sync =
-        actions_reversed.iter().all(|a| matches!(a, RepairAction::SkipToSync { .. }));
-    if !all_skips_and_sync {
-        // There are non-skip actions. Check if there are trailing skips that
-        // should be consolidated into a SkipToSync at the end.
-        // For now, if the last action isn't a SkipToSync and we reached a sync,
-        // append a sync marker.
-        let has_sync = actions_reversed
-            .iter()
-            .any(|a| matches!(a, RepairAction::SkipToSync { .. }));
-        if !has_sync && final_sync_pos < token_ids.len() {
-            // Add the final sync action
-            actions_reversed.push(RepairAction::SkipToSync {
-                skip_count: 0,
-                sync_token: token_ids[final_sync_pos],
-            });
-        }
+    if !flush_pending_skips(&mut actions, &mut pending_skips, final_sync_pos - pos) {
+        return None;
     }
 
     // Compute total edits
-    let total_edits = actions_reversed
+    let total_edits = actions
         .iter()
         .fold(crate::automata::semiring::EditWeight::new(0), |acc, a| {
             crate::automata::semiring::EditWeight::new(acc.0.saturating_add(a.edit_cost().0))
         });
 
     Some(RepairSequence {
-        actions: actions_reversed,
+        actions,
         new_pos: final_sync_pos,
         total_cost: dist[sink],
         total_edits,
@@ -1422,7 +1584,16 @@ pub fn viterbi_recovery_forward_backward(
     config: &RecoveryConfig,
     dispatch_context: Option<crate::automata::semiring::ContextWeight>,
 ) -> RecoveryPosterior {
-    let remaining = &token_ids[pos..];
+    let normalized_config = config.normalized_for_recovery_search();
+    let config = &normalized_config;
+    let Some(remaining) = token_ids.get(pos..) else {
+        return RecoveryPosterior {
+            position_costs: vec![],
+            total_cost: TropicalWeight::zero(),
+            bottleneck_positions: vec![],
+            optimal_sequence: None,
+        };
+    };
     let max_lookahead = remaining.len().min(config.max_skip_lookahead);
 
     if max_lookahead == 0 {
@@ -1466,37 +1637,38 @@ pub fn viterbi_recovery_forward_backward(
             }
         }
 
-        // Skip edge: i → i+1
-        if i + 1 < num_nodes {
+        // Skip edge: i → i+1 over real token positions only.
+        if i + 1 < max_lookahead {
             edges[i].push((i + 1, skip_cost));
         }
 
-        // Delete edge: i → i+1
-        if i + 1 < num_nodes {
+        // Delete edge: i → i+1 over real token positions only.
+        if i + 1 < max_lookahead {
             edges[i].push((i + 1, delete_cost));
         }
 
-        // Substitute edge: i → i+1 (only when not a sync token)
-        if i + 1 < num_nodes && !recovery_wfst.sync_tokens.contains(&token_at_i) {
+        // Substitute edge: i → sink (only when not a sync token)
+        if !recovery_wfst.sync_tokens.contains(&token_at_i) {
             for &sync_id in &recovery_wfst.sync_tokens {
                 let context_viable = dispatch_context
                     .map_or(true, |ctx| recovery_wfst.is_sync_reachable(sync_id, ctx));
                 if context_viable {
-                    edges[i].push((i + 1, substitute_cost));
+                    edges[i].push((sink, substitute_cost));
                     break; // one substitute edge per position suffices for cost analysis
                 }
             }
         }
 
-        // Swap edge: i → i+2
-        if i + 2 <= max_lookahead {
-            edges[i].push((i + 2, swap_cost));
+        // Swap edge: i → sink only when the second token is a sync token
+        // revealed at the current position by transposition.
+        if i + 1 < max_lookahead && recovery_wfst.sync_tokens.contains(&remaining[i + 1]) {
+            edges[i].push((sink, swap_cost));
         }
 
         // Insert edge: i → sink (insert sync token to reach sync immediately)
         for &sync_id in &recovery_wfst.sync_tokens {
-            let context_viable = dispatch_context
-                .map_or(true, |ctx| recovery_wfst.is_sync_reachable(sync_id, ctx));
+            let context_viable =
+                dispatch_context.map_or(true, |ctx| recovery_wfst.is_sync_reachable(sync_id, ctx));
             if context_viable {
                 edges[i].push((sink, insert_cost));
                 break; // one insert cost per position suffices
@@ -1511,9 +1683,8 @@ pub fn viterbi_recovery_forward_backward(
     let total_cost = alpha[sink];
 
     // Posterior costs: alpha[i] ⊗ beta[i] for each position
-    let position_costs: Vec<TropicalWeight> = (0..num_nodes)
-        .map(|i| alpha[i].times(&beta[i]))
-        .collect();
+    let position_costs: Vec<TropicalWeight> =
+        (0..num_nodes).map(|i| alpha[i].times(&beta[i])).collect();
 
     // Bottleneck detection: positions where posterior ≈ total cost
     // (within tolerance 1e-6). These positions are on every optimal path.
@@ -1530,12 +1701,7 @@ pub fn viterbi_recovery_forward_backward(
     };
 
     // Also run Viterbi to get the optimal sequence
-    let optimal_sequence = viterbi_multi_step(
-        token_ids,
-        pos,
-        &recovery_wfst.sync_tokens,
-        config,
-    );
+    let optimal_sequence = viterbi_multi_step(token_ids, pos, &recovery_wfst.sync_tokens, config);
 
     RecoveryPosterior {
         position_costs,
@@ -1636,19 +1802,25 @@ pub fn build_recovery_wfsts(
                     //
                     // We assign rule indices = action index in the WFST action table
                     // (capped at 127 for the 128-bit ContextWeight capacity).
-                    let mut follow_ctxs: std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight> =
-                        std::collections::HashMap::new();
+                    let mut follow_ctxs: std::collections::HashMap<
+                        TokenId,
+                        crate::automata::semiring::ContextWeight,
+                    > = std::collections::HashMap::new();
 
                     // Structural sync tokens (Eof, RParen, etc.) are always reachable
                     // from any rule → ContextWeight::one()
-                    let structural_names: std::collections::HashSet<&str> = ["Eof", "RParen", "RBrace", "RBracket", "Semi", "Comma"]
-                        .into_iter()
-                        .collect();
+                    let structural_names: std::collections::HashSet<&str> =
+                        ["Eof", "RParen", "RBrace", "RBracket", "Semi", "Comma"]
+                            .into_iter()
+                            .collect();
 
                     for sync_name in &sync_names {
                         if let Some(sync_id) = token_map.get(sync_name) {
                             if structural_names.contains(sync_name.as_str()) {
-                                follow_ctxs.insert(sync_id, crate::automata::semiring::ContextWeight::one());
+                                follow_ctxs.insert(
+                                    sync_id,
+                                    crate::automata::semiring::ContextWeight::one(),
+                                );
                             } else {
                                 // Non-structural FOLLOW token: compute which rules can reach it.
                                 // A rule can reach this sync token if any of its dispatch tokens
@@ -1656,7 +1828,8 @@ pub fn build_recovery_wfsts(
                                 // For now, use a conservative approach: check all dispatch tokens
                                 // in the WFST and union the rule bits for tokens that are
                                 // associated with rules whose FOLLOW set includes sync_name.
-                                let mut reachable = crate::automata::semiring::ContextWeight::zero();
+                                let mut reachable =
+                                    crate::automata::semiring::ContextWeight::zero();
 
                                 // Iterate all tokens that have predictions in this WFST
                                 for (action_idx, _action) in pred.actions.iter().enumerate() {
@@ -1669,7 +1842,10 @@ pub fn build_recovery_wfsts(
 
                                 if reachable.is_zero() {
                                     // No actions → use one() (don't filter)
-                                    follow_ctxs.insert(sync_id, crate::automata::semiring::ContextWeight::one());
+                                    follow_ctxs.insert(
+                                        sync_id,
+                                        crate::automata::semiring::ContextWeight::one(),
+                                    );
                                 } else {
                                     follow_ctxs.insert(sync_id, reachable);
                                 }
@@ -1931,7 +2107,7 @@ impl RecoveryContext {
                     // More viable rules → cheaper (inverse)
                     1.0 / (viable as f64).max(1.0)
                 }
-            }
+            },
             None => 1.0, // no dispatch context → neutral
         }
     }
@@ -2142,11 +2318,61 @@ impl RecoveryWfst {
         simulator: Option<&ParseSimulator>,
         category: &str,
     ) -> Option<RepairResult> {
-        let remaining = &token_ids[pos..];
+        let default_config = RecoveryConfig::default();
+        self.find_best_recovery_contextual_with_config(
+            token_ids,
+            pos,
+            ctx,
+            simulator,
+            category,
+            &default_config,
+        )
+    }
+
+    /// Find the best recovery action with context-aware cost adjustments
+    /// using the supplied recovery configuration.
+    pub fn find_best_recovery_contextual_with_config(
+        &self,
+        token_ids: &[TokenId],
+        pos: usize,
+        ctx: &RecoveryContext,
+        simulator: Option<&ParseSimulator>,
+        category: &str,
+        config: &RecoveryConfig,
+    ) -> Option<RepairResult> {
+        self.find_best_recovery_contextual_with_config_filtered(
+            token_ids,
+            pos,
+            ctx,
+            simulator,
+            category,
+            config,
+            |_| true,
+        )
+    }
+
+    /// Find the best configured contextual recovery action satisfying an
+    /// additional candidate predicate.
+    pub(crate) fn find_best_recovery_contextual_with_config_filtered<F>(
+        &self,
+        token_ids: &[TokenId],
+        pos: usize,
+        ctx: &RecoveryContext,
+        simulator: Option<&ParseSimulator>,
+        category: &str,
+        config: &RecoveryConfig,
+        mut accept_candidate: F,
+    ) -> Option<RepairResult>
+    where
+        F: FnMut(&RepairResult) -> bool,
+    {
+        let normalized_config = config.normalized_for_recovery_search();
+        let config = &normalized_config;
+        let remaining = token_ids.get(pos..)?;
         let mut best: Option<RepairResult> = None;
 
         // ── Strategy 1: SkipToSync ─────────────────────────────────────────
-        let max_lookahead = remaining.len().min(costs::MAX_SKIP_LOOKAHEAD);
+        let max_lookahead = remaining.len().min(config.max_skip_lookahead);
         #[allow(clippy::needless_range_loop)]
         // `skip` used for arithmetic, cost calc, struct field, and position offset
         for skip in 0..max_lookahead {
@@ -2155,16 +2381,16 @@ impl RecoveryWfst {
                 let base_cost = if skip == 0 {
                     TropicalWeight::one()
                 } else {
-                    TropicalWeight::new(skip as f64 * costs::SKIP_PER_TOKEN.value())
+                    TropicalWeight::new(skip as f64 * config.skip_per_token)
                 };
 
                 // Tier 1: frame context multiplier for skip
-                let tier1_mult = ctx.skip_multiplier();
+                let tier1_mult = ctx.skip_multiplier_with(config);
 
                 // Tier 3: simulation after the skip
                 let tier3_mult = if let Some(sim) = simulator {
                     let sim_result = sim.simulate_after_repair(token_ids, pos + skip, category);
-                    sim.cost_multiplier(&sim_result)
+                    sim.cost_multiplier_with(&sim_result, config)
                 } else {
                     1.0
                 };
@@ -2176,12 +2402,22 @@ impl RecoveryWfst {
                     // Tier 4: B1 prediction discount
                     let tier4_mult = self.prediction_discount(token_at);
                     // Tier 5 (Sprint 7): ContextWeight viability
-                    let tier5_mult = self.follow_contexts.get(&token_at)
+                    let tier5_mult = self
+                        .follow_contexts
+                        .get(&token_at)
                         .map_or(1.0, |fc| ctx.context_viability_multiplier(fc));
                     // Sprint C2: Liveness — penalize skip in recursive categories
                     // Breaking out of a recursive loop via skip is structurally damaging.
                     let liveness_skip_mult = if self.recursive_category { 1.3 } else { 1.0 };
-                    costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult * tier4_mult * tier5_mult * liveness_skip_mult, action.edit_cost())
+                    costs::joint_edit(
+                        base_cost.value()
+                            * tier1_mult
+                            * tier3_mult
+                            * tier4_mult
+                            * tier5_mult
+                            * liveness_skip_mult,
+                        action.edit_cost(),
+                    )
                 };
 
                 let result = RepairResult {
@@ -2189,48 +2425,51 @@ impl RecoveryWfst {
                     new_pos: pos + skip,
                     cost: adjusted_cost,
                 };
-                best = Some(pick_better(best, result));
+                best = pick_better_if_allowed(best, result, &mut accept_candidate);
                 break; // first sync point only
             }
         }
 
         // ── Strategy 2: DeleteToken ────────────────────────────────────────
         if !remaining.is_empty() {
-            let base_cost = costs::DELETE;
+            let base_cost = TropicalWeight::new(config.delete_cost);
             // Delete is a mild skip variant — use skip multiplier
-            let tier1_mult = ctx.skip_multiplier();
+            let tier1_mult = ctx.skip_multiplier_with(config);
 
             let tier3_mult = if let Some(sim) = simulator {
                 let sim_result = sim.simulate_after_repair(token_ids, pos + 1, category);
-                sim.cost_multiplier(&sim_result)
+                sim.cost_multiplier_with(&sim_result, config)
             } else {
                 1.0
             };
 
             let action = RepairAction::DeleteToken;
             let result = RepairResult {
-                cost: costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult, action.edit_cost()),
+                cost: costs::joint_edit(
+                    base_cost.value() * tier1_mult * tier3_mult,
+                    action.edit_cost(),
+                ),
                 action,
                 new_pos: pos + 1,
             };
-            best = Some(pick_better(best, result));
+            best = pick_better_if_allowed(best, result, &mut accept_candidate);
         }
 
         // ── Strategy 3: InsertToken ────────────────────────────────────────
         for &sync_id in &self.sync_tokens {
-            let base_cost = costs::INSERT;
+            let base_cost = TropicalWeight::new(config.insert_cost);
 
             // Tier 1: frame context multiplier for insert
-            let tier1_mult = ctx.insert_multiplier();
+            let tier1_mult = ctx.insert_multiplier_with(config);
 
             // Tier 2: bracket balance multiplier
             let token_name = self.token_map.name(sync_id);
-            let tier2_mult = ctx.bracket_insert_multiplier(token_name);
+            let tier2_mult = ctx.bracket_insert_multiplier_with(token_name, config);
 
             // Tier 3: simulation after inserting this token
             let tier3_mult = if let Some(sim) = simulator {
                 let sim_result = sim.simulate_after_repair(token_ids, pos, category);
-                sim.cost_multiplier(&sim_result)
+                sim.cost_multiplier_with(&sim_result, config)
             } else {
                 1.0
             };
@@ -2247,24 +2486,33 @@ impl RecoveryWfst {
 
             let action = RepairAction::InsertToken { token: sync_id };
             let result = RepairResult {
-                cost: costs::joint_edit(base_cost.value() * tier1_mult * tier2_mult * tier3_mult * tier4_mult * bracket_mult * liveness_insert_mult, action.edit_cost()),
+                cost: costs::joint_edit(
+                    base_cost.value()
+                        * tier1_mult
+                        * tier2_mult
+                        * tier3_mult
+                        * tier4_mult
+                        * bracket_mult
+                        * liveness_insert_mult,
+                    action.edit_cost(),
+                ),
                 action,
                 new_pos: pos,
             };
-            best = Some(pick_better(best, result));
+            best = pick_better_if_allowed(best, result, &mut accept_candidate);
         }
 
         // ── Strategy 4: SubstituteToken ────────────────────────────────────
         if !remaining.is_empty() {
             for &sync_id in &self.sync_tokens {
-                let base_cost = costs::SUBSTITUTE;
+                let base_cost = TropicalWeight::new(config.substitute_cost);
 
                 // Tier 1: frame context multiplier for substitute
-                let tier1_mult = ctx.substitute_multiplier();
+                let tier1_mult = ctx.substitute_multiplier_with(config);
 
                 let tier3_mult = if let Some(sim) = simulator {
                     let sim_result = sim.simulate_after_repair(token_ids, pos + 1, category);
-                    sim.cost_multiplier(&sim_result)
+                    sim.cost_multiplier_with(&sim_result, config)
                 } else {
                     1.0
                 };
@@ -2274,11 +2522,14 @@ impl RecoveryWfst {
 
                 let action = RepairAction::SubstituteToken { replacement: sync_id };
                 let result = RepairResult {
-                    cost: costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult * tier4_mult, action.edit_cost()),
+                    cost: costs::joint_edit(
+                        base_cost.value() * tier1_mult * tier3_mult * tier4_mult,
+                        action.edit_cost(),
+                    ),
                     action,
                     new_pos: pos + 1,
                 };
-                best = Some(pick_better(best, result));
+                best = pick_better_if_allowed(best, result, &mut accept_candidate);
             }
         }
 
@@ -2286,12 +2537,12 @@ impl RecoveryWfst {
         if remaining.len() >= 2 {
             let swapped_first = remaining[1];
             if self.sync_tokens.contains(&swapped_first) {
-                let base_cost = 1.25_f64; // SWAP cost
-                let tier1_mult = ctx.skip_multiplier(); // swap is a mild reorder
+                let base_cost = config.swap_cost;
+                let tier1_mult = ctx.skip_multiplier_with(config); // swap is a mild reorder
 
                 let tier3_mult = if let Some(sim) = simulator {
                     let sim_result = sim.simulate_after_repair(token_ids, pos + 2, category);
-                    sim.cost_multiplier(&sim_result)
+                    sim.cost_multiplier_with(&sim_result, config)
                 } else {
                     1.0
                 };
@@ -2299,16 +2550,16 @@ impl RecoveryWfst {
                 // Tier 4: B1 prediction discount on the sync token revealed by the swap
                 let tier4_mult = self.prediction_discount(swapped_first);
 
-                let action = RepairAction::SwapTokens {
-                    pos_a: pos,
-                    pos_b: pos + 1,
-                };
+                let action = RepairAction::SwapTokens { pos_a: pos, pos_b: pos + 1 };
                 let result = RepairResult {
-                    cost: costs::joint_edit(base_cost * tier1_mult * tier3_mult * tier4_mult, action.edit_cost()),
+                    cost: costs::joint_edit(
+                        base_cost * tier1_mult * tier3_mult * tier4_mult,
+                        action.edit_cost(),
+                    ),
                     action,
                     new_pos: pos + 2,
                 };
-                best = Some(pick_better(best, result));
+                best = pick_better_if_allowed(best, result, &mut accept_candidate);
             }
         }
 
@@ -2372,7 +2623,9 @@ mod tests {
         // the edit count tiebreaker resolves the tropical tie.
         match &result.action {
             RepairAction::DeleteToken => {},
-            other => panic!("Expected DeleteToken (wins via edit-count tiebreaker), got {:?}", other),
+            other => {
+                panic!("Expected DeleteToken (wins via edit-count tiebreaker), got {:?}", other)
+            },
         }
         assert_eq!(result.new_pos, 1);
         assert_eq!(result.cost.left, TropicalWeight::new(1.0));
@@ -2557,7 +2810,8 @@ mod tests {
         grammar_terminals.insert(";".to_string());
         grammar_terminals.insert(")".to_string());
 
-        let wfsts = build_recovery_wfsts(&categories, &follow_sets, &grammar_terminals, &token_map, None);
+        let wfsts =
+            build_recovery_wfsts(&categories, &follow_sets, &grammar_terminals, &token_map, None);
 
         assert_eq!(wfsts.len(), 2);
         assert_eq!(wfsts[0].category(), "Int");
@@ -2750,6 +3004,99 @@ mod tests {
         // Note: exact winner depends on relative costs, but the important thing
         // is that the context adjustment changes the result or cost.
         let _ = (s, c); // both valid
+    }
+
+    #[test]
+    fn test_contextual_recovery_observes_supplied_config() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let token_ids = vec![token_map.get("Ident").expect("Ident"), semi_id];
+        let ctx = RecoveryContext {
+            depth: 50,
+            binding_power: 10,
+            ..Default::default()
+        };
+
+        let default_result = wfst
+            .find_best_recovery_contextual(&token_ids, 0, &ctx, None, "Expr")
+            .expect("default contextual recovery should find the sync token");
+
+        let config = RecoveryConfig {
+            shallow_depth_threshold: 100,
+            shallow_depth_skip_mult: 4.0,
+            delete_cost: 9.0,
+            insert_cost: 9.0,
+            substitute_cost: 9.0,
+            swap_cost: 9.0,
+            ..RecoveryConfig::default()
+        };
+        let configured_result = wfst
+            .find_best_recovery_contextual_with_config(&token_ids, 0, &ctx, None, "Expr", &config)
+            .expect("configured contextual recovery should find the sync token");
+
+        match configured_result.action {
+            RepairAction::SkipToSync { skip_count, sync_token } => {
+                assert_eq!(skip_count, 1);
+                assert_eq!(sync_token, semi_id);
+            },
+            other => panic!("expected configured SkipToSync, got {:?}", other),
+        }
+        assert!(
+            configured_result.cost.left.value() > default_result.cost.left.value(),
+            "configured shallow-depth multiplier must affect contextual recovery cost",
+        );
+    }
+
+    #[test]
+    fn test_contextual_recovery_filtered_skips_non_advancing_sync() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let token_ids = vec![semi_id];
+        let ctx = RecoveryContext {
+            depth: 50,
+            binding_power: 10,
+            ..Default::default()
+        };
+
+        let unfiltered = wfst
+            .find_best_recovery_contextual(&token_ids, 0, &ctx, None, "Expr")
+            .expect("unfiltered contextual recovery should see immediate sync");
+        match unfiltered.action {
+            RepairAction::SkipToSync { skip_count, sync_token } => {
+                assert_eq!(skip_count, 0);
+                assert_eq!(sync_token, semi_id);
+            },
+            other => panic!("expected zero-token SkipToSync, got {:?}", other),
+        }
+
+        let filtered = wfst
+            .find_best_recovery_contextual_with_config_filtered(
+                &token_ids,
+                0,
+                &ctx,
+                None,
+                "Expr",
+                &RecoveryConfig::default(),
+                |result| {
+                    result.new_pos > 0 || matches!(result.action, RepairAction::InsertToken { .. })
+                },
+            )
+            .expect("filtered contextual recovery should choose an advancing fallback");
+
+        assert!(
+            filtered.new_pos > 0 || matches!(filtered.action, RepairAction::InsertToken { .. }),
+            "filtered recovery must satisfy the dispatch progress predicate",
+        );
+        assert!(
+            !matches!(filtered.action, RepairAction::SkipToSync { skip_count: 0, .. }),
+            "zero-token sync repair must not suppress a dispatch-viable fallback",
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3099,6 +3446,57 @@ mod tests {
     }
 
     #[test]
+    fn test_recovery_config_normalizes_invalid_search_weights() {
+        let config = RecoveryConfig {
+            skip_per_token: -1.0,
+            delete_cost: f64::NAN,
+            substitute_cost: f64::NEG_INFINITY,
+            insert_cost: f64::INFINITY,
+            swap_cost: -2.0,
+            deep_nesting_skip_mult: -0.5,
+            shallow_depth_skip_mult: f64::NAN,
+            low_bp_skip_mult: f64::NEG_INFINITY,
+            collection_insert_mult: -0.25,
+            group_insert_mult: f64::INFINITY,
+            bracket_insert_mult: -0.3,
+            mixfix_substitute_mult: f64::NAN,
+            simulation_valid_mult: -1.0,
+            simulation_fail_penalty: f64::INFINITY,
+            beam_width: Some(f64::NAN),
+            adaptive_weight_threshold: f64::NEG_INFINITY,
+            deterministic_skip_discount: -0.75,
+            ambiguous_insert_discount: f64::NAN,
+            max_skip_lookahead: 7,
+            max_recovery_depth: 2,
+            ..RecoveryConfig::default()
+        };
+
+        let normalized = config.normalized_for_recovery_search();
+        let default = RecoveryConfig::default();
+
+        assert_eq!(normalized.skip_per_token, default.skip_per_token);
+        assert_eq!(normalized.delete_cost, default.delete_cost);
+        assert_eq!(normalized.substitute_cost, default.substitute_cost);
+        assert_eq!(normalized.insert_cost, default.insert_cost);
+        assert_eq!(normalized.swap_cost, default.swap_cost);
+        assert_eq!(normalized.deep_nesting_skip_mult, default.deep_nesting_skip_mult);
+        assert_eq!(normalized.shallow_depth_skip_mult, default.shallow_depth_skip_mult);
+        assert_eq!(normalized.low_bp_skip_mult, default.low_bp_skip_mult);
+        assert_eq!(normalized.collection_insert_mult, default.collection_insert_mult);
+        assert_eq!(normalized.group_insert_mult, default.group_insert_mult);
+        assert_eq!(normalized.bracket_insert_mult, default.bracket_insert_mult);
+        assert_eq!(normalized.mixfix_substitute_mult, default.mixfix_substitute_mult);
+        assert_eq!(normalized.simulation_valid_mult, default.simulation_valid_mult);
+        assert_eq!(normalized.simulation_fail_penalty, default.simulation_fail_penalty);
+        assert_eq!(normalized.beam_width, None);
+        assert_eq!(normalized.adaptive_weight_threshold, default.adaptive_weight_threshold);
+        assert_eq!(normalized.deterministic_skip_discount, default.deterministic_skip_discount);
+        assert_eq!(normalized.ambiguous_insert_discount, default.ambiguous_insert_discount);
+        assert_eq!(normalized.max_skip_lookahead, 7);
+        assert_eq!(normalized.max_recovery_depth, 2);
+    }
+
+    #[test]
     fn test_recovery_config_default_identical_to_no_config() {
         // Verify that *_with(&default) produces the same result as the no-config variant
         let ctx = RecoveryContext {
@@ -3112,7 +3510,9 @@ mod tests {
 
         assert!((ctx.skip_multiplier() - ctx.skip_multiplier_with(&config)).abs() < 1e-9);
         assert!((ctx.insert_multiplier() - ctx.insert_multiplier_with(&config)).abs() < 1e-9);
-        assert!((ctx.substitute_multiplier() - ctx.substitute_multiplier_with(&config)).abs() < 1e-9);
+        assert!(
+            (ctx.substitute_multiplier() - ctx.substitute_multiplier_with(&config)).abs() < 1e-9
+        );
         assert!(
             (ctx.bracket_insert_multiplier(Some("RParen"))
                 - ctx.bracket_insert_multiplier_with(Some("RParen"), &config))
@@ -3232,8 +3632,8 @@ mod tests {
         ];
 
         let config = RecoveryConfig::default();
-        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
-            .expect("should find recovery");
+        let result =
+            viterbi_multi_step(&token_ids, 0, &sync_tokens, &config).expect("should find recovery");
 
         assert_eq!(result.new_pos, 2);
         assert!(result.total_cost.left.value() <= 1.0 + 1e-9);
@@ -3248,14 +3648,12 @@ mod tests {
 
         // tokens: [Plus, Semi] — delete Plus (1.0) vs skip to Semi at 1 (0.5)
         // Skip wins: cost 0.5 < 1.0
-        let token_ids: Vec<TokenId> = vec![
-            token_map.get("Plus").expect("Plus"),
-            token_map.get("Semi").expect("Semi"),
-        ];
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Plus").expect("Plus"), token_map.get("Semi").expect("Semi")];
 
         let config = RecoveryConfig::default();
-        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
-            .expect("should find recovery");
+        let result =
+            viterbi_multi_step(&token_ids, 0, &sync_tokens, &config).expect("should find recovery");
 
         // Should sync at position 1 (Semi) via skip
         assert_eq!(result.new_pos, 1);
@@ -3273,8 +3671,8 @@ mod tests {
         let token_ids: Vec<TokenId> = vec![token_map.get("Semi").expect("Semi")];
 
         let config = RecoveryConfig::default();
-        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
-            .expect("should find recovery");
+        let result =
+            viterbi_multi_step(&token_ids, 0, &sync_tokens, &config).expect("should find recovery");
 
         assert_eq!(result.new_pos, 0);
         assert_eq!(result.total_cost.left, TropicalWeight::one()); // zero cost
@@ -3286,17 +3684,21 @@ mod tests {
         let mut sync_tokens = BTreeSet::new();
         sync_tokens.insert(token_map.get("Semi").expect("Semi"));
 
-        // No Semi in the remaining tokens, but insert is possible
+        // No Semi in the remaining tokens, but token-bearing repair is possible.
         let ident_id = token_map.get("Ident").expect("Ident");
         let token_ids: Vec<TokenId> = vec![ident_id; 5];
 
         let config = RecoveryConfig::default();
         let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config);
 
-        // Insert should provide a path: insert Semi at pos 0, cost = 2.0
+        // A token-bearing repair should provide a path; skip-only paths must
+        // not reach the virtual sink without a real sync token.
         assert!(result.is_some());
-        let seq = result.expect("insert should provide recovery");
-        assert!(seq.actions.iter().any(|a| matches!(a, RepairAction::InsertToken { .. })));
+        let seq = result.expect("token-bearing repair should provide recovery");
+        assert!(seq.actions.iter().any(|a| matches!(
+            a,
+            RepairAction::InsertToken { .. } | RepairAction::SubstituteToken { .. }
+        )));
     }
 
     #[test]
@@ -3305,6 +3707,23 @@ mod tests {
         let config = RecoveryConfig::default();
         let result = viterbi_multi_step(&[], 0, &sync_tokens, &config);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_no_sync_and_no_insert_target_is_unreachable() {
+        let token_map = make_token_map();
+        let sync_tokens = BTreeSet::new();
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Ident").expect("Ident"), token_map.get("Plus").expect("Plus")];
+
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config);
+
+        assert!(
+            result.is_none(),
+            "skip edges alone must not complete a multi-step recovery without \
+             a real sync token or a token-bearing repair target",
+        );
     }
 
     #[test]
@@ -3354,6 +3773,131 @@ mod tests {
         // Both should find a path
         assert!(result_tight.is_some());
         assert!(result_no_beam.is_some());
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_negative_beam_is_disabled() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Ident").expect("Ident"), token_map.get("Semi").expect("Semi")];
+
+        let negative_beam_config = RecoveryConfig {
+            beam_width: Some(-2.0),
+            ..RecoveryConfig::default()
+        };
+        let no_beam_config = RecoveryConfig {
+            beam_width: None,
+            ..RecoveryConfig::default()
+        };
+
+        let result_negative =
+            viterbi_multi_step(&token_ids, 0, &sync_tokens, &negative_beam_config)
+                .expect("negative beam is normalized to disabled");
+        let result_no_beam = viterbi_multi_step(&token_ids, 0, &sync_tokens, &no_beam_config)
+            .expect("unbounded beam should find recovery");
+
+        assert_eq!(result_negative.total_cost, result_no_beam.total_cost);
+        assert_eq!(result_negative.actions, result_no_beam.actions);
+        assert_eq!(result_negative.new_pos, result_no_beam.new_pos);
+        assert!(
+            matches!(
+                result_negative.actions.as_slice(),
+                [RepairAction::SkipToSync { skip_count: 1, .. }]
+            ),
+            "negative beam width must not prune the cheaper skip-to-sync path",
+        );
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_invalid_costs_are_normalized() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+        let token_ids =
+            vec![token_map.get("Ident").expect("Ident"), token_map.get("Semi").expect("Semi")];
+
+        let poisoned_config = RecoveryConfig {
+            skip_per_token: -100.0,
+            delete_cost: f64::NAN,
+            substitute_cost: f64::NEG_INFINITY,
+            insert_cost: f64::INFINITY,
+            swap_cost: -100.0,
+            beam_width: Some(f64::INFINITY),
+            ..RecoveryConfig::default()
+        };
+        let default_config = RecoveryConfig::default();
+
+        let result_poisoned = viterbi_multi_step(&token_ids, 0, &sync_tokens, &poisoned_config)
+            .expect("normalized poisoned config should still find recovery");
+        let result_default = viterbi_multi_step(&token_ids, 0, &sync_tokens, &default_config)
+            .expect("default config should find recovery");
+
+        assert_eq!(result_poisoned.total_cost, result_default.total_cost);
+        assert_eq!(result_poisoned.actions, result_default.actions);
+        assert_eq!(result_poisoned.new_pos, result_default.new_pos);
+        assert!(
+            result_poisoned.total_cost.left.value() >= 0.0,
+            "invalid configured costs must not create negative recovery paths"
+        );
+    }
+
+    #[test]
+    fn test_recovery_windows_past_input_return_no_recovery() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "Eof".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+        let token_ids = vec![token_map.get("Ident").expect("Ident")];
+        let past_end = token_ids.len() + 1;
+        let config = RecoveryConfig::default();
+        let ctx = RecoveryContext::default();
+
+        assert!(
+            wfst.find_best_recovery(&token_ids, past_end).is_none(),
+            "direct recovery must be total for positions past the token window",
+        );
+        assert!(
+            viterbi_recovery(&token_ids, past_end, &sync_tokens).is_none(),
+            "single-step Viterbi recovery must be total for positions past the token window",
+        );
+        assert!(
+            viterbi_recovery_beam(
+                &token_ids,
+                past_end,
+                &sync_tokens,
+                Some(TropicalWeight::new(1.0))
+            )
+            .is_none(),
+            "beam Viterbi recovery must be total for positions past the token window",
+        );
+        assert!(
+            viterbi_multi_step(&token_ids, past_end, &sync_tokens, &config).is_none(),
+            "multi-step Viterbi recovery must be total for positions past the token window",
+        );
+        assert!(
+            wfst.find_best_recovery_contextual_with_config_filtered(
+                &token_ids,
+                past_end,
+                &ctx,
+                None,
+                "Expr",
+                &config,
+                |_| true,
+            )
+            .is_none(),
+            "contextual recovery must be total for positions past the token window",
+        );
+
+        let posterior =
+            viterbi_recovery_forward_backward(&token_ids, past_end, &wfst, &config, None);
+        assert!(posterior.position_costs.is_empty());
+        assert!(posterior.bottleneck_positions.is_empty());
+        assert!(posterior.optimal_sequence.is_none());
+        assert_eq!(posterior.total_cost, TropicalWeight::zero());
     }
 
     #[test]
@@ -3420,9 +3964,9 @@ mod tests {
     fn test_composite_action_edit_cost() {
         let action = RepairAction::Composite {
             steps: vec![
-                RepairAction::DeleteToken,                         // 1
-                RepairAction::InsertToken { token: 0 },            // 2
-                RepairAction::SwapTokens { pos_a: 0, pos_b: 1 },   // 1
+                RepairAction::DeleteToken,                       // 1
+                RepairAction::InsertToken { token: 0 },          // 2
+                RepairAction::SwapTokens { pos_a: 0, pos_b: 1 }, // 1
             ],
         };
         assert_eq!(action.edit_cost().0, 4);
@@ -3443,7 +3987,9 @@ mod tests {
             token_map.get("Eof").expect("Eof"),
         ];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
         // Skip should win (cost 0.5 to reach Semi at position 1)
         match &result.action {
             RepairAction::SkipToSync { skip_count, .. } => assert_eq!(*skip_count, 1),
@@ -3469,7 +4015,9 @@ mod tests {
             token_map.get("Plus").expect("Plus"),
         ];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
         // Skip to Eof at position 1 should win
         assert!(result.cost.left.value() <= 1.0);
     }
@@ -3491,11 +4039,91 @@ mod tests {
         ];
 
         let config = RecoveryConfig::default();
-        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
-            .expect("should find recovery");
+        let result =
+            viterbi_multi_step(&token_ids, 0, &sync_tokens, &config).expect("should find recovery");
 
         // Skip to Semi is cheaper
         assert!(result.total_cost.left.value() <= 1.25 + 1e-9);
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_swap_positions_are_sequence_local() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Integer").expect("Integer"),
+            token_map.get("Integer").expect("Integer"),
+            token_map.get("Plus").expect("Plus"),
+            token_map.get("Semi").expect("Semi"),
+            token_map.get("Ident").expect("Ident"),
+        ];
+
+        let mut config = RecoveryConfig::default();
+        config.skip_per_token = 10.0;
+        config.delete_cost = 10.0;
+        config.substitute_cost = 10.0;
+        config.insert_cost = 10.0;
+        config.swap_cost = 0.1;
+        config.beam_width = None;
+
+        let result =
+            viterbi_multi_step(&token_ids, 2, &sync_tokens, &config).expect("swap recovery");
+
+        assert_eq!(result.new_pos, 4, "new_pos remains an absolute parser position",);
+        assert!(
+            result
+                .actions
+                .iter()
+                .any(|action| matches!(action, RepairAction::SwapTokens { pos_a: 0, pos_b: 1 })),
+            "swap actions in RepairSequence must be relative to the recovery \
+             window, not absolute input positions: {:?}",
+            result.actions,
+        );
+        assert!(
+            !result
+                .actions
+                .iter()
+                .any(|action| matches!(action, RepairAction::SwapTokens { pos_a: 2, pos_b: 3 })),
+            "absolute swap coordinates would be double-offset during \
+             ApplyRecoverySequence replay",
+        );
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_swap_requires_revealed_sync() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Plus").expect("Plus"),
+            token_map.get("Semi").expect("Semi"),
+        ];
+
+        let config = RecoveryConfig {
+            skip_per_token: 10.0,
+            delete_cost: 10.0,
+            substitute_cost: 10.0,
+            insert_cost: 10.0,
+            swap_cost: 0.1,
+            beam_width: None,
+            ..RecoveryConfig::default()
+        };
+
+        let result =
+            viterbi_multi_step(&token_ids, 0, &sync_tokens, &config).expect("insert fallback");
+
+        assert!(
+            !result
+                .actions
+                .iter()
+                .any(|action| matches!(action, RepairAction::SwapTokens { .. })),
+            "swap must not act as a cheap two-token skip unless it reveals a \
+             sync token at the current position",
+        );
     }
 
     #[test]
@@ -3514,6 +4142,70 @@ mod tests {
         let failed = SimulationResult::FailedAt { position: 2 };
         // 1.0 + (5 - 2) * 0.5 = 1.0 + 1.5 = 2.5
         assert!((sim.cost_multiplier_with(&failed, &config) - 2.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_contextual_recovery_uses_supplied_simulation_config() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let ident = token_map.get("Ident").expect("Ident");
+        let semi = token_map.get("Semi").expect("Semi");
+        let token_ids = vec![ident, semi];
+
+        let mut follow = BTreeSet::new();
+        follow.insert(semi);
+        let sim = ParseSimulator::new(
+            BTreeMap::new(),
+            BTreeMap::from([("Expr".to_string(), follow)]),
+            BTreeMap::new(),
+            5,
+        );
+        let ctx = RecoveryContext {
+            depth: 50,
+            binding_power: 10,
+            ..Default::default()
+        };
+
+        let cheap_config = RecoveryConfig {
+            simulation_valid_mult: 0.25,
+            ..RecoveryConfig::default()
+        };
+        let expensive_config = RecoveryConfig {
+            simulation_valid_mult: 2.0,
+            ..RecoveryConfig::default()
+        };
+
+        let cheap = wfst
+            .find_best_recovery_contextual_with_config_filtered(
+                &token_ids,
+                0,
+                &ctx,
+                Some(&sim),
+                "Expr",
+                &cheap_config,
+                |_| true,
+            )
+            .expect("cheap simulation config should recover");
+        let expensive = wfst
+            .find_best_recovery_contextual_with_config_filtered(
+                &token_ids,
+                0,
+                &ctx,
+                Some(&sim),
+                "Expr",
+                &expensive_config,
+                |_| true,
+            )
+            .expect("expensive simulation config should recover");
+
+        assert!(matches!(cheap.action, RepairAction::SkipToSync { skip_count: 1, .. }));
+        assert!(matches!(expensive.action, RepairAction::SkipToSync { skip_count: 1, .. }));
+        assert!(
+            cheap.cost.left.value() < expensive.cost.left.value(),
+            "contextual recovery must use the supplied simulation multipliers",
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -3552,6 +4244,32 @@ mod tests {
     }
 
     #[test]
+    fn test_prediction_discount_invalid_values_are_neutral() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "RParen".to_string()];
+        let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let rparen_id = token_map.get("RParen").expect("RParen");
+        let mut discounts = std::collections::HashMap::new();
+        discounts.insert(semi_id, -0.25);
+        discounts.insert(rparen_id, f64::NAN);
+        wfst.set_prediction_discounts(discounts);
+
+        assert_eq!(wfst.prediction_discount(semi_id), 1.0);
+        assert_eq!(wfst.prediction_discount(rparen_id), 1.0);
+
+        let token_ids: Vec<TokenId> = vec![];
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("neutralized invalid discounts should still allow recovery");
+        assert!(
+            result.cost.left.value() >= 0.0,
+            "invalid prediction discounts must not create negative recovery costs"
+        );
+    }
+
+    #[test]
     fn test_prediction_discount_affects_insert_cost() {
         let token_map = make_token_map();
         let sync_names = vec!["Semi".to_string(), "RParen".to_string()];
@@ -3560,7 +4278,8 @@ mod tests {
         let wfst_no_pred = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
         let token_ids: Vec<TokenId> = vec![]; // empty: only insert is possible
 
-        let result_no = wfst_no_pred.find_best_recovery(&token_ids, 0)
+        let result_no = wfst_no_pred
+            .find_best_recovery(&token_ids, 0)
             .expect("should find recovery");
         let cost_no_discount = result_no.cost.left.value();
 
@@ -3573,7 +4292,8 @@ mod tests {
         discounts.insert(rparen_id, 0.8); // small discount
         wfst_pred.set_prediction_discounts(discounts);
 
-        let result_pred = wfst_pred.find_best_recovery(&token_ids, 0)
+        let result_pred = wfst_pred
+            .find_best_recovery(&token_ids, 0)
             .expect("should find recovery");
 
         // With prediction discount, the best insert should be cheaper
@@ -3614,18 +4334,24 @@ mod tests {
         // RParen: 2.0 * 0.9 = 1.8
         // Delete: 1.0 (no prediction discount)
         // So SubstituteToken(Semi) at 0.3 should win!
-        let token_ids: Vec<TokenId> = vec![
-            token_map.get("Ident").expect("Ident"),
-            token_map.get("Plus").expect("Plus"),
-        ];
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Ident").expect("Ident"), token_map.get("Plus").expect("Plus")];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
 
         match &result.action {
             RepairAction::SubstituteToken { replacement } => {
-                assert_eq!(*replacement, semi_id, "should prefer substituting with high-confidence token");
-                assert!((result.cost.left.value() - 0.3).abs() < 1e-9,
-                    "cost should be 1.5 * 0.2 = 0.3, got {}", result.cost.left.value());
+                assert_eq!(
+                    *replacement, semi_id,
+                    "should prefer substituting with high-confidence token"
+                );
+                assert!(
+                    (result.cost.left.value() - 0.3).abs() < 1e-9,
+                    "cost should be 1.5 * 0.2 = 0.3, got {}",
+                    result.cost.left.value()
+                );
             },
             other => panic!("Expected SubstituteToken(Semi), got {:?}", other),
         }
@@ -3645,12 +4371,12 @@ mod tests {
         // tokens: [Ident, Semi] — skip 1 to sync
         // Base skip cost: 1 * 0.5 = 0.5
         // With prediction discount: 0.5 * 0.5 = 0.25
-        let token_ids: Vec<TokenId> = vec![
-            token_map.get("Ident").expect("Ident"),
-            token_map.get("Semi").expect("Semi"),
-        ];
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Ident").expect("Ident"), token_map.get("Semi").expect("Semi")];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
         match &result.action {
             RepairAction::SkipToSync { skip_count, sync_token } => {
                 assert_eq!(*skip_count, 1);
@@ -3682,7 +4408,8 @@ mod tests {
         grammar_terminals.insert(")".to_string());
 
         // Without prediction WFSTs
-        let wfsts = build_recovery_wfsts(&categories, &follow_sets, &grammar_terminals, &token_map, None);
+        let wfsts =
+            build_recovery_wfsts(&categories, &follow_sets, &grammar_terminals, &token_map, None);
         assert_eq!(wfsts.len(), 1);
 
         // All sync tokens should have default discount (1.0)
@@ -3726,13 +4453,13 @@ mod tests {
 
         // Dispatch context = rule 0
         let ctx_rule0 = ContextWeight::singleton(0);
-        assert!(wfst.is_sync_reachable(semi_id, ctx_rule0));   // Semi: rule 0 in {0,2}
+        assert!(wfst.is_sync_reachable(semi_id, ctx_rule0)); // Semi: rule 0 in {0,2}
         assert!(!wfst.is_sync_reachable(rparen_id, ctx_rule0)); // RParen: rule 0 not in {1}
 
         // Dispatch context = rule 1
         let ctx_rule1 = ContextWeight::singleton(1);
-        assert!(!wfst.is_sync_reachable(semi_id, ctx_rule1));  // Semi: rule 1 not in {0,2}
-        assert!(wfst.is_sync_reachable(rparen_id, ctx_rule1));  // RParen: rule 1 in {1}
+        assert!(!wfst.is_sync_reachable(semi_id, ctx_rule1)); // Semi: rule 1 not in {0,2}
+        assert!(wfst.is_sync_reachable(rparen_id, ctx_rule1)); // RParen: rule 1 in {1}
 
         // Dispatch context = all rules
         assert!(wfst.is_sync_reachable(semi_id, ContextWeight::one()));
@@ -3762,7 +4489,7 @@ mod tests {
         let tightened = wfst.tightened_sync_tokens(ContextWeight::singleton(0));
         assert!(tightened.contains(&semi_id));
         assert!(!tightened.contains(&rparen_id)); // filtered out
-        assert!(tightened.contains(&eof_id));     // unannotated → always present
+        assert!(tightened.contains(&eof_id)); // unannotated → always present
 
         // Tighten with one() → all tokens
         let all = wfst.tightened_sync_tokens(ContextWeight::one());
@@ -3786,7 +4513,9 @@ mod tests {
         // Build with prediction WFSTs → follow contexts should be populated
         // (using a simple prediction WFST with one action)
         let pred_token_map = crate::token_id::TokenIdMap::from_names(
-            vec!["Plus", "Ident", "Semi", "Eof"].into_iter().map(String::from)
+            vec!["Plus", "Ident", "Semi", "Eof"]
+                .into_iter()
+                .map(String::from),
         );
         let mut builder = crate::wfst::PredictionWfstBuilder::new("Expr", pred_token_map);
         builder.add_action(
@@ -3803,14 +4532,19 @@ mod tests {
         prediction_wfsts.insert("Expr".to_string(), pred_wfst);
 
         let wfsts = build_recovery_wfsts(
-            &categories, &follow_sets, &grammar_terminals, &token_map,
+            &categories,
+            &follow_sets,
+            &grammar_terminals,
+            &token_map,
             Some(&prediction_wfsts),
         );
 
         assert_eq!(wfsts.len(), 1);
         // Follow contexts should be non-empty
-        assert!(!wfsts[0].follow_contexts().is_empty(),
-            "follow_contexts should be populated when prediction WFST is provided");
+        assert!(
+            !wfsts[0].follow_contexts().is_empty(),
+            "follow_contexts should be populated when prediction WFST is provided"
+        );
     }
 
     // ── D3: RecoveryWfst DOT visualization tests ───────────────────────
@@ -3823,11 +4557,7 @@ mod tests {
         token_map.get_or_insert("Semicolon");
         token_map.get_or_insert("Eof");
 
-        let sync_names = vec![
-            "RParen".to_string(),
-            "Semicolon".to_string(),
-            "Eof".to_string(),
-        ];
+        let sync_names = vec!["RParen".to_string(), "Semicolon".to_string(), "Eof".to_string()];
         let recovery = RecoveryWfst::new("Proc".to_string(), &sync_names, &token_map);
         let dot = recovery.to_dot();
 
@@ -3873,8 +4603,10 @@ mod tests {
         assert!(dot.contains("digraph RecoveryWfst_Empty"));
         assert!(dot.contains("error"));
         // No sync tokens → no edges
-        assert!(!dot.contains("->") || dot.matches("->").count() == 0
-            || !dot.contains("sync_"), "empty recovery should have no sync edges");
+        assert!(
+            !dot.contains("->") || dot.matches("->").count() == 0 || !dot.contains("sync_"),
+            "empty recovery should have no sync edges"
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -3968,11 +4700,7 @@ mod tests {
         let semi_id = token_map.get_or_insert("Semicolon");
         let bad_id = token_map.get_or_insert("BadToken");
 
-        let sync_names = vec![
-            "Eof".to_string(),
-            "RParen".to_string(),
-            "Semicolon".to_string(),
-        ];
+        let sync_names = vec!["Eof".to_string(), "RParen".to_string(), "Semicolon".to_string()];
         let mut recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
 
         // Set follow contexts: RParen reachable from rule 0, Semicolon from rule 1
@@ -3989,9 +4717,7 @@ mod tests {
         let mut ctx = RecoveryContext::default();
         ctx.dispatch_context = Some(ContextWeight::singleton(0));
 
-        let result = recovery.find_best_recovery_contextual(
-            &tokens, 0, &ctx, None, "Expr",
-        );
+        let result = recovery.find_best_recovery_contextual(&tokens, 0, &ctx, None, "Expr");
         assert!(result.is_some(), "should find a recovery action");
 
         let repair = result.expect("recovery should succeed");
@@ -4003,7 +4729,7 @@ mod tests {
                     *sync_token, rparen_id,
                     "should prefer RParen (viable from rule 0) over Semicolon"
                 );
-            }
+            },
             _ => {
                 // Other repair actions are also valid — just check cost is reasonable
                 assert!(
@@ -4011,7 +4737,7 @@ mod tests {
                     "repair cost should be reasonable, got {}",
                     repair.cost.left.value()
                 );
-            }
+            },
         }
     }
 
@@ -4037,9 +4763,7 @@ mod tests {
         let tokens = vec![bad1, bad2, semi_id, eof_id];
         let config = RecoveryConfig::default();
 
-        let posterior = viterbi_recovery_forward_backward(
-            &tokens, 0, &recovery, &config, None,
-        );
+        let posterior = viterbi_recovery_forward_backward(&tokens, 0, &recovery, &config, None);
 
         // Total cost should be finite (a path exists)
         assert!(
@@ -4055,10 +4779,7 @@ mod tests {
         );
 
         // The optimal sequence should exist
-        assert!(
-            posterior.optimal_sequence.is_some(),
-            "should have an optimal repair sequence"
-        );
+        assert!(posterior.optimal_sequence.is_some(), "should have an optimal repair sequence");
     }
 
     #[test]
@@ -4076,19 +4797,54 @@ mod tests {
         let tokens = vec![semi_id, eof_id];
         let config = RecoveryConfig::default();
 
-        let posterior = viterbi_recovery_forward_backward(
-            &tokens, 0, &recovery, &config, None,
-        );
+        let posterior = viterbi_recovery_forward_backward(&tokens, 0, &recovery, &config, None);
 
-        assert!(
-            !posterior.total_cost.is_zero(),
-            "immediate sync should have finite total cost"
-        );
+        assert!(!posterior.total_cost.is_zero(), "immediate sync should have finite total cost");
 
         // Position 0 should be a bottleneck (the only path goes through it)
         assert!(
             posterior.bottleneck_positions.contains(&0),
             "position 0 should be a bottleneck for immediate sync"
+        );
+    }
+
+    #[test]
+    fn test_sprint7_fb_swap_requires_revealed_sync() {
+        use crate::token_id::TokenIdMap;
+
+        let mut token_map = TokenIdMap::new();
+        let semi_id = token_map.get_or_insert("Semicolon");
+        let bad_id = token_map.get_or_insert("BadToken");
+        let plus_id = token_map.get_or_insert("Plus");
+
+        let sync_names = vec!["Semicolon".to_string()];
+        let recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+        let tokens = vec![bad_id, plus_id, semi_id];
+        let config = RecoveryConfig {
+            skip_per_token: 10.0,
+            delete_cost: 10.0,
+            substitute_cost: 10.0,
+            insert_cost: 10.0,
+            swap_cost: 0.1,
+            beam_width: None,
+            ..RecoveryConfig::default()
+        };
+
+        let posterior = viterbi_recovery_forward_backward(&tokens, 0, &recovery, &config, None);
+
+        assert!(
+            posterior.total_cost.value() >= 9.9,
+            "forward-backward must not score swap as a cheap two-token skip \
+             unless the second token is a sync token; got {}",
+            posterior.total_cost.value(),
+        );
+        assert!(
+            !posterior.optimal_sequence.as_ref().is_some_and(|seq| seq
+                .actions
+                .iter()
+                .any(|action| matches!(action, RepairAction::SwapTokens { .. }))),
+            "Viterbi and forward-backward must agree that this is not a \
+             sync-revealing swap",
         );
     }
 
@@ -4103,9 +4859,7 @@ mod tests {
         let tokens: Vec<TokenId> = vec![];
         let config = RecoveryConfig::default();
 
-        let posterior = viterbi_recovery_forward_backward(
-            &tokens, 0, &recovery, &config, None,
-        );
+        let posterior = viterbi_recovery_forward_backward(&tokens, 0, &recovery, &config, None);
 
         assert!(posterior.position_costs.is_empty(), "no positions for empty input");
         assert!(posterior.total_cost.is_zero(), "no path for empty input");
@@ -4124,11 +4878,7 @@ mod tests {
         let semi_id = token_map.get_or_insert("Semicolon");
         let bad_id = token_map.get_or_insert("BadToken");
 
-        let sync_names = vec![
-            "Eof".to_string(),
-            "RParen".to_string(),
-            "Semicolon".to_string(),
-        ];
+        let sync_names = vec!["Eof".to_string(), "RParen".to_string(), "Semicolon".to_string()];
         let mut recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
 
         // RParen reachable from rule 0 only, Semicolon from rule 1 only
@@ -4144,20 +4894,15 @@ mod tests {
 
         // With dispatch context = rule 0: only RParen and Eof are reachable
         let dispatch = ContextWeight::singleton(0);
-        let posterior_ctx = viterbi_recovery_forward_backward(
-            &tokens, 0, &recovery, &config, Some(dispatch),
-        );
+        let posterior_ctx =
+            viterbi_recovery_forward_backward(&tokens, 0, &recovery, &config, Some(dispatch));
 
         // Without context: all sync tokens are available
-        let posterior_no_ctx = viterbi_recovery_forward_backward(
-            &tokens, 0, &recovery, &config, None,
-        );
+        let posterior_no_ctx =
+            viterbi_recovery_forward_backward(&tokens, 0, &recovery, &config, None);
 
         // Both should find a path
-        assert!(
-            !posterior_ctx.total_cost.is_zero(),
-            "should find path with context filter"
-        );
+        assert!(!posterior_ctx.total_cost.is_zero(), "should find path with context filter");
         assert!(
             !posterior_no_ctx.total_cost.is_zero(),
             "should find path without context filter"
@@ -4221,7 +4966,9 @@ mod tests {
         let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
 
         // Mark "Plus" as a bracket mismatch token
-        let plus_id = token_map.get("Plus").expect("Plus should exist in token map");
+        let plus_id = token_map
+            .get("Plus")
+            .expect("Plus should exist in token map");
         let mut mismatch_ids = BTreeSet::new();
         mismatch_ids.insert(plus_id);
         wfst.set_bracket_mismatch_ids(mismatch_ids);
@@ -4249,7 +4996,9 @@ mod tests {
             .collect();
 
         // Build a WFST with "Plus" as bracket mismatch
-        let plus_id = token_map.get("Plus").expect("Plus should exist in token map");
+        let plus_id = token_map
+            .get("Plus")
+            .expect("Plus should exist in token map");
         let eof_id = token_map.get("Eof").expect("Eof should exist in token map");
 
         let mut wfst_mismatch = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
@@ -4282,7 +5031,8 @@ mod tests {
         // the penalty mechanism is wired correctly by checking that the mismatch
         // penalty getter works.
         assert!(
-            wfst_mismatch.bracket_mismatch_penalty(plus_id) > wfst_normal.bracket_mismatch_penalty(plus_id),
+            wfst_mismatch.bracket_mismatch_penalty(plus_id)
+                > wfst_normal.bracket_mismatch_penalty(plus_id),
             "mismatch WFST should penalize Plus insertion more than normal WFST"
         );
 
@@ -4295,10 +5045,7 @@ mod tests {
     fn bracket_mismatch_insert_only_affects_insert_strategy() {
         let token_map = make_token_map();
         // Only sync token is "Plus" (the mismatch token)
-        let sync_names: Vec<String> = vec!["Plus"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let sync_names: Vec<String> = vec!["Plus"].into_iter().map(String::from).collect();
 
         let plus_id = token_map.get("Plus").expect("Plus should exist");
         let eof_id = token_map.get("Eof").expect("Eof should exist");
@@ -4325,11 +5072,13 @@ mod tests {
         // Both should produce InsertToken actions
         assert!(
             matches!(rm.action, RepairAction::InsertToken { .. }),
-            "mismatch recovery should be InsertToken, got {:?}", rm.action
+            "mismatch recovery should be InsertToken, got {:?}",
+            rm.action
         );
         assert!(
             matches!(rc.action, RepairAction::InsertToken { .. }),
-            "clean recovery should be InsertToken, got {:?}", rc.action
+            "clean recovery should be InsertToken, got {:?}",
+            rc.action
         );
 
         // InsertToken(Plus) with mismatch penalty should cost 2× more
@@ -4345,10 +5094,7 @@ mod tests {
     #[test]
     fn bracket_mismatch_empty_set_no_penalty() {
         let token_map = make_token_map();
-        let sync_names: Vec<String> = vec!["Eof", "Plus"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let sync_names: Vec<String> = vec!["Eof", "Plus"].into_iter().map(String::from).collect();
 
         // Empty mismatch set (default)
         let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
@@ -4372,10 +5118,7 @@ mod tests {
     #[test]
     fn recursive_category_defaults_to_false() {
         let token_map = make_token_map();
-        let sync_names: Vec<String> = vec!["Plus", "Eof"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let sync_names: Vec<String> = vec!["Plus", "Eof"].into_iter().map(String::from).collect();
 
         let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
         assert!(!wfst.is_recursive_category(), "default should be non-recursive");
@@ -4384,10 +5127,7 @@ mod tests {
     #[test]
     fn set_recursive_category_round_trip() {
         let token_map = make_token_map();
-        let sync_names: Vec<String> = vec!["Plus", "Eof"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let sync_names: Vec<String> = vec!["Plus", "Eof"].into_iter().map(String::from).collect();
 
         let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
         assert!(!wfst.is_recursive_category());
@@ -4400,10 +5140,7 @@ mod tests {
     #[test]
     fn recursive_category_prefers_insert_over_skip() {
         let token_map = make_token_map();
-        let sync_names: Vec<String> = vec!["Plus", "Eof"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let sync_names: Vec<String> = vec!["Plus", "Eof"].into_iter().map(String::from).collect();
 
         // Build a recursive recovery WFST
         let mut wfst_recursive = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
@@ -4419,7 +5156,8 @@ mod tests {
         let tokens = vec![integer_id, eof_id];
         let ctx = RecoveryContext::default();
 
-        let r_recursive = wfst_recursive.find_best_recovery_contextual(&tokens, 0, &ctx, None, "Expr");
+        let r_recursive =
+            wfst_recursive.find_best_recovery_contextual(&tokens, 0, &ctx, None, "Expr");
         let r_normal = wfst_normal.find_best_recovery_contextual(&tokens, 0, &ctx, None, "Expr");
 
         // Both should produce results
@@ -4443,10 +5181,7 @@ mod tests {
     fn recursive_category_insert_cost_discounted() {
         // Directly verify that InsertToken cost is lower in recursive categories.
         let token_map = make_token_map();
-        let sync_names: Vec<String> = vec!["Plus"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let sync_names: Vec<String> = vec!["Plus"].into_iter().map(String::from).collect();
 
         let mut wfst_recursive = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
         wfst_recursive.set_recursive_category(true);
@@ -4461,7 +5196,8 @@ mod tests {
         let tokens = vec![eof_id];
         let ctx = RecoveryContext::default();
 
-        let r_recursive = wfst_recursive.find_best_recovery_contextual(&tokens, 0, &ctx, None, "Expr");
+        let r_recursive =
+            wfst_recursive.find_best_recovery_contextual(&tokens, 0, &ctx, None, "Expr");
         let r_normal = wfst_normal.find_best_recovery_contextual(&tokens, 0, &ctx, None, "Expr");
 
         let rr = r_recursive.expect("recursive should produce recovery");
@@ -4483,17 +5219,14 @@ mod tests {
                 // The overall best may differ, but the liveness adjustments are applied.
                 assert!(rr.cost.left.value() >= 0.0);
                 assert!(rn.cost.left.value() >= 0.0);
-            }
+            },
         }
     }
 
     #[test]
     fn non_recursive_category_no_liveness_change() {
         let token_map = make_token_map();
-        let sync_names: Vec<String> = vec!["Plus", "Eof"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        let sync_names: Vec<String> = vec!["Plus", "Eof"].into_iter().map(String::from).collect();
 
         let wfst = RecoveryWfst::new("Stmt".to_string(), &sync_names, &token_map);
         // recursive_category defaults to false
@@ -4544,7 +5277,8 @@ mod proptest_tests {
     }
 
     /// All token names in the default map.
-    const ALL_TOKEN_NAMES: &[&str] = &["Plus", "Minus", "Star", "Integer", "Ident", "RParen", "Semi", "Eof"];
+    const ALL_TOKEN_NAMES: &[&str] =
+        &["Plus", "Minus", "Star", "Integer", "Ident", "RParen", "Semi", "Eof"];
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(50))]
@@ -4908,7 +5642,8 @@ mod proptest_tests {
         assert!(
             (m_at - m_baseline).abs() < 1e-9,
             "depth == ceiling should NOT trigger discount: m_at={}, baseline={}",
-            m_at, m_baseline
+            m_at,
+            m_baseline
         );
 
         // Above boundary: discount applied
@@ -4916,7 +5651,8 @@ mod proptest_tests {
         assert!(
             (m_above - expected_above).abs() < 1e-9,
             "depth > ceiling should trigger 0.3x discount: m_above={}, expected={}",
-            m_above, expected_above
+            m_above,
+            expected_above
         );
     }
 
@@ -4933,7 +5669,9 @@ mod proptest_tests {
         let m0_baseline = ctx0.skip_multiplier_with(&no_vpa);
         assert!(
             (m0 - m0_baseline).abs() < 1e-9,
-            "depth 0, ceiling 0: no discount: m0={}, baseline={}", m0, m0_baseline
+            "depth 0, ceiling 0: no discount: m0={}, baseline={}",
+            m0,
+            m0_baseline
         );
 
         // depth = 1: discount applied
@@ -4943,7 +5681,9 @@ mod proptest_tests {
         let expected = m1_baseline * 0.3;
         assert!(
             (m1 - expected).abs() < 1e-9,
-            "depth 1, ceiling 0: 0.3x discount: m1={}, expected={}", m1, expected
+            "depth 1, ceiling 0: 0.3x discount: m1={}, expected={}",
+            m1,
+            expected
         );
 
         // depth = 10: discount applied
@@ -4953,7 +5693,9 @@ mod proptest_tests {
         let expected10 = m10_baseline * 0.3;
         assert!(
             (m10 - expected10).abs() < 1e-9,
-            "depth 10, ceiling 0: 0.3x discount: m10={}, expected={}", m10, expected10
+            "depth 10, ceiling 0: 0.3x discount: m10={}, expected={}",
+            m10,
+            expected10
         );
     }
 
@@ -4981,7 +5723,8 @@ mod proptest_tests {
                     assert!(
                         (wfst.bracket_mismatch_penalty(tid) - 1.0).abs() < 1e-9,
                         "non-mismatch token {} should get 1.0, got {}",
-                        name, wfst.bracket_mismatch_penalty(tid)
+                        name,
+                        wfst.bracket_mismatch_penalty(tid)
                     );
                 }
             }
@@ -5007,7 +5750,8 @@ mod proptest_tests {
                 assert!(
                     (wfst.bracket_mismatch_penalty(tid) - 2.0).abs() < 1e-9,
                     "all-mismatch: token {} should get 2.0, got {}",
-                    name, wfst.bracket_mismatch_penalty(tid)
+                    name,
+                    wfst.bracket_mismatch_penalty(tid)
                 );
             }
         }

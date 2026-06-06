@@ -53,19 +53,19 @@
 //!   └── temporal           — LTL checking over traces (AtomicProposition, check_trace_ltl)
 //! ```
 
-pub mod semiring;
-pub mod stochastic_petri;
 pub mod mdp;
 pub mod parikh_automaton;
+pub mod semiring;
+pub mod stochastic_petri;
 pub mod streaming_automaton;
 
-pub mod step;
-pub mod trace;
 pub mod invariant;
 pub mod morphology;
 pub mod results;
 pub mod runner;
+pub mod step;
+pub mod trace;
 
-pub mod model;
 pub mod coverage;
+pub mod model;
 pub mod temporal;

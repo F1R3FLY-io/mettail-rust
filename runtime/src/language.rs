@@ -55,7 +55,7 @@ impl fmt::Display for TermType {
                 // Render as a pipe-separated union: `Int | Bool | Float`.
                 let parts: Vec<String> = types.iter().map(|t| format!("{}", t)).collect();
                 write!(f, "{}", parts.join(" | "))
-            }
+            },
             TermType::Unknown => write!(f, "?"),
         }
     }
@@ -467,7 +467,7 @@ impl AscentResults {
                         } else {
                             prev
                         }
-                    }
+                    },
                 });
             }
         }

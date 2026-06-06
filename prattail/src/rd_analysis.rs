@@ -349,9 +349,7 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
                 // must be stored across the trampoline split so the frame
                 // finalizer can construct the term.
                 current_inline.push(item.clone());
-                accumulated_captures.push(SegmentCapture::Guard {
-                    name: param_name.clone(),
-                });
+                accumulated_captures.push(SegmentCapture::Guard { name: param_name.clone() });
             },
             RDSyntaxItem::Sep { .. }
             | RDSyntaxItem::Map { .. }
@@ -395,7 +393,8 @@ pub fn compute_live_captures(
     }
 
     let n = segments.len();
-    let mut live_at: Vec<std::collections::HashSet<String>> = vec![std::collections::HashSet::new(); n];
+    let mut live_at: Vec<std::collections::HashSet<String>> =
+        vec![std::collections::HashSet::new(); n];
 
     // Initialize: final segment's liveness = constructor capture names
     // (the final segment itself doesn't push a frame, but defines what the constructor needs)

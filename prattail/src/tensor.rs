@@ -554,9 +554,7 @@ impl<W1: Semiring, W2: Semiring> Default for TensorWeight<W1, W2> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automata::semiring::{
-        BooleanWeight, CountingWeight, ProductWeight, TropicalWeight,
-    };
+    use crate::automata::semiring::{BooleanWeight, CountingWeight, ProductWeight, TropicalWeight};
 
     // Convenience aliases for test readability.
     type TW = TropicalWeight;
@@ -731,20 +729,15 @@ mod tests {
     fn times_bilinear_expansion() {
         // (a1 ⊗ b1 + a2 ⊗ b2) * (c1 ⊗ d1)
         // = (a1*c1) ⊗ (b1*d1) + (a2*c1) ⊗ (b2*d1)
-        let lhs = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(3.0), CW::new(4)),
-        ]);
+        let lhs = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(3.0), CW::new(4))]);
         let rhs = TensorTC::elementary(TW::new(0.5), CW::new(3));
 
         let result = lhs.times(&rhs);
 
         // Expected:
         // (1.0+0.5) ⊗ (2*3) + (3.0+0.5) ⊗ (4*3) = 1.5 ⊗ 6 + 3.5 ⊗ 12
-        let expected = TensorTC::from_pairs(&[
-            (TW::new(1.5), CW::new(6)),
-            (TW::new(3.5), CW::new(12)),
-        ]);
+        let expected =
+            TensorTC::from_pairs(&[(TW::new(1.5), CW::new(6)), (TW::new(3.5), CW::new(12))]);
         assert_eq!(result, expected);
     }
 
@@ -753,10 +746,7 @@ mod tests {
         // (a1 ⊗ b1 + a2 ⊗ b2) * (c1 ⊗ d1 + c2 ⊗ d2)
         // = (a1*c1) ⊗ (b1*d1) + (a1*c2) ⊗ (b1*d2)
         //   + (a2*c1) ⊗ (b2*d1) + (a2*c2) ⊗ (b2*d2)
-        let x = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(2.0), CW::new(3)),
-        ]);
+        let x = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(2.0), CW::new(3))]);
         let y = TensorTC::from_pairs(&[
             (TW::new(0.0), CW::new(1)), // TW::one() = 0.0
             (TW::new(1.0), CW::new(2)),
@@ -784,20 +774,14 @@ mod tests {
 
     #[test]
     fn project_left_marginalizes_right() {
-        let t = TensorTC::from_pairs(&[
-            (TW::new(2.0), CW::new(3)),
-            (TW::new(5.0), CW::new(7)),
-        ]);
+        let t = TensorTC::from_pairs(&[(TW::new(2.0), CW::new(3)), (TW::new(5.0), CW::new(7))]);
         // project_left: TW::plus(2.0, 5.0) = min(2.0, 5.0) = 2.0
         assert_eq!(t.project_left(), TW::new(2.0));
     }
 
     #[test]
     fn project_right_marginalizes_left() {
-        let t = TensorTC::from_pairs(&[
-            (TW::new(2.0), CW::new(3)),
-            (TW::new(5.0), CW::new(7)),
-        ]);
+        let t = TensorTC::from_pairs(&[(TW::new(2.0), CW::new(3)), (TW::new(5.0), CW::new(7))]);
         // project_right: CW::plus(3, 7) = 3 + 7 = 10
         assert_eq!(t.project_right(), CW::new(10));
     }
@@ -882,10 +866,7 @@ mod tests {
 
     #[test]
     fn simplify_removes_zero_second_components() {
-        let t = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::zero()),
-            (TW::new(2.0), CW::new(5)),
-        ]);
+        let t = TensorTC::from_pairs(&[(TW::new(1.0), CW::zero()), (TW::new(2.0), CW::new(5))]);
         let s = t.simplify();
         assert_eq!(s.len(), 1);
         assert_eq!(s.as_slice()[0], (TW::new(2.0), CW::new(5)));
@@ -895,10 +876,7 @@ mod tests {
     fn simplify_removes_zero_first_components() {
         // TW::zero() = +inf (tropical zero). A term (0₁, w2) is zero
         // by bilinearity, so it should be stripped.
-        let t = TensorTC::from_pairs(&[
-            (TW::zero(), CW::new(3)),
-            (TW::new(2.0), CW::new(5)),
-        ]);
+        let t = TensorTC::from_pairs(&[(TW::zero(), CW::new(3)), (TW::new(2.0), CW::new(5))]);
         let s = t.simplify();
         assert_eq!(s.len(), 1);
         assert_eq!(s.as_slice()[0], (TW::new(2.0), CW::new(5)));
@@ -906,10 +884,7 @@ mod tests {
 
     #[test]
     fn simplify_all_zeros_yields_zero() {
-        let t = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::zero()),
-            (TW::new(2.0), CW::zero()),
-        ]);
+        let t = TensorTC::from_pairs(&[(TW::new(1.0), CW::zero()), (TW::new(2.0), CW::zero())]);
         let s = t.simplify();
         assert!(s.is_zero());
     }
@@ -1195,10 +1170,7 @@ mod tests {
     #[test]
     fn distributivity_multi_term() {
         // a * (b + c) = a*b + a*c with multi-term tensors.
-        let a = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(2.0), CW::new(1)),
-        ]);
+        let a = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(2.0), CW::new(1))]);
         let b = TensorTC::elementary(TW::new(0.5), CW::new(3));
         let c = TensorTC::elementary(TW::new(1.0), CW::new(2));
 
@@ -1209,10 +1181,7 @@ mod tests {
 
     #[test]
     fn zero_annihilation_multi_term() {
-        let a = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(3.0), CW::new(4)),
-        ]);
+        let a = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(3.0), CW::new(4))]);
         let z = TensorTC::zero();
 
         assert!(z.times(&a).is_zero());
@@ -1221,10 +1190,7 @@ mod tests {
 
     #[test]
     fn one_identity_multi_term() {
-        let a = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(3.0), CW::new(4)),
-        ]);
+        let a = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(3.0), CW::new(4))]);
         let one = TensorTC::one();
 
         assert_eq!(one.times(&a), a);
@@ -1249,24 +1215,15 @@ mod tests {
 
     #[test]
     fn equality_is_order_independent() {
-        let a = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(3.0), CW::new(4)),
-        ]);
-        let b = TensorTC::from_pairs(&[
-            (TW::new(3.0), CW::new(4)),
-            (TW::new(1.0), CW::new(2)),
-        ]);
+        let a = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(3.0), CW::new(4))]);
+        let b = TensorTC::from_pairs(&[(TW::new(3.0), CW::new(4)), (TW::new(1.0), CW::new(2))]);
         assert_eq!(a, b);
     }
 
     #[test]
     fn equality_after_simplification() {
         // (1.0, 2) + (1.0, 3) simplifies to (1.0, 5)
-        let a = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(1.0), CW::new(3)),
-        ]);
+        let a = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(1.0), CW::new(3))]);
         let b = TensorTC::elementary(TW::new(1.0), CW::new(5));
         assert_eq!(a, b);
     }
@@ -1285,10 +1242,7 @@ mod tests {
     #[test]
     fn approx_eq_different_counts_false() {
         let a = TensorTT::elementary(TW::new(1.0), TW::new(2.0));
-        let b = TensorTT::from_pairs(&[
-            (TW::new(1.0), TW::new(2.0)),
-            (TW::new(3.0), TW::new(4.0)),
-        ]);
+        let b = TensorTT::from_pairs(&[(TW::new(1.0), TW::new(2.0)), (TW::new(3.0), TW::new(4.0))]);
         assert!(!a.approx_eq(&b, 1e-10));
     }
 
@@ -1298,10 +1252,7 @@ mod tests {
 
     #[test]
     fn iter_yields_active_terms_only() {
-        let t = TensorTC::from_pairs(&[
-            (TW::new(1.0), CW::new(2)),
-            (TW::new(3.0), CW::new(4)),
-        ]);
+        let t = TensorTC::from_pairs(&[(TW::new(1.0), CW::new(2)), (TW::new(3.0), CW::new(4))]);
         let collected: Vec<_> = t.iter().cloned().collect();
         assert_eq!(collected.len(), 2);
         assert_eq!(collected[0], (TW::new(1.0), CW::new(2)));

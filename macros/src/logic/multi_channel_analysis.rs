@@ -42,7 +42,7 @@
 //! `BehavioralPred` inputs that simulate multi-channel scenarios.
 
 use mettail_ast::grammar::{GrammarRule, TermParam};
-use mettail_ast::language::{BehavioralPred, LanguageDef, PredArg, Quantifier};
+use mettail_ast::language::{BehavioralPred, LanguageDef, PredArg};
 use mettail_prattail::lint::DiagnosticId;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -110,12 +110,9 @@ pub fn analyze_rule(rule: &GrammarRule) -> Option<MultiChannelGuardSpec> {
         return None;
     }
 
-    // For now, the inline-predicate form is not yet wired into the
-    // GrammarRule AST (Phase 11 follow-up). The detector framework
-    // is in place; when Phase 11 lands and `GrammarRule` carries an
-    // optional inline `BehavioralPred`, the analyzer will inspect it
-    // here. Until then, return None for all rules — the framework
-    // is exercised by unit tests below using synthetic inputs.
+    // Source-level guards carry per-instance predicates, not compile-time
+    // predicate data on `GrammarRule`. Return None for those rules; the
+    // detector is exercised by unit tests below using synthetic inputs.
     None
 }
 
@@ -135,18 +132,13 @@ pub fn analyze_predicate(
     pred: &BehavioralPred,
     channel_bindings: &BTreeMap<String, BTreeSet<String>>,
 ) -> Option<MultiChannelGuardSpec> {
-    let pred_vars: BTreeSet<String> =
-        collect_predicate_free_vars(pred).into_iter().collect();
+    let pred_vars: BTreeSet<String> = collect_predicate_free_vars(pred).into_iter().collect();
 
     // For each channel binding, compute the intersection with the
     // predicate's free vars.
-    let mut channel_dependencies: BTreeMap<String, BTreeSet<String>> =
-        BTreeMap::new();
+    let mut channel_dependencies: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (channel, bound_vars) in channel_bindings {
-        let intersection: BTreeSet<String> = bound_vars
-            .intersection(&pred_vars)
-            .cloned()
-            .collect();
+        let intersection: BTreeSet<String> = bound_vars.intersection(&pred_vars).cloned().collect();
         if !intersection.is_empty() {
             channel_dependencies.insert(channel.clone(), intersection);
         }
@@ -290,7 +282,7 @@ fn collect_predicate_free_vars_inner(
                     }
                 }
             }
-        }
+        },
         BehavioralPred::Quantified { var, body, .. } => {
             let var_name = var.to_string();
             let inserted = bound.insert(var_name.clone());
@@ -298,12 +290,8 @@ fn collect_predicate_free_vars_inner(
             if inserted {
                 bound.remove(&var_name);
             }
-        }
-        BehavioralPred::AcMatch {
-            bag,
-            elements,
-            rest,
-        } => {
+        },
+        BehavioralPred::AcMatch { bag, elements, rest } => {
             // The AST `AcMatch` carries `Ident` directly (not
             // `PredArg`), so every reference is a variable.
             let bag_name = bag.to_string();
@@ -322,24 +310,24 @@ fn collect_predicate_free_vars_inner(
                     free.insert(name);
                 }
             }
-        }
-        BehavioralPred::And(a, b)
-        | BehavioralPred::Or(a, b)
-        | BehavioralPred::Implies(a, b) => {
+        },
+        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
             collect_predicate_free_vars_inner(a, free, bound);
             collect_predicate_free_vars_inner(b, free, bound);
-        }
+        },
         BehavioralPred::Not(inner) => {
             collect_predicate_free_vars_inner(inner, free, bound);
-        }
-        BehavioralPred::Top => {}
+        },
+        BehavioralPred::Top => {},
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mettail_ast::language::{AttributeValue, GuardConfig, LangType, Quantifier};
     use proc_macro2::Span;
+    use std::collections::HashMap;
     use syn::Ident;
 
     fn ident(name: &str) -> Ident {
@@ -355,6 +343,27 @@ mod tests {
             relation_name: ident(name),
             args,
             negated: false,
+        }
+    }
+
+    fn minimal_language() -> LanguageDef {
+        LanguageDef {
+            name: ident("TestLang"),
+            options: HashMap::<String, AttributeValue>::new(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::<LangType>::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None::<GuardConfig>,
         }
     }
 
@@ -399,10 +408,7 @@ mod tests {
             bindings.insert(channel.to_string(), s);
         }
 
-        let pred = rel(
-            "triple",
-            vec![pred_var("x"), pred_var("y"), pred_var("z")],
-        );
+        let pred = rel("triple", vec![pred_var("x"), pred_var("y"), pred_var("z")]);
         let result = analyze_predicate("PTripleInput", &pred, &bindings);
         let spec = result.expect("3-channel guard should be flagged");
         assert_eq!(spec.channel_count, 3);
@@ -459,20 +465,14 @@ mod tests {
             body: Box::new(rel("rel", vec![pred_var("x"), pred_var("y")])),
         };
         let result = analyze_predicate("PInput", &pred, &bindings);
-        assert!(
-            result.is_none(),
-            "single-channel predicate with bound y should not be flagged"
-        );
+        assert!(result.is_none(), "single-channel predicate with bound y should not be flagged");
     }
 
     #[test]
     fn analyze_language_returns_empty_when_no_guarded_constructors() {
-        // Synthesize a minimal LanguageDef with no terms.
-        // The detector should report zero specs.
-        // We use a doc-only smoke test rather than building a full
-        // LanguageDef (which requires extensive scaffolding); the
-        // unit tests above already exercise the predicate-level
-        // analysis surface.
+        let language = minimal_language();
+
+        assert!(analyze_language(&language).is_empty());
     }
 
     // ── Phase 9: deadlock detection ──
@@ -480,8 +480,7 @@ mod tests {
     fn make_spec(channels: &[(&str, &[&str])]) -> MultiChannelGuardSpec {
         let mut deps = BTreeMap::new();
         for (channel, vars) in channels {
-            let set: BTreeSet<String> =
-                vars.iter().map(|s| s.to_string()).collect();
+            let set: BTreeSet<String> = vars.iter().map(|s| s.to_string()).collect();
             deps.insert(channel.to_string(), set);
         }
         MultiChannelGuardSpec {
@@ -501,11 +500,7 @@ mod tests {
 
     #[test]
     fn three_channel_join_reports_deadlock_conservatively() {
-        let spec = make_spec(&[
-            ("ch1", &["x"]),
-            ("ch2", &["y"]),
-            ("ch3", &["z"]),
-        ]);
+        let spec = make_spec(&[("ch1", &["x"]), ("ch2", &["y"]), ("ch3", &["z"])]);
         let report = analyze_join_pattern(&spec);
         assert!(report.has_deadlock());
         assert_eq!(report.deadlock_cycles.len(), 1);
@@ -514,11 +509,7 @@ mod tests {
 
     #[test]
     fn deadlock_diagnostics_emit_tw03() {
-        let spec = make_spec(&[
-            ("ch1", &["x"]),
-            ("ch2", &["y"]),
-            ("ch3", &["z"]),
-        ]);
+        let spec = make_spec(&[("ch1", &["x"]), ("ch2", &["y"]), ("ch3", &["z"])]);
         let report = analyze_join_pattern(&spec);
         let diagnostics = report.diagnostics();
         assert_eq!(diagnostics.len(), 1);

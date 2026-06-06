@@ -80,10 +80,7 @@ impl ENode {
 
     /// Create an e-node with children.
     fn with_children(symbol: impl Into<String>, children: Vec<EClassId>) -> Self {
-        ENode {
-            symbol: symbol.into(),
-            children,
-        }
+        ENode { symbol: symbol.into(), children }
     }
 
     /// Canonicalize this e-node by mapping all children through a union-find.
@@ -113,10 +110,7 @@ struct UnionFind {
 
 impl UnionFind {
     fn new() -> Self {
-        UnionFind {
-            parent: Vec::new(),
-            rank: Vec::new(),
-        }
+        UnionFind { parent: Vec::new(), rank: Vec::new() }
     }
 
     fn make_set(&mut self) -> EClassId {
@@ -177,10 +171,7 @@ pub struct EGraphConfig {
 
 impl Default for EGraphConfig {
     fn default() -> Self {
-        EGraphConfig {
-            max_nodes: 10_000,
-            max_iterations: 30,
-        }
+        EGraphConfig { max_nodes: 10_000, max_iterations: 30 }
     }
 }
 
@@ -213,10 +204,7 @@ impl EGraph {
 
     /// Create a new e-graph with the given configuration.
     pub fn with_config(config: EGraphConfig) -> Self {
-        EGraph {
-            config,
-            ..Self::new()
-        }
+        EGraph { config, ..Self::new() }
     }
 
     /// Canonical representative for an e-class.
@@ -278,12 +266,12 @@ impl EGraph {
                 // Variables are added as nullary e-nodes with __var_ prefix
                 let enode = ENode::leaf(format!("__var_{}", name));
                 self.add(enode)
-            }
+            },
             Term::App { symbol, args } => {
                 let children: Vec<EClassId> = args.iter().map(|a| self.add_term(a)).collect();
                 let enode = ENode::with_children(symbol.as_str(), children);
                 self.add(enode)
-            }
+            },
         }
     }
 
@@ -360,10 +348,10 @@ impl EGraph {
                             }
                             new_memo.insert(canon_node, winner);
                         }
-                    }
+                    },
                     _ => {
                         new_memo.insert(canon_node, canon_id);
-                    }
+                    },
                 }
             }
             self.memo = new_memo;
@@ -391,10 +379,10 @@ impl EGraph {
                             }
                             self.memo.insert(canon_node, winner);
                         }
-                    }
+                    },
                     _ => {
                         self.memo.insert(canon_node, canon_id);
-                    }
+                    },
                 }
             }
         }
@@ -404,7 +392,6 @@ impl EGraph {
     pub fn extract_best(&self, id: EClassId) -> Term {
         self.extract_smallest(id).term
     }
-
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -517,15 +504,15 @@ impl EGraph {
                 match subst.get(name) {
                     Some(&existing) if self.find(existing) == class_id => {
                         results.push((class_id, subst.clone()));
-                    }
-                    Some(_) => { /* variable bound to a different class — no match */ }
+                    },
+                    Some(_) => { /* variable bound to a different class — no match */ },
                     None => {
                         let mut new_subst = subst.clone();
                         new_subst.insert(name.clone(), class_id);
                         results.push((class_id, new_subst));
-                    }
+                    },
                 }
-            }
+            },
             Pattern::App { symbol, args } => {
                 let class = match self.classes.get(&class_id) {
                     Some(c) => c,
@@ -538,7 +525,7 @@ impl EGraph {
                         self.match_children(args, &enode.children, subst, class_id, results);
                     }
                 }
-            }
+            },
         }
     }
 
@@ -567,13 +554,7 @@ impl EGraph {
 
         // For each child match, continue with remaining children
         for (_, child_subst) in child_matches {
-            self.match_children(
-                &patterns[1..],
-                &children[1..],
-                &child_subst,
-                root_class,
-                results,
-            );
+            self.match_children(&patterns[1..], &children[1..], &child_subst, root_class, results);
         }
     }
 
@@ -587,9 +568,9 @@ impl EGraph {
                         // Free variable: add as a variable e-node
                         let enode = ENode::leaf(format!("__var_{}", name));
                         self.add(enode)
-                    }
+                    },
                 }
-            }
+            },
             Pattern::App { symbol, args } => {
                 let children: Vec<EClassId> = args
                     .iter()
@@ -597,18 +578,14 @@ impl EGraph {
                     .collect();
                 let enode = ENode::with_children(symbol.as_str(), children);
                 self.add(enode)
-            }
+            },
         }
     }
 
     /// Apply matched substitutions for a rule's RHS, merging with the match root.
     ///
     /// Returns the number of new merges applied.
-    fn apply_matches(
-        &mut self,
-        rhs: &Pattern,
-        matches: &[(EClassId, Subst)],
-    ) -> usize {
+    fn apply_matches(&mut self, rhs: &Pattern, matches: &[(EClassId, Subst)]) -> usize {
         let mut merges = 0;
         for (root_id, subst) in matches {
             let rhs_id = self.instantiate_pattern(rhs, subst);
@@ -722,10 +699,7 @@ pub struct WeightedCost {
 
 impl WeightedCost {
     pub fn new(default_weight: u64) -> Self {
-        WeightedCost {
-            weights: HashMap::new(),
-            default_weight,
-        }
+        WeightedCost { weights: HashMap::new(), default_weight }
     }
 
     pub fn with_weight(mut self, symbol: impl Into<String>, weight: u64) -> Self {
@@ -784,7 +758,7 @@ impl EGraph {
                             None => {
                                 all_have_cost = false;
                                 break;
-                            }
+                            },
                         }
                     }
 
@@ -794,11 +768,11 @@ impl EGraph {
 
                     let cost = cost_fn.cost(enode, &children_costs);
                     match best.get(&class_id) {
-                        Some((existing_cost, _)) if *existing_cost <= cost => {}
+                        Some((existing_cost, _)) if *existing_cost <= cost => {},
                         _ => {
                             best.insert(class_id, (cost, node_idx));
                             changed = true;
-                        }
+                        },
                     }
                 }
             }
@@ -822,13 +796,8 @@ impl EGraph {
         best: &HashMap<EClassId, (C, usize)>,
     ) -> Term {
         let id = self.find(id);
-        let (_, node_idx) = best
-            .get(&id)
-            .expect("reconstruct: class not in DP table");
-        let class = self
-            .classes
-            .get(&id)
-            .expect("reconstruct: class not found");
+        let (_, node_idx) = best.get(&id).expect("reconstruct: class not in DP table");
+        let class = self.classes.get(&id).expect("reconstruct: class not found");
         let enode = &class.nodes[*node_idx];
 
         // Check for variable e-nodes
@@ -922,11 +891,7 @@ pub fn check_joinability_egraph(
         None
     };
 
-    EGraphJoinabilityResult {
-        joinable,
-        witness,
-        saturation,
-    }
+    EGraphJoinabilityResult { joinable, witness, saturation }
 }
 
 /// Run e-graph TRS analysis: enhanced joinability, simplification, equivalence discovery.
@@ -984,10 +949,10 @@ pub fn analyze_trs(
                     let witness = egraph.extract_best(*id1);
                     newly_joinable.push((i, witness));
                 }
-            }
+            },
             JoinabilityResult::Joinable { .. } => {
                 // Already joinable by normalization — skip
-            }
+            },
         }
     }
 
@@ -1087,10 +1052,8 @@ pub fn generate_repair_suggestions(
             .get(*rule_idx)
             .and_then(|r| r.label.as_deref())
             .unwrap_or("unknown");
-        let description = format!(
-            "rule '{}' RHS '{}' can be simplified to '{}'",
-            label, original, simplified,
-        );
+        let description =
+            format!("rule '{}' RHS '{}' can be simplified to '{}'", label, original, simplified,);
         suggestions.push(RepairSuggestion {
             kind: RepairKind::FixConfluence,
             description,
@@ -1356,10 +1319,7 @@ mod tests {
 
     #[test]
     fn config_max_nodes() {
-        let config = EGraphConfig {
-            max_nodes: 5,
-            max_iterations: 100,
-        };
+        let config = EGraphConfig { max_nodes: 5, max_iterations: 100 };
         let mut eg = EGraph::with_config(config);
         for i in 0..10 {
             eg.add(ENode::leaf(format!("n{}", i)));
@@ -1375,10 +1335,7 @@ mod tests {
         let mut eg = EGraph::new();
         eg.add(ENode::leaf("a"));
         eg.add(ENode::leaf("b"));
-        let pattern = Pattern::App {
-            symbol: "a".to_string(),
-            args: vec![],
-        };
+        let pattern = Pattern::App { symbol: "a".to_string(), args: vec![] };
         let matches = eg.search_pattern(&pattern);
         assert_eq!(matches.len(), 1);
     }
@@ -1418,10 +1375,7 @@ mod tests {
     fn search_no_match() {
         let mut eg = EGraph::new();
         eg.add(ENode::leaf("a"));
-        let pattern = Pattern::App {
-            symbol: "b".to_string(),
-            args: vec![],
-        };
+        let pattern = Pattern::App { symbol: "b".to_string(), args: vec![] };
         let matches = eg.search_pattern(&pattern);
         assert!(matches.is_empty());
     }
@@ -1437,21 +1391,20 @@ mod tests {
         // Pattern f(b) should match because a ≡ b
         let pattern = Pattern::App {
             symbol: "f".to_string(),
-            args: vec![Pattern::App {
-                symbol: "b".to_string(),
-                args: vec![],
-            }],
+            args: vec![Pattern::App { symbol: "b".to_string(), args: vec![] }],
         };
         let matches = eg.search_pattern(&pattern);
         // f(a) node exists and a ≡ b, so f(b) should match f(a)
         // The "b" constant node is merged with "a", so searching for f(b) finds f(a)
-        assert!(!matches.is_empty() || {
-            // After merge, "b" and "a" are in the same class.
-            // The pattern f("b") looks for an f-node with a child that contains a "b" node.
-            // Since a ≡ b, the merged class contains both "a" and "b" nodes.
-            let fb = eg.add(ENode::with_children("f", vec![b]));
-            eg.equiv(fa, fb)
-        });
+        assert!(
+            !matches.is_empty() || {
+                // After merge, "b" and "a" are in the same class.
+                // The pattern f("b") looks for an f-node with a child that contains a "b" node.
+                // Since a ≡ b, the merged class contains both "a" and "b" nodes.
+                let fb = eg.add(ENode::with_children("f", vec![b]));
+                eg.equiv(fa, fb)
+            }
+        );
     }
 
     #[test]
@@ -1492,17 +1445,11 @@ mod tests {
         let rule = ERewriteRule {
             lhs: Pattern::App {
                 symbol: "f".to_string(),
-                args: vec![
-                    Pattern::Var("x".to_string()),
-                    Pattern::Var("y".to_string()),
-                ],
+                args: vec![Pattern::Var("x".to_string()), Pattern::Var("y".to_string())],
             },
             rhs: Pattern::App {
                 symbol: "f".to_string(),
-                args: vec![
-                    Pattern::Var("y".to_string()),
-                    Pattern::Var("x".to_string()),
-                ],
+                args: vec![Pattern::Var("y".to_string()), Pattern::Var("x".to_string())],
             },
             label: None,
         };
@@ -1532,10 +1479,7 @@ mod tests {
                 args: vec![
                     Pattern::App {
                         symbol: "f".to_string(),
-                        args: vec![
-                            Pattern::Var("x".to_string()),
-                            Pattern::Var("y".to_string()),
-                        ],
+                        args: vec![Pattern::Var("x".to_string()), Pattern::Var("y".to_string())],
                     },
                     Pattern::Var("z".to_string()),
                 ],
@@ -1546,10 +1490,7 @@ mod tests {
                     Pattern::Var("x".to_string()),
                     Pattern::App {
                         symbol: "f".to_string(),
-                        args: vec![
-                            Pattern::Var("y".to_string()),
-                            Pattern::Var("z".to_string()),
-                        ],
+                        args: vec![Pattern::Var("y".to_string()), Pattern::Var("z".to_string())],
                     },
                 ],
             },
@@ -1574,10 +1515,7 @@ mod tests {
         let rule = ERewriteRule {
             lhs: Pattern::App {
                 symbol: "f".to_string(),
-                args: vec![
-                    Pattern::Var("x".to_string()),
-                    Pattern::Var("x".to_string()),
-                ],
+                args: vec![Pattern::Var("x".to_string()), Pattern::Var("x".to_string())],
             },
             rhs: Pattern::Var("x".to_string()),
             label: None,
@@ -1592,10 +1530,7 @@ mod tests {
 
     #[test]
     fn saturate_node_limit() {
-        let config = EGraphConfig {
-            max_nodes: 5,
-            max_iterations: 100,
-        };
+        let config = EGraphConfig { max_nodes: 5, max_iterations: 100 };
         let mut eg = EGraph::with_config(config);
         let a = eg.add(ENode::leaf("a"));
         let b = eg.add(ENode::leaf("b"));
@@ -1605,17 +1540,11 @@ mod tests {
         let rule = ERewriteRule {
             lhs: Pattern::App {
                 symbol: "f".to_string(),
-                args: vec![
-                    Pattern::Var("x".to_string()),
-                    Pattern::Var("y".to_string()),
-                ],
+                args: vec![Pattern::Var("x".to_string()), Pattern::Var("y".to_string())],
             },
             rhs: Pattern::App {
                 symbol: "f".to_string(),
-                args: vec![
-                    Pattern::Var("y".to_string()),
-                    Pattern::Var("x".to_string()),
-                ],
+                args: vec![Pattern::Var("y".to_string()), Pattern::Var("x".to_string())],
             },
             label: None,
         };
@@ -1627,10 +1556,7 @@ mod tests {
 
     #[test]
     fn saturate_iteration_limit() {
-        let config = EGraphConfig {
-            max_nodes: 100_000,
-            max_iterations: 2,
-        };
+        let config = EGraphConfig { max_nodes: 100_000, max_iterations: 2 };
         let mut eg = EGraph::with_config(config);
         let a = eg.add(ENode::leaf("a"));
         let b = eg.add(ENode::leaf("b"));
@@ -1643,10 +1569,7 @@ mod tests {
         let rule = ERewriteRule {
             lhs: Pattern::App {
                 symbol: "f".to_string(),
-                args: vec![
-                    Pattern::Var("x".to_string()),
-                    Pattern::Var("y".to_string()),
-                ],
+                args: vec![Pattern::Var("x".to_string()), Pattern::Var("y".to_string())],
             },
             rhs: Pattern::App {
                 symbol: "f".to_string(),
@@ -1689,28 +1612,22 @@ mod tests {
 
     #[test]
     fn ast_size_binary() {
-        let cost = AstSize.cost(
-            &ENode::with_children("f", vec![EClassId(0), EClassId(1)]),
-            &[1, 1],
-        );
+        let cost =
+            AstSize.cost(&ENode::with_children("f", vec![EClassId(0), EClassId(1)]), &[1, 1]);
         assert_eq!(cost, 3); // 1 + 1 + 1
     }
 
     #[test]
     fn ast_depth_flat() {
-        let cost = AstDepth.cost(
-            &ENode::with_children("f", vec![EClassId(0), EClassId(1)]),
-            &[1, 1],
-        );
+        let cost =
+            AstDepth.cost(&ENode::with_children("f", vec![EClassId(0), EClassId(1)]), &[1, 1]);
         assert_eq!(cost, 2); // 1 + max(1,1)
     }
 
     #[test]
     fn ast_depth_nested() {
-        let cost = AstDepth.cost(
-            &ENode::with_children("f", vec![EClassId(0), EClassId(1)]),
-            &[1, 3],
-        );
+        let cost =
+            AstDepth.cost(&ENode::with_children("f", vec![EClassId(0), EClassId(1)]), &[1, 3]);
         assert_eq!(cost, 4); // 1 + max(1,3)
     }
 
@@ -1745,10 +1662,7 @@ mod tests {
         let rule = ERewriteRule {
             lhs: Pattern::App {
                 symbol: "f".to_string(),
-                args: vec![
-                    Pattern::Var("x".to_string()),
-                    Pattern::Var("x".to_string()),
-                ],
+                args: vec![Pattern::Var("x".to_string()), Pattern::Var("x".to_string())],
             },
             rhs: Pattern::Var("x".to_string()),
             label: None,
@@ -1790,10 +1704,8 @@ mod tests {
     #[test]
     fn extract_roundtrip() {
         let mut eg = EGraph::new();
-        let term = Term::app("h", vec![
-            Term::app("f", vec![Term::constant("a")]),
-            Term::constant("b"),
-        ]);
+        let term =
+            Term::app("h", vec![Term::app("f", vec![Term::constant("a")]), Term::constant("b")]);
         let id = eg.add_term(&term);
         let extracted = eg.extract_best(id);
         assert_eq!(extracted, term);
@@ -1830,10 +1742,7 @@ mod tests {
     #[test]
     fn joinability_already_joinable() {
         // Both terms are the same
-        let rules = vec![RewriteRule::new(
-            Term::app("f", vec![Term::var("x")]),
-            Term::var("x"),
-        )];
+        let rules = vec![RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::var("x"))];
         let pair = CriticalPair {
             term1: Term::constant("a"),
             term2: Term::constant("a"),
@@ -1892,13 +1801,11 @@ mod tests {
     fn analyze_simplifies_rhs() {
         // Rule: f(g(x)) → g(f(x)), plus idempotence g(g(x)) → g(x)
         // The RHS g(f(x)) might simplify under these rules
-        let rules = vec![
-            RewriteRule::labeled(
-                "swap",
-                Term::app("f", vec![Term::app("g", vec![Term::var("x")])]),
-                Term::app("g", vec![Term::app("f", vec![Term::var("x")])]),
-            ),
-        ];
+        let rules = vec![RewriteRule::labeled(
+            "swap",
+            Term::app("f", vec![Term::app("g", vec![Term::var("x")])]),
+            Term::app("g", vec![Term::app("f", vec![Term::var("x")])]),
+        )];
         let confluence = ConfluenceAnalysis {
             is_confluent: true,
             critical_pairs: vec![],
@@ -1930,10 +1837,7 @@ mod tests {
     #[test]
     fn simplify_identity() {
         // f(x) → x: simplify f(a) should give a
-        let rules = vec![RewriteRule::new(
-            Term::app("f", vec![Term::var("x")]),
-            Term::var("x"),
-        )];
+        let rules = vec![RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::var("x"))];
         let term = Term::app("f", vec![Term::constant("a")]);
         let result = simplify_term(&term, &rules, &EGraphConfig::default());
         assert_eq!(result, Term::constant("a"));
@@ -1942,10 +1846,7 @@ mod tests {
     #[test]
     fn simplify_reduction() {
         // f(f(x)) → f(x) and f(x) → x: simplify f(f(a)) should give a
-        let rules = vec![RewriteRule::new(
-            Term::app("f", vec![Term::var("x")]),
-            Term::var("x"),
-        )];
+        let rules = vec![RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::var("x"))];
         let term = Term::app("f", vec![Term::app("f", vec![Term::constant("a")])]);
         let result = simplify_term(&term, &rules, &EGraphConfig::default());
         assert_eq!(result, Term::constant("a"));
@@ -1953,13 +1854,11 @@ mod tests {
 
     #[test]
     fn repair_suggestions() {
-        let rules = vec![
-            RewriteRule::labeled(
-                "r1",
-                Term::app("f", vec![Term::var("x")]),
-                Term::app("h", vec![Term::var("x")]),
-            ),
-        ];
+        let rules = vec![RewriteRule::labeled(
+            "r1",
+            Term::app("f", vec![Term::var("x")]),
+            Term::app("h", vec![Term::var("x")]),
+        )];
         let confluence = ConfluenceAnalysis {
             is_confluent: false,
             critical_pairs: vec![CriticalPair {

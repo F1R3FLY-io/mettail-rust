@@ -41,11 +41,11 @@ impl TermMetrics {
                     if current_depth > max_depth {
                         max_depth = current_depth;
                     }
-                }
+                },
                 ')' | ']' | '}' => {
                     current_depth = current_depth.saturating_sub(1);
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
@@ -173,7 +173,10 @@ impl MorphologyTracker {
         }
 
         // Check for structural stagnation (all fingerprints identical).
-        let first_fp = window.first().expect("window non-empty").structural_fingerprint;
+        let first_fp = window
+            .first()
+            .expect("window non-empty")
+            .structural_fingerprint;
         let all_same = window.iter().all(|m| m.structural_fingerprint == first_fp);
         if all_same && len > self.trend_window {
             self.alerts.push(MorphologyAlert {
@@ -294,7 +297,9 @@ mod tests {
         }
         let alerts = tracker.check();
         assert!(
-            alerts.iter().any(|a| a.message.contains("monotonically increasing")),
+            alerts
+                .iter()
+                .any(|a| a.message.contains("monotonically increasing")),
             "Expected monotone increasing alert, got: {:?}",
             alerts,
         );

@@ -22,13 +22,14 @@ pub fn assert_equation_symmetry(
         .map_err(|e| format!("Ascent failed on LHS '{}': {}", lhs_str, e))?;
 
     // Check that rhs appears somewhere in the reachable terms
-    let rhs_found = results
-        .all_terms
-        .iter()
-        .any(|t| t.display == rhs_str);
+    let rhs_found = results.all_terms.iter().any(|t| t.display == rhs_str);
 
     if !rhs_found {
-        let all_displays: Vec<&str> = results.all_terms.iter().map(|t| t.display.as_str()).collect();
+        let all_displays: Vec<&str> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.as_str())
+            .collect();
         return Err(format!(
             "Equation LHS->RHS failed: '{}' does not produce '{}'\n  reachable: {:?}",
             lhs_str, rhs_str, all_displays
@@ -46,13 +47,14 @@ pub fn assert_equation_symmetry(
         .run_ascent(rhs.as_ref())
         .map_err(|e| format!("Ascent failed on RHS '{}': {}", rhs_str, e))?;
 
-    let lhs_found = results
-        .all_terms
-        .iter()
-        .any(|t| t.display == lhs_str);
+    let lhs_found = results.all_terms.iter().any(|t| t.display == lhs_str);
 
     if !lhs_found {
-        let all_displays: Vec<&str> = results.all_terms.iter().map(|t| t.display.as_str()).collect();
+        let all_displays: Vec<&str> = results
+            .all_terms
+            .iter()
+            .map(|t| t.display.as_str())
+            .collect();
         return Err(format!(
             "Equation RHS->LHS failed: '{}' does not produce '{}'\n  reachable: {:?}",
             rhs_str, lhs_str, all_displays
@@ -75,21 +77,14 @@ pub fn assert_rewrite_fires(lang: &dyn Language, input: &str) -> Result<(), Stri
         .map_err(|e| format!("Ascent failed for '{}': {}", input, e))?;
 
     if results.rewrites.is_empty() {
-        return Err(format!(
-            "Expected at least one rewrite to fire for '{}', but none did",
-            input
-        ));
+        return Err(format!("Expected at least one rewrite to fire for '{}', but none did", input));
     }
 
     Ok(())
 }
 
 /// Run Ascent, verify rewrite reaches expected normal form.
-pub fn assert_rewrites_to(
-    lang: &dyn Language,
-    input: &str,
-    expected: &str,
-) -> Result<(), String> {
+pub fn assert_rewrites_to(lang: &dyn Language, input: &str, expected: &str) -> Result<(), String> {
     mettail_runtime::clear_var_cache();
     let term = lang
         .parse_term(input)

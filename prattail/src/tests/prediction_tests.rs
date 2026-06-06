@@ -1,11 +1,11 @@
 //! Tests for FIRST/FOLLOW set computation and dispatch table generation.
 
 use crate::binding_power::Associativity;
+use crate::grammar::ir::CollectionKind;
 use crate::prediction::{
     analyze_cross_category_overlaps, build_dispatch_tables, compute_first_sets,
     compute_follow_sets, FirstItem, FirstSet, RuleInfo,
 };
-use crate::grammar::ir::CollectionKind;
 use crate::{RuleSpec, SyntaxItemSpec};
 
 #[test]

@@ -43,21 +43,14 @@ pub fn write_simulation_binary(language: &LanguageDef) {
 
     match write_binary_to_disk(&lang_lower, &content) {
         Ok((path, true)) => {
-            eprintln!(
-                "  ({}) Generated simulation binary: {}",
-                lang_name,
-                path.display()
-            );
-        }
+            eprintln!("  ({}) Generated simulation binary: {}", lang_name, path.display());
+        },
         Ok((_, false)) => {
             // Content unchanged — skip write, no message (avoids mtime update)
-        }
+        },
         Err(e) => {
-            eprintln!(
-                "Warning: Failed to write simulation binary for {}: {}",
-                lang_name, e
-            );
-        }
+            eprintln!("Warning: Failed to write simulation binary for {}: {}", lang_name, e);
+        },
     }
 }
 
@@ -96,10 +89,7 @@ fn generate_simulation_binary(language: &LanguageDef) -> String {
     out.push_str("use mettail_simulation::invariant::{\n");
     out.push_str("    AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,\n");
     out.push_str("};\n");
-    out.push_str(&format!(
-        "use mettail_languages::{}::{};\n",
-        lang_lower, lang_struct
-    ));
+    out.push_str(&format!("use mettail_languages::{}::{};\n", lang_lower, lang_struct));
     out.push_str(&format!(
         "use mettail_languages::{}::strategies::arb_{};\n",
         lang_lower, primary_cat_lower
@@ -296,8 +286,7 @@ fn write_binary_to_disk(lang_lower: &str, content: &str) -> std::io::Result<(Pat
     let filename = format!("simulate_{}.rs", lang_lower);
 
     // CARGO_MANIFEST_DIR points to macros/ — go up to workspace root.
-    let manifest_dir =
-        std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
 
     let mut path = PathBuf::from(manifest_dir);
     path.pop(); // Go up from macros/ to workspace root

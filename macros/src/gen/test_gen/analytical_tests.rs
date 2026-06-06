@@ -4,7 +4,7 @@
 //! (confluence, termination, etc.) for each language definition.
 //!
 //! All tests are always generated (no feature gates). The testkit modules
-//! themselves handle feature-gated stubs internally, so the generated tests
+//! themselves handle feature-gated analytical backends, so the generated tests
 //! compile and run regardless of which testkit features are enabled.
 //!
 //! Everything is derived from the `language!` spec.
@@ -44,10 +44,7 @@ pub fn generate_analytical_tests(language: &LanguageDef, _pipeline: &PipelineAna
     // Confluence check — verifies all critical pairs are joinable.
     // FAILS if any non-joinable critical pair is found.
     out.push_str("#[test]\n");
-    out.push_str(&format!(
-        "fn {}_confluence_check() {{\n",
-        lang_name_lower
-    ));
+    out.push_str(&format!("fn {}_confluence_check() {{\n", lang_name_lower));
     out.push_str(&format!("    let lang = {};\n", lang_struct));
     out.push_str("    let meta = lang.metadata();\n");
     out.push_str("    let result = mettail_testkit::analytical::confluence::check_language_confluence(meta);\n");
@@ -66,10 +63,7 @@ pub fn generate_analytical_tests(language: &LanguageDef, _pipeline: &PipelineAna
     // Termination check — asserts only when the analysis is conclusive.
     // An inconclusive result silently passes (the separate #[ignore] test catches it).
     out.push_str("#[test]\n");
-    out.push_str(&format!(
-        "fn {}_termination_check() {{\n",
-        lang_name_lower
-    ));
+    out.push_str(&format!("fn {}_termination_check() {{\n", lang_name_lower));
     out.push_str(&format!("    let lang = {};\n", lang_struct));
     out.push_str("    let meta = lang.metadata();\n");
     out.push_str("    let result = mettail_testkit::analytical::termination::check_language_termination(meta);\n");
@@ -89,10 +83,7 @@ pub fn generate_analytical_tests(language: &LanguageDef, _pipeline: &PipelineAna
     // Termination inconclusive check — always #[ignore]d, run manually to inspect.
     out.push_str("#[test]\n");
     out.push_str("#[ignore = \"termination analysis inconclusive -- run manually to inspect\"]\n");
-    out.push_str(&format!(
-        "fn {}_termination_check_inconclusive() {{\n",
-        lang_name_lower
-    ));
+    out.push_str(&format!("fn {}_termination_check_inconclusive() {{\n", lang_name_lower));
     out.push_str(&format!("    let lang = {};\n", lang_struct));
     out.push_str("    let meta = lang.metadata();\n");
     out.push_str("    let result = mettail_testkit::analytical::termination::check_language_termination(meta);\n");

@@ -6,17 +6,17 @@
 
 use mettail_macros::language;
 
-/// Minimal test language designed to exercise LED delegation code paths.
-///
-/// The operators (+, *, !, ==, !=, "and") live on the constituent categories
-/// (Num, Pred), NOT on the sum type Expr. Expr only owns the "|" operator.
-/// This forces the parser to use LED delegation when parsing expressions
-/// like "1 + 2" at the Expr level.
-///
-/// Types:
-/// - Num: "Int-like" constituent with infix (+, *), unary prefix (-), postfix (!), cross-cat (==, !=)
-/// - Pred: "Bool-like" result category for cross-category operators and its own infix ("and")
-/// - Expr: Sum type with cast rules from Num and Pred, owns only the "|" operator
+// Minimal test language designed to exercise LED delegation code paths.
+//
+// The operators (+, *, !, ==, !=, "and") live on the constituent categories
+// (Num, Pred), NOT on the sum type Expr. Expr only owns the "|" operator.
+// This forces the parser to use LED delegation when parsing expressions
+// like "1 + 2" at the Expr level.
+//
+// Types:
+// - Num: "Int-like" constituent with infix (+, *), unary prefix (-), postfix (!), cross-cat (==, !=)
+// - Pred: "Bool-like" result category for cross-category operators and its own infix ("and")
+// - Expr: Sum type with cast rules from Num and Pred, owns only the "|" operator
 language! {
     name: LedTest,
 

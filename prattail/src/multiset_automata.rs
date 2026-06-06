@@ -102,9 +102,7 @@ pub struct MultisetWeight {
 impl MultisetWeight {
     /// Create an empty multiset weight (all features have multiplicity 0).
     pub fn new() -> Self {
-        MultisetWeight {
-            features: HashMap::new(),
-        }
+        MultisetWeight { features: HashMap::new() }
     }
 
     /// Builder: set a feature's multiplicity.
@@ -174,14 +172,9 @@ impl HeapSemiring for MultisetWeight {
 
     fn approx_eq(&self, other: &Self, _epsilon: f64) -> bool {
         // Exact equality for integer multiplicities — collect all keys.
-        let all_keys: HashSet<&String> = self
-            .features
-            .keys()
-            .chain(other.features.keys())
-            .collect();
-        all_keys
-            .iter()
-            .all(|k| self.get(k) == other.get(k))
+        let all_keys: HashSet<&String> =
+            self.features.keys().chain(other.features.keys()).collect();
+        all_keys.iter().all(|k| self.get(k) == other.get(k))
     }
 }
 
@@ -280,11 +273,8 @@ impl HeapSemiring for TropicalMultisetWeight {
         if other.is_zero_flag {
             return self.clone();
         }
-        let all_keys: HashSet<&String> = self
-            .features
-            .keys()
-            .chain(other.features.keys())
-            .collect();
+        let all_keys: HashSet<&String> =
+            self.features.keys().chain(other.features.keys()).collect();
         let mut result = HashMap::with_capacity(all_keys.len());
         for key in all_keys {
             let a = self.get(key);
@@ -294,10 +284,7 @@ impl HeapSemiring for TropicalMultisetWeight {
                 result.insert(key.clone(), min_val);
             }
         }
-        TropicalMultisetWeight {
-            features: result,
-            is_zero_flag: false,
-        }
+        TropicalMultisetWeight { features: result, is_zero_flag: false }
     }
 
     /// Semiring multiplication: pointwise add.
@@ -305,11 +292,8 @@ impl HeapSemiring for TropicalMultisetWeight {
         if self.is_zero_flag || other.is_zero_flag {
             return Self::zero();
         }
-        let all_keys: HashSet<&String> = self
-            .features
-            .keys()
-            .chain(other.features.keys())
-            .collect();
+        let all_keys: HashSet<&String> =
+            self.features.keys().chain(other.features.keys()).collect();
         let mut result = HashMap::with_capacity(all_keys.len());
         for key in all_keys {
             let sum = self.get(key) + other.get(key);
@@ -317,10 +301,7 @@ impl HeapSemiring for TropicalMultisetWeight {
                 result.insert(key.clone(), sum);
             }
         }
-        TropicalMultisetWeight {
-            features: result,
-            is_zero_flag: false,
-        }
+        TropicalMultisetWeight { features: result, is_zero_flag: false }
     }
 
     fn is_zero(&self) -> bool {
@@ -328,7 +309,8 @@ impl HeapSemiring for TropicalMultisetWeight {
     }
 
     fn is_one(&self) -> bool {
-        !self.is_zero_flag && (self.features.is_empty() || self.features.values().all(|&v| v == 0.0))
+        !self.is_zero_flag
+            && (self.features.is_empty() || self.features.values().all(|&v| v == 0.0))
     }
 
     fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
@@ -338,11 +320,8 @@ impl HeapSemiring for TropicalMultisetWeight {
         if self.is_zero_flag || other.is_zero_flag {
             return false;
         }
-        let all_keys: HashSet<&String> = self
-            .features
-            .keys()
-            .chain(other.features.keys())
-            .collect();
+        let all_keys: HashSet<&String> =
+            self.features.keys().chain(other.features.keys()).collect();
         all_keys.iter().all(|k| {
             let a = self.get(k);
             let b = other.get(k);
@@ -432,11 +411,7 @@ pub struct CardinalityConstraint {
 impl CardinalityConstraint {
     /// Create a new cardinality constraint.
     pub fn new(feature: impl Into<String>, min: Option<u64>, max: Option<u64>) -> Self {
-        CardinalityConstraint {
-            feature: feature.into(),
-            min,
-            max,
-        }
+        CardinalityConstraint { feature: feature.into(), min, max }
     }
 
     /// Check whether a given multiplicity satisfies this constraint.
@@ -486,11 +461,7 @@ impl<W: HeapSemiring> MultisetAutomaton<W> {
     /// Add a state and return its ID.
     pub fn add_state(&mut self, is_accepting: bool, label: Option<String>) -> usize {
         let id = self.states.len();
-        self.states.push(MultisetState {
-            id,
-            is_accepting,
-            label,
-        });
+        self.states.push(MultisetState { id, is_accepting, label });
         if is_accepting {
             self.accepting_states.insert(id);
         }
@@ -525,13 +496,8 @@ impl<W: HeapSemiring> MultisetAutomaton<W> {
         if let Some(ref lbl) = label {
             self.alphabet.insert(lbl.clone());
         }
-        self.transitions.push(MultisetTransition {
-            from,
-            to,
-            label,
-            weight,
-            feature_effects,
-        });
+        self.transitions
+            .push(MultisetTransition { from, to, label, weight, feature_effects });
     }
 
     /// Number of states in the automaton.
@@ -568,8 +534,7 @@ impl<W: HeapSemiring> MultisetAutomaton<W> {
 
         // BFS state: (current_state, position_in_word, accumulated_features)
         let mut queue: VecDeque<(usize, usize, HashMap<String, u64>)> = VecDeque::new();
-        let init_accum: HashMap<String, u64> =
-            HashMap::with_capacity(self.feature_set.len());
+        let init_accum: HashMap<String, u64> = HashMap::with_capacity(self.feature_set.len());
         queue.push_back((initial, 0, init_accum));
 
         let mut max_multiplicity: u64 = 0;
@@ -631,11 +596,7 @@ impl<W: HeapSemiring> MultisetAutomaton<W> {
     ///
     /// Computes the maximum multiplicity of the constrained feature along any
     /// accepting path, then checks whether it falls within `[min, max]`.
-    pub fn satisfies_cardinality(
-        &self,
-        constraint: &CardinalityConstraint,
-        word: &[&str],
-    ) -> bool {
+    pub fn satisfies_cardinality(&self, constraint: &CardinalityConstraint, word: &[&str]) -> bool {
         let count = self.multiplicity_of(&constraint.feature, word);
         constraint.is_satisfied_by(count)
     }
@@ -663,10 +624,8 @@ impl<W: HeapSemiring> MultisetAutomaton<W> {
         for i in 0..self.feature_set.len() {
             for j in (i + 1)..self.feature_set.len() {
                 if self.feature_interaction(&self.feature_set[i], &self.feature_set[j]) {
-                    feature_interactions.push((
-                        self.feature_set[i].clone(),
-                        self.feature_set[j].clone(),
-                    ));
+                    feature_interactions
+                        .push((self.feature_set[i].clone(), self.feature_set[j].clone()));
                 }
             }
         }
@@ -710,10 +669,7 @@ impl MultisetAutomaton<MultisetWeight> {
                     for (feat, &count) in &tr.weight.features {
                         features.insert(feat.clone(), count as f64);
                     }
-                    TropicalMultisetWeight {
-                        features,
-                        is_zero_flag: false,
-                    }
+                    TropicalMultisetWeight { features, is_zero_flag: false }
                 };
                 MultisetTransition {
                     from: tr.from,
@@ -762,11 +718,7 @@ impl fmt::Display for MultisetAnalysisResult {
         for (f1, f2) in &self.feature_interactions {
             writeln!(f, "    {} <-> {}", f1, f2)?;
         }
-        writeln!(
-            f,
-            "  unsatisfiable: {}",
-            self.unsatisfiable_constraints.len()
-        )?;
+        writeln!(f, "  unsatisfiable: {}", self.unsatisfiable_constraints.len())?;
         for c in &self.unsatisfiable_constraints {
             writeln!(
                 f,
@@ -804,21 +756,19 @@ pub fn analyze_from_bundle(
 
 impl<W: HeapSemiring + fmt::Display> fmt::Display for MultisetAutomaton<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "MultisetAutomaton(states={}, transitions={}, features={:?}):",
-            self.num_states(), self.num_transitions(), self.feature_set)?;
+        writeln!(
+            f,
+            "MultisetAutomaton(states={}, transitions={}, features={:?}):",
+            self.num_states(),
+            self.num_transitions(),
+            self.feature_set
+        )?;
         if let Some(init) = self.initial_state {
             writeln!(f, "  initial: {}", init)?;
         }
-        writeln!(
-            f,
-            "  accepting: {:?}",
-            self.accepting_states.iter().collect::<Vec<_>>()
-        )?;
+        writeln!(f, "  accepting: {:?}", self.accepting_states.iter().collect::<Vec<_>>())?;
         for tr in &self.transitions {
-            let label_str = tr
-                .label
-                .as_deref()
-                .unwrap_or("ε");
+            let label_str = tr.label.as_deref().unwrap_or("ε");
             let effects: Vec<String> = tr
                 .feature_effects
                 .iter()
@@ -884,18 +834,38 @@ mod tests {
         // q0 --"a"--> q1, f1 += 1
         let mut fx1 = HashMap::new();
         fx1.insert("f1".to_string(), 1);
-        aut.add_transition(q0, q1, Some("a".to_string()), MultisetWeight::new().with_feature("f1", 1), fx1);
+        aut.add_transition(
+            q0,
+            q1,
+            Some("a".to_string()),
+            MultisetWeight::new().with_feature("f1", 1),
+            fx1,
+        );
 
         // q0 --"b"--> q1, f2 += 2
         let mut fx2 = HashMap::new();
         fx2.insert("f2".to_string(), 2);
-        aut.add_transition(q0, q1, Some("b".to_string()), MultisetWeight::new().with_feature("f2", 2), fx2);
+        aut.add_transition(
+            q0,
+            q1,
+            Some("b".to_string()),
+            MultisetWeight::new().with_feature("f2", 2),
+            fx2,
+        );
 
         // q1 --"a"--> q1, f1 += 1, f2 += 1
         let mut fx3 = HashMap::new();
         fx3.insert("f1".to_string(), 1);
         fx3.insert("f2".to_string(), 1);
-        aut.add_transition(q1, q1, Some("a".to_string()), MultisetWeight::new().with_feature("f1", 1).with_feature("f2", 1), fx3);
+        aut.add_transition(
+            q1,
+            q1,
+            Some("a".to_string()),
+            MultisetWeight::new()
+                .with_feature("f1", 1)
+                .with_feature("f2", 1),
+            fx3,
+        );
 
         aut
     }
@@ -1024,8 +994,7 @@ mod tests {
 
     #[test]
     fn tropical_multiset_weight_zero_annihilates() {
-        let a = TropicalMultisetWeight::new()
-            .with_feature("x", 3.0);
+        let a = TropicalMultisetWeight::new().with_feature("x", 3.0);
         let z = TropicalMultisetWeight::zero();
         // 0 ⊗ a = 0
         assert!(z.times(&a).is_zero());
@@ -1047,8 +1016,7 @@ mod tests {
 
     #[test]
     fn tropical_multiset_weight_display() {
-        let w = TropicalMultisetWeight::new()
-            .with_feature("cost", 2.5);
+        let w = TropicalMultisetWeight::new().with_feature("cost", 2.5);
         let s = format!("{}", w);
         assert!(s.contains("cost: 2.50"), "Display should show cost, got: {}", s);
 
@@ -1179,10 +1147,8 @@ mod tests {
     #[test]
     fn feature_interaction_absent() {
         // Build automaton where f1 and f2 never co-occur on the same transition
-        let mut aut = MultisetAutomaton::<MultisetWeight>::new(vec![
-            "f1".to_string(),
-            "f2".to_string(),
-        ]);
+        let mut aut =
+            MultisetAutomaton::<MultisetWeight>::new(vec!["f1".to_string(), "f2".to_string()]);
         let q0 = aut.add_state(false, None);
         let q1 = aut.add_state(true, None);
         aut.initial_state = Some(q0);
@@ -1273,8 +1239,8 @@ mod tests {
     fn analyze_detects_interactions_and_violations() {
         let aut = build_simple_automaton();
         let constraints = vec![
-            CardinalityConstraint::new("f1", Some(1), Some(1)),  // f1 must be exactly 1
-            CardinalityConstraint::new("f2", Some(0), Some(1)),  // f2 must be at most 1
+            CardinalityConstraint::new("f1", Some(1), Some(1)), // f1 must be exactly 1
+            CardinalityConstraint::new("f2", Some(0), Some(1)), // f2 must be at most 1
         ];
         // Word "a", "a": f1=2, f2=1 — first constraint violated (f1=2 > max=1)
         let result = aut.analyze(&constraints, &["a", "a"]);
@@ -1364,7 +1330,8 @@ mod tests {
         assert!(
             lhs.approx_eq(&rhs, 0.0),
             "left distributivity failed: lhs = {:?}, rhs = {:?}",
-            lhs, rhs
+            lhs,
+            rhs
         );
     }
 
@@ -1392,7 +1359,8 @@ mod tests {
         assert!(
             lhs.approx_eq(&rhs, 0.0),
             "right distributivity failed: lhs = {:?}, rhs = {:?}",
-            lhs, rhs
+            lhs,
+            rhs
         );
     }
 
@@ -1422,7 +1390,8 @@ mod tests {
         assert!(
             lhs.approx_eq(&rhs, 1e-10),
             "tropical left distributivity failed: lhs = {:?}, rhs = {:?}",
-            lhs, rhs
+            lhs,
+            rhs
         );
 
         // Right distributivity: (a ⊕ b) ⊗ c = (a ⊗ c) ⊕ (b ⊗ c)
@@ -1436,7 +1405,8 @@ mod tests {
         assert!(
             lhs_r.approx_eq(&rhs_r, 1e-10),
             "tropical right distributivity failed: lhs = {:?}, rhs = {:?}",
-            lhs_r, rhs_r
+            lhs_r,
+            rhs_r
         );
     }
 }

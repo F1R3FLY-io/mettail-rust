@@ -68,10 +68,7 @@ pub enum RepairKind {
 #[derive(Debug, Clone)]
 pub enum RepairAction {
     /// Add a new rule to a category.
-    AddRuleToCategory {
-        category: String,
-        rule_skeleton: String,
-    },
+    AddRuleToCategory { category: String, rule_skeleton: String },
     /// Add a cross-category reference.
     AddCrossCategoryRef {
         from_category: String,
@@ -85,10 +82,7 @@ pub enum RepairAction {
         rule_text: String,
     },
     /// Add an equation.
-    AddEquation {
-        lhs: String,
-        rhs: String,
-    },
+    AddEquation { lhs: String, rhs: String },
     /// Add a rewrite rule.
     AddRewrite {
         lhs: String,
@@ -161,7 +155,9 @@ impl RepairSet {
     /// Sort by confidence (highest first).
     pub fn sort_by_confidence(&mut self) {
         self.suggestions.sort_by(|a, b| {
-            b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
     }
 
@@ -172,13 +168,16 @@ impl RepairSet {
 
     /// Sort by alternative count (most alternatives first).
     pub fn sort_by_alternatives(&mut self) {
-        self.suggestions.sort_by(|a, b| b.alternative_count.cmp(&a.alternative_count));
+        self.suggestions
+            .sort_by(|a, b| b.alternative_count.cmp(&a.alternative_count));
     }
 
     /// Get the best suggestion by confidence.
     pub fn best_by_confidence(&self) -> Option<&RepairSuggestion> {
         self.suggestions.iter().max_by(|a, b| {
-            a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal)
+            a.confidence
+                .partial_cmp(&b.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
         })
     }
 
@@ -197,10 +196,7 @@ impl RepairSet {
 /// `category` is the name of the grammar category. `missing_tokens` is a list
 /// of terminal tokens that appear in FIRST sets of other categories but have
 /// no rule starting with them in this category.
-pub fn suggest_missing_rules(
-    category: &str,
-    missing_tokens: &[&str],
-) -> RepairSet {
+pub fn suggest_missing_rules(category: &str, missing_tokens: &[&str]) -> RepairSet {
     let mut set = RepairSet::new();
     for token in missing_tokens {
         let skeleton = format!("NewRule . {} ::= \"{}\" ... ;", category, token);
@@ -262,11 +258,7 @@ pub fn suggest_cross_category_ref(
 /// `constructor` is the constructor name, `category` is the grammar category,
 /// and `arity` is the number of arguments. Generates one congruence rule per
 /// argument position.
-pub fn suggest_congruence_rules(
-    constructor: &str,
-    category: &str,
-    arity: usize,
-) -> RepairSet {
+pub fn suggest_congruence_rules(constructor: &str, category: &str, arity: usize) -> RepairSet {
     let mut set = RepairSet::new();
     for pos in 0..arity {
         let mut args_lhs = Vec::with_capacity(arity);
@@ -282,18 +274,12 @@ pub fn suggest_congruence_rules(
         }
         let lhs = format!("({} {})", constructor, args_lhs.join(" "));
         let rhs = format!("({} {})", constructor, args_rhs.join(" "));
-        let rule_text = format!(
-            "{}Cong{} . |- S ~> T |- {} ~> {} ;",
-            constructor, pos, lhs, rhs
-        );
+        let rule_text = format!("{}Cong{} . |- S ~> T |- {} ~> {} ;", constructor, pos, lhs, rhs);
 
         set.add(
             RepairSuggestion::new(
                 RepairKind::AddCongruence,
-                format!(
-                    "Add congruence rule for {} at argument position {}",
-                    constructor, pos
-                ),
+                format!("Add congruence rule for {} at argument position {}", constructor, pos),
                 RepairAction::AddCongruenceRule {
                     constructor: constructor.to_string(),
                     category: category.to_string(),
@@ -391,10 +377,7 @@ impl RepairSet {
                 (s, score)
             })
             .collect();
-        ranked.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        ranked.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         ranked
     }
 }
@@ -480,13 +463,9 @@ pub struct CongruenceFusionHint {
 ///
 /// `rules` is a list of `(constructor, category, argument_position)` triples
 /// representing existing congruence rules.
-pub fn analyze_congruence_fusion(
-    rules: &[(String, String, usize)],
-) -> Vec<CongruenceFusionHint> {
-    let mut by_constructor: std::collections::HashMap<
-        (String, String),
-        Vec<usize>,
-    > = std::collections::HashMap::new();
+pub fn analyze_congruence_fusion(rules: &[(String, String, usize)]) -> Vec<CongruenceFusionHint> {
+    let mut by_constructor: std::collections::HashMap<(String, String), Vec<usize>> =
+        std::collections::HashMap::new();
 
     for (constructor, category, pos) in rules {
         by_constructor
@@ -593,11 +572,7 @@ impl RepairDiagnostic {
     }
 
     /// Create a dead-rule diagnostic with cross-category repair suggestions.
-    pub fn dead_rule(
-        rule_label: &str,
-        category: &str,
-        reachable_categories: &[&str],
-    ) -> Self {
+    pub fn dead_rule(rule_label: &str, category: &str, reachable_categories: &[&str]) -> Self {
         let repairs = suggest_cross_category_ref(rule_label, category, reachable_categories);
         RepairDiagnostic::new(
             "W01",
@@ -628,10 +603,7 @@ impl RepairDiagnostic {
         RepairDiagnostic::new(
             "G03",
             DiagnosticSeverity::Note,
-            format!(
-                "constructor '{}' in '{}' has no congruence rules",
-                constructor, category
-            ),
+            format!("constructor '{}' in '{}' has no congruence rules", constructor, category),
         )
         .with_repairs(repairs)
     }
@@ -733,12 +705,22 @@ mod tests {
     #[test]
     fn test_repair_set_sort_by_confidence() {
         let mut set = RepairSet::new();
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "low", RepairAction::Description("low".into()),
-        ).with_confidence(0.3));
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "high", RepairAction::Description("high".into()),
-        ).with_confidence(0.9));
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "low",
+                RepairAction::Description("low".into()),
+            )
+            .with_confidence(0.3),
+        );
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "high",
+                RepairAction::Description("high".into()),
+            )
+            .with_confidence(0.9),
+        );
         set.sort_by_confidence();
         assert_eq!(set.suggestions[0].description, "high");
     }
@@ -746,12 +728,22 @@ mod tests {
     #[test]
     fn test_repair_set_cheapest() {
         let mut set = RepairSet::new();
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "expensive", RepairAction::Description("e".into()),
-        ).with_edit_cost(5));
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "cheap", RepairAction::Description("c".into()),
-        ).with_edit_cost(1));
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "expensive",
+                RepairAction::Description("e".into()),
+            )
+            .with_edit_cost(5),
+        );
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "cheap",
+                RepairAction::Description("c".into()),
+            )
+            .with_edit_cost(1),
+        );
         let cheapest = set.cheapest().expect("should have suggestions");
         assert_eq!(cheapest.description, "cheap");
     }
@@ -805,14 +797,20 @@ mod tests {
     fn test_repair_set_merge_dedup() {
         let mut set1 = RepairSet::new();
         set1.add(RepairSuggestion::new(
-            RepairKind::AddRule, "fix A", RepairAction::Description("a".into()),
+            RepairKind::AddRule,
+            "fix A",
+            RepairAction::Description("a".into()),
         ));
         let mut set2 = RepairSet::new();
         set2.add(RepairSuggestion::new(
-            RepairKind::AddRule, "fix A", RepairAction::Description("a".into()),
+            RepairKind::AddRule,
+            "fix A",
+            RepairAction::Description("a".into()),
         ));
         set2.add(RepairSuggestion::new(
-            RepairKind::AddRule, "fix B", RepairAction::Description("b".into()),
+            RepairKind::AddRule,
+            "fix B",
+            RepairAction::Description("b".into()),
         ));
         set1.merge(&set2);
         assert_eq!(set1.len(), 2); // "fix A" deduplicated
@@ -821,12 +819,22 @@ mod tests {
     #[test]
     fn test_filter_by_confidence() {
         let mut set = RepairSet::new();
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "low", RepairAction::Description("l".into()),
-        ).with_confidence(0.3));
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "high", RepairAction::Description("h".into()),
-        ).with_confidence(0.9));
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "low",
+                RepairAction::Description("l".into()),
+            )
+            .with_confidence(0.3),
+        );
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "high",
+                RepairAction::Description("h".into()),
+            )
+            .with_confidence(0.9),
+        );
         let filtered = set.filter_by_confidence(0.5);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered.suggestions[0].description, "high");
@@ -835,12 +843,22 @@ mod tests {
     #[test]
     fn test_filter_by_max_cost() {
         let mut set = RepairSet::new();
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "cheap", RepairAction::Description("c".into()),
-        ).with_edit_cost(1));
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "expensive", RepairAction::Description("e".into()),
-        ).with_edit_cost(10));
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "cheap",
+                RepairAction::Description("c".into()),
+            )
+            .with_edit_cost(1),
+        );
+        set.add(
+            RepairSuggestion::new(
+                RepairKind::AddRule,
+                "expensive",
+                RepairAction::Description("e".into()),
+            )
+            .with_edit_cost(10),
+        );
         let filtered = set.filter_by_max_cost(5);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered.suggestions[0].description, "cheap");
@@ -850,11 +868,14 @@ mod tests {
     fn test_top_n_by_confidence() {
         let mut set = RepairSet::new();
         for i in 0..5 {
-            set.add(RepairSuggestion::new(
-                RepairKind::AddRule,
-                format!("fix{}", i),
-                RepairAction::Description(format!("{}", i)),
-            ).with_confidence(i as f64 * 0.2));
+            set.add(
+                RepairSuggestion::new(
+                    RepairKind::AddRule,
+                    format!("fix{}", i),
+                    RepairAction::Description(format!("{}", i)),
+                )
+                .with_confidence(i as f64 * 0.2),
+            );
         }
         let top = set.top_n_by_confidence(2);
         assert_eq!(top.len(), 2);
@@ -866,13 +887,17 @@ mod tests {
     fn test_rank_multi_criteria() {
         let mut set = RepairSet::new();
         // High confidence, high cost → moderate score
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "a", RepairAction::Description("a".into()),
-        ).with_confidence(0.9).with_edit_cost(9));
+        set.add(
+            RepairSuggestion::new(RepairKind::AddRule, "a", RepairAction::Description("a".into()))
+                .with_confidence(0.9)
+                .with_edit_cost(9),
+        );
         // Moderate confidence, low cost → high score
-        set.add(RepairSuggestion::new(
-            RepairKind::AddRule, "b", RepairAction::Description("b".into()),
-        ).with_confidence(0.8).with_edit_cost(1));
+        set.add(
+            RepairSuggestion::new(RepairKind::AddRule, "b", RepairAction::Description("b".into()))
+                .with_confidence(0.8)
+                .with_edit_cost(1),
+        );
         let ranked = set.rank_multi_criteria();
         // b has score 0.8/2 = 0.4, a has score 0.9/10 = 0.09
         assert_eq!(ranked[0].0.description, "b");
@@ -1018,8 +1043,8 @@ mod tests {
 
     #[test]
     fn test_enrich_trs_repairs_appends_hint() {
-        use crate::lint::{LintDiagnostic, LintSeverity};
         use crate::confluence::{ConfluenceAnalysis, CriticalPair, JoinabilityResult, Term};
+        use crate::lint::{LintDiagnostic, LintSeverity};
         let mut diagnostics = vec![LintDiagnostic {
             id: DiagnosticId::T01,
             name: "non-joinable-critical-pair",

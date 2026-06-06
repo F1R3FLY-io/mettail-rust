@@ -26,11 +26,7 @@ pub struct Position {
 
 impl Position {
     pub fn zero() -> Self {
-        Position {
-            byte_offset: 0,
-            line: 0,
-            column: 0,
-        }
+        Position { byte_offset: 0, line: 0, column: 0 }
     }
 }
 
@@ -107,11 +103,7 @@ impl Range {
     pub fn from_char_offset(input: &str, start_chars: usize, end_chars: usize) -> Self {
         let start = byte_to_position(input, char_to_byte(input, start_chars));
         let end = byte_to_position(input, char_to_byte(input, end_chars));
-        Range {
-            start,
-            end,
-            file_id: None,
-        }
+        Range { start, end, file_id: None }
     }
 }
 
@@ -146,11 +138,7 @@ fn byte_to_position(input: &str, byte_offset: usize) -> Position {
             column += 1;
         }
     }
-    Position {
-        byte_offset,
-        line,
-        column,
-    }
+    Position { byte_offset, line, column }
 }
 
 impl fmt::Display for Range {
@@ -219,12 +207,7 @@ pub enum ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::UnexpectedToken {
-                expected,
-                found,
-                range,
-                hint,
-            } => {
+            ParseError::UnexpectedToken { expected, found, range, hint } => {
                 write!(
                     f,
                     "{}:{}: expected {}, found {}",
@@ -253,7 +236,7 @@ impl fmt::Display for ParseError {
             },
             ParseError::LexError { message, position } => {
                 write!(f, "{}:{}: {}", position.line + 1, position.column + 1, message)
-            }
+            },
             ParseError::TrailingTokens { found, range, hint } => {
                 write!(
                     f,
@@ -267,11 +250,9 @@ impl fmt::Display for ParseError {
                 }
                 Ok(())
             },
-            ParseError::RecoveryApplied {
-                original_error,
-                repair_description,
-                ..
-            } => write!(f, "{} (recovered: {})", original_error, repair_description),
+            ParseError::RecoveryApplied { original_error, repair_description, .. } => {
+                write!(f, "{} (recovered: {})", original_error, repair_description)
+            },
             ParseError::AmbiguityBudget { budget, actual, range, hint } => {
                 write!(
                     f,
@@ -285,7 +266,7 @@ impl fmt::Display for ParseError {
                     write!(f, "\n  = hint: {}", h)?;
                 }
                 Ok(())
-            }
+            },
         }
     }
 }
@@ -312,10 +293,7 @@ impl std::error::Error for ParseError {}
 
 impl From<String> for ParseError {
     fn from(message: String) -> Self {
-        ParseError::LexError {
-            message,
-            position: Position::zero(),
-        }
+        ParseError::LexError { message, position: Position::zero() }
     }
 }
 
@@ -332,16 +310,13 @@ pub fn format_error_context(input: &str, range: &Range) -> String {
     let caret_len =
         if range.end.byte_offset > range.start.byte_offset && range.end.line == range.start.line {
             // Count characters (not bytes) for correct caret width with multi-byte UTF-8
-            input[range.start.byte_offset..range.end.byte_offset].chars().count()
+            input[range.start.byte_offset..range.end.byte_offset]
+                .chars()
+                .count()
         } else {
             1
         };
-    format!(
-        "{}\n{}{}",
-        source_line,
-        " ".repeat(caret_col),
-        "^".repeat(caret_len)
-    )
+    format!("{}\n{}{}", source_line, " ".repeat(caret_col), "^".repeat(caret_len))
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -394,7 +369,7 @@ pub fn lex_core<'a, T>(
                 Some((ch, ch_len)) if ch.is_whitespace() => {
                     col += 1;
                     pos += ch_len;
-                }
+                },
                 _ => break,
             }
         }
@@ -455,23 +430,21 @@ pub fn lex_core<'a, T>(
                         },
                     ));
                 }
-            }
+            },
             None => {
                 let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
                 let msg = format!(
                     "{}:{}: unexpected character '{}'",
-                    line + 1, col + 1, ch.escape_debug(),
+                    line + 1,
+                    col + 1,
+                    ch.escape_debug(),
                 );
                 return Err(msg);
-            }
+            },
         }
     }
 
-    let eof_pos = Position {
-        byte_offset: pos,
-        line,
-        column: col,
-    };
+    let eof_pos = Position { byte_offset: pos, line, column: col };
     Ok((tokens, eof_pos))
 }
 
@@ -509,7 +482,7 @@ pub fn lex_weighted_core<'a, T>(
                 Some((ch, ch_len)) if ch.is_whitespace() => {
                     col += 1;
                     pos += ch_len;
-                }
+                },
                 _ => break,
             }
         }
@@ -572,23 +545,21 @@ pub fn lex_weighted_core<'a, T>(
                         weight,
                     ));
                 }
-            }
+            },
             None => {
                 let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
                 let msg = format!(
                     "{}:{}: unexpected character '{}'",
-                    line + 1, col + 1, ch.escape_debug(),
+                    line + 1,
+                    col + 1,
+                    ch.escape_debug(),
                 );
                 return Err(msg);
-            }
+            },
         }
     }
 
-    let eof_pos = Position {
-        byte_offset: pos,
-        line,
-        column: col,
-    };
+    let eof_pos = Position { byte_offset: pos, line, column: col };
     Ok((tokens, eof_pos))
 }
 
@@ -645,7 +616,7 @@ pub fn lex_lattice_core<'a, T: Clone>(
                 Some((ch, ch_len)) if ch.is_whitespace() => {
                     col += 1;
                     pos += ch_len;
-                }
+                },
                 _ => break,
             }
         }
@@ -713,27 +684,22 @@ pub fn lex_lattice_core<'a, T: Clone>(
                 if !has_ambiguity && alts.len() == 1 {
                     linear_tokens.push((alts[0].0.clone(), range));
                 }
-                token_alts.push(TokenAlts {
-                    range,
-                    alternatives: alts,
-                });
-            }
+                token_alts.push(TokenAlts { range, alternatives: alts });
+            },
             None => {
                 let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
                 let msg = format!(
                     "{}:{}: unexpected character '{}'",
-                    line + 1, col + 1, ch.escape_debug(),
+                    line + 1,
+                    col + 1,
+                    ch.escape_debug(),
                 );
                 return Err(msg);
-            }
+            },
         }
     }
 
-    let eof_pos = Position {
-        byte_offset: pos,
-        line,
-        column: col,
-    };
+    let eof_pos = Position { byte_offset: pos, line, column: col };
 
     if !has_ambiguity {
         // Fast path: no lexical ambiguity detected — return linear
@@ -748,13 +714,7 @@ pub fn lex_lattice_core<'a, T: Clone>(
 
         for (i, ta) in token_alts.iter().enumerate() {
             for (token, weight) in &ta.alternatives {
-                lattice.add_edge(
-                    i,
-                    i + 1,
-                    token.clone(),
-                    ta.range,
-                    TropicalWeight::new(*weight),
-                );
+                lattice.add_edge(i, i + 1, token.clone(), ta.range, TropicalWeight::new(*weight));
             }
         }
 
@@ -813,7 +773,7 @@ pub fn lex_stream_core<'a, T: Clone>(
                 Some((ch, ch_len)) if ch.is_whitespace() => {
                     col += 1;
                     pos += ch_len;
-                }
+                },
                 _ => break,
             }
         }
@@ -855,12 +815,8 @@ pub fn lex_stream_core<'a, T: Clone>(
 
         if accepts.is_empty() {
             let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
-            let msg = format!(
-                "{}:{}: unexpected character '{}'",
-                line + 1,
-                col + 1,
-                ch.escape_debug(),
-            );
+            let msg =
+                format!("{}:{}: unexpected character '{}'", line + 1, col + 1, ch.escape_debug(),);
             return Err(msg);
         }
 
@@ -905,17 +861,12 @@ pub fn lex_stream_core<'a, T: Clone>(
         line = longest_line;
         col = longest_col;
 
-        stream.entries.push(LexEntry {
-            byte_start: start,
-            alternatives,
-        });
+        stream
+            .entries
+            .push(LexEntry { byte_start: start, alternatives });
     }
 
-    let eof_pos = Position {
-        byte_offset: pos,
-        line,
-        column: col,
-    };
+    let eof_pos = Position { byte_offset: pos, line, column: col };
     Ok((stream, eof_pos))
 }
 
@@ -974,8 +925,10 @@ pub fn lex_dag_core<'a, T: Clone>(
     let mut nodes: Vec<LexDagNode> = Vec::new();
     // (raw edges with `target_byte` instead of `target_node` — fix up after
     // all nodes are allocated)
-    let mut raw_edges: Vec<(usize, Vec<(crate::automata::TokenKind, String, usize, TropicalWeight)>)> =
-        Vec::new();
+    let mut raw_edges: Vec<(
+        usize,
+        Vec<(crate::automata::TokenKind, String, usize, TropicalWeight)>,
+    )> = Vec::new();
     let mut worklist: VecDeque<usize> = VecDeque::new();
     worklist.push_back(0);
     // M6c.7.1 (2026-05-14): primary-chain tracking for soft-fail
@@ -991,8 +944,7 @@ pub fn lex_dag_core<'a, T: Clone>(
     // dispatch in the parser state machine, and dies naturally —
     // pure rule-out by structural evidence (the alt's downstream
     // doesn't lex, so the alt cannot contribute to any valid parse).
-    let mut primary_targets: std::collections::HashSet<usize> =
-        std::collections::HashSet::new();
+    let mut primary_targets: std::collections::HashSet<usize> = std::collections::HashSet::new();
     primary_targets.insert(0);
     // M6c.8.1 (2026-05-14): canonical EOF sentinel index, captured
     // when we allocate the node at `byte_start == bytes.len()`.
@@ -1021,17 +973,14 @@ pub fn lex_dag_core<'a, T: Clone>(
             match decode_char_at(input, pos) {
                 Some((ch, ch_len)) if ch.is_whitespace() => {
                     pos += ch_len;
-                }
+                },
                 _ => break,
             }
         }
 
         let node_idx = nodes.len();
         byte_to_node.insert(start, node_idx);
-        nodes.push(LexDagNode {
-            byte_start: pos,
-            edges: Vec::new(),
-        });
+        nodes.push(LexDagNode { byte_start: pos, edges: Vec::new() });
         raw_edges.push((node_idx, Vec::new()));
 
         if pos >= bytes.len() {
@@ -1087,11 +1036,7 @@ pub fn lex_dag_core<'a, T: Clone>(
                 continue;
             }
             let (ch, _ch_len) = decode_char_at(input, pos).unwrap_or(('\u{FFFD}', 1));
-            return Err(format!(
-                "unexpected character '{}' at byte {}",
-                ch.escape_debug(),
-                pos
-            ));
+            return Err(format!("unexpected character '{}' at byte {}", ch.escape_debug(), pos));
         }
 
         // For each accept, emit a raw edge (target_byte = end_byte).
@@ -1120,9 +1065,8 @@ pub fn lex_dag_core<'a, T: Clone>(
         // The fix: filter accepts to LONGEST per kind BEFORE queueing
         // their end_bytes to the worklist. This keeps node IDs dense
         // and aligned with token positions.
-        let mut seen_kinds_this_node: std::collections::HashSet<
-            crate::automata::TokenKind,
-        > = std::collections::HashSet::new();
+        let mut seen_kinds_this_node: std::collections::HashSet<crate::automata::TokenKind> =
+            std::collections::HashSet::new();
         // M6c.7.1: the longest end_byte is the primary maximal-munch
         // target. Track it to propagate primary-chain status through
         // the worklist; secondary alts (shorter end_bytes) get
@@ -1196,18 +1140,14 @@ pub fn lex_dag_core<'a, T: Clone>(
     // (= longest-match) wins.
     for (node_idx, edges) in raw_edges.into_iter() {
         let mut alt_idx_counter: u16 = 0;
-        let mut seen: std::collections::HashSet<(
-            crate::automata::TokenKind,
-            String,
-            usize,
-        )> = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<(crate::automata::TokenKind, String, usize)> =
+            std::collections::HashSet::new();
         // M6c.4: per-kind longest-match filter. Iterates edges in the
         // order they were collected (longest end_byte first per the
         // sort at line ~1021); the FIRST entry for each kind is the
         // longest, and subsequent same-kind entries are dropped.
-        let mut seen_kinds: std::collections::HashSet<
-            crate::automata::TokenKind,
-        > = std::collections::HashSet::new();
+        let mut seen_kinds: std::collections::HashSet<crate::automata::TokenKind> =
+            std::collections::HashSet::new();
         for (kind, text, end_byte, weight) in edges {
             let target_node = match byte_to_node.get(&end_byte) {
                 Some(&idx) => idx,
@@ -1215,7 +1155,7 @@ pub fn lex_dag_core<'a, T: Clone>(
                     // No node allocated for this end_byte — should be
                     // impossible given the worklist scan, but be defensive.
                     continue;
-                }
+                },
             };
             let key = (kind.clone(), text.clone(), end_byte);
             if !seen.insert(key) {
@@ -1246,19 +1186,12 @@ pub fn lex_dag_core<'a, T: Clone>(
     // allocates node 0 at byte 0 (= `bytes.len()`); that's the EOF
     // sentinel.
     let eof_node = eof_node_idx.unwrap_or_else(|| {
-        debug_assert!(
-            false,
-            "EOF sentinel must be allocated by lex_dag_core"
-        );
+        debug_assert!(false, "EOF sentinel must be allocated by lex_dag_core");
         // Defensive fallback: last node (may be an orphan, but
         // better than panicking in release).
         nodes.len().saturating_sub(1)
     });
-    Ok(LexDag {
-        nodes,
-        byte_to_node,
-        eof_node,
-    })
+    Ok(LexDag { nodes, byte_to_node, eof_node })
 }
 
 #[inline(always)]
@@ -1290,8 +1223,13 @@ pub struct SkipResult {
 ///
 /// Uses only safe `std::simd` APIs. No unsafe code.
 #[inline]
-pub fn skip_whitespace_simd(bytes: &[u8], mut pos: usize, mut line: usize, mut col: usize) -> SkipResult {
-    use std::simd::{Simd, cmp::SimdPartialEq};
+pub fn skip_whitespace_simd(
+    bytes: &[u8],
+    mut pos: usize,
+    mut line: usize,
+    mut col: usize,
+) -> SkipResult {
+    use std::simd::{cmp::SimdPartialEq, Simd};
 
     const LANE_WIDTH: usize = 16;
 
@@ -1305,10 +1243,8 @@ pub fn skip_whitespace_simd(bytes: &[u8], mut pos: usize, mut line: usize, mut c
         let chunk = Simd::<u8, LANE_WIDTH>::from_slice(&bytes[pos..pos + LANE_WIDTH]);
 
         // Compare chunk against each whitespace character and OR the masks
-        let is_ws = chunk.simd_eq(space)
-            | chunk.simd_eq(tab)
-            | chunk.simd_eq(newline)
-            | chunk.simd_eq(cr);
+        let is_ws =
+            chunk.simd_eq(space) | chunk.simd_eq(tab) | chunk.simd_eq(newline) | chunk.simd_eq(cr);
 
         if is_ws.all() {
             // Entire 16-byte chunk is whitespace — count newlines for line tracking
@@ -1362,7 +1298,12 @@ pub fn skip_whitespace_simd(bytes: &[u8], mut pos: usize, mut line: usize, mut c
 /// Used when `simd-whitespace` feature is not enabled and also as the
 /// reference implementation for testing SIMD correctness.
 #[inline]
-pub fn skip_whitespace_scalar(bytes: &[u8], mut pos: usize, mut line: usize, mut col: usize) -> (usize, usize, usize) {
+pub fn skip_whitespace_scalar(
+    bytes: &[u8],
+    mut pos: usize,
+    mut line: usize,
+    mut col: usize,
+) -> (usize, usize, usize) {
     while pos < bytes.len() && is_whitespace(bytes[pos]) {
         if bytes[pos] == b'\n' {
             line += 1;
@@ -1572,7 +1513,7 @@ mod tests {
             ParseError::LexError { message, position } => {
                 assert_eq!(message, "something went wrong");
                 assert_eq!(*position, Position::zero());
-            }
+            },
             other => panic!("expected LexError variant, got: {:?}", other),
         }
     }
@@ -1583,11 +1524,7 @@ mod tests {
         // Error at '@' on line 1, column 8, byte_offset = 11 (line 0) + 8 = 19
         let byte_offset = input.find('@').expect("'@' not found in input");
         let range = Range {
-            start: Position {
-                byte_offset,
-                line: 1,
-                column: 8,
-            },
+            start: Position { byte_offset, line: 1, column: 8 },
             end: Position {
                 byte_offset: byte_offset + 1,
                 line: 1,
@@ -1818,16 +1755,9 @@ mod tests {
             }
         };
         // Identity for this test (we pass TokenKind in, get TokenKind out).
-        let token_to_kind = |t: &crate::automata::TokenKind| -> crate::automata::TokenKind {
-            t.clone()
-        };
-        (
-            char_class,
-            dfa_next,
-            is_accepting,
-            accept_alternatives,
-            token_to_kind,
-        )
+        let token_to_kind =
+            |t: &crate::automata::TokenKind| -> crate::automata::TokenKind { t.clone() };
+        (char_class, dfa_next, is_accepting, accept_alternatives, token_to_kind)
     }
 
     #[test]
@@ -1847,10 +1777,7 @@ mod tests {
         assert_eq!(node_0.edges.len(), 2);
         assert_eq!(node_0.edges[0].end_byte, 2); // Integer first (longest)
         assert_eq!(node_0.edges[1].end_byte, 1); // Minus second (shorter)
-        assert!(matches!(
-            node_0.edges[0].kind,
-            crate::automata::TokenKind::Integer
-        ));
+        assert!(matches!(node_0.edges[0].kind, crate::automata::TokenKind::Integer));
         assert!(matches!(
             node_0.edges[1].kind,
             crate::automata::TokenKind::Fixed(ref s) if s == "-"
@@ -1861,10 +1788,7 @@ mod tests {
         assert_eq!(node_1.byte_start, 1);
         assert_eq!(node_1.edges.len(), 1);
         assert_eq!(node_1.edges[0].end_byte, 2);
-        assert!(matches!(
-            node_1.edges[0].kind,
-            crate::automata::TokenKind::Integer
-        ));
+        assert!(matches!(node_1.edges[0].kind, crate::automata::TokenKind::Integer));
     }
 
     #[test]
@@ -1876,10 +1800,7 @@ mod tests {
         assert!(!dag.has_ambiguity(), "DAG should be linear for `3`");
         let node_0 = &dag.nodes[0];
         assert_eq!(node_0.edges.len(), 1);
-        assert!(matches!(
-            node_0.edges[0].kind,
-            crate::automata::TokenKind::Integer
-        ));
+        assert!(matches!(node_0.edges[0].kind, crate::automata::TokenKind::Integer));
     }
 
     #[test]

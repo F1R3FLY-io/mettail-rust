@@ -33,11 +33,9 @@
 //! The source tree is never modified (shared reference). All pointers are valid
 //! for the full duration of `clone()`.
 
+use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::CollectionType;
-use crate::gen::native::native_type_to_string;
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
-use crate::gen::generate_var_label;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -171,7 +169,7 @@ fn generate_assemble_variant(
     match variant {
         VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
             None // Leaf — no assemble variant needed
-        }
+        },
 
         VariantKind::Regular { label, fields } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
@@ -217,23 +215,19 @@ fn generate_assemble_variant(
             Some(quote! {
                 #variant_name { slot: usize, #(#field_slots),* }
             })
-        }
+        },
 
         VariantKind::Collection { label, coll_type, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
             match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap => {
-                    Some(quote! {
-                        #variant_name { slot: usize, elements_start: usize, elements_count: usize, counts_vec: Vec<usize> }
-                    })
-                }
-                _ => {
-                    Some(quote! {
-                        #variant_name { slot: usize, elements_start: usize, elements_count: usize }
-                    })
-                }
+                CollectionType::HashBag | CollectionType::HashMap => Some(quote! {
+                    #variant_name { slot: usize, elements_start: usize, elements_count: usize, counts_vec: Vec<usize> }
+                }),
+                _ => Some(quote! {
+                    #variant_name { slot: usize, elements_start: usize, elements_count: usize }
+                }),
             }
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
@@ -283,7 +277,7 @@ fn generate_assemble_variant(
                     body_slot: usize,
                 }
             })
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
@@ -329,7 +323,7 @@ fn generate_assemble_variant(
                     body_slot: usize,
                 }
             })
-        }
+        },
     }
 }
 
@@ -445,7 +439,7 @@ fn generate_clone_match_arm(
                     results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label));
                 }
             }
-        }
+        },
 
         VariantKind::Literal { label } => {
             quote! {
@@ -453,7 +447,7 @@ fn generate_clone_match_arm(
                     results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(val.clone())));
                 }
             }
-        }
+        },
 
         VariantKind::Var { label } => {
             quote! {
@@ -461,23 +455,23 @@ fn generate_clone_match_arm(
                     results[slot] = Some(AnyClonedTerm::#wrap_variant(#category::#label(v.clone())));
                 }
             }
-        }
+        },
 
         VariantKind::Regular { label, fields } => {
             generate_regular_clone_arm(category, label, fields, language)
-        }
+        },
 
         VariantKind::Collection { label, element_cat, coll_type } => {
             generate_collection_clone_arm(category, label, element_cat, coll_type, language)
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_binder_clone_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             generate_multi_binder_clone_arm(category, label, pre_scope_fields, body_cat, language)
-        }
+        },
     }
 }
 
@@ -558,7 +552,7 @@ fn generate_regular_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
-                }
+                },
                 // Phase 4 #5b (2026-05-12): HashMap stores 2*N flat slots.
                 CollectionType::HashMap => {
                     alloc_stmts.push(quote! {
@@ -584,7 +578,7 @@ fn generate_regular_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::Vec => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -599,7 +593,7 @@ fn generate_regular_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::HashSet => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -615,7 +609,7 @@ fn generate_regular_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
             }
         } else {
             let slot_name = format_ident!("f{}_slot", i);
@@ -672,7 +666,7 @@ fn generate_collection_clone_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::Vec => {
             quote! {
                 #category::#label(ref coll) => {
@@ -689,7 +683,7 @@ fn generate_collection_clone_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::HashSet => {
             quote! {
                 #category::#label(ref coll) => {
@@ -707,7 +701,7 @@ fn generate_collection_clone_arm(
                     }
                 }
             }
-        }
+        },
     }
 }
 
@@ -782,7 +776,7 @@ fn generate_binder_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
-                }
+                },
                 CollectionType::Vec => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -797,7 +791,7 @@ fn generate_binder_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::HashSet => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -813,7 +807,7 @@ fn generate_binder_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
             }
         } else {
             let slot_name = format_ident!("pf{}_slot", i);
@@ -925,7 +919,7 @@ fn generate_multi_binder_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
-                }
+                },
                 CollectionType::Vec => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -940,7 +934,7 @@ fn generate_multi_binder_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::HashSet => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -956,7 +950,7 @@ fn generate_multi_binder_clone_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
             }
         } else {
             let slot_name = format_ident!("pf{}_slot", i);
@@ -1010,25 +1004,29 @@ fn generate_assemble_match_arm(
     language: &LanguageDef,
 ) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
-            None
-        }
+        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
 
         VariantKind::Regular { label, fields } => {
             Some(generate_regular_assemble_arm(category, label, fields, language))
-        }
+        },
 
-        VariantKind::Collection { label, element_cat, coll_type } => {
-            Some(generate_collection_assemble_arm(category, label, element_cat, coll_type, language))
-        }
+        VariantKind::Collection { label, element_cat, coll_type } => Some(
+            generate_collection_assemble_arm(category, label, element_cat, coll_type, language),
+        ),
 
-        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-            Some(generate_binder_assemble_arm(category, label, pre_scope_fields, body_cat, language))
-        }
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => Some(
+            generate_binder_assemble_arm(category, label, pre_scope_fields, body_cat, language),
+        ),
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            Some(generate_multi_binder_assemble_arm(category, label, pre_scope_fields, body_cat, language))
-        }
+            Some(generate_multi_binder_assemble_arm(
+                category,
+                label,
+                pre_scope_fields,
+                body_cat,
+                language,
+            ))
+        },
     }
 }
 
@@ -1294,7 +1292,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count, counts_vec);
                 }
             }
-        }
+        },
         CollectionType::Vec => {
             quote! {
                 CloneTask::#assemble_variant { slot, elements_start, elements_count } => {
@@ -1318,7 +1316,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count);
                 }
             }
-        }
+        },
         CollectionType::HashSet => {
             quote! {
                 CloneTask::#assemble_variant { slot, elements_start, elements_count } => {
@@ -1342,7 +1340,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count);
                 }
             }
-        }
+        },
     }
 }
 
@@ -1380,10 +1378,10 @@ fn generate_binder_assemble_arm(
                     CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name, #count_name, #counts_name }
-                    }
+                    },
                     _ => {
                         quote! { #start_name, #count_name }
-                    }
+                    },
                 }
             } else {
                 let slot_name = format_ident!("pf{}_slot", i);
@@ -1617,10 +1615,10 @@ fn generate_multi_binder_assemble_arm(
                     CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name, #count_name, #counts_name }
-                    }
+                    },
                     _ => {
                         quote! { #start_name, #count_name }
-                    }
+                    },
                 }
             } else {
                 let slot_name = format_ident!("pf{}_slot", i);

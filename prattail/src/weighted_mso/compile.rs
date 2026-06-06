@@ -108,10 +108,10 @@ impl std::fmt::Display for MsoCompileError {
         match self {
             MsoCompileError::FullMsoUnsupported { reason } => {
                 write!(f, "MSO compile error: full MSO fragment is unsupported ({})", reason)
-            }
+            },
             MsoCompileError::NonBooleanConstant { value } => {
                 write!(f, "MSO compile error: non-Boolean constant `{}`", value)
-            }
+            },
         }
     }
 }
@@ -150,10 +150,7 @@ pub mod atom {
 /// every variable bound by a quantifier in `formula`. Bound variables
 /// must be included because the body's compiled SFA references them
 /// before existential projection erases them.
-pub fn build_algebra(
-    formula: &WeightedMsoFormula,
-    label_alphabet: &[String],
-) -> KatBooleanAlgebra {
+pub fn build_algebra(formula: &WeightedMsoFormula, label_alphabet: &[String]) -> KatBooleanAlgebra {
     let mut atoms: BTreeSet<String> = BTreeSet::new();
     for label in label_alphabet {
         atoms.insert(atom::label(label));
@@ -174,53 +171,49 @@ pub fn build_algebra(
 fn collect_all_first_order_vars(formula: &WeightedMsoFormula, acc: &mut HashSet<String>) {
     use WeightedMsoFormula::*;
     match formula {
-        Constant(_) => {}
+        Constant(_) => {},
         AtomicPos { var, .. } | NegAtomicPos { var, .. } => {
             acc.insert(var.clone());
-        }
+        },
         Order { x, y } | NegOrder { x, y } => {
             acc.insert(x.clone());
             acc.insert(y.clone());
-        }
+        },
         InSet { var, .. } | NotInSet { var, .. } => {
             acc.insert(var.clone());
-        }
+        },
         Or(a, b) | And(a, b) => {
             collect_all_first_order_vars(a, acc);
             collect_all_first_order_vars(b, acc);
-        }
+        },
         ExistsFirst { var, body } | ForallFirst { var, body } => {
             acc.insert(var.clone());
             collect_all_first_order_vars(body, acc);
-        }
+        },
         ExistsSecond { body, .. } | ForallSecond { body, .. } => {
             collect_all_first_order_vars(body, acc);
-        }
+        },
     }
 }
 
 fn collect_all_second_order_vars(formula: &WeightedMsoFormula, acc: &mut HashSet<String>) {
     use WeightedMsoFormula::*;
     match formula {
-        Constant(_)
-        | AtomicPos { .. }
-        | NegAtomicPos { .. }
-        | Order { .. }
-        | NegOrder { .. } => {}
+        Constant(_) | AtomicPos { .. } | NegAtomicPos { .. } | Order { .. } | NegOrder { .. } => {},
         InSet { set_var, .. } | NotInSet { set_var, .. } => {
             acc.insert(set_var.clone());
-        }
+        },
         Or(a, b) | And(a, b) => {
             collect_all_second_order_vars(a, acc);
             collect_all_second_order_vars(b, acc);
-        }
+        },
         ExistsFirst { body, .. } | ForallFirst { body, .. } => {
             collect_all_second_order_vars(body, acc);
-        }
+        },
         ExistsSecond { var, body } | ForallSecond { var, body } => {
             acc.insert(var.clone());
             collect_all_second_order_vars(body, acc);
-        }
+        },
     }
 }
 
@@ -542,10 +535,10 @@ fn substitute_atom(pred: &BooleanTest, atom_name: &str, value: bool) -> BooleanT
             } else {
                 BooleanTest::Atom(name.clone())
             }
-        }
+        },
         BooleanTest::Not(inner) => {
             BooleanTest::Not(Box::new(substitute_atom(inner, atom_name, value)))
-        }
+        },
         BooleanTest::And(a, b) => BooleanTest::And(
             Box::new(substitute_atom(a, atom_name, value)),
             Box::new(substitute_atom(b, atom_name, value)),
@@ -583,9 +576,7 @@ pub fn compile_with_algebra(
         Constant(s) => match s.as_str() {
             "true" | "1" => Ok(make_universal(algebra)),
             "false" | "0" => Ok(make_empty(algebra)),
-            other => Err(MsoCompileError::NonBooleanConstant {
-                value: other.to_string(),
-            }),
+            other => Err(MsoCompileError::NonBooleanConstant { value: other.to_string() }),
         },
         AtomicPos { label, var } => Ok(compile_atomic_pos(label, var, algebra)),
         NegAtomicPos { label, var } => Ok(compile_neg_atomic_pos(label, var, algebra)),
@@ -597,12 +588,12 @@ pub fn compile_with_algebra(
             let sfa_a = compile_with_algebra(a, algebra)?;
             let sfa_b = compile_with_algebra(b, algebra)?;
             Ok(sfa_a.intersect(&sfa_b))
-        }
+        },
         Or(a, b) => {
             let sfa_a = compile_with_algebra(a, algebra)?;
             let sfa_b = compile_with_algebra(b, algebra)?;
             Ok(sfa_a.union(&sfa_b))
-        }
+        },
         ExistsFirst { var, body } => {
             let body_sfa = compile_with_algebra(body, algebra)?;
             // Constrain `var` to a unique witness, then existentially
@@ -610,26 +601,21 @@ pub fn compile_with_algebra(
             let unique = build_unique_var_automaton(var, algebra);
             let constrained = body_sfa.intersect(&unique);
             Ok(project_first_order(&constrained, var))
-        }
+        },
         ExistsSecond { var, body } => {
             let body_sfa = compile_with_algebra(body, algebra)?;
             // Sets need not be unique — no uniqueness constraint.
             Ok(project_second_order(&body_sfa, var))
-        }
+        },
         ForallFirst { var, body } => {
             // ∀x. φ ≡ ¬∃x. ¬φ
-            let neg_body = WeightedMsoFormula::And(
-                Box::new(WeightedMsoFormula::Constant("true".to_string())),
-                Box::new(*body.clone()),
-            );
-            let _ = neg_body; // placeholder; we use complement at the SFA level
             let body_sfa = compile_with_algebra(body, algebra)?;
             let neg_body_sfa = body_sfa.complement();
             let unique = build_unique_var_automaton(var, algebra);
             let constrained = neg_body_sfa.intersect(&unique);
             let projected = project_first_order(&constrained, var);
             Ok(projected.complement())
-        }
+        },
         ForallSecond { .. } => Err(MsoCompileError::FullMsoUnsupported {
             reason: "∀X is in the Full MSO fragment".to_string(),
         }),
@@ -641,13 +627,7 @@ pub fn compile_with_algebra(
 pub fn compile_formula(
     formula: &WeightedMsoFormula,
     label_alphabet: &[String],
-) -> Result<
-    (
-        KatBooleanAlgebra,
-        SymbolicAutomaton<KatBooleanAlgebra>,
-    ),
-    MsoCompileError,
-> {
+) -> Result<(KatBooleanAlgebra, SymbolicAutomaton<KatBooleanAlgebra>), MsoCompileError> {
     let algebra = build_algebra(formula, label_alphabet);
     let sfa = compile_with_algebra(formula, &algebra)?;
     Ok((algebra, sfa))
@@ -675,7 +655,9 @@ fn make_empty(algebra: &KatBooleanAlgebra) -> SymbolicAutomaton<KatBooleanAlgebr
 // Re-export helpers used by external callers
 // ════════════════════════════════════════════════════════════════════
 
-pub use crate::weighted_mso::{free_set_variables as exported_free_set_variables, free_variables as exported_free_variables};
+pub use crate::weighted_mso::{
+    free_set_variables as exported_free_set_variables, free_variables as exported_free_variables,
+};
 
 #[allow(dead_code)]
 fn _ensure_imports_used() {

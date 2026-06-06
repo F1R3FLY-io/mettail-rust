@@ -7,9 +7,9 @@
 //! All recursive operations use iterative work-stacks (trampolines).
 //! Everything is derived from the `language!` spec.
 
+use crate::gen::native::native_type_to_string;
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
-use crate::gen::native::native_type_to_string;
 use std::collections::{HashMap, HashSet};
 
 use super::expr_string_gen::TestCase;
@@ -22,16 +22,12 @@ const MAX_EDGE_CASES_PER_LANGUAGE: usize = 80;
 /// Detected edge-case pattern in a rust_code expression.
 #[derive(Debug, Clone, PartialEq)]
 enum EdgePattern {
-    /// Division or modulo — test with denominator = 0.
-    DivByZero,
     /// Power operation — test with exponent 0 and base 0.
     PowerEdge,
     /// Boolean exhaustive — enumerate all boolean combinations.
     BoolExhaustive,
     /// String operation — test with empty string.
     EmptyString,
-    /// Integer type boundary — test with MAX and MIN values.
-    IntBoundary,
 }
 
 /// Generate edge case tests for the language.
@@ -113,7 +109,6 @@ pub fn generate_edge_case_tests(
 /// Detect edge-case patterns by walking a `syn::Expr` with an iterative work-stack.
 fn detect_edge_patterns(expr: &syn::Expr) -> Vec<EdgePattern> {
     let mut patterns = Vec::new();
-    let mut has_div = false;
     let mut has_pow = false;
     let mut has_bool_params = false;
     let mut has_string_ops = false;
@@ -124,9 +119,6 @@ fn detect_edge_patterns(expr: &syn::Expr) -> Vec<EdgePattern> {
     while let Some(e) = stack.pop() {
         match e {
             syn::Expr::Binary(bin) => {
-                if matches!(bin.op, syn::BinOp::Div(_) | syn::BinOp::Rem(_)) {
-                    has_div = true;
-                }
                 // Check for boolean comparison ops (could accept bool params)
                 if matches!(
                     bin.op,
@@ -233,41 +225,16 @@ fn generate_tests_for_pattern(
     let mut cases = Vec::new();
 
     match pattern {
-        EdgePattern::DivByZero => {
-            // For rules with division, test with the last param = 0.
-            // This should NOT panic — we use catch_unwind.
-            if param_info.len() >= 2 {
-                let last_pi = &param_info[param_info.len() - 1];
-                if let Some(ref nt) = last_pi.native_type {
-                    if is_numeric_type(nt) {
-                        let edge_vals = generate_edge_values_for_divisor(
-                            param_info, category, language, rule,
-                        );
-                        if let Some((construction, suffix)) = edge_vals {
-                            let test_name = format!(
-                                "edge_{}_{}_div_by_zero_{}",
-                                lang_name_lower,
-                                label.to_lowercase(),
-                                suffix
-                            );
-                            // Division by zero test: smoke test
-                            cases.push(TestCase {
-                                test_name,
-                                construction_code: construction,
-                                lang_struct: lang_struct.to_string(),
-                                expected: None,
-                            });
-                        }
-                    }
-                }
-            }
-        },
         EdgePattern::PowerEdge => {
             // Test with exponent = 0 (should give 1 for any base)
             if param_info.len() >= 2 {
                 let param_count = param_info.len();
                 let edge_exp0 = generate_power_edge(
-                    param_info, category, language, rule, "exp0",
+                    param_info,
+                    category,
+                    language,
+                    rule,
+                    "exp0",
                     |pi_idx, pi| {
                         if pi_idx == param_count - 1 {
                             zero_value_for_type(language, &pi.native_type)
@@ -277,7 +244,10 @@ fn generate_tests_for_pattern(
                     },
                 );
                 if let Some((construction, hint)) = edge_exp0 {
-                    let expected = try_eval_edge(rule, param_info, &construction,
+                    let expected = try_eval_edge(
+                        rule,
+                        param_info,
+                        &construction,
                         |pi_idx, pi| {
                             if pi_idx == param_count - 1 {
                                 zero_sym_value(&pi.native_type)
@@ -287,12 +257,8 @@ fn generate_tests_for_pattern(
                         },
                         result_native_type,
                     );
-                    let test_name = format!(
-                        "edge_{}_{}_{}",
-                        lang_name_lower,
-                        label.to_lowercase(),
-                        hint
-                    );
+                    let test_name =
+                        format!("edge_{}_{}_{}", lang_name_lower, label.to_lowercase(), hint);
                     cases.push(TestCase {
                         test_name,
                         construction_code: construction,
@@ -317,12 +283,21 @@ fn generate_tests_for_pattern(
 
                 for combo_idx in 0..cap {
                     let edge_vals = generate_bool_combo(
-                        param_info, category, language, rule, &bool_slots, combo_idx,
+                        param_info,
+                        category,
+                        language,
+                        rule,
+                        &bool_slots,
+                        combo_idx,
                     );
                     if let Some((construction, hint)) = edge_vals {
-                        let expected = try_eval_edge(rule, param_info, &construction,
+                        let expected = try_eval_edge(
+                            rule,
+                            param_info,
+                            &construction,
                             |pi_idx, pi| {
-                                if let Some(slot_pos) = bool_slots.iter().position(|&s| s == pi_idx) {
+                                if let Some(slot_pos) = bool_slots.iter().position(|&s| s == pi_idx)
+                                {
                                     let bit = (combo_idx >> slot_pos) & 1;
                                     Some(SymValue::Bool(bit == 1))
                                 } else {
@@ -360,10 +335,17 @@ fn generate_tests_for_pattern(
 
             if !string_slots.is_empty() {
                 let edge_vals = generate_empty_string_combo(
-                    param_info, category, language, rule, &string_slots,
+                    param_info,
+                    category,
+                    language,
+                    rule,
+                    &string_slots,
                 );
                 if let Some((construction, hint)) = edge_vals {
-                    let expected = try_eval_edge(rule, param_info, &construction,
+                    let expected = try_eval_edge(
+                        rule,
+                        param_info,
+                        &construction,
                         |pi_idx, pi| {
                             if string_slots.contains(&pi_idx) {
                                 Some(SymValue::Str(String::new()))
@@ -388,105 +370,9 @@ fn generate_tests_for_pattern(
                 }
             }
         },
-        EdgePattern::IntBoundary => {
-            let int_slots: Vec<(usize, String)> = param_info
-                .iter()
-                .enumerate()
-                .filter_map(|(i, pi)| {
-                    if let Some(ref nt) = pi.native_type {
-                        if is_integer_type(nt) {
-                            return Some((i, nt.clone()));
-                        }
-                    }
-                    None
-                })
-                .collect();
-
-            if !int_slots.is_empty() && !has_overflow_risk(rule) {
-                let max_vals = generate_int_boundary(
-                    param_info, category, language, rule, &int_slots, true,
-                );
-                if let Some((construction, hint)) = max_vals {
-                    let test_name = format!(
-                        "edge_{}_{}_int_max_{}",
-                        lang_name_lower,
-                        label.to_lowercase(),
-                        hint
-                    );
-                    cases.push(TestCase {
-                        test_name,
-                        construction_code: construction,
-                        lang_struct: lang_struct.to_string(),
-                        expected: None,
-                    });
-                }
-            }
-        },
     }
 
     cases
-}
-
-/// Check if a native type is numeric (int or float).
-fn is_numeric_type(nt: &str) -> bool {
-    matches!(nt, "i32" | "i64" | "u32" | "u64" | "f32" | "f64" | "isize" | "usize")
-}
-
-/// Check if a native type is an integer type.
-fn is_integer_type(nt: &str) -> bool {
-    matches!(nt, "i32" | "i64" | "u32" | "u64" | "isize" | "usize")
-}
-
-/// Check if a rule's rust_code has overflow risk (pow, product, factorial).
-///
-/// Uses iterative work-stack.
-fn has_overflow_risk(rule: &GrammarRule) -> bool {
-    let rust_code = match &rule.rust_code {
-        Some(rc) => rc,
-        None => return false,
-    };
-
-    let mut stack: Vec<&syn::Expr> = vec![&rust_code.code];
-    while let Some(e) = stack.pop() {
-        match e {
-            syn::Expr::MethodCall(mc) => {
-                let method = mc.method.to_string();
-                if method == "pow"
-                    || method == "powf"
-                    || method == "product"
-                    || method == "checked_mul"
-                {
-                    return true;
-                }
-                stack.push(&mc.receiver);
-                for arg in &mc.args {
-                    stack.push(arg);
-                }
-            },
-            syn::Expr::Binary(bin) => {
-                if matches!(bin.op, syn::BinOp::Mul(_) | syn::BinOp::Shl(_)) {
-                    // Multiplication or shift with MAX could overflow
-                    return true;
-                }
-                stack.push(&bin.left);
-                stack.push(&bin.right);
-            },
-            syn::Expr::Paren(p) => stack.push(&p.expr),
-            syn::Expr::Group(g) => stack.push(&g.expr),
-            syn::Expr::Unary(u) => stack.push(&u.expr),
-            syn::Expr::Cast(c) => stack.push(&c.expr),
-            syn::Expr::Block(b) => {
-                for stmt in &b.block.stmts {
-                    if let syn::Stmt::Expr(e, _) = stmt {
-                        stack.push(e);
-                    }
-                }
-            },
-            _ => {},
-        }
-    }
-
-    false
 }
 
 /// Return a zero value for a given native type (raw string form).
@@ -502,7 +388,7 @@ fn zero_value_for_type(language: &LanguageDef, nt: &Option<String>) -> Option<St
         nt @ ("i32" | "i64" | "u32" | "u64") => {
             let v = crate::gen::spec_admitted_integer_default(language);
             Some(format!("{}{}", v, nt))
-        }
+        },
         "f32" => Some("0.0f32".to_string()),
         "f64" => Some("0.0f64".to_string()),
         _ => None,
@@ -517,10 +403,11 @@ fn safe_value_for_type(language: &LanguageDef, nt: &Option<String>) -> Option<St
     match nt.as_deref()? {
         nt @ ("i32" | "i64" | "u32" | "u64") => {
             let samples = crate::gen::spec_admitted_integer_samples(
-                language, crate::gen::SamplePurpose::Safe,
+                language,
+                crate::gen::SamplePurpose::Safe,
             );
             samples.first().map(|s| format!("{}{}", s, nt))
-        }
+        },
         "f32" => Some("2.0f32".to_string()),
         "f64" => Some("2.0f64".to_string()),
         "bool" => Some("true".to_string()),
@@ -549,42 +436,18 @@ fn safe_sym_value(nt: &Option<String>) -> Option<SymValue> {
     }
 }
 
-/// Construct a term for div-by-zero edge case (last param = 0).
-fn generate_edge_values_for_divisor(
-    param_info: &[ParamInfo],
-    category: &str,
-    language: &LanguageDef,
-    rule: &GrammarRule,
-) -> Option<(String, String)> {
-    let label = rule.label.to_string();
-    let mut parts = Vec::with_capacity(param_info.len());
-
-    for (i, pi) in param_info.iter().enumerate() {
-        let raw = if i == param_info.len() - 1 {
-            zero_value_for_type(language, &pi.native_type)?
-        } else {
-            safe_value_for_type(language, &pi.native_type)?
-        };
-        let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language);
-        parts.push(format!("std::sync::Arc::new({})", construction?));
-    }
-    for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
-        parts.push("None".to_string());
-    }
-
-    let construction = format!("{}::{}({})", category, label, parts.join(", "));
-    Some((construction, "div_zero".to_string()))
-}
-
 /// Construct a leaf value for a category.
 fn construct_leaf(
     _outer_cat: &str,
     inner_cat: &str,
     raw_val: &str,
-    native_type: &Option<String>,
+    _native_type: &Option<String>,
     language: &LanguageDef,
 ) -> Option<String> {
-    let lt = language.types.iter().find(|t| t.name.to_string() == inner_cat)?;
+    let lt = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == inner_cat)?;
     let nt = lt.native_type.as_ref()?;
     let type_str = native_type_to_string(nt);
     let lit_label = crate::gen::generate_literal_label(nt).to_string();
@@ -691,64 +554,6 @@ fn generate_empty_string_combo(
 
     let construction = format!("{}::{}({})", category, label, parts.join(", "));
     Some((construction, "empty".to_string()))
-}
-
-/// Generate an integer boundary test construction.
-fn generate_int_boundary(
-    param_info: &[ParamInfo],
-    category: &str,
-    language: &LanguageDef,
-    rule: &GrammarRule,
-    int_slots: &[(usize, String)],
-    use_max: bool,
-) -> Option<(String, String)> {
-    let label = rule.label.to_string();
-    let mut parts = Vec::with_capacity(param_info.len());
-
-    for (i, pi) in param_info.iter().enumerate() {
-        let is_int_slot = int_slots.iter().any(|(idx, _)| *idx == i);
-        let raw = if is_int_slot {
-            boundary_value_for_type(&pi.native_type, use_max)?
-        } else {
-            safe_value_for_type(language, &pi.native_type)?
-        };
-        let construction = construct_leaf(category, &pi.category, &raw, &pi.native_type, language)?;
-        parts.push(format!("std::sync::Arc::new({})", construction));
-    }
-    for _ in 0..super::ground_term_enum::count_optional_inner_simples(rule) {
-        parts.push("None".to_string());
-    }
-
-    let construction = format!("{}::{}({})", category, label, parts.join(", "));
-    let hint = if use_max { "max" } else { "min" };
-    Some((construction, hint.to_string()))
-}
-
-/// Return a boundary value (MAX or MIN) for a native type.
-fn boundary_value_for_type(nt: &Option<String>, use_max: bool) -> Option<String> {
-    match nt.as_deref()? {
-        "i32" => Some(if use_max {
-            format!("{}i32", i32::MAX)
-        } else {
-            format!("{}i32", i32::MIN)
-        }),
-        "i64" => Some(if use_max {
-            format!("{}i64", i64::MAX)
-        } else {
-            format!("{}i64", i64::MIN)
-        }),
-        "u32" => Some(if use_max {
-            format!("{}u32", u32::MAX)
-        } else {
-            "0u32".to_string()
-        }),
-        "u64" => Some(if use_max {
-            format!("{}u64", u64::MAX)
-        } else {
-            "0u64".to_string()
-        }),
-        _ => None,
-    }
 }
 
 /// Try to symbolically evaluate an edge case term.

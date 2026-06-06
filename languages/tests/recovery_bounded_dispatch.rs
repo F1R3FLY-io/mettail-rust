@@ -46,7 +46,8 @@ fn t1_all_junk_terminates_within_recovery_depth_cap() {
     assert!(
         elapsed_ms < TIMING_CAP_MS,
         "T1 all-junk parse took {}ms (cap {}ms) — bounded recovery violated",
-        elapsed_ms, TIMING_CAP_MS,
+        elapsed_ms,
+        TIMING_CAP_MS,
     );
 }
 
@@ -62,7 +63,8 @@ fn t2_skip_bad_infix_terminates_within_cap() {
     assert!(
         elapsed_ms < TIMING_CAP_MS,
         "T2 stray-infix parse took {}ms (cap {}ms) — bounded recovery violated",
-        elapsed_ms, TIMING_CAP_MS,
+        elapsed_ms,
+        TIMING_CAP_MS,
     );
 }
 
@@ -77,7 +79,8 @@ fn t3_unbalanced_parens_terminates_within_cap() {
     assert!(
         elapsed_ms < TIMING_CAP_MS,
         "T3 unbalanced-parens parse took {}ms (cap {}ms) — bounded recovery violated",
-        elapsed_ms, TIMING_CAP_MS,
+        elapsed_ms,
+        TIMING_CAP_MS,
     );
 }
 
@@ -94,7 +97,8 @@ fn t4_cursor_cycle_caught_by_visited_set() {
         elapsed_ms < TIMING_CAP_MS,
         "T4 cursor-cycle parse took {}ms (cap {}ms) — visited-set defense \
          likely failed",
-        elapsed_ms, TIMING_CAP_MS,
+        elapsed_ms,
+        TIMING_CAP_MS,
     );
 }
 
@@ -109,19 +113,17 @@ fn t5_shipped_grammar_regression_smoke() {
         elapsed_ms < TIMING_CAP_MS,
         "T5 valid parse took {}ms (cap {}ms) — bounded recovery should be \
          dormant on the success path",
-        elapsed_ms, TIMING_CAP_MS,
+        elapsed_ms,
+        TIMING_CAP_MS,
     );
     assert!(
         result.is_some(),
         "T5 valid input '1 + 2 * 3' must parse successfully; got result_some={} \
          errors={}",
-        result.is_some(), errors,
-    );
-    assert_eq!(
-        errors, 0,
-        "T5 valid input must not trigger recovery; got {} errors",
+        result.is_some(),
         errors,
     );
+    assert_eq!(errors, 0, "T5 valid input must not trigger recovery; got {} errors", errors,);
 }
 
 /// T6 — Timing bound. Aggregates the timing assertion across a
@@ -131,21 +133,15 @@ fn t5_shipped_grammar_regression_smoke() {
 /// non-advancing branches.
 #[test]
 fn t6_recovery_completes_under_timing_cap() {
-    let inputs = [
-        "@@@@",
-        "1 + + 2",
-        "((((1",
-        "@",
-        "1 @ 2 @ 3 @ 4 @ 5",
-        "1 + ",
-        " + 2",
-    ];
+    let inputs = ["@@@@", "1 + + 2", "((((1", "@", "1 @ 2 @ 3 @ 4 @ 5", "1 + ", " + 2"];
     for input in inputs {
         let (_result, _errors, elapsed_ms) = time_parse_recovering(input);
         assert!(
             elapsed_ms < TIMING_CAP_MS,
             "T6 input {:?} took {}ms (cap {}ms) — bounded recovery violated",
-            input, elapsed_ms, TIMING_CAP_MS,
+            input,
+            elapsed_ms,
+            TIMING_CAP_MS,
         );
     }
 }

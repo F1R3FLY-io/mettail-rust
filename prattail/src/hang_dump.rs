@@ -94,15 +94,17 @@ mod imp {
             for row in self.cursors.iter().take(8) {
                 s.push_str(&format!(
                     "  cursor[{}] pos={} state={} weight={} src_pri={} pending={} coll_depth={}\n",
-                    row.idx, row.pos, row.state_dbg, row.weight_dbg,
-                    row.source_priority, row.pending_ops_len, row.collection_depth,
+                    row.idx,
+                    row.pos,
+                    row.state_dbg,
+                    row.weight_dbg,
+                    row.source_priority,
+                    row.pending_ops_len,
+                    row.collection_depth,
                 ));
             }
             if self.cursors.len() > 8 {
-                s.push_str(&format!(
-                    "  ... ({} more cursors omitted)\n",
-                    self.cursors.len() - 8
-                ));
+                s.push_str(&format!("  ... ({} more cursors omitted)\n", self.cursors.len() - 8));
             }
             s.push_str("═════════════════════════════════════════════════════\n");
             s
@@ -114,7 +116,12 @@ mod imp {
         pub fn to_json(&self) -> String {
             let mut s = String::with_capacity(512 + self.cursors.len() * 128);
             s.push('{');
-            push_json_field(&mut s, "timestamp_unix_secs", &self.timestamp_unix_secs.to_string(), false);
+            push_json_field(
+                &mut s,
+                "timestamp_unix_secs",
+                &self.timestamp_unix_secs.to_string(),
+                false,
+            );
             s.push(',');
             push_json_field(&mut s, "pid", &self.pid.to_string(), false);
             s.push(',');
@@ -132,7 +139,9 @@ mod imp {
             s.push(',');
             s.push_str("\"cursors\":[");
             for (i, c) in self.cursors.iter().enumerate() {
-                if i > 0 { s.push(','); }
+                if i > 0 {
+                    s.push(',');
+                }
                 s.push('{');
                 push_json_field(&mut s, "idx", &c.idx.to_string(), false);
                 s.push(',');
@@ -213,10 +222,9 @@ mod imp {
         }
         INSTALL_ONCE.call_once(|| {
             // Register SIGUSR1 → flip flag (async-signal-safe).
-            if let Err(e) = signal_hook::flag::register(
-                signal_hook::consts::SIGUSR1,
-                SIGUSR1_FIRED.clone(),
-            ) {
+            if let Err(e) =
+                signal_hook::flag::register(signal_hook::consts::SIGUSR1, SIGUSR1_FIRED.clone())
+            {
                 eprintln!("prattail-hang-dump: failed to register SIGUSR1: {e}");
                 return;
             }
@@ -277,9 +285,8 @@ mod imp {
                 if cur_step == last_seen_step {
                     idle_polls += 1;
                     if idle_polls >= threshold && watcher_started.elapsed().as_secs() > 1 {
-                        let trigger = HangTrigger::Watchdog {
-                            idle_secs: idle_polls / polls_per_sec,
-                        };
+                        let trigger =
+                            HangTrigger::Watchdog { idle_secs: idle_polls / polls_per_sec };
                         if let Some(snap) = take_snapshot(trigger) {
                             dump_snapshot(&snap);
                         }
@@ -364,23 +371,23 @@ mod imp {
 #[cfg(feature = "hang-dump")]
 pub use imp::*;
 
-// Stub variants emitted when the `hang-dump` feature is OFF — the walker
-// always calls `publish_snapshot`, which becomes a no-op. Zero overhead
-// (compiler inlines + eliminates).
+// Feature-disabled fallback emitted when the `hang-dump` feature is off. The
+// walker always calls `publish_snapshot`; in this configuration it becomes a
+// no-op and the compiler inlines it away.
 #[cfg(not(feature = "hang-dump"))]
-mod stub {
-    /// Stub: `publish_snapshot` argument type. Not used at runtime.
+mod disabled {
+    /// `publish_snapshot` argument type for feature-disabled builds.
     #[derive(Debug, Clone)]
     pub struct HangSnapshot;
 
-    /// Stub: no-op when the feature is off.
+    /// No-op when the feature is off.
     #[inline(always)]
     pub fn publish_snapshot(_: HangSnapshot) {}
 
-    /// Stub: no-op installer.
+    /// No-op installer when the feature is off.
     #[inline(always)]
     pub fn install_hang_dump_handler() {}
 }
 
 #[cfg(not(feature = "hang-dump"))]
-pub use stub::*;
+pub use disabled::*;

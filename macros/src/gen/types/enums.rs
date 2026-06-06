@@ -1,12 +1,12 @@
 #![allow(clippy::single_match)]
 
+use crate::gen::native::NativeType;
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::native::NativeType;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -204,7 +204,11 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
 }
 
 /// Rust type for a literal rule's single field (Integer, Boolean, StringLiteral, FloatLiteral).
-fn literal_payload_type(kind: NonTerminalKind, category: &syn::Ident, language: &LanguageDef) -> TokenStream {
+fn literal_payload_type(
+    kind: NonTerminalKind,
+    category: &syn::Ident,
+    language: &LanguageDef,
+) -> TokenStream {
     let native_type_for_category = || {
         language
             .types
@@ -264,7 +268,9 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
         .items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal { ident, kind } => Some(FieldType::NonTerminal(ident.clone(), *kind)),
+            GrammarItem::NonTerminal { ident, kind } => {
+                Some(FieldType::NonTerminal(ident.clone(), *kind))
+            },
             GrammarItem::Collection { coll_type, element_type, .. } => {
                 Some(FieldType::Collection {
                     coll_type: coll_type.clone(),
@@ -319,7 +325,9 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                 },
                 FieldType::Collection { coll_type, element_type } => {
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap => quote! { mettail_runtime::HashBag },
+                        CollectionType::HashBag | CollectionType::HashMap => {
+                            quote! { mettail_runtime::HashBag }
+                        },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
                         CollectionType::Vec => quote! { Vec },
                     };
@@ -409,14 +417,16 @@ fn generate_variant_from_term_context(
                             match ty {
                                 TypeExpr::Collection { .. } | TypeExpr::Map { .. } => {
                                     vec![quote! { Option<#inner_ty> }]
-                                }
+                                },
                                 _ => vec![quote! { Option<std::sync::Arc<#inner_ty>> }],
                             }
                         },
                         TermParam::Abstraction { ty, .. } => {
                             if let TypeExpr::Arrow { codomain, .. } = ty {
                                 let body = type_expr_to_rust_type(codomain);
-                                vec![quote! { Option<mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body>>> }]
+                                vec![
+                                    quote! { Option<mettail_runtime::Scope<mettail_runtime::Binder<String>, std::sync::Arc<#body>>> },
+                                ]
                             } else {
                                 vec![]
                             }
@@ -424,7 +434,9 @@ fn generate_variant_from_term_context(
                         TermParam::MultiAbstraction { ty, .. } => {
                             if let TypeExpr::Arrow { codomain, .. } = ty {
                                 let body = type_expr_to_rust_type(codomain);
-                                vec![quote! { Option<mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body>>> }]
+                                vec![
+                                    quote! { Option<mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, std::sync::Arc<#body>>> },
+                                ]
                             } else {
                                 vec![]
                             }
@@ -497,7 +509,9 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                 GrammarItem::Collection { coll_type, element_type, .. } => {
                     // Collection becomes a field with the appropriate collection type
                     let coll_type_ident = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap => quote! { mettail_runtime::HashBag },
+                        CollectionType::HashBag | CollectionType::HashMap => {
+                            quote! { mettail_runtime::HashBag }
+                        },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
                         CollectionType::Vec => quote! { Vec },
                     };
@@ -527,30 +541,24 @@ fn type_expr_to_field_type(
     language_category: Option<(&LanguageDef, &syn::Ident)>,
 ) -> TokenStream {
     match ty {
-        TypeExpr::Base(ident) => {
-            match NonTerminalKind::classify(&ident.to_string()) {
-                NonTerminalKind::Var => quote! { mettail_runtime::OrdVar },
-                NonTerminalKind::Integer => quote! { i64 },
-                NonTerminalKind::Boolean => quote! { bool },
-                NonTerminalKind::StringLiteral => quote! { std::string::String },
-                NonTerminalKind::FloatLiteral => {
-                    language_category
-                        .and_then(|(lang, cat)| {
-                            lang.types
-                                .iter()
-                                .find(|t| t.name == *cat)
-                                .and_then(|t| t.native_type.as_ref())
-                        })
-                        .map(|native_type| {
-                            match NativeType::from_syn_type(native_type) {
-                                NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
-                                _ => quote! { mettail_runtime::CanonicalFloat64 },
-                            }
-                        })
-                        .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 })
-                },
-                NonTerminalKind::Category => quote! { std::sync::Arc<#ident> },
-            }
+        TypeExpr::Base(ident) => match NonTerminalKind::classify(&ident.to_string()) {
+            NonTerminalKind::Var => quote! { mettail_runtime::OrdVar },
+            NonTerminalKind::Integer => quote! { i64 },
+            NonTerminalKind::Boolean => quote! { bool },
+            NonTerminalKind::StringLiteral => quote! { std::string::String },
+            NonTerminalKind::FloatLiteral => language_category
+                .and_then(|(lang, cat)| {
+                    lang.types
+                        .iter()
+                        .find(|t| t.name == *cat)
+                        .and_then(|t| t.native_type.as_ref())
+                })
+                .map(|native_type| match NativeType::from_syn_type(native_type) {
+                    NativeType::Float32 => quote! { mettail_runtime::CanonicalFloat32 },
+                    _ => quote! { mettail_runtime::CanonicalFloat64 },
+                })
+                .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 }),
+            NonTerminalKind::Category => quote! { std::sync::Arc<#ident> },
         },
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);

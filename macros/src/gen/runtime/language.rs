@@ -4,10 +4,10 @@
 //! - `{Name}Term` wrapper implementing `mettail_runtime::Term`
 //! - `{Name}Language` struct implementing `mettail_runtime::Language`
 
-use mettail_ast::grammar::{GrammarItem, GrammarRule};
-use mettail_ast::language::LanguageDef;
 use crate::gen::{generate_literal_label, generate_var_label};
 use crate::logic::list_all_relations_for_extraction;
+use mettail_ast::grammar::{GrammarItem, GrammarRule};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -46,7 +46,7 @@ fn generate_ascent_struct(struct_name: &Ident, content: &TokenStream) -> TokenSt
 
 /// Spill an `ascent!{}` / `ascent_par!{}` invocation to its own file under
 /// `target/generated/<lang>/<struct_snake>_ascent.rs` and return an
-/// `include!` stub. This completes the modularization started by the
+/// `include!` wrapper. This completes the modularization started by the
 /// top-level `spill_and_include` in `macros/src/lib.rs`: without it, the
 /// potentially multi-MB ascent content stayed inlined in the monolithic
 /// `language.rs` spill (e.g., Ambient's 2,473-line language.rs was 90 %
@@ -949,10 +949,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
 /// The actual pattern matching uses the ground rewrite seeds already generated
 /// by B-CG04, so this block only needs to detect the ground-term case and
 /// signal that the fast-path was taken.
-fn generate_cek_fast_path(
-    _primary_type: &Ident,
-    language: &LanguageDef,
-) -> TokenStream {
+fn generate_cek_fast_path(_primary_type: &Ident, language: &LanguageDef) -> TokenStream {
     // Count rewrites with ground LHS (no congruence premises = no variable matching)
     let ground_count = language
         .rewrites
@@ -1120,9 +1117,8 @@ fn generate_language_struct(
     // Sprint 5: Generate pre-stratum struct if ground HOL step rules exist
     // F2: Pre-stratum also switches between ascent!/ascent_par! via cfg.
     let pre_stratum_struct_name = format_ident!("{}AscentProgPreStratum", name);
-    let pre_stratum_struct_def = pre_stratum_content.map(|content| {
-        generate_ascent_struct(&pre_stratum_struct_name, content)
-    });
+    let pre_stratum_struct_def = pre_stratum_content
+        .map(|content| generate_ascent_struct(&pre_stratum_struct_name, content));
 
     // B-CG04: Ground rewrite seed block (injected before prog.run())
     let ground_seed_block = if ground_rewrite_seeds.is_empty() {
@@ -1592,10 +1588,13 @@ fn generate_var_collection_impl(
         // wrapped as `Option<...>`), not 1 — flatten recursively.
         fn flat_field_count(params: &[mettail_ast::grammar::TermParam]) -> usize {
             use mettail_ast::grammar::TermParam;
-            params.iter().map(|p| match p {
-                TermParam::Optional { params: inner } => flat_field_count(inner),
-                _ => 1,
-            }).sum()
+            params
+                .iter()
+                .map(|p| match p {
+                    TermParam::Optional { params: inner } => flat_field_count(inner),
+                    _ => 1,
+                })
+                .sum()
         }
         let field_count = if let Some(ctx) = &rule.term_context {
             flat_field_count(ctx)
@@ -1676,9 +1675,11 @@ fn generate_var_collection_impl(
                                                 // HashBag/HashSet yield
                                                 // (elem, count) tuples.
                                                 Some(match coll_type {
-                                                    mettail_ast::types::CollectionType::Vec => quote! {
-                                                        for elem in __v.iter() {
-                                                            Self::#impl_fn_name(root_term, elem, result, seen);
+                                                    mettail_ast::types::CollectionType::Vec => {
+                                                        quote! {
+                                                            for elem in __v.iter() {
+                                                                Self::#impl_fn_name(root_term, elem, result, seen);
+                                                            }
                                                         }
                                                     },
                                                     _ => quote! {
@@ -1898,7 +1899,9 @@ fn generate_var_collection_impl(
                             // Skip to the body item
                             item_idx += 1;
                             if item_idx < rule.items.len() {
-                                if let GrammarItem::NonTerminal { ident: body_type, .. } = &rule.items[item_idx] {
+                                if let GrammarItem::NonTerminal { ident: body_type, .. } =
+                                    &rule.items[item_idx]
+                                {
                                     let body_str = body_type.to_string();
                                     if body_str == primary_type.to_string() {
                                         recurse_calls.push(quote! {
@@ -2026,7 +2029,9 @@ fn generate_language_struct_multi(
                         let ty = term_ctx.iter().find_map(|tp| match tp {
                             TermParam::Simple { name, ty } if name == ident => Some(ty),
                             TermParam::Abstraction { body, ty, .. } if body == ident => Some(ty),
-                            TermParam::MultiAbstraction { body, ty, .. } if body == ident => Some(ty),
+                            TermParam::MultiAbstraction { body, ty, .. } if body == ident => {
+                                Some(ty)
+                            },
                             _ => None,
                         });
                         if let Some(TypeExpr::Base(type_ident)) = ty {
@@ -2055,6 +2060,11 @@ fn generate_language_struct_multi(
         }
         set
     };
+    let uses_first_tok_filter = has_non_native
+        && parse_order.iter().any(|cat| {
+            let cat_name = cat.to_string();
+            native_cat_names.contains(&cat_name) && !cats_with_foreign_nt_first.contains(&cat_name)
+        });
 
     let parse_tries: Vec<TokenStream> = parse_order
         .iter()
@@ -2108,7 +2118,7 @@ fn generate_language_struct_multi(
             // or cross-cat dispatch), so it must be tried even when first_tok is Ident.
             // Example: `x == 1` must parse as Bool via EqInt (Int == Int → Bool).
             let cat_name = cat.to_string();
-            if has_non_native
+            if uses_first_tok_filter
                 && native_cat_names.contains(&cat_name)
                 && !cats_with_foreign_nt_first.contains(&cat_name)
             {
@@ -2125,7 +2135,7 @@ fn generate_language_struct_multi(
 
     // Lexer probe: only emitted for languages with non-native categories.
     // All-native languages (e.g. Calculator) skip this and try all parsers unconditionally.
-    let lexer_probe: TokenStream = if has_non_native {
+    let lexer_probe: TokenStream = if uses_first_tok_filter {
         quote! {
             // Lex once to classify the first token for parse dispatch
             let probe_tokens = lex(input).map_err(|e| e.to_string())?;
@@ -2505,9 +2515,8 @@ fn generate_language_struct_multi(
     // Sprint 5: Generate pre-stratum struct if ground HOL step rules exist
     // F2: Pre-stratum also switches between ascent!/ascent_par! via cfg.
     let pre_stratum_struct_name = format_ident!("{}AscentProgPreStratum", name);
-    let pre_stratum_struct_def = pre_stratum_content.map(|content| {
-        generate_ascent_struct(&pre_stratum_struct_name, content)
-    });
+    let pre_stratum_struct_def = pre_stratum_content
+        .map(|content| generate_ascent_struct(&pre_stratum_struct_name, content));
 
     // Sprint 5: Generate pre-stratum run + seed blocks (used in run_ascent_typed)
     let (pre_stratum_block, seed_from_pre_stratum) = if pre_stratum_content.is_some() {
@@ -2629,7 +2638,8 @@ fn generate_language_struct_multi(
                         && r.term_context.as_ref().is_some_and(|ctx| {
                             ctx.iter().any(|p| match p {
                                 mettail_ast::grammar::TermParam::Simple {
-                                    ty: mettail_ast::types::TypeExpr::Base(ref id), ..
+                                    ty: mettail_ast::types::TypeExpr::Base(ref id),
+                                    ..
                                 } => id == cat,
                                 _ => false,
                             })
@@ -4010,27 +4020,19 @@ fn classify_rule_for_cek(rule: &GrammarRule) -> CekRuleKind {
                 // Look for Terminal between the two param references
                 for item in syntax_pattern {
                     if let mettail_ast::grammar::SyntaxExpr::Literal(op) = item {
-                        return CekRuleKind::Infix {
-                            operator: op.clone(),
-                        };
+                        return CekRuleKind::Infix { operator: op.clone() };
                     }
                 }
             }
             if simple_count == 1 {
                 // Check if first item is a terminal (unary prefix)
-                if let Some(mettail_ast::grammar::SyntaxExpr::Literal(op)) =
-                    syntax_pattern.first()
+                if let Some(mettail_ast::grammar::SyntaxExpr::Literal(op)) = syntax_pattern.first()
                 {
-                    return CekRuleKind::UnaryPrefix {
-                        operator: op.clone(),
-                    };
+                    return CekRuleKind::UnaryPrefix { operator: op.clone() };
                 }
                 // Check if last item is a terminal (unary postfix)
-                if let Some(mettail_ast::grammar::SyntaxExpr::Literal(op)) = syntax_pattern.last()
-                {
-                    return CekRuleKind::UnaryPostfix {
-                        operator: op.clone(),
-                    };
+                if let Some(mettail_ast::grammar::SyntaxExpr::Literal(op)) = syntax_pattern.last() {
+                    return CekRuleKind::UnaryPostfix { operator: op.clone() };
                 }
             }
         }
@@ -4067,9 +4069,7 @@ fn classify_rule_for_cek(rule: &GrammarRule) -> CekRuleKind {
 
     if !collections.is_empty() {
         if let GrammarItem::Collection { separator, .. } = collections[0] {
-            return CekRuleKind::Collection {
-                separator: separator.clone(),
-            };
+            return CekRuleKind::Collection { separator: separator.clone() };
         }
     }
 
@@ -4079,22 +4079,16 @@ fn classify_rule_for_cek(rule: &GrammarRule) -> CekRuleKind {
 
     if nonterminals.len() == 2 && !terminals.is_empty() {
         // Infix: pick the first terminal as operator
-        return CekRuleKind::Infix {
-            operator: terminals[0].clone(),
-        };
+        return CekRuleKind::Infix { operator: terminals[0].clone() };
     }
 
     if nonterminals.len() == 1 && !terminals.is_empty() {
         // Check if terminal comes before or after the nonterminal
         if let Some(GrammarItem::Terminal(op)) = rule.items.first() {
-            return CekRuleKind::UnaryPrefix {
-                operator: op.clone(),
-            };
+            return CekRuleKind::UnaryPrefix { operator: op.clone() };
         }
         if let Some(GrammarItem::Terminal(op)) = rule.items.last() {
-            return CekRuleKind::UnaryPostfix {
-                operator: op.clone(),
-            };
+            return CekRuleKind::UnaryPostfix { operator: op.clone() };
         }
     }
 
@@ -4115,7 +4109,9 @@ fn rule_field_count(rule: &GrammarRule) -> usize {
         fn count_one(p: &mettail_ast::grammar::TermParam) -> usize {
             use mettail_ast::grammar::TermParam;
             match p {
-                TermParam::Simple { .. } | TermParam::MultiAbstraction { .. } | TermParam::Abstraction { .. } => 1,
+                TermParam::Simple { .. }
+                | TermParam::MultiAbstraction { .. }
+                | TermParam::Abstraction { .. } => 1,
                 TermParam::GuardBody { .. } => 0,
                 TermParam::Optional { params: inner } => inner.iter().map(count_one).sum(),
             }
@@ -4125,10 +4121,7 @@ fn rule_field_count(rule: &GrammarRule) -> usize {
         rule.items
             .iter()
             .filter(|i| {
-                matches!(
-                    i,
-                    GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. }
-                )
+                matches!(i, GrammarItem::NonTerminal { .. } | GrammarItem::Collection { .. })
             })
             .count()
     }

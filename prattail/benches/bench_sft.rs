@@ -15,9 +15,7 @@ fn bench_transduce_identity(c: &mut Criterion) {
 
     let input: Vec<i64> = (0..100).collect();
 
-    c.bench_function("sft/transduce_identity", |b| {
-        b.iter(|| sft.transduce(&input))
-    });
+    c.bench_function("sft/transduce_identity", |b| b.iter(|| sft.transduce(&input)));
 }
 
 fn bench_transduce_case_fold(c: &mut Criterion) {
@@ -26,9 +24,7 @@ fn bench_transduce_case_fold(c: &mut Criterion) {
         .chars()
         .collect();
 
-    c.bench_function("sft/transduce_case_fold", |b| {
-        b.iter(|| sft.transduce(&input))
-    });
+    c.bench_function("sft/transduce_case_fold", |b| b.iter(|| sft.transduce(&input)));
 }
 
 fn bench_compose_chain(c: &mut Criterion) {
@@ -43,9 +39,7 @@ fn bench_compose_chain(c: &mut Criterion) {
         })
         .collect();
 
-    c.bench_function("sft/compose_chain", |b| {
-        b.iter(|| compose_chain(&chain))
-    });
+    c.bench_function("sft/compose_chain", |b| b.iter(|| compose_chain(&chain)));
 }
 
 fn bench_pre_image(c: &mut Criterion) {
@@ -60,9 +54,7 @@ fn bench_pre_image(c: &mut Criterion) {
     acceptor.set_initial(s0);
     acceptor.add_transition(s0, s0, IntervalPred::Range(0, 500));
 
-    c.bench_function("sft/pre_image", |b| {
-        b.iter(|| sft.pre_image(&acceptor))
-    });
+    c.bench_function("sft/pre_image", |b| b.iter(|| sft.pre_image(&acceptor)));
 }
 
 fn bench_is_functional(c: &mut Criterion) {
@@ -86,9 +78,7 @@ fn bench_is_functional(c: &mut Criterion) {
         );
     }
 
-    c.bench_function("sft/is_functional", |b| {
-        b.iter(|| sft.is_functional())
-    });
+    c.bench_function("sft/is_functional", |b| b.iter(|| sft.is_functional()));
 }
 
 criterion_group!(

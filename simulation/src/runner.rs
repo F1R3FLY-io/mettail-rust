@@ -138,22 +138,14 @@ pub fn save_regression_seed(path: &Path, seed: &[u8; 32]) {
     {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "Warning: failed to save regression seed to {}: {}",
-                path.display(),
-                e
-            );
+            eprintln!("Warning: failed to save regression seed to {}: {}", path.display(), e);
             return;
-        }
+        },
     };
 
     let hex = seed_to_hex(seed);
     if let Err(e) = writeln!(file, "{}", hex) {
-        eprintln!(
-            "Warning: failed to write regression seed to {}: {}",
-            path.display(),
-            e
-        );
+        eprintln!("Warning: failed to write regression seed to {}: {}", path.display(), e);
     }
 }
 
@@ -174,23 +166,15 @@ pub fn remove_regression_seed(path: &Path, seed: &[u8; 32]) {
     let mut file = match std::fs::File::create(path) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!(
-                "Warning: failed to rewrite regression file {}: {}",
-                path.display(),
-                e
-            );
+            eprintln!("Warning: failed to rewrite regression file {}: {}", path.display(), e);
             return;
-        }
+        },
     };
 
     for s in &filtered {
         let hex = seed_to_hex(s);
         if let Err(e) = writeln!(file, "{}", hex) {
-            eprintln!(
-                "Warning: failed to write seed to {}: {}",
-                path.display(),
-                e
-            );
+            eprintln!("Warning: failed to write seed to {}: {}", path.display(), e);
             return;
         }
     }
@@ -278,9 +262,7 @@ impl<'a> SimulationRunner<'a> {
                     seed: seed_str.clone(),
                     language: language_name.clone(),
                     steps,
-                    outcome: TraceOutcome::Error {
-                        message: format!("Parse error: {}", e),
-                    },
+                    outcome: TraceOutcome::Error { message: format!("Parse error: {}", e) },
                     morphology: morphology_tracker.as_ref().map(|t| t.summary()),
                 };
                 return Err(SimulationFailure {
@@ -289,7 +271,7 @@ impl<'a> SimulationRunner<'a> {
                     trace,
                     error: format!("Parse error: {}", e),
                 });
-            }
+            },
         };
 
         let term_display = format!("{}", term);
@@ -301,10 +283,7 @@ impl<'a> SimulationRunner<'a> {
         steps.push(TraceEntry {
             step_index,
             term_display: term_display.clone(),
-            operation: SimOperation::Parse {
-                input: input.to_string(),
-            }
-            .label(),
+            operation: SimOperation::Parse { input: input.to_string() }.label(),
             metrics: Some(metrics.clone()),
         });
 
@@ -332,9 +311,7 @@ impl<'a> SimulationRunner<'a> {
                     seed: seed_str.clone(),
                     language: language_name.clone(),
                     steps,
-                    outcome: TraceOutcome::Error {
-                        message: format!("Ascent error: {}", e),
-                    },
+                    outcome: TraceOutcome::Error { message: format!("Ascent error: {}", e) },
                     morphology: morphology_tracker.as_ref().map(|t| t.summary()),
                 };
                 return Err(SimulationFailure {
@@ -343,7 +320,7 @@ impl<'a> SimulationRunner<'a> {
                     trace,
                     error: format!("Ascent error: {}", e),
                 });
-            }
+            },
         };
 
         // Step 3: Walk the rewrite graph iteratively (trampoline-style BFS)
@@ -417,7 +394,7 @@ impl<'a> SimulationRunner<'a> {
                     let ka = (ia.display.len(), ia.display.as_str(), a.0);
                     let kb = (ib.display.len(), ib.display.as_str(), b.0);
                     ka.cmp(&kb)
-                }
+                },
                 _ => a.0.cmp(&b.0),
             }
         });
@@ -481,18 +458,13 @@ impl<'a> SimulationRunner<'a> {
                 .find(|t| t.term_id == nf_id)
                 .map(|t| t.display.clone())
                 .unwrap_or_else(|| "?".to_string());
-            TraceOutcome::NormalForm {
-                term: nf_display,
-                steps: step_index,
-            }
+            TraceOutcome::NormalForm { term: nf_display, steps: step_index }
         } else if results.all_terms.len() > self.config.max_steps {
             let last_display = steps
                 .last()
                 .map(|s| s.term_display.clone())
                 .unwrap_or_default();
-            TraceOutcome::StepLimitReached {
-                final_term: last_display,
-            }
+            TraceOutcome::StepLimitReached { final_term: last_display }
         } else {
             // No normal form found but didn't hit step limit.
             // Check if there are any normal forms at all.
@@ -512,10 +484,7 @@ impl<'a> SimulationRunner<'a> {
                 }
             } else {
                 // Truly empty results (identity term?).
-                TraceOutcome::NormalForm {
-                    term: term_display,
-                    steps: step_index,
-                }
+                TraceOutcome::NormalForm { term: term_display, steps: step_index }
             }
         };
 
@@ -608,10 +577,7 @@ impl<'a> SimulationRunner<'a> {
             }
             for reg_seed in &regression_seeds {
                 // Build a deterministic runner with this seed.
-                let reg_config = proptest::test_runner::Config {
-                    cases: 1,
-                    ..Default::default()
-                };
+                let reg_config = proptest::test_runner::Config { cases: 1, ..Default::default() };
                 let mut reg_runner = TestRunner::new_with_rng(
                     reg_config,
                     proptest::test_runner::TestRng::from_seed(
@@ -627,7 +593,7 @@ impl<'a> SimulationRunner<'a> {
                         // If we can't generate, the seed is stale; remove it.
                         remove_regression_seed(regression_path, reg_seed);
                         continue;
-                    }
+                    },
                 };
                 let input = value_tree.current();
                 let seed_hex = seed_to_hex(reg_seed);
@@ -643,15 +609,12 @@ impl<'a> SimulationRunner<'a> {
                             "    Regression seed {} now passes (removed from file)",
                             &seed_hex[..16]
                         );
-                    }
+                    },
                     Ok(Err(failure)) => {
                         // Still fails: keep in file, add to results.
                         results.record_failure(failure);
-                        eprintln!(
-                            "    Regression seed {} still fails",
-                            &seed_hex[..16]
-                        );
-                    }
+                        eprintln!("    Regression seed {} still fails", &seed_hex[..16]);
+                    },
                     Err(panic_payload) => {
                         // Evaluation panicked (e.g., arithmetic overflow).
                         // Record as failure, keep in regression file.
@@ -670,11 +633,8 @@ impl<'a> SimulationRunner<'a> {
                             },
                             error: format!("panic during evaluation: {}", msg),
                         });
-                        eprintln!(
-                            "    Regression seed {} panicked: {}",
-                            &seed_hex[..16], msg
-                        );
-                    }
+                        eprintln!("    Regression seed {} panicked: {}", &seed_hex[..16], msg);
+                    },
                 }
             }
         }
@@ -709,7 +669,7 @@ impl<'a> SimulationRunner<'a> {
                     // Strategy exhausted or generation failure; skip.
                     case_index += 1;
                     continue;
-                }
+                },
             };
 
             let input = value_tree.current();
@@ -733,8 +693,9 @@ impl<'a> SimulationRunner<'a> {
                             agg.record(TermMetrics {
                                 node_count: morph.max_nodes,
                                 depth: morph.max_depth,
-                                structural_fingerprint:
-                                    crate::morphology::fingerprint_of(final_display),
+                                structural_fingerprint: crate::morphology::fingerprint_of(
+                                    final_display,
+                                ),
                             });
                         }
                     }
@@ -742,7 +703,10 @@ impl<'a> SimulationRunner<'a> {
                     // Record rule coverage from trace.
                     for entry in &trace.steps {
                         if entry.operation.starts_with("rewrite:") {
-                            let rule = entry.operation.strip_prefix("rewrite:").unwrap_or(&entry.operation);
+                            let rule = entry
+                                .operation
+                                .strip_prefix("rewrite:")
+                                .unwrap_or(&entry.operation);
                             results.coverage.record_rule(rule);
                         } else if entry.operation == "rewrite" {
                             results.coverage.record_rule("(unnamed)");
@@ -759,7 +723,7 @@ impl<'a> SimulationRunner<'a> {
                     }
 
                     results.record_pass();
-                }
+                },
                 Ok(Err(failure)) => {
                     // Also fingerprint into the aggregate tracker on
                     // failure — failing shapes are still part of the
@@ -775,8 +739,9 @@ impl<'a> SimulationRunner<'a> {
                             agg.record(TermMetrics {
                                 node_count: morph.max_nodes,
                                 depth: morph.max_depth,
-                                structural_fingerprint:
-                                    crate::morphology::fingerprint_of(final_display),
+                                structural_fingerprint: crate::morphology::fingerprint_of(
+                                    final_display,
+                                ),
                             });
                         }
                     }
@@ -811,7 +776,7 @@ impl<'a> SimulationRunner<'a> {
                     }
 
                     results.record_failure(shrunk_failure);
-                }
+                },
                 Err(panic_payload) => {
                     // Evaluation panicked (e.g., arithmetic overflow).
                     let msg = panic_payload_to_string(panic_payload);
@@ -837,14 +802,11 @@ impl<'a> SimulationRunner<'a> {
                     }
 
                     if self.config.verbose {
-                        eprintln!(
-                            "  [{}] panic  input={:?} msg={}",
-                            seed_str, input, msg,
-                        );
+                        eprintln!("  [{}] panic  input={:?} msg={}", seed_str, input, msg,);
                     }
 
                     results.record_failure(failure);
-                }
+                },
             }
 
             case_index += 1;
@@ -897,7 +859,7 @@ impl<'a> SimulationRunner<'a> {
                     if !value_tree.complicate() {
                         break;
                     }
-                }
+                },
                 Ok(Err(failure)) => {
                     // Still fails; record and try shrinking more.
                     best_failure = SimulationFailure {
@@ -906,7 +868,7 @@ impl<'a> SimulationRunner<'a> {
                         trace: failure.trace,
                         error: failure.error,
                     };
-                }
+                },
                 Err(panic_payload) => {
                     // Panicked during shrinking — still a failure.
                     let msg = panic_payload_to_string(panic_payload);
@@ -924,7 +886,7 @@ impl<'a> SimulationRunner<'a> {
                         },
                         error: format!("panic during shrinking: {}", msg),
                     };
-                }
+                },
             }
         }
 
@@ -993,10 +955,9 @@ mod tests {
     #[test]
     fn test_seed_to_hex_roundtrip() {
         let seed: [u8; 32] = [
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
-            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-            0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
+            0x32, 0x10, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+            0xcc, 0xdd, 0xee, 0xff,
         ];
         let hex = seed_to_hex(&seed);
         assert_eq!(hex.len(), 64);

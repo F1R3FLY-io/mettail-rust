@@ -137,10 +137,7 @@ impl Term {
 
     /// Create a term node with the given symbol and children.
     pub fn node(symbol: impl Into<String>, children: Vec<Term>) -> Self {
-        Term {
-            symbol: symbol.into(),
-            children,
-        }
+        Term { symbol: symbol.into(), children }
     }
 }
 
@@ -209,12 +206,8 @@ impl<W: Semiring> ParityAlternatingTreeAutomaton<W> {
         label: Option<String>,
     ) -> usize {
         let id = self.states.len();
-        self.states.push(ParityTreeState {
-            id,
-            branching,
-            priority,
-            label,
-        });
+        self.states
+            .push(ParityTreeState { id, branching, priority, label });
         id
     }
 
@@ -227,11 +220,8 @@ impl<W: Semiring> ParityAlternatingTreeAutomaton<W> {
         directions: Vec<(usize, usize, W)>,
     ) {
         self.alphabet.insert(symbol.clone());
-        self.transitions.push(ParityTreeTransition {
-            from,
-            symbol,
-            directions,
-        });
+        self.transitions
+            .push(ParityTreeTransition { from, symbol, directions });
     }
 
     /// Number of states.
@@ -341,6 +331,25 @@ pub enum MuCalculusFormula {
     },
 }
 
+/// Errors produced while compiling modal mu-calculus formulas to PATA.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MuCalculusCompileError {
+    /// A variable reference appears outside the scope of a matching fixpoint.
+    UnboundVariable { var: String },
+}
+
+impl fmt::Display for MuCalculusCompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MuCalculusCompileError::UnboundVariable { var } => {
+                write!(f, "unbound mu-calculus variable `{}`", var)
+            },
+        }
+    }
+}
+
+impl std::error::Error for MuCalculusCompileError {}
+
 impl fmt::Display for MuCalculusFormula {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -353,10 +362,10 @@ impl fmt::Display for MuCalculusFormula {
             MuCalculusFormula::Or(phi, psi) => write!(f, "({} \\/ {})", phi, psi),
             MuCalculusFormula::Diamond { child_idx, body } => {
                 write!(f, "<{}>.({})", child_idx, body)
-            }
+            },
             MuCalculusFormula::Box { child_idx, body } => {
                 write!(f, "[{}].({})", child_idx, body)
-            }
+            },
             MuCalculusFormula::Mu { var, body } => write!(f, "mu {}.{}", var, body),
             MuCalculusFormula::Nu { var, body } => write!(f, "nu {}.{}", var, body),
         }
@@ -522,12 +531,16 @@ pub fn check_emptiness(automaton: &ParityAlternatingTreeAutomaton<BooleanWeight>
             let new_status = match automaton.states[s].branching {
                 BranchingMode::Existential => {
                     // At least one transition must be satisfied.
-                    transitions_from[s].iter().any(|targets| transition_satisfied(targets))
-                }
+                    transitions_from[s]
+                        .iter()
+                        .any(|targets| transition_satisfied(targets))
+                },
                 BranchingMode::Universal => {
                     // ALL transitions must be satisfied.
-                    transitions_from[s].iter().all(|targets| transition_satisfied(targets))
-                }
+                    transitions_from[s]
+                        .iter()
+                        .all(|targets| transition_satisfied(targets))
+                },
             };
 
             if new_status {
@@ -613,7 +626,7 @@ pub fn evaluate_term(
                     // For leaves with even priority, this state could accept
                     // vacuously if it has no transitions at all on any symbol.
                     // But without a matching transition, we cannot accept.
-                }
+                },
                 Some(trans_list) => {
                     // Check if any/all transitions (depending on branching mode)
                     // lead to acceptance.
@@ -638,7 +651,7 @@ pub fn evaluate_term(
                                     })
                                 }
                             })
-                        }
+                        },
                         BranchingMode::Universal => {
                             // ALL transitions must have all their directions satisfied.
                             trans_list.iter().all(|directions| {
@@ -657,13 +670,13 @@ pub fn evaluate_term(
                                     })
                                 }
                             })
-                        }
+                        },
                     };
 
                     if result {
                         accepting_states.insert(sid);
                     }
-                }
+                },
             }
         }
 
@@ -701,21 +714,30 @@ pub fn mu_calculus_to_pata(
     formula: &MuCalculusFormula,
     max_arity: usize,
 ) -> ParityAlternatingTreeAutomaton<BooleanWeight> {
+    try_mu_calculus_to_pata(formula, max_arity).unwrap_or_else(|err| {
+        panic!("failed to compile mu-calculus formula `{}` to PATA: {}", formula, err)
+    })
+}
+
+/// Checked compiler from modal mu-calculus formulas to parity alternating tree
+/// automata.
+///
+/// Unlike [`mu_calculus_to_pata`], this function reports ill-scoped formulas
+/// instead of panicking.
+pub fn try_mu_calculus_to_pata(
+    formula: &MuCalculusFormula,
+    max_arity: usize,
+) -> Result<ParityAlternatingTreeAutomaton<BooleanWeight>, MuCalculusCompileError> {
     let mut automaton = ParityAlternatingTreeAutomaton::new(max_arity);
     // Track variable -> state ID bindings for fixpoint references.
     let mut var_env: HashMap<String, usize> = HashMap::new();
     // Track priority allocation: each new fixpoint gets a fresh priority level.
     let mut next_priority: u32 = 0;
 
-    let initial = compile_formula(
-        formula,
-        &mut automaton,
-        &mut var_env,
-        &mut next_priority,
-    );
+    let initial = compile_formula(formula, &mut automaton, &mut var_env, &mut next_priority)?;
     automaton.initial_state = Some(initial);
 
-    automaton
+    Ok(automaton)
 }
 
 /// Recursive helper for `mu_calculus_to_pata`.
@@ -726,54 +748,39 @@ fn compile_formula(
     automaton: &mut ParityAlternatingTreeAutomaton<BooleanWeight>,
     var_env: &mut HashMap<String, usize>,
     next_priority: &mut u32,
-) -> usize {
+) -> Result<usize, MuCalculusCompileError> {
     match formula {
         MuCalculusFormula::True => {
             // Accepting leaf: existential state with even priority, no transitions needed.
             // Any tree node matches — we add a wildcard-like behavior by adding
             // a transition for each symbol in the alphabet, or by using priority alone.
-            automaton.add_state(BranchingMode::Existential, 0, Some("true".to_string()))
-        }
+            Ok(automaton.add_state(BranchingMode::Existential, 0, Some("true".to_string())))
+        },
 
         MuCalculusFormula::False => {
             // Rejecting leaf: existential state with odd priority.
-            automaton.add_state(BranchingMode::Existential, 1, Some("false".to_string()))
-        }
+            Ok(automaton.add_state(BranchingMode::Existential, 1, Some("false".to_string())))
+        },
 
-        MuCalculusFormula::Var(x) => {
-            // Look up the fixpoint variable's state. If not bound, create a
-            // dangling reference (the fixpoint operator will wire it up).
-            if let Some(&state_id) = var_env.get(x) {
-                state_id
-            } else {
-                // Create a placeholder state that will be wired by the enclosing
-                // fixpoint. Use even priority as a default; the fixpoint will
-                // override.
-                automaton.add_state(
-                    BranchingMode::Existential,
-                    0,
-                    Some(format!("var:{}", x)),
-                )
-            }
-        }
+        MuCalculusFormula::Var(x) => var_env
+            .get(x)
+            .copied()
+            .ok_or_else(|| MuCalculusCompileError::UnboundVariable { var: x.clone() }),
 
         MuCalculusFormula::Atom(a) => {
             // Existential state that matches nodes with symbol `a`.
             // Create a state and add a transition on symbol `a` with no child
             // directions (matches the node itself, regardless of children).
-            let state = automaton.add_state(
-                BranchingMode::Existential,
-                0,
-                Some(format!("atom:{}", a)),
-            );
+            let state =
+                automaton.add_state(BranchingMode::Existential, 0, Some(format!("atom:{}", a)));
             automaton.add_transition(state, a.clone(), Vec::new());
-            state
-        }
+            Ok(state)
+        },
 
         MuCalculusFormula::Not(phi) => {
             // Complement: compile the inner formula, then create a new automaton
             // that flips branching and priorities.
-            let inner = compile_formula(phi, automaton, var_env, next_priority);
+            let inner = compile_formula(phi, automaton, var_env, next_priority)?;
             // Create a state that mirrors the inner state with flipped branching.
             let inner_branching = automaton.states[inner].branching;
             let inner_priority = automaton.states[inner].priority;
@@ -803,13 +810,13 @@ fn compile_formula(
             for t in inner_transitions {
                 automaton.add_transition(neg_state, t.symbol, t.directions);
             }
-            neg_state
-        }
+            Ok(neg_state)
+        },
 
         MuCalculusFormula::And(phi, psi) => {
             // Universal state: both subformulas must be satisfied.
-            let phi_state = compile_formula(phi, automaton, var_env, next_priority);
-            let psi_state = compile_formula(psi, automaton, var_env, next_priority);
+            let phi_state = compile_formula(phi, automaton, var_env, next_priority)?;
+            let psi_state = compile_formula(psi, automaton, var_env, next_priority)?;
             let and_state = automaton.add_state(
                 BranchingMode::Universal,
                 0,
@@ -828,13 +835,13 @@ fn compile_formula(
                 "_and_right".to_string(),
                 vec![(0, psi_state, BooleanWeight::one())],
             );
-            and_state
-        }
+            Ok(and_state)
+        },
 
         MuCalculusFormula::Or(phi, psi) => {
             // Existential state: at least one subformula must be satisfied.
-            let phi_state = compile_formula(phi, automaton, var_env, next_priority);
-            let psi_state = compile_formula(psi, automaton, var_env, next_priority);
+            let phi_state = compile_formula(phi, automaton, var_env, next_priority)?;
+            let psi_state = compile_formula(psi, automaton, var_env, next_priority)?;
             let or_state = automaton.add_state(
                 BranchingMode::Existential,
                 0,
@@ -850,12 +857,12 @@ fn compile_formula(
                 "_or_right".to_string(),
                 vec![(0, psi_state, BooleanWeight::one())],
             );
-            or_state
-        }
+            Ok(or_state)
+        },
 
         MuCalculusFormula::Diamond { child_idx, body } => {
             // Existential modality: some `child_idx`-th child satisfies `body`.
-            let body_state = compile_formula(body, automaton, var_env, next_priority);
+            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
             let diamond_state = automaton.add_state(
                 BranchingMode::Existential,
                 0,
@@ -867,12 +874,12 @@ fn compile_formula(
                 format!("_diamond_{}", child_idx),
                 vec![(*child_idx, body_state, BooleanWeight::one())],
             );
-            diamond_state
-        }
+            Ok(diamond_state)
+        },
 
         MuCalculusFormula::Box { child_idx, body } => {
             // Universal modality: all `child_idx`-th children satisfy `body`.
-            let body_state = compile_formula(body, automaton, var_env, next_priority);
+            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
             let box_state = automaton.add_state(
                 BranchingMode::Universal,
                 0,
@@ -883,8 +890,8 @@ fn compile_formula(
                 format!("_box_{}", child_idx),
                 vec![(*child_idx, body_state, BooleanWeight::one())],
             );
-            box_state
-        }
+            Ok(box_state)
+        },
 
         MuCalculusFormula::Mu { var, body } => {
             // Least fixpoint: mu X. phi
@@ -898,16 +905,21 @@ fn compile_formula(
             );
             // Bind the variable to this state before compiling the body
             // (the body may reference X).
-            var_env.insert(var.clone(), mu_state);
-            let body_state = compile_formula(body, automaton, var_env, next_priority);
+            let previous = var_env.insert(var.clone(), mu_state);
+            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
+            if let Some(prev_state) = previous {
+                var_env.insert(var.clone(), prev_state);
+            } else {
+                var_env.remove(var);
+            }
             // Wire the mu state to the body: transition to the body's start state.
             automaton.add_transition(
                 mu_state,
                 format!("_mu_{}", var),
                 vec![(0, body_state, BooleanWeight::one())],
             );
-            mu_state
-        }
+            Ok(mu_state)
+        },
 
         MuCalculusFormula::Nu { var, body } => {
             // Greatest fixpoint: nu X. phi
@@ -919,15 +931,20 @@ fn compile_formula(
                 priority,
                 Some(format!("nu:{}", var)),
             );
-            var_env.insert(var.clone(), nu_state);
-            let body_state = compile_formula(body, automaton, var_env, next_priority);
+            let previous = var_env.insert(var.clone(), nu_state);
+            let body_state = compile_formula(body, automaton, var_env, next_priority)?;
+            if let Some(prev_state) = previous {
+                var_env.insert(var.clone(), prev_state);
+            } else {
+                var_env.remove(var);
+            }
             automaton.add_transition(
                 nu_state,
                 format!("_nu_{}", var),
                 vec![(0, body_state, BooleanWeight::one())],
             );
-            nu_state
-        }
+            Ok(nu_state)
+        },
     }
 }
 
@@ -1033,7 +1050,7 @@ fn intersect(
             let branching = match (sa.branching, sb.branching) {
                 (BranchingMode::Universal, _) | (_, BranchingMode::Universal) => {
                     BranchingMode::Universal
-                }
+                },
                 _ => BranchingMode::Existential,
             };
             // Priority: interleave priorities from both components using the
@@ -1096,20 +1113,12 @@ fn intersect(
                                 // Target in A maps to product state (tgt_a, qb).
                                 // Use qb as the "unchanged" component for A's directions.
                                 for qb_inner in 0..nb {
-                                    merged.push((
-                                        ci,
-                                        product_id(tgt_a, qb_inner),
-                                        w,
-                                    ));
+                                    merged.push((ci, product_id(tgt_a, qb_inner), w));
                                 }
                             }
                             for &(ci, tgt_b, w) in b_dirs.iter() {
                                 for qa_inner in 0..na {
-                                    merged.push((
-                                        ci,
-                                        product_id(qa_inner, tgt_b),
-                                        w,
-                                    ));
+                                    merged.push((ci, product_id(qa_inner, tgt_b), w));
                                 }
                             }
                             product.add_transition(pid, sym.to_string(), merged);
@@ -1137,9 +1146,7 @@ fn intersect(
 }
 
 /// Analyze a PATA and produce a summary.
-pub fn analyze(
-    automaton: &ParityAlternatingTreeAutomaton<BooleanWeight>,
-) -> ParityTreeAnalysis {
+pub fn analyze(automaton: &ParityAlternatingTreeAutomaton<BooleanWeight>) -> ParityTreeAnalysis {
     ParityTreeAnalysis {
         num_states: automaton.num_states(),
         max_priority: automaton.max_priority(),
@@ -1204,10 +1211,7 @@ mod tests {
         pata.add_transition(
             q0,
             "f".to_string(),
-            vec![
-                (0, q1, BooleanWeight::one()),
-                (1, q2, BooleanWeight::one()),
-            ],
+            vec![(0, q1, BooleanWeight::one()), (1, q2, BooleanWeight::one())],
         );
 
         assert_eq!(pata.num_states(), 3);
@@ -1254,11 +1258,7 @@ mod tests {
         let q0 = pata.add_state(BranchingMode::Existential, 1, None);
         let q1 = pata.add_state(BranchingMode::Existential, 0, None);
         pata.initial_state = Some(q0);
-        pata.add_transition(
-            q0,
-            "f".to_string(),
-            vec![(0, q1, BooleanWeight::one())],
-        );
+        pata.add_transition(q0, "f".to_string(), vec![(0, q1, BooleanWeight::one())]);
         assert!(!check_emptiness(&pata)); // q1 accepts, so q0 accepts via existential
     }
 
@@ -1275,10 +1275,7 @@ mod tests {
         pata.add_transition(
             q0,
             "f".to_string(),
-            vec![
-                (0, q1, BooleanWeight::one()),
-                (1, q2, BooleanWeight::one()),
-            ],
+            vec![(0, q1, BooleanWeight::one()), (1, q2, BooleanWeight::one())],
         );
         assert!(!check_emptiness(&pata)); // both accept => universal accepts
     }
@@ -1296,10 +1293,7 @@ mod tests {
         pata.add_transition(
             q0,
             "f".to_string(),
-            vec![
-                (0, q1, BooleanWeight::one()),
-                (1, q2, BooleanWeight::one()),
-            ],
+            vec![(0, q1, BooleanWeight::one()), (1, q2, BooleanWeight::one())],
         );
         assert!(check_emptiness(&pata)); // q2 rejects => universal fails => empty
     }
@@ -1337,10 +1331,7 @@ mod tests {
         pata.add_transition(
             q0,
             "f".to_string(),
-            vec![
-                (0, q1, BooleanWeight::one()),
-                (1, q2, BooleanWeight::one()),
-            ],
+            vec![(0, q1, BooleanWeight::one()), (1, q2, BooleanWeight::one())],
         );
         pata.add_transition(q1, "a".to_string(), Vec::new());
         pata.add_transition(q2, "b".to_string(), Vec::new());
@@ -1420,11 +1411,7 @@ mod tests {
         let init = pata.initial_state.expect("should have initial state");
         assert_eq!(pata.states[init].branching, BranchingMode::Existential);
         // Should have a transition with child_idx=0 in its directions.
-        let init_trans: Vec<_> = pata
-            .transitions
-            .iter()
-            .filter(|t| t.from == init)
-            .collect();
+        let init_trans: Vec<_> = pata.transitions.iter().filter(|t| t.from == init).collect();
         assert!(!init_trans.is_empty());
         let has_child_0_dir = init_trans
             .iter()
@@ -1470,6 +1457,30 @@ mod tests {
         assert_eq!(pata.states[init].priority % 2, 0);
     }
 
+    #[test]
+    fn mu_calculus_rejects_free_variable() {
+        let formula = MuCalculusFormula::Var("X".to_string());
+        let err = try_mu_calculus_to_pata(&formula, 2)
+            .err()
+            .expect("free variable should fail compilation");
+        assert_eq!(err, MuCalculusCompileError::UnboundVariable { var: "X".to_string() });
+    }
+
+    #[test]
+    fn mu_calculus_restores_fixpoint_scope() {
+        let formula = MuCalculusFormula::And(
+            Box::new(MuCalculusFormula::Mu {
+                var: "X".to_string(),
+                body: Box::new(MuCalculusFormula::Var("X".to_string())),
+            }),
+            Box::new(MuCalculusFormula::Var("X".to_string())),
+        );
+        let err = try_mu_calculus_to_pata(&formula, 2)
+            .err()
+            .expect("variable should not escape the left fixpoint branch");
+        assert_eq!(err, MuCalculusCompileError::UnboundVariable { var: "X".to_string() });
+    }
+
     // ─── check_inclusion ────────────────────────────────────────────────
 
     #[test]
@@ -1496,13 +1507,7 @@ mod tests {
         assert_eq!(node.to_string(), "f(a, b)");
         assert_eq!(node.children.len(), 2);
 
-        let nested = Term::node(
-            "g",
-            vec![
-                Term::node("f", vec![Term::leaf("x")]),
-                Term::leaf("y"),
-            ],
-        );
+        let nested = Term::node("g", vec![Term::node("f", vec![Term::leaf("x")]), Term::leaf("y")]);
         assert_eq!(nested.to_string(), "g(f(x), y)");
     }
 
@@ -1513,10 +1518,7 @@ mod tests {
         assert_eq!(MuCalculusFormula::True.to_string(), "true");
         assert_eq!(MuCalculusFormula::False.to_string(), "false");
         assert_eq!(MuCalculusFormula::Var("X".to_string()).to_string(), "X");
-        assert_eq!(
-            MuCalculusFormula::Atom("f".to_string()).to_string(),
-            "\"f\""
-        );
+        assert_eq!(MuCalculusFormula::Atom("f".to_string()).to_string(), "\"f\"");
         assert_eq!(
             MuCalculusFormula::Not(Box::new(MuCalculusFormula::True)).to_string(),
             "~(true)"
@@ -1646,11 +1648,7 @@ mod tests {
             ParityAlternatingTreeAutomaton::new(2);
         pata.add_state(BranchingMode::Existential, 0, None);
         pata.add_state(BranchingMode::Universal, 1, None);
-        pata.add_transition(
-            0,
-            "f".to_string(),
-            vec![(0, 1, BooleanWeight::one())],
-        );
+        pata.add_transition(0, "f".to_string(), vec![(0, 1, BooleanWeight::one())]);
         assert_eq!(
             pata.to_string(),
             "PATA { states: 2, transitions: 1, max_priority: 1, max_arity: 2 }"
@@ -1720,17 +1718,11 @@ mod tests {
         );
 
         let is_empty = check_emptiness(&pata);
-        assert!(
-            is_empty,
-            "universal state with one rejecting child (odd leaf) should be empty"
-        );
+        assert!(is_empty, "universal state with one rejecting child (odd leaf) should be empty");
 
         // Now make q3 accepting (even priority) — should become non-empty.
         pata.states[q3].priority = 0;
         let is_empty2 = check_emptiness(&pata);
-        assert!(
-            !is_empty2,
-            "universal state with all accepting children should be non-empty"
-        );
+        assert!(!is_empty2, "universal state with all accepting children should be non-empty");
     }
 }

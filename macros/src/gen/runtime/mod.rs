@@ -9,5 +9,6 @@ pub mod environment;
 pub mod guard_codegen;
 pub mod language;
 pub mod metadata;
+#[cfg(test)]
 pub mod predicate_lower;
 pub mod wpda_codegen;

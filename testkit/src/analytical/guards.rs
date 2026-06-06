@@ -92,10 +92,7 @@ pub fn check_guard_decidability(metadata: &dyn LanguageMetadata) -> GuardResult 
         // Binder fields have a freshness guard.
         for field in term_def.fields {
             if field.is_binder {
-                guards.push(PredicateExpr::Atom(format!(
-                    "binder({})",
-                    field.name
-                )));
+                guards.push(PredicateExpr::Atom(format!("binder({})", field.name)));
             }
         }
     }
@@ -131,21 +128,20 @@ pub fn check_guard_decidability(metadata: &dyn LanguageMetadata) -> GuardResult 
                 if matches!(worst, DecidabilityTier::CompileTimeDecidable) {
                     worst = DecidabilityTier::RuntimeDecidable;
                 }
-            }
+            },
             DecidabilityTier::SemiDecidable => {
                 semi += 1;
                 if matches!(
                     worst,
-                    DecidabilityTier::CompileTimeDecidable
-                        | DecidabilityTier::RuntimeDecidable
+                    DecidabilityTier::CompileTimeDecidable | DecidabilityTier::RuntimeDecidable
                 ) {
                     worst = DecidabilityTier::SemiDecidable;
                 }
-            }
+            },
             DecidabilityTier::Undecidable => {
                 undecidable += 1;
                 worst = DecidabilityTier::Undecidable;
-            }
+            },
         }
     }
 

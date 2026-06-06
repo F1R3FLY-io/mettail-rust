@@ -82,9 +82,7 @@ pub enum RDSyntaxItem {
         kind: CollectionKind,
     },
     /// Structured body pattern: multiple items forming one logical element.
-    Map {
-        body_items: Vec<RDSyntaxItem>,
-    },
+    Map { body_items: Vec<RDSyntaxItem> },
     /// Parallel dual-accumulator collection.
     Zip {
         left_name: String,

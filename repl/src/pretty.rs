@@ -104,7 +104,7 @@ pub fn format_parse_error_with_context(input: &str, error_msg: &str) -> String {
         None => {
             // Fallback: just return raw message
             error_msg.to_string()
-        }
+        },
     }
 }
 
@@ -123,13 +123,13 @@ fn format_rich_error(input: &str, parsed: &ParsedError<'_>) -> String {
     let summary = match &parsed.kind {
         ErrorKind::UnexpectedToken { expected, found } => {
             format!("expected {}, found {}", expected, found)
-        }
+        },
         ErrorKind::UnexpectedEof { expected } => {
             format!("unexpected end of input, expected {}", expected)
-        }
+        },
         ErrorKind::TrailingTokens { found } => {
             format!("unexpected {} after parsing", found)
-        }
+        },
         ErrorKind::LexError { message } => message.to_string(),
         ErrorKind::Recovery { message } => message.to_string(),
     };

@@ -100,9 +100,8 @@ pub mod visitor;
 // `mettail-macros::logic::rules::compile_guard_to_ascent_clauses`.
 pub mod behavioral_pred;
 pub use behavioral_pred::{
-    BehavioralPred, PredArg, Quantifier, QuantifiedDomain,
-    set_pred_fact_snapshot, clear_pred_fact_snapshot,
-    evaluate_pred_with_bindings,
+    clear_pred_fact_snapshot, evaluate_pred_with_bindings, set_pred_fact_snapshot, BehavioralPred,
+    PredArg, QuantifiedDomain, Quantifier,
 };
 
 // Phase 7: refinement-type predicate registry + evaluator. Generated
@@ -111,16 +110,15 @@ pub use behavioral_pred::{
 // the refinement.
 pub mod refinement;
 pub use refinement::{
-    clear_refinement_registry, evaluate_refinement_predicate,
-    register_refinement_predicate, RefinementPredicate,
+    clear_refinement_registry, evaluate_refinement_predicate, register_refinement_predicate,
+    RefinementPredicate,
 };
 
 // T4 user assertion registry — see `t4_assertions` for full lifecycle.
 // Phase 7C of the predicated-types implementation plan.
 pub mod t4_assertions;
 pub use t4_assertions::{
-    clear_t4_assertions, register_t4_assertion, t4_assertion_lookup,
-    T4Assertion, T4AssertionHandle,
+    clear_t4_assertions, register_t4_assertion, t4_assertion_lookup, T4Assertion, T4AssertionHandle,
 };
 
 // Language-generic parsers for sub-sublanguages embedded inside
@@ -129,15 +127,14 @@ pub use t4_assertions::{
 // plan).
 pub mod parser;
 pub use parser::{
-    parse_predicate_from_str, ParseError, PredicateParser,
-    PredicateParserConfig, TerminatorToken,
+    parse_predicate_from_str, ParseError, PredicateParser, PredicateParserConfig, TerminatorToken,
 };
 
 // Re-export CEK evaluator types when cek-runtime feature is enabled,
 // so consumers don't need a direct mettail-prattail dependency.
 pub use mettail_prattail::cek_eval::{
-    CekEvaluator, EvalFrame, EvalObserver, EvalState, EvalStepEvent, NullEvalObserver,
-    StepResult, TracingEvalObserver,
+    CekEvaluator, EvalFrame, EvalObserver, EvalState, EvalStepEvent, NullEvalObserver, StepResult,
+    TracingEvalObserver,
 };
 
 // Re-export CESK store types for consumers that need store manipulation.

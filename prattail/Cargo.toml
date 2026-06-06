@@ -39,6 +39,20 @@ hang-dump = ["dep:signal-hook", "dep:parking_lot"]
 ## Use: `cargo test --features mettail-prattail/walker-stats ... \
 ##       -- --nocapture` with `PRATTAIL_WALKER_STATS=1` env var.
 walker-stats = []
+## Bench-only toggles used by criterion targets. Declaring them keeps
+## `cargo check --all-targets` check-cfg clean even when they are off.
+wfst-log = []
+set-theoretic-types = []
+## Capability labels used by predicate-dispatch conformance tests.
+buchi = []
+alternating = []
+vpa = []
+parity-tree-automata = []
+register-automata = []
+probabilistic = []
+multi-tape = []
+multiset-automata = []
+two-way-transducer = []
 
 [dependencies]
 # Note: prattail does NOT depend on runtime. fixed_lit/float_lit were moved

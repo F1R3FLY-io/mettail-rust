@@ -166,7 +166,7 @@ pub fn check_trace_ltl(
             return LtlCheckResult::ParseError {
                 message: format!("Failed to parse LTL formula '{}': {}", formula_str, e),
             };
-        }
+        },
     };
 
     // Handle empty trace: vacuously satisfied for safety, violated for liveness.
@@ -186,9 +186,9 @@ pub fn check_trace_ltl(
             atom_names
                 .iter()
                 .filter(|atom_name| {
-                    propositions
-                        .iter()
-                        .any(|prop| prop.name() == atom_name.as_str() && prop.evaluate(term_display, *is_nf))
+                    propositions.iter().any(|prop| {
+                        prop.name() == atom_name.as_str() && prop.evaluate(term_display, *is_nf)
+                    })
                 })
                 .cloned()
                 .collect()
@@ -246,11 +246,7 @@ pub fn check_trace_ltl(
         // negated atoms (e.g., !normal_form).
         for atom_name in &atom_names {
             if !label_sets[i].contains(atom_name) {
-                system.add_transition(
-                    from_state,
-                    Some(format!("!{}", atom_name)),
-                    next_state,
-                );
+                system.add_transition(from_state, Some(format!("!{}", atom_name)), next_state);
             }
         }
     }
@@ -276,18 +272,15 @@ pub fn check_trace_ltl(
                 message.push_str(&format!(". Lasso: {}", lasso.join(" -> ")));
             }
             LtlCheckResult::Violated { step, message }
-        }
+        },
         ltl::LtlCheckResult::Inconclusive { reason } => {
             // Treat inconclusive as satisfied with a note.
             // This can happen for very large state spaces.
             LtlCheckResult::Violated {
                 step: 0,
-                message: format!(
-                    "LTL check inconclusive for '{}': {}",
-                    formula_str, reason
-                ),
+                message: format!("LTL check inconclusive for '{}': {}", formula_str, reason),
             }
-        }
+        },
     }
 }
 
@@ -301,10 +294,7 @@ mod tests {
 
     /// Helper: create standard propositions for testing.
     fn standard_propositions() -> Vec<Box<dyn AtomicProposition>> {
-        vec![
-            Box::new(IsNormalForm),
-            Box::new(TermSizeBounded { bound: 100 }),
-        ]
+        vec![Box::new(IsNormalForm), Box::new(TermSizeBounded { bound: 100 })]
     }
 
     #[test]
@@ -320,7 +310,7 @@ mod tests {
         let result = check_trace_ltl(&trace, "F(normal_form)", &props);
 
         match result {
-            LtlCheckResult::Satisfied => {} // expected
+            LtlCheckResult::Satisfied => {}, // expected
             other => panic!(
                 "Expected Satisfied for F(normal_form) on trace reaching NF, got: {:?}",
                 other
@@ -331,20 +321,17 @@ mod tests {
     #[test]
     fn test_ltl_always_bounded() {
         // Trace: all terms have display length <= 100.
-        let trace: Vec<(String, bool)> = vec![
-            ("(AddInt 3 5)".to_string(), false),
-            ("8".to_string(), true),
-        ];
+        let trace: Vec<(String, bool)> =
+            vec![("(AddInt 3 5)".to_string(), false), ("8".to_string(), true)];
 
         let props = standard_propositions();
         let result = check_trace_ltl(&trace, "G(bounded_size)", &props);
 
         match result {
-            LtlCheckResult::Satisfied => {} // expected
-            other => panic!(
-                "Expected Satisfied for G(bounded_size) on bounded trace, got: {:?}",
-                other
-            ),
+            LtlCheckResult::Satisfied => {}, // expected
+            other => {
+                panic!("Expected Satisfied for G(bounded_size) on bounded trace, got: {:?}", other)
+            },
         }
     }
 
@@ -367,7 +354,7 @@ mod tests {
                     "Violation message should reference the formula: {}",
                     message
                 );
-            }
+            },
             other => panic!(
                 "Expected Violated for F(normal_form) on trace never reaching NF, got: {:?}",
                 other
@@ -388,7 +375,7 @@ mod tests {
                     "Parse error message should indicate failure: {}",
                     message
                 );
-            }
+            },
             other => panic!("Expected ParseError, got: {:?}", other),
         }
     }
@@ -400,7 +387,7 @@ mod tests {
 
         let result = check_trace_ltl(&trace, "F(normal_form)", &props);
         match result {
-            LtlCheckResult::Satisfied => {} // vacuously true
+            LtlCheckResult::Satisfied => {}, // vacuously true
             other => panic!("Expected Satisfied for empty trace, got: {:?}", other),
         }
     }
@@ -421,9 +408,7 @@ mod tests {
         assert!(!bounded.evaluate("123456", false));
 
         // ContainsSubstring
-        let contains = ContainsSubstring {
-            pattern: "Zero".to_string(),
-        };
+        let contains = ContainsSubstring { pattern: "Zero".to_string() };
         assert_eq!(contains.name(), "contains");
         assert!(contains.evaluate("PZero", false));
         assert!(!contains.evaluate("PPar", false));
@@ -438,28 +423,22 @@ mod tests {
         let result = check_trace_ltl(&trace, "F(normal_form)", &props);
 
         match result {
-            LtlCheckResult::Satisfied => {} // expected
-            other => panic!(
-                "Expected Satisfied for single-step NF trace, got: {:?}",
-                other
-            ),
+            LtlCheckResult::Satisfied => {}, // expected
+            other => panic!("Expected Satisfied for single-step NF trace, got: {:?}", other),
         }
     }
 
     #[test]
     fn test_ltl_always_true_literal() {
         // G(true) should always be satisfied.
-        let trace: Vec<(String, bool)> = vec![
-            ("a".to_string(), false),
-            ("b".to_string(), false),
-            ("c".to_string(), true),
-        ];
+        let trace: Vec<(String, bool)> =
+            vec![("a".to_string(), false), ("b".to_string(), false), ("c".to_string(), true)];
 
         let props = standard_propositions();
         let result = check_trace_ltl(&trace, "G(true)", &props);
 
         match result {
-            LtlCheckResult::Satisfied => {} // expected
+            LtlCheckResult::Satisfied => {}, // expected
             other => panic!("Expected Satisfied for G(true), got: {:?}", other),
         }
     }

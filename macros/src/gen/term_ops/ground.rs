@@ -85,11 +85,12 @@ fn generate_is_ground_arm(category: &Ident, variant: &VariantKind) -> TokenStrea
 }
 
 /// Generate the `all elements are ground` check for a collection, accounting
-/// for the different iteration patterns of `HashBag` (yields `(&T, usize)`)
-/// vs `Vec`/`HashSet` (yields `&T`).
+/// for the different iterator item shapes:
+/// HashBag -> `(&T, usize)`, HashMapLit -> `(&K, &V)`,
+/// Vec/HashSet -> `&T`.
 fn collection_all_ground(name: TokenStream, coll_type: &CollectionType) -> TokenStream {
     match coll_type {
-        CollectionType::HashBag | CollectionType::HashMap => {
+        CollectionType::HashBag => {
             quote! { #name.iter().all(|(x, _count)| x.is_ground()) }
         },
         CollectionType::Vec | CollectionType::HashSet => {
@@ -118,10 +119,7 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
         // Phase 4 #3 (2026-05-12): Optional-Collection — None is
         // trivially ground; Some(c) is ground iff every element is.
         if field.is_collection {
-            let coll_type = field
-                .coll_type
-                .as_ref()
-                .unwrap_or(&CollectionType::HashBag);
+            let coll_type = field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag);
             let inner = collection_all_ground(quote! { __c }, coll_type);
             return quote! { #name.as_ref().map(|__c| #inner).unwrap_or(true) };
         }
@@ -143,6 +141,7 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
 /// Collection fields use the appropriate iteration pattern for their type.
 fn generate_regular_arm(category: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let suppress_unused = field_names.iter().map(|name| quote! { let _ = #name; });
 
     let checks: Vec<TokenStream> = fields
         .iter()
@@ -158,7 +157,10 @@ fn generate_regular_arm(category: &Ident, label: &Ident, fields: &[FieldInfo]) -
     };
 
     quote! {
-        #category::#label(#(#field_names),*) => #body
+        #category::#label(#(#field_names),*) => {
+            #(#suppress_unused)*
+            #body
+        }
     }
 }
 
@@ -174,6 +176,7 @@ fn generate_binder_arm(
     let field_names: Vec<Ident> = (0..pre_scope_fields.len())
         .map(|i| format_ident!("f{}", i))
         .collect();
+    let suppress_unused = field_names.iter().map(|name| quote! { let _ = #name; });
 
     let field_checks: Vec<TokenStream> = pre_scope_fields
         .iter()
@@ -194,5 +197,37 @@ fn generate_binder_arm(
         .chain(std::iter::once(&body_check))
         .collect();
 
-    quote! { #pattern => #(#all_checks)&&* }
+    quote! {
+        #pattern => {
+            #(#suppress_unused)*
+            #(#all_checks)&&*
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collection_ground_hashmap_checks_keys_and_values() {
+        let generated =
+            collection_all_ground(quote! { coll }, &CollectionType::HashMap).to_string();
+        assert!(
+            generated.contains("k . is_ground") && generated.contains("v . is_ground"),
+            "HashMap groundness must inspect both keys and values: {}",
+            generated,
+        );
+    }
+
+    #[test]
+    fn collection_ground_hashbag_uses_counted_items() {
+        let generated =
+            collection_all_ground(quote! { coll }, &CollectionType::HashBag).to_string();
+        assert!(
+            generated.contains("_count") && generated.contains("x . is_ground"),
+            "HashBag groundness must inspect counted items: {}",
+            generated,
+        );
+    }
 }

@@ -102,9 +102,7 @@ impl LinearConstraint {
         let sum: i64 = self
             .terms
             .iter()
-            .map(|&(var, coeff)| {
-                coeff * assignment.0.get(var).copied().unwrap_or(0)
-            })
+            .map(|&(var, coeff)| coeff * assignment.0.get(var).copied().unwrap_or(0))
             .sum();
         sum <= self.rhs
     }
@@ -116,44 +114,30 @@ impl LinearConstraint {
     ///
     /// `a > b` ↔ `-(a) ≤ -(b+1)` ↔ `-(a) ≤ -b - 1`
     pub fn from_gt(terms: Vec<(usize, i64)>, rhs: i64) -> Self {
-        let negated_terms: Vec<(usize, i64)> =
-            terms.into_iter().map(|(v, c)| (v, -c)).collect();
-        LinearConstraint {
-            terms: negated_terms,
-            rhs: -rhs - 1,
-        }
+        let negated_terms: Vec<(usize, i64)> = terms.into_iter().map(|(v, c)| (v, -c)).collect();
+        LinearConstraint { terms: negated_terms, rhs: -rhs - 1 }
     }
 
     /// Convert `Σ aᵢ·xᵢ ≥ b` to normal form: `Σ (-aᵢ)·xᵢ ≤ -b`.
     ///
     /// `a ≥ b` ↔ `-(a) ≤ -(b)` ↔ `Σ (-aᵢ)·xᵢ ≤ -b`
     pub fn from_gte(terms: Vec<(usize, i64)>, rhs: i64) -> Self {
-        let negated_terms: Vec<(usize, i64)> =
-            terms.into_iter().map(|(v, c)| (v, -c)).collect();
-        LinearConstraint {
-            terms: negated_terms,
-            rhs: -rhs,
-        }
+        let negated_terms: Vec<(usize, i64)> = terms.into_iter().map(|(v, c)| (v, -c)).collect();
+        LinearConstraint { terms: negated_terms, rhs: -rhs }
     }
 
     /// Convert `Σ aᵢ·xᵢ < b` to normal form: `Σ aᵢ·xᵢ ≤ b - 1`.
     ///
     /// `a < b` ↔ `a ≤ b - 1` (for integers)
     pub fn from_lt(terms: Vec<(usize, i64)>, rhs: i64) -> Self {
-        LinearConstraint {
-            terms,
-            rhs: rhs - 1,
-        }
+        LinearConstraint { terms, rhs: rhs - 1 }
     }
 
     /// Convert `Σ aᵢ·xᵢ = b` to a conjunction of two ≤ constraints.
     ///
     /// `a = b` ↔ `a ≤ b ∧ a ≥ b` ↔ `a ≤ b ∧ -a ≤ -b`
     pub fn from_eq(terms: Vec<(usize, i64)>, rhs: i64) -> (Self, Self) {
-        let leq = LinearConstraint {
-            terms: terms.clone(),
-            rhs,
-        };
+        let leq = LinearConstraint { terms: terms.clone(), rhs };
         let geq = LinearConstraint::from_gte(terms, rhs);
         (leq, geq)
     }
@@ -215,10 +199,7 @@ pub enum PresburgerPred {
     /// Existential quantification: `∃ xᵥ. φ`.
     ///
     /// Implemented via NFA projection (drop the bit dimension for variable `var`).
-    Exists {
-        var: usize,
-        body: Box<PresburgerPred>,
-    },
+    Exists { var: usize, body: Box<PresburgerPred> },
 }
 
 impl PresburgerPred {
@@ -254,10 +235,7 @@ impl PresburgerPred {
     /// Convenience: `a ≠ b` (disjunction of < and >).
     pub fn neq(terms: Vec<(usize, i64)>, rhs: i64) -> Self {
         let (lt, gt) = LinearConstraint::from_neq(terms, rhs);
-        PresburgerPred::Or(
-            Box::new(PresburgerPred::Atom(lt)),
-            Box::new(PresburgerPred::Atom(gt)),
-        )
+        PresburgerPred::Or(Box::new(PresburgerPred::Atom(lt)), Box::new(PresburgerPred::Atom(gt)))
     }
 
     /// Number of distinct variables referenced in the entire formula.
@@ -265,9 +243,7 @@ impl PresburgerPred {
         match self {
             PresburgerPred::True | PresburgerPred::False => 0,
             PresburgerPred::Atom(c) => c.num_vars(),
-            PresburgerPred::And(a, b) | PresburgerPred::Or(a, b) => {
-                a.num_vars().max(b.num_vars())
-            }
+            PresburgerPred::And(a, b) | PresburgerPred::Or(a, b) => a.num_vars().max(b.num_vars()),
             PresburgerPred::Not(inner) => inner.num_vars(),
             PresburgerPred::Exists { var, body } => (*var + 1).max(body.num_vars()),
         }
@@ -336,11 +312,11 @@ pub fn evaluate_presburger(
         PresburgerPred::And(a, b) => {
             evaluate_presburger(a, assignment, bit_width)
                 && evaluate_presburger(b, assignment, bit_width)
-        }
+        },
         PresburgerPred::Or(a, b) => {
             evaluate_presburger(a, assignment, bit_width)
                 || evaluate_presburger(b, assignment, bit_width)
-        }
+        },
         PresburgerPred::Not(inner) => !evaluate_presburger(inner, assignment, bit_width),
         PresburgerPred::Exists { var, body } => {
             // Bounded search: try all values in the bit-width range.
@@ -357,7 +333,7 @@ pub fn evaluate_presburger(
                 ext.0[*var] = val;
                 evaluate_presburger(body, &ext, bit_width)
             })
-        }
+        },
     }
 }
 
@@ -398,10 +374,9 @@ fn push_negation_inward(pred: &PresburgerPred) -> PresburgerPred {
             Box::new(push_negation_inward(a)),
             Box::new(push_negation_inward(b)),
         ),
-        PresburgerPred::Or(a, b) => PresburgerPred::Or(
-            Box::new(push_negation_inward(a)),
-            Box::new(push_negation_inward(b)),
-        ),
+        PresburgerPred::Or(a, b) => {
+            PresburgerPred::Or(Box::new(push_negation_inward(a)), Box::new(push_negation_inward(b)))
+        },
         PresburgerPred::Not(inner) => negate_pred(inner),
         PresburgerPred::Exists { var, body } => PresburgerPred::Exists {
             var: *var,
@@ -418,25 +393,19 @@ fn negate_pred(pred: &PresburgerPred) -> PresburgerPred {
         PresburgerPred::Atom(c) => {
             // NOT(Σ aᵢxᵢ ≤ b) = Σ aᵢxᵢ > b = Σ (-aᵢ)xᵢ ≤ -(b+1)
             PresburgerPred::Atom(LinearConstraint::from_gt(c.terms.clone(), c.rhs))
-        }
+        },
         PresburgerPred::And(a, b) => {
             // De Morgan: NOT(A AND B) = NOT(A) OR NOT(B)
-            PresburgerPred::Or(
-                Box::new(negate_pred(a)),
-                Box::new(negate_pred(b)),
-            )
-        }
+            PresburgerPred::Or(Box::new(negate_pred(a)), Box::new(negate_pred(b)))
+        },
         PresburgerPred::Or(a, b) => {
             // De Morgan: NOT(A OR B) = NOT(A) AND NOT(B)
-            PresburgerPred::And(
-                Box::new(negate_pred(a)),
-                Box::new(negate_pred(b)),
-            )
-        }
+            PresburgerPred::And(Box::new(negate_pred(a)), Box::new(negate_pred(b)))
+        },
         PresburgerPred::Not(inner) => {
             // Double negation: NOT(NOT(A)) = A
             push_negation_inward(inner)
-        }
+        },
         PresburgerPred::Exists { var, body } => {
             // NOT(EXISTS x. A) = FORALL x. NOT(A)
             // For bounded integers: FORALL x. P(x) = NOT(EXISTS x. NOT(P(x)))
@@ -451,7 +420,7 @@ fn negate_pred(pred: &PresburgerPred) -> PresburgerPred {
                 var: *var,
                 body: Box::new(push_negation_inward(body)),
             }))
-        }
+        },
     }
 }
 
@@ -489,7 +458,11 @@ impl PresburgerNfa {
     ///
     /// The construction unfolds the remainder automaton for exactly `w` time steps,
     /// creating at most `w * |reachable_remainders|` states.
-    pub fn from_constraint(constraint: &LinearConstraint, num_vars: usize, bit_width: usize) -> Self {
+    pub fn from_constraint(
+        constraint: &LinearConstraint,
+        num_vars: usize,
+        bit_width: usize,
+    ) -> Self {
         let alpha_size: u32 = 1 << num_vars;
 
         // Build coefficient vector indexed by variable (0..num_vars).
@@ -542,12 +515,14 @@ impl PresburgerNfa {
                 let next_pos = pos + 1;
 
                 // Get or create the destination state.
-                let dst = *state_map.entry((next_pos, next_remainder)).or_insert_with(|| {
-                    let id = num_states;
-                    num_states += 1;
-                    queue.push_back((next_pos, next_remainder));
-                    id
-                });
+                let dst = *state_map
+                    .entry((next_pos, next_remainder))
+                    .or_insert_with(|| {
+                        let id = num_states;
+                        num_states += 1;
+                        queue.push_back((next_pos, next_remainder));
+                        id
+                    });
 
                 transitions
                     .entry((src, sym))
@@ -630,23 +605,23 @@ impl PresburgerNfa {
                 let nfa_a = Self::compile_nnf(a, num_vars, bit_width);
                 let nfa_b = Self::compile_nnf(b, num_vars, bit_width);
                 intersect_nfa(&nfa_a, &nfa_b)
-            }
+            },
             PresburgerPred::Or(a, b) => {
                 let nfa_a = Self::compile_nnf(a, num_vars, bit_width);
                 let nfa_b = Self::compile_nnf(b, num_vars, bit_width);
                 union_nfa(&nfa_a, &nfa_b)
-            }
+            },
             PresburgerPred::Not(inner) => {
                 // After NNF conversion, Not only appears wrapping Exists
                 // (representing FORALL = NOT EXISTS). Handle by building the
                 // inner NFA and complementing using the fixed-length complement.
                 let nfa_inner = Self::compile_nnf(inner, num_vars, bit_width);
                 complement_fixed_length(&nfa_inner)
-            }
+            },
             PresburgerPred::Exists { var, body } => {
                 let nfa_body = Self::compile_nnf(body, num_vars, bit_width);
                 project_nfa(&nfa_body, *var)
-            }
+            },
         }
     }
 
@@ -1076,7 +1051,9 @@ fn complement_fixed_length(nfa: &PresburgerNfa) -> PresburgerNfa {
     let mut accepting = vec![false; num_states];
     for (nfa_set, &dfa_id) in &state_map {
         if state_depth[dfa_id] == bit_width {
-            let any_accept = nfa_set.iter().any(|&s| s < nfa.accepting.len() && nfa.accepting[s]);
+            let any_accept = nfa_set
+                .iter()
+                .any(|&s| s < nfa.accepting.len() && nfa.accepting[s]);
             accepting[dfa_id] = !any_accept;
         }
     }
@@ -1199,9 +1176,7 @@ impl PresburgerAlgebra {
 
     /// Create a new `PresburgerAlgebra` with the default bit width (16).
     pub fn default_width() -> Self {
-        PresburgerAlgebra {
-            bit_width: DEFAULT_BIT_WIDTH,
-        }
+        PresburgerAlgebra { bit_width: DEFAULT_BIT_WIDTH }
     }
 }
 
@@ -1249,7 +1224,7 @@ impl crate::symbolic::BooleanAlgebra for PresburgerAlgebra {
         match pred {
             PresburgerPred::True => return true,
             PresburgerPred::False => return false,
-            _ => {}
+            _ => {},
         }
 
         let nfa = PresburgerNfa::from_pred(pred, self.bit_width);
@@ -1260,7 +1235,7 @@ impl crate::symbolic::BooleanAlgebra for PresburgerAlgebra {
         match pred {
             PresburgerPred::True => return Some(IntAssignment(vec![0])),
             PresburgerPred::False => return None,
-            _ => {}
+            _ => {},
         }
 
         let nfa = PresburgerNfa::from_pred(pred, self.bit_width);
@@ -1350,9 +1325,7 @@ impl PresburgerTheory {
 
     /// Create a new `PresburgerTheory` with the default bit width (16).
     pub fn default_width() -> Self {
-        PresburgerTheory {
-            bit_width: DEFAULT_BIT_WIDTH,
-        }
+        PresburgerTheory { bit_width: DEFAULT_BIT_WIDTH }
     }
 }
 
@@ -1426,7 +1399,7 @@ pub fn is_satisfiable_nfa(pred: &PresburgerPred, bit_width: usize) -> bool {
         _ => {
             let nfa = PresburgerNfa::from_pred(pred, bit_width);
             nfa.is_nonempty()
-        }
+        },
     }
 }
 
@@ -1469,14 +1442,14 @@ pub fn extract_numeric_guard(
         match item {
             crate::SyntaxItemSpec::IdentCapture { param_name } => {
                 Some(Operand::Var(param_name.clone()))
-            }
+            },
             crate::SyntaxItemSpec::Terminal(s) => {
                 if let Ok(n) = s.parse::<i64>() {
                     Some(Operand::Const(n))
                 } else {
                     None
                 }
-            }
+            },
             _ => None,
         }
     }
@@ -1504,14 +1477,14 @@ pub fn extract_numeric_guard(
     // Slide a 3-element window looking for <operand> <op> <operand>.
     for window in items.windows(3) {
         let lhs_item = &window[0];
-        let op_item  = &window[1];
+        let op_item = &window[1];
         let rhs_item = &window[2];
 
         // The middle element must be a comparison terminal.
         let op = match op_item {
             crate::SyntaxItemSpec::Terminal(s) if COMPARISON_OPS.contains(&s.as_str()) => {
                 s.as_str()
-            }
+            },
             _ => continue,
         };
 
@@ -1540,28 +1513,28 @@ pub fn extract_numeric_guard(
             Operand::Var(name) => {
                 let idx = *var_map.get(name).expect("var_map built above");
                 terms.push((idx, 1));
-            }
+            },
             Operand::Const(c) => {
                 // lhs constant: move to RHS as `-c`
                 rhs_const -= c;
-            }
+            },
         }
         match &rhs {
             Operand::Var(name) => {
                 let idx = *var_map.get(name).expect("var_map built above");
                 // `lhs - rhs OP 0` → coefficient for rhs variable is -1
                 terms.push((idx, -1));
-            }
+            },
             Operand::Const(c) => {
                 rhs_const += c;
-            }
+            },
         }
         // Now the comparison is `Σ terms OP rhs_const`.
 
         let pred = match op {
-            "<"  => PresburgerPred::lt(terms, rhs_const),
+            "<" => PresburgerPred::lt(terms, rhs_const),
             "<=" => PresburgerPred::leq(terms, rhs_const),
-            ">"  => PresburgerPred::gt(terms, rhs_const),
+            ">" => PresburgerPred::gt(terms, rhs_const),
             ">=" => PresburgerPred::geq(terms, rhs_const),
             "==" => PresburgerPred::eq(terms, rhs_const),
             "!=" => PresburgerPred::neq(terms, rhs_const),
@@ -1621,7 +1594,7 @@ pub fn analyze_from_bundle(
 
     // ── Phase 2: Satisfiability and tautology checks ─────────────────────────
     let mut unsatisfiable_guards: Vec<(String, String)> = Vec::new();
-    let mut tautological_guards:  Vec<(String, String)> = Vec::new();
+    let mut tautological_guards: Vec<(String, String)> = Vec::new();
 
     for (rule_label, _category, pred, guard_desc) in &guards {
         // Unsatisfiable: predicate itself has no solutions.
@@ -1667,11 +1640,7 @@ pub fn analyze_from_bundle(
                 );
                 if !is_satisfiable_nfa(&not_i_and_j, BIT_WIDTH) {
                     // pred_i subsumes pred_j: every solution of pred_j is also a solution of pred_i.
-                    subsumed_guards.push((
-                        desc_i.clone(),
-                        desc_j.clone(),
-                        rule_j.clone(),
-                    ));
+                    subsumed_guards.push((desc_i.clone(), desc_j.clone(), rule_j.clone()));
                 }
             }
         }
@@ -1848,16 +1817,8 @@ mod tests {
 
     #[test]
     fn evaluate_true_false() {
-        assert!(evaluate_presburger(
-            &PresburgerPred::True,
-            &IntAssignment::new(vec![42]),
-            8
-        ));
-        assert!(!evaluate_presburger(
-            &PresburgerPred::False,
-            &IntAssignment::new(vec![42]),
-            8
-        ));
+        assert!(evaluate_presburger(&PresburgerPred::True, &IntAssignment::new(vec![42]), 8));
+        assert!(!evaluate_presburger(&PresburgerPred::False, &IntAssignment::new(vec![42]), 8));
     }
 
     #[test]
@@ -1882,11 +1843,7 @@ mod tests {
 
         assert!(nfa.is_nonempty());
         let w = nfa.witness().expect("should find witness");
-        assert!(
-            w.0[0] <= 5,
-            "witness x={} should satisfy x <= 5",
-            w.0[0]
-        );
+        assert!(w.0[0] <= 5, "witness x={} should satisfy x <= 5", w.0[0]);
     }
 
     #[test]
@@ -1897,11 +1854,7 @@ mod tests {
 
         assert!(nfa.is_nonempty());
         let w = nfa.witness().expect("should find witness");
-        assert!(
-            w.0[0] >= 3,
-            "witness x={} should satisfy x >= 3",
-            w.0[0]
-        );
+        assert!(w.0[0] >= 3, "witness x={} should satisfy x >= 3", w.0[0]);
     }
 
     #[test]
@@ -1960,12 +1913,7 @@ mod tests {
 
         assert!(nfa.is_nonempty());
         let w = nfa.witness().expect("should find witness");
-        assert!(
-            w.0[0] <= w.0[1],
-            "witness x0={}, x1={} should satisfy x0 <= x1",
-            w.0[0],
-            w.0[1]
-        );
+        assert!(w.0[0] <= w.0[1], "witness x0={}, x1={} should satisfy x0 <= x1", w.0[0], w.0[1]);
     }
 
     // ── NFA Boolean operations ──────────────────────────────────────────
@@ -1981,11 +1929,7 @@ mod tests {
 
         assert!(inter.is_nonempty());
         let w = inter.witness().expect("should find witness");
-        assert!(
-            w.0[0] >= 3 && w.0[0] <= 5,
-            "witness x={} should be in [3, 5]",
-            w.0[0]
-        );
+        assert!(w.0[0] >= 3 && w.0[0] <= 5, "witness x={} should be in [3, 5]", w.0[0]);
     }
 
     #[test]
@@ -2011,11 +1955,7 @@ mod tests {
 
         assert!(uni.is_nonempty());
         let w = uni.witness().expect("should find witness");
-        assert!(
-            w.0[0] <= 2 || w.0[0] >= 8,
-            "witness x={} should satisfy x<=2 or x>=8",
-            w.0[0]
-        );
+        assert!(w.0[0] <= 2 || w.0[0] >= 8, "witness x={} should satisfy x<=2 or x>=8", w.0[0]);
     }
 
     #[test]
@@ -2027,11 +1967,7 @@ mod tests {
 
         assert!(comp.is_nonempty());
         let w = comp.witness().expect("should find witness");
-        assert!(
-            w.0[0] > 5,
-            "witness x={} should satisfy x > 5 (complement of x <= 5)",
-            w.0[0]
-        );
+        assert!(w.0[0] > 5, "witness x={} should satisfy x > 5 (complement of x <= 5)", w.0[0]);
     }
 
     #[test]
@@ -2075,11 +2011,7 @@ mod tests {
         assert!(nfa.is_nonempty());
 
         let w = nfa.witness().expect("should find witness");
-        assert!(
-            w.0[0] >= 0 && w.0[0] <= 5,
-            "witness x={} should be in [0, 5]",
-            w.0[0]
-        );
+        assert!(w.0[0] >= 0 && w.0[0] <= 5, "witness x={} should be in [0, 5]", w.0[0]);
     }
 
     #[test]
@@ -2093,11 +2025,7 @@ mod tests {
         assert!(nfa.is_nonempty());
 
         let w = nfa.witness().expect("should find witness");
-        assert!(
-            w.0[0] <= 0 || w.0[0] >= 10,
-            "witness x={} should satisfy x<=0 or x>=10",
-            w.0[0]
-        );
+        assert!(w.0[0] <= 0 || w.0[0] >= 10, "witness x={} should satisfy x<=0 or x>=10", w.0[0]);
     }
 
     #[test]
@@ -2108,11 +2036,7 @@ mod tests {
         assert!(nfa.is_nonempty());
 
         let w = nfa.witness().expect("should find witness");
-        assert!(
-            w.0[0] > 5,
-            "witness x={} should satisfy NOT(x <= 5)",
-            w.0[0]
-        );
+        assert!(w.0[0] > 5, "witness x={} should satisfy NOT(x <= 5)", w.0[0]);
     }
 
     #[test]
@@ -2205,11 +2129,7 @@ mod tests {
             .expect("conjunction should be consistent");
 
         let w = theory.witness(&store).expect("should find witness");
-        assert!(
-            w.0[0] >= 3 && w.0[0] <= 7,
-            "witness x={} should be in [3, 7]",
-            w.0[0]
-        );
+        assert!(w.0[0] >= 3 && w.0[0] <= 7, "witness x={} should be in [3, 7]", w.0[0]);
     }
 
     #[test]
@@ -2272,30 +2192,24 @@ mod tests {
         #[test]
         fn algebra_conjunction_satisfiable() {
             let algebra = PresburgerAlgebra::new(8);
-            let pred = algebra.and(
-                &PresburgerPred::geq(vec![(0, 1)], 0),
-                &PresburgerPred::leq(vec![(0, 1)], 5),
-            );
+            let pred = algebra
+                .and(&PresburgerPred::geq(vec![(0, 1)], 0), &PresburgerPred::leq(vec![(0, 1)], 5));
             assert!(algebra.is_satisfiable(&pred));
         }
 
         #[test]
         fn algebra_conjunction_unsatisfiable() {
             let algebra = PresburgerAlgebra::new(8);
-            let pred = algebra.and(
-                &PresburgerPred::geq(vec![(0, 1)], 10),
-                &PresburgerPred::leq(vec![(0, 1)], 5),
-            );
+            let pred = algebra
+                .and(&PresburgerPred::geq(vec![(0, 1)], 10), &PresburgerPred::leq(vec![(0, 1)], 5));
             assert!(!algebra.is_satisfiable(&pred));
         }
 
         #[test]
         fn algebra_disjunction() {
             let algebra = PresburgerAlgebra::new(8);
-            let pred = algebra.or(
-                &PresburgerPred::leq(vec![(0, 1)], 0),
-                &PresburgerPred::geq(vec![(0, 1)], 10),
-            );
+            let pred = algebra
+                .or(&PresburgerPred::leq(vec![(0, 1)], 0), &PresburgerPred::geq(vec![(0, 1)], 10));
             assert!(algebra.is_satisfiable(&pred));
         }
 
@@ -2312,10 +2226,7 @@ mod tests {
             let p = PresburgerPred::leq(vec![(0, 1)], 5);
             let nn = algebra.not(&algebra.not(&p));
             // Double negation should be satisfiable iff the original is.
-            assert_eq!(
-                algebra.is_satisfiable(&p),
-                algebra.is_satisfiable(&nn)
-            );
+            assert_eq!(algebra.is_satisfiable(&p), algebra.is_satisfiable(&nn));
         }
 
         #[test]
@@ -2326,11 +2237,7 @@ mod tests {
                 Box::new(PresburgerPred::leq(vec![(0, 1)], 7)),
             );
             let w = algebra.witness(&pred).expect("should find witness");
-            assert!(
-                algebra.evaluate(&pred, &w),
-                "witness {} does not satisfy predicate",
-                w
-            );
+            assert!(algebra.evaluate(&pred, &w), "witness {} does not satisfy predicate", w);
         }
 
         #[test]
@@ -2455,11 +2362,7 @@ mod tests {
             let w = algebra.witness(&pred);
             assert!(w.is_some(), "should find a witness for [3, 7]");
             let w = w.expect("witness exists");
-            assert!(
-                w.0[0] >= 3 && w.0[0] <= 7,
-                "witness x={} should be in [3, 7]",
-                w.0[0]
-            );
+            assert!(w.0[0] >= 3 && w.0[0] <= 7, "witness x={} should be in [3, 7]", w.0[0]);
         }
 
         #[test]
@@ -2514,10 +2417,7 @@ mod tests {
         #[test]
         fn cross_validate_simple_leq() {
             let c = LinearConstraint::new(vec![(0, 1)], 5);
-            cross_validate_satisfiability(
-                &PresburgerPred::Atom(c.clone()),
-                &TheoryPred::Atom(c),
-            );
+            cross_validate_satisfiability(&PresburgerPred::Atom(c.clone()), &TheoryPred::Atom(c));
         }
 
         #[test]
@@ -2528,14 +2428,9 @@ mod tests {
             let theory: TheoryAlgebra<PresburgerTheory> =
                 TheoryAlgebra::new(PresburgerTheory::new(8), 100);
 
-            let dp = direct.and(
-                &PresburgerPred::Atom(c1.clone()),
-                &PresburgerPred::Atom(c2.clone()),
-            );
-            let tp = theory.and(
-                &TheoryPred::Atom(c1),
-                &TheoryPred::Atom(c2),
-            );
+            let dp =
+                direct.and(&PresburgerPred::Atom(c1.clone()), &PresburgerPred::Atom(c2.clone()));
+            let tp = theory.and(&TheoryPred::Atom(c1), &TheoryPred::Atom(c2));
 
             cross_validate_satisfiability(&dp, &tp);
         }
@@ -2548,14 +2443,9 @@ mod tests {
             let theory: TheoryAlgebra<PresburgerTheory> =
                 TheoryAlgebra::new(PresburgerTheory::new(8), 100);
 
-            let dp = direct.and(
-                &PresburgerPred::Atom(c1.clone()),
-                &PresburgerPred::Atom(c2.clone()),
-            );
-            let tp = theory.and(
-                &TheoryPred::Atom(c1),
-                &TheoryPred::Atom(c2),
-            );
+            let dp =
+                direct.and(&PresburgerPred::Atom(c1.clone()), &PresburgerPred::Atom(c2.clone()));
+            let tp = theory.and(&TheoryPred::Atom(c1), &TheoryPred::Atom(c2));
 
             cross_validate_satisfiability(&dp, &tp);
         }
@@ -2568,14 +2458,9 @@ mod tests {
             let theory: TheoryAlgebra<PresburgerTheory> =
                 TheoryAlgebra::new(PresburgerTheory::new(8), 100);
 
-            let dp = direct.or(
-                &PresburgerPred::Atom(c1.clone()),
-                &PresburgerPred::Atom(c2.clone()),
-            );
-            let tp = theory.or(
-                &TheoryPred::Atom(c1),
-                &TheoryPred::Atom(c2),
-            );
+            let dp =
+                direct.or(&PresburgerPred::Atom(c1.clone()), &PresburgerPred::Atom(c2.clone()));
+            let tp = theory.or(&TheoryPred::Atom(c1), &TheoryPred::Atom(c2));
 
             cross_validate_satisfiability(&dp, &tp);
         }
@@ -2610,10 +2495,7 @@ mod tests {
             let direct_sat = direct.is_satisfiable(&dp);
             let theory_sat = theory.is_satisfiable(&tp);
 
-            assert!(
-                direct_sat,
-                "PresburgerAlgebra should find NOT(x<=5) satisfiable"
-            );
+            assert!(direct_sat, "PresburgerAlgebra should find NOT(x<=5) satisfiable");
 
             // Document the actual behavior of the TheoryAlgebra:
             // Due to NAF semantics, the result may differ from classical logic.
@@ -2642,17 +2524,11 @@ mod tests {
 
             let dp = direct.and(
                 &PresburgerPred::Atom(c1.clone()),
-                &direct.and(
-                    &PresburgerPred::Atom(c2.clone()),
-                    &PresburgerPred::Atom(c3.clone()),
-                ),
+                &direct.and(&PresburgerPred::Atom(c2.clone()), &PresburgerPred::Atom(c3.clone())),
             );
             let tp = theory.and(
                 &TheoryPred::Atom(c1),
-                &theory.and(
-                    &TheoryPred::Atom(c2),
-                    &TheoryPred::Atom(c3),
-                ),
+                &theory.and(&TheoryPred::Atom(c2), &TheoryPred::Atom(c3)),
             );
 
             cross_validate_satisfiability(&dp, &tp);
@@ -2668,14 +2544,9 @@ mod tests {
             let theory: TheoryAlgebra<PresburgerTheory> =
                 TheoryAlgebra::new(PresburgerTheory::new(8), 100);
 
-            let dp = direct.and(
-                &PresburgerPred::Atom(c1.clone()),
-                &PresburgerPred::Atom(c2.clone()),
-            );
-            let tp = theory.and(
-                &TheoryPred::Atom(c1.clone()),
-                &TheoryPred::Atom(c2.clone()),
-            );
+            let dp =
+                direct.and(&PresburgerPred::Atom(c1.clone()), &PresburgerPred::Atom(c2.clone()));
+            let tp = theory.and(&TheoryPred::Atom(c1.clone()), &TheoryPred::Atom(c2.clone()));
 
             let dw = direct.witness(&dp);
             let tw = theory.witness(&tp);
@@ -2687,23 +2558,11 @@ mod tests {
             let tw = tw.expect("theory witness");
 
             // Both witnesses should satisfy the original predicate.
-            assert!(
-                direct.evaluate(&dp, &dw),
-                "direct witness {} does not satisfy predicate",
-                dw
-            );
+            assert!(direct.evaluate(&dp, &dw), "direct witness {} does not satisfy predicate", dw);
 
             // Theory witness should satisfy both constraints directly.
-            assert!(
-                c1.evaluate(&tw),
-                "theory witness {} does not satisfy c1",
-                tw
-            );
-            assert!(
-                c2.evaluate(&tw),
-                "theory witness {} does not satisfy c2",
-                tw
-            );
+            assert!(c1.evaluate(&tw), "theory witness {} does not satisfy c1", tw);
+            assert!(c2.evaluate(&tw), "theory witness {} does not satisfy c2", tw);
         }
     }
 
@@ -2754,39 +2613,15 @@ mod tests {
     fn pred_convenience_methods() {
         // x0 = 5 (leq AND geq)
         let eq_pred = PresburgerPred::eq(vec![(0, 1)], 5);
-        assert!(evaluate_presburger(
-            &eq_pred,
-            &IntAssignment::new(vec![5]),
-            8
-        ));
-        assert!(!evaluate_presburger(
-            &eq_pred,
-            &IntAssignment::new(vec![4]),
-            8
-        ));
-        assert!(!evaluate_presburger(
-            &eq_pred,
-            &IntAssignment::new(vec![6]),
-            8
-        ));
+        assert!(evaluate_presburger(&eq_pred, &IntAssignment::new(vec![5]), 8));
+        assert!(!evaluate_presburger(&eq_pred, &IntAssignment::new(vec![4]), 8));
+        assert!(!evaluate_presburger(&eq_pred, &IntAssignment::new(vec![6]), 8));
 
         // x0 != 5 (lt OR gt)
         let neq_pred = PresburgerPred::neq(vec![(0, 1)], 5);
-        assert!(!evaluate_presburger(
-            &neq_pred,
-            &IntAssignment::new(vec![5]),
-            8
-        ));
-        assert!(evaluate_presburger(
-            &neq_pred,
-            &IntAssignment::new(vec![4]),
-            8
-        ));
-        assert!(evaluate_presburger(
-            &neq_pred,
-            &IntAssignment::new(vec![6]),
-            8
-        ));
+        assert!(!evaluate_presburger(&neq_pred, &IntAssignment::new(vec![5]), 8));
+        assert!(evaluate_presburger(&neq_pred, &IntAssignment::new(vec![4]), 8));
+        assert!(evaluate_presburger(&neq_pred, &IntAssignment::new(vec![6]), 8));
     }
 
     #[test]
@@ -2811,11 +2646,7 @@ mod tests {
         assert!(nfa.is_nonempty());
 
         let w = nfa.witness().expect("should find witness for x0=x1");
-        assert_eq!(
-            w.0[0], w.0[1],
-            "witness should have x0=x1, got x0={}, x1={}",
-            w.0[0], w.0[1]
-        );
+        assert_eq!(w.0[0], w.0[1], "witness should have x0=x1, got x0={}, x1={}", w.0[0], w.0[1]);
     }
 
     // ── PresburgerAnalysis ──────────────────────────────────────────────
@@ -2844,11 +2675,7 @@ mod tests {
     fn test_analyze_from_bundle_no_numeric_guards() {
         // Grammar with no comparison terminals — expects empty result.
         let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![
-            (
-                "Foo".to_string(),
-                "Expr".to_string(),
-                vec![t("("), ic("x"), t(")")],
-            ),
+            ("Foo".to_string(), "Expr".to_string(), vec![t("("), ic("x"), t(")")]),
             (
                 "Bar".to_string(),
                 "Expr".to_string(),
@@ -2878,16 +2705,8 @@ mod tests {
     fn test_analyze_from_bundle_with_numeric_terminals() {
         // Grammar with comparison terminals — at least one guard should be extracted.
         let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![
-            (
-                "LtRule".to_string(),
-                "Guard".to_string(),
-                vec![ic("x"), t("<"), t("10")],
-            ),
-            (
-                "GeqRule".to_string(),
-                "Guard".to_string(),
-                vec![ic("y"), t(">="), t("0")],
-            ),
+            ("LtRule".to_string(), "Guard".to_string(), vec![ic("x"), t("<"), t("10")]),
+            ("GeqRule".to_string(), "Guard".to_string(), vec![ic("y"), t(">="), t("0")]),
         ];
 
         let result = analyze_from_bundle(&all_syntax);
@@ -2896,12 +2715,18 @@ mod tests {
         // is that no panic occurs and we got a result.
         // x < 10  → satisfiable (e.g. x=5) and non-tautological (x=10 fails)
         assert!(
-            !result.unsatisfiable_guards.iter().any(|(_, r)| r == "LtRule"),
+            !result
+                .unsatisfiable_guards
+                .iter()
+                .any(|(_, r)| r == "LtRule"),
             "LtRule (x<10) should not be detected as unsatisfiable"
         );
         // y >= 0  in a 16-bit *unsigned* NFA is satisfiable
         assert!(
-            !result.unsatisfiable_guards.iter().any(|(_, r)| r == "GeqRule"),
+            !result
+                .unsatisfiable_guards
+                .iter()
+                .any(|(_, r)| r == "GeqRule"),
             "GeqRule (y>=0) should not be detected as unsatisfiable"
         );
     }
@@ -2915,19 +2740,20 @@ mod tests {
         //   items = [x, >, 10]  together with the rule label "Contra".
         // The guard "x > 10" alone is satisfiable; to test unsatisfiability we
         // inject a literal False by using a constant comparison "5 < 3".
-        let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![
-            (
-                "AlwaysFalse".to_string(),
-                "Guard".to_string(),
-                // 5 < 3 → normalises to x0_const_pred that is unsat
-                // But terminals-only: resolve_operand returns Const for both.
-                vec![t("5"), t("<"), t("3")],
-            ),
-        ];
+        let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![(
+            "AlwaysFalse".to_string(),
+            "Guard".to_string(),
+            // 5 < 3 → normalises to x0_const_pred that is unsat
+            // But terminals-only: resolve_operand returns Const for both.
+            vec![t("5"), t("<"), t("3")],
+        )];
 
         let result = analyze_from_bundle(&all_syntax);
         assert!(
-            result.unsatisfiable_guards.iter().any(|(_, rule)| rule == "AlwaysFalse"),
+            result
+                .unsatisfiable_guards
+                .iter()
+                .any(|(_, rule)| rule == "AlwaysFalse"),
             "expected AlwaysFalse (5 < 3) to be detected as unsatisfiable, \
              got unsatisfiable_guards: {:?}",
             result.unsatisfiable_guards
@@ -2937,17 +2763,15 @@ mod tests {
     #[test]
     fn test_presburger_tautology_detection() {
         // 3 <= 5 → always true (0 ≤ 2 after normalisation).
-        let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![
-            (
-                "AlwaysTrue".to_string(),
-                "Guard".to_string(),
-                vec![t("3"), t("<="), t("5")],
-            ),
-        ];
+        let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> =
+            vec![("AlwaysTrue".to_string(), "Guard".to_string(), vec![t("3"), t("<="), t("5")])];
 
         let result = analyze_from_bundle(&all_syntax);
         assert!(
-            result.tautological_guards.iter().any(|(_, rule)| rule == "AlwaysTrue"),
+            result
+                .tautological_guards
+                .iter()
+                .any(|(_, rule)| rule == "AlwaysTrue"),
             "expected AlwaysTrue (3 <= 5) to be detected as tautological, \
              got tautological_guards: {:?}",
             result.tautological_guards
@@ -2961,16 +2785,8 @@ mod tests {
         // A is subsumed by B (every x satisfying A also satisfies B).
         // Both are in the same category "Comp".
         let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![
-            (
-                "Narrow".to_string(),
-                "Comp".to_string(),
-                vec![ic("x"), t("<="), t("3")],
-            ),
-            (
-                "Wide".to_string(),
-                "Comp".to_string(),
-                vec![ic("x"), t("<="), t("5")],
-            ),
+            ("Narrow".to_string(), "Comp".to_string(), vec![ic("x"), t("<="), t("3")]),
+            ("Wide".to_string(), "Comp".to_string(), vec![ic("x"), t("<="), t("5")]),
         ];
 
         let result = analyze_from_bundle(&all_syntax);
@@ -2979,7 +2795,10 @@ mod tests {
         // Expected: subsumed_guards contains an entry where subsumed_desc
         // corresponds to the Narrow guard and the subsumed_rule is "Narrow".
         assert!(
-            result.subsumed_guards.iter().any(|(_, _, rule)| rule == "Narrow"),
+            result
+                .subsumed_guards
+                .iter()
+                .any(|(_, _, rule)| rule == "Narrow"),
             "expected Narrow (x<=3) to be subsumed by Wide (x<=5), \
              got subsumed_guards: {:?}",
             result.subsumed_guards

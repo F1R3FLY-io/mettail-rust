@@ -51,16 +51,12 @@ fn bench_parse_recovering_valid(c: &mut Criterion) {
     ];
 
     for (name, input) in &inputs {
-        group.bench_with_input(
-            BenchmarkId::new("parse_recovering", name),
-            input,
-            |b, input| {
-                b.iter(|| {
-                    mettail_runtime::clear_var_cache();
-                    let _ = black_box(Int::parse_recovering(input));
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("parse_recovering", name), input, |b, input| {
+            b.iter(|| {
+                mettail_runtime::clear_var_cache();
+                let _ = black_box(Int::parse_recovering(input));
+            })
+        });
     }
     group.finish();
 }
@@ -121,28 +117,20 @@ fn bench_recovery_deeply_nested(c: &mut Criterion) {
         let close: String = ")".repeat(depth);
         // Valid nested
         let valid_input = format!("{}1 + 2{}", open, close);
-        group.bench_with_input(
-            BenchmarkId::new("valid", depth),
-            &valid_input,
-            |b, input| {
-                b.iter(|| {
-                    mettail_runtime::clear_var_cache();
-                    let _ = black_box(Int::parse_recovering(input));
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("valid", depth), &valid_input, |b, input| {
+            b.iter(|| {
+                mettail_runtime::clear_var_cache();
+                let _ = black_box(Int::parse_recovering(input));
+            })
+        });
         // Nested with error
         let error_input = format!("{}1 + + 2{}", open, close);
-        group.bench_with_input(
-            BenchmarkId::new("error", depth),
-            &error_input,
-            |b, input| {
-                b.iter(|| {
-                    mettail_runtime::clear_var_cache();
-                    let _ = black_box(Int::parse_recovering(input));
-                })
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("error", depth), &error_input, |b, input| {
+            b.iter(|| {
+                mettail_runtime::clear_var_cache();
+                let _ = black_box(Int::parse_recovering(input));
+            })
+        });
     }
     group.finish();
 }

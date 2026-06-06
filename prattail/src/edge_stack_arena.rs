@@ -99,7 +99,10 @@ mod tests {
         let mut arena = EdgeStackArena::new();
         let mut cur = EDGE_STACK_ID_ROOT;
         let mut expected: Vec<GssEdgeId> = Vec::new();
-        for eid in [u64::MAX, 0, 1, u32::MAX as u64, 1u64 << 40].iter().copied() {
+        for eid in [u64::MAX, 0, 1, u32::MAX as u64, 1u64 << 40]
+            .iter()
+            .copied()
+        {
             cur = arena.intern_push(cur, eid);
             expected.push(eid);
             let mut scratch = Vec::new();

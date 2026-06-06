@@ -148,7 +148,7 @@ fn test_parse_error_from_string() {
         ParseError::LexError { message, position } => {
             assert_eq!(message, "test error");
             assert_eq!(position, Position::zero());
-        }
+        },
         _ => panic!("From<String> should produce LexError variant"),
     }
 }
@@ -169,16 +169,8 @@ fn test_format_error_context() {
     // format_error_context is now in runtime_types — verify it works
     let input = "hello world";
     let range = Range {
-        start: Position {
-            byte_offset: 6,
-            line: 0,
-            column: 6,
-        },
-        end: Position {
-            byte_offset: 11,
-            line: 0,
-            column: 11,
-        },
+        start: Position { byte_offset: 6, line: 0, column: 6 },
+        end: Position { byte_offset: 11, line: 0, column: 11 },
         file_id: None,
     };
     let ctx = crate::runtime_types::format_error_context(input, &range);

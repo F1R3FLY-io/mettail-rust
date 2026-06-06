@@ -11,12 +11,11 @@
 //! tests assert correct WPDS behavior; they don't gate on trampoline
 //! equivalence.
 
-use mettail_languages::calculator::{Int, Bool, Str, UInt32, BigInt, BigRat, Fixed, Float};
 use mettail_languages::calculator::{
-    parse_Int_via_wpda, parse_Bool_via_wpda, parse_Str_via_wpda,
-    parse_UInt32_via_wpda, parse_BigInt_via_wpda, parse_BigRat_via_wpda,
-    parse_Fixed_via_wpda, parse_Float_via_wpda,
+    parse_BigInt_via_wpda, parse_BigRat_via_wpda, parse_Bool_via_wpda, parse_Fixed_via_wpda,
+    parse_Float_via_wpda, parse_Int_via_wpda, parse_Str_via_wpda, parse_UInt32_via_wpda,
 };
+use mettail_languages::calculator::{BigInt, BigRat, Bool, Fixed, Float, Int, Str, UInt32};
 use mettail_prattail::automata::TokenKind;
 
 /// Drive `parse_Int_via_wpda` with an IntegerLit("Int") token; expect NumLit(i32).
@@ -27,7 +26,7 @@ fn wpds_parse_int_lit_42() {
     let mut pos = 0usize;
     let result = parse_Int_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
-        Ok(Int::NumLit(42)) => {}
+        Ok(Int::NumLit(42)) => {},
         other => panic!("expected Int::NumLit(42), got {:?}", other),
     }
     assert_eq!(pos, 1);
@@ -40,7 +39,7 @@ fn wpds_parse_int_lit_negative() {
     let mut pos = 0usize;
     let result = parse_Int_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
-        Ok(Int::NumLit(-7)) => {}
+        Ok(Int::NumLit(-7)) => {},
         other => panic!("expected Int::NumLit(-7), got {:?}", other),
     }
 }
@@ -52,7 +51,7 @@ fn wpds_parse_err_keyword() {
     let mut pos = 0usize;
     let result = parse_Int_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
-        Ok(Int::Err) => {}
+        Ok(Int::Err) => {},
         other => panic!("expected Int::Err, got {:?}", other),
     }
 }
@@ -64,7 +63,7 @@ fn wpds_parse_cast_err_int_keyword() {
     let mut pos = 0usize;
     let result = parse_Int_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
-        Ok(Int::CastErrInt) => {}
+        Ok(Int::CastErrInt) => {},
         other => panic!("expected Int::CastErrInt, got {:?}", other),
     }
 }
@@ -76,7 +75,7 @@ fn wpds_parse_uint32_lit() {
     let mut pos = 0usize;
     let result = parse_UInt32_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
-        Ok(UInt32::NumLit(42)) => {}
+        Ok(UInt32::NumLit(42)) => {},
         other => panic!("expected UInt32::NumLit(42), got {:?}", other),
     }
 }
@@ -101,7 +100,7 @@ fn wpds_parse_bool_lit_true() {
     let mut pos = 0usize;
     let result = parse_Bool_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
-        Ok(Bool::BoolLit(true)) => {}
+        Ok(Bool::BoolLit(true)) => {},
         other => panic!("expected Bool::BoolLit(true), got {:?}", other),
     }
 }
@@ -113,7 +112,7 @@ fn wpds_parse_bool_lit_yeap() {
     let mut pos = 0usize;
     let result = parse_Bool_via_wpda(&kinds, &texts, &mut pos, 0);
     match result {
-        Ok(Bool::BoolLit(true)) => {}
+        Ok(Bool::BoolLit(true)) => {},
         other => panic!("expected Bool::BoolLit(true), got {:?}", other),
     }
 }
@@ -125,7 +124,7 @@ fn wpds_parse_str_lit() {
     let mut pos = 0usize;
     let result = parse_Str_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
-        Ok(Str::StringLit(s)) if s == "hello" => {}
+        Ok(Str::StringLit(s)) if s == "hello" => {},
         _ => panic!("expected Str::StringLit(\"hello\"), got {:?}", result),
     }
 }
@@ -215,7 +214,7 @@ fn wpds_parse_rejects_bare_bool_in_int_slot_token_unsound() {
     let result2 = parse_Int_via_wpda(&kinds2, &texts2, &mut pos2, 0);
     match &result2 {
         Ok(Int::BoolToInt(inner)) => match inner.as_ref() {
-            Bool::BoolLit(true) => {}
+            Bool::BoolLit(true) => {},
             other => panic!(
                 "expected Int::BoolToInt(Bool::BoolLit(true)), got Int::BoolToInt({:?})",
                 other
@@ -244,7 +243,7 @@ fn wpds_parse_int_add_simple() {
     let result = parse_Int_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
         Ok(Int::AddInt(a, b)) => match (a.as_ref(), b.as_ref()) {
-            (Int::NumLit(1), Int::NumLit(2)) => {}
+            (Int::NumLit(1), Int::NumLit(2)) => {},
             _ => panic!("inner shape wrong: {:?}", result),
         },
         _ => panic!("expected Int::AddInt(NumLit(1), NumLit(2)), got {:?}", result),
@@ -268,7 +267,7 @@ fn wpds_parse_int_mul_left_assoc() {
     match &result {
         Ok(Int::AddInt(a, b)) => match (a.as_ref(), b.as_ref()) {
             (Int::NumLit(1), Int::MulInt(c, d)) => match (c.as_ref(), d.as_ref()) {
-                (Int::NumLit(2), Int::NumLit(3)) => {}
+                (Int::NumLit(2), Int::NumLit(3)) => {},
                 _ => panic!("inner mul shape wrong: {:?}", result),
             },
             _ => panic!("inner shape wrong: {:?}", result),
@@ -294,7 +293,7 @@ fn wpds_parse_int_left_assoc_chain() {
     match &result {
         Ok(Int::AddInt(outer_l, outer_r)) => match (outer_l.as_ref(), outer_r.as_ref()) {
             (Int::AddInt(a, b), Int::NumLit(3)) => match (a.as_ref(), b.as_ref()) {
-                (Int::NumLit(1), Int::NumLit(2)) => {}
+                (Int::NumLit(1), Int::NumLit(2)) => {},
                 _ => panic!("inner shape wrong: {:?}", result),
             },
             _ => panic!("expected AddInt(AddInt(1, 2), 3), got {:?}", result),

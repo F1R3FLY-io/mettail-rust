@@ -94,19 +94,10 @@ impl Parse for ComposeDef {
             // FromIterator<PathSegment> creates proper separators without trailing `::`.
             let seg_count = p.segments.len();
             let leading_colon = p.leading_colon;
-            let module_segments: Punctuated<syn::PathSegment, Token![::]> = p
-                .segments
-                .into_iter()
-                .take(seg_count - 1)
-                .collect();
-            let module_path = syn::Path {
-                leading_colon,
-                segments: module_segments,
-            };
-            languages.push(LanguageRef {
-                module_path,
-                variant_name,
-            });
+            let module_segments: Punctuated<syn::PathSegment, Token![::]> =
+                p.segments.into_iter().take(seg_count - 1).collect();
+            let module_path = syn::Path { leading_colon, segments: module_segments };
+            languages.push(LanguageRef { module_path, variant_name });
         }
 
         // Consume optional trailing comma after the closing `]`

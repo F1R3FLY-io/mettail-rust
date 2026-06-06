@@ -45,7 +45,7 @@
 
 use crate::automata::semiring::BooleanWeight;
 use crate::parity_tree::{
-    mu_calculus_to_pata, MuCalculusFormula, ParityAlternatingTreeAutomaton,
+    try_mu_calculus_to_pata, MuCalculusFormula, ParityAlternatingTreeAutomaton,
 };
 use std::collections::HashSet;
 
@@ -105,6 +105,8 @@ pub enum LetPropError {
     /// `BehavioralPred` instead. (Not strictly an error; can be
     /// downgraded to a warning.)
     NotRecursive { name: String },
+    /// Lowering produced an ill-scoped mu-calculus formula.
+    MuCalculusCompile { message: String },
 }
 
 impl std::fmt::Display for LetPropError {
@@ -116,11 +118,7 @@ impl std::fmt::Display for LetPropError {
                  the mu-calculus requires uniform monotone polarity",
                 name
             ),
-            LetPropError::ArgumentMismatch {
-                name,
-                expected,
-                actual,
-            } => write!(
+            LetPropError::ArgumentMismatch { name, expected, actual } => write!(
                 f,
                 "letprop `{}`: recursive call passes args {:?} but the \
                  predicate is declared with params {:?}",
@@ -132,6 +130,9 @@ impl std::fmt::Display for LetPropError {
                  plain BehavioralPred instead",
                 name
             ),
+            LetPropError::MuCalculusCompile { message } => {
+                write!(f, "letprop lowered to an invalid mu-calculus formula: {}", message)
+            },
         }
     }
 }
@@ -172,34 +173,32 @@ fn analyze_polarity_inner(
     negative: &mut bool,
 ) {
     match expr {
-        LetPropExpr::True | LetPropExpr::False | LetPropExpr::Atom { .. } => {}
+        LetPropExpr::True | LetPropExpr::False | LetPropExpr::Atom { .. } => {},
         LetPropExpr::Recursive { .. } => {
             if inside_negation {
                 *negative = true;
             } else {
                 *positive = true;
             }
-        }
+        },
         LetPropExpr::Not(inner) => {
             analyze_polarity_inner(inner, !inside_negation, positive, negative);
-        }
+        },
         LetPropExpr::And(a, b) | LetPropExpr::Or(a, b) => {
             analyze_polarity_inner(a, inside_negation, positive, negative);
             analyze_polarity_inner(b, inside_negation, positive, negative);
-        }
+        },
         LetPropExpr::Implies(a, b) => {
             // P ⟹ Q ≡ ¬P ∨ Q : antecedent flips polarity
             analyze_polarity_inner(a, !inside_negation, positive, negative);
             analyze_polarity_inner(b, inside_negation, positive, negative);
-        }
+        },
     }
 }
 
 /// Verify that every recursive reference's args match the predicate's
 /// formal parameter list.
-pub fn validate_arguments(
-    pred: &RecursivePredicate,
-) -> Result<(), LetPropError> {
+pub fn validate_arguments(pred: &RecursivePredicate) -> Result<(), LetPropError> {
     let mut error: Option<LetPropError> = None;
     walk_recursive_calls(&pred.body, &mut |args| {
         if args != pred.params.as_slice() {
@@ -224,13 +223,11 @@ where
     match expr {
         LetPropExpr::Recursive { args } => f(args),
         LetPropExpr::Not(inner) => walk_recursive_calls(inner, f),
-        LetPropExpr::And(a, b)
-        | LetPropExpr::Or(a, b)
-        | LetPropExpr::Implies(a, b) => {
+        LetPropExpr::And(a, b) | LetPropExpr::Or(a, b) | LetPropExpr::Implies(a, b) => {
             walk_recursive_calls(a, f);
             walk_recursive_calls(b, f);
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -240,23 +237,17 @@ where
 /// by `analyze_polarity`. The body is lowered structurally, with
 /// recursive self-references translated to a `Var(name)` reference
 /// to the fixpoint binder.
-pub fn lower_to_mu_calculus(
-    pred: &RecursivePredicate,
-) -> Result<MuCalculusFormula, LetPropError> {
+pub fn lower_to_mu_calculus(pred: &RecursivePredicate) -> Result<MuCalculusFormula, LetPropError> {
     validate_arguments(pred)?;
     let (polarity, mixed) = analyze_polarity(&pred.body);
     if mixed {
-        return Err(LetPropError::MixedPolarity {
-            name: pred.name.clone(),
-        });
+        return Err(LetPropError::MixedPolarity { name: pred.name.clone() });
     }
     let positive = match polarity {
         Some(p) => p,
         None => {
-            return Err(LetPropError::NotRecursive {
-                name: pred.name.clone(),
-            });
-        }
+            return Err(LetPropError::NotRecursive { name: pred.name.clone() });
+        },
     };
 
     let body_mu = lower_expr(&pred.body, &pred.name);
@@ -286,13 +277,9 @@ fn lower_expr(expr: &LetPropExpr, self_name: &str) -> MuCalculusFormula {
             // evaluator will need to dispatch on (relation, args) at
             // call time.
             MuCalculusFormula::Atom(relation.clone())
-        }
-        LetPropExpr::Recursive { .. } => {
-            MuCalculusFormula::Var(self_name.to_string())
-        }
-        LetPropExpr::Not(inner) => {
-            MuCalculusFormula::Not(Box::new(lower_expr(inner, self_name)))
-        }
+        },
+        LetPropExpr::Recursive { .. } => MuCalculusFormula::Var(self_name.to_string()),
+        LetPropExpr::Not(inner) => MuCalculusFormula::Not(Box::new(lower_expr(inner, self_name))),
         LetPropExpr::And(a, b) => MuCalculusFormula::And(
             Box::new(lower_expr(a, self_name)),
             Box::new(lower_expr(b, self_name)),
@@ -304,12 +291,10 @@ fn lower_expr(expr: &LetPropExpr, self_name: &str) -> MuCalculusFormula {
         LetPropExpr::Implies(a, b) => {
             // P ⟹ Q ≡ ¬P ∨ Q
             MuCalculusFormula::Or(
-                Box::new(MuCalculusFormula::Not(Box::new(lower_expr(
-                    a, self_name,
-                )))),
+                Box::new(MuCalculusFormula::Not(Box::new(lower_expr(a, self_name)))),
                 Box::new(lower_expr(b, self_name)),
             )
-        }
+        },
     }
 }
 
@@ -320,7 +305,8 @@ pub fn letprop_to_pata(
     max_arity: usize,
 ) -> Result<ParityAlternatingTreeAutomaton<BooleanWeight>, LetPropError> {
     let mu_formula = lower_to_mu_calculus(pred)?;
-    Ok(mu_calculus_to_pata(&mu_formula, max_arity))
+    try_mu_calculus_to_pata(&mu_formula, max_arity)
+        .map_err(|err| LetPropError::MuCalculusCompile { message: err.to_string() })
 }
 
 /// Collect every distinct atom name referenced by a `LetPropExpr`.
@@ -335,15 +321,13 @@ fn collect_relations_inner(expr: &LetPropExpr, acc: &mut HashSet<String>) {
     match expr {
         LetPropExpr::Atom { relation, .. } => {
             acc.insert(relation.clone());
-        }
+        },
         LetPropExpr::Not(inner) => collect_relations_inner(inner, acc),
-        LetPropExpr::And(a, b)
-        | LetPropExpr::Or(a, b)
-        | LetPropExpr::Implies(a, b) => {
+        LetPropExpr::And(a, b) | LetPropExpr::Or(a, b) | LetPropExpr::Implies(a, b) => {
             collect_relations_inner(a, acc);
             collect_relations_inner(b, acc);
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -367,10 +351,7 @@ mod tests {
     #[test]
     fn polarity_positive_recursive() {
         // reachable(x, y) = edge(x, y) \/ reachable(x, y)
-        let body = LetPropExpr::Or(
-            Box::new(atom("edge", &["x", "y"])),
-            Box::new(rec(&["x", "y"])),
-        );
+        let body = LetPropExpr::Or(Box::new(atom("edge", &["x", "y"])), Box::new(rec(&["x", "y"])));
         let (pol, mixed) = analyze_polarity(&body);
         assert_eq!(pol, Some(true));
         assert!(!mixed);
@@ -392,10 +373,8 @@ mod tests {
     #[test]
     fn polarity_mixed_is_flagged() {
         // body has both a positive and a negative recursive call
-        let body = LetPropExpr::And(
-            Box::new(rec(&[])),
-            Box::new(LetPropExpr::Not(Box::new(rec(&[])))),
-        );
+        let body =
+            LetPropExpr::And(Box::new(rec(&[])), Box::new(LetPropExpr::Not(Box::new(rec(&[])))));
         let (_pol, mixed) = analyze_polarity(&body);
         assert!(mixed);
     }
@@ -413,10 +392,7 @@ mod tests {
         let pred = RecursivePredicate {
             name: "reachable".to_string(),
             params: vec!["x".to_string(), "y".to_string()],
-            body: LetPropExpr::Or(
-                Box::new(atom("edge", &["x", "y"])),
-                Box::new(rec(&["x", "y"])),
-            ),
+            body: LetPropExpr::Or(Box::new(atom("edge", &["x", "y"])), Box::new(rec(&["x", "y"]))),
         };
         let mu = lower_to_mu_calculus(&pred).expect("should lower");
         match mu {
@@ -432,9 +408,9 @@ mod tests {
             params: vec![],
             body: LetPropExpr::And(
                 Box::new(atom("safe", &[])),
-                Box::new(LetPropExpr::Not(Box::new(LetPropExpr::Not(
-                    Box::new(LetPropExpr::Not(Box::new(rec(&[])))),
-                )))),
+                Box::new(LetPropExpr::Not(Box::new(LetPropExpr::Not(Box::new(LetPropExpr::Not(
+                    Box::new(rec(&[])),
+                )))))),
             ),
         };
         // Triple-nested Not: positive → negative → positive → negative
@@ -456,10 +432,7 @@ mod tests {
             ),
         };
         let result = lower_to_mu_calculus(&pred);
-        assert!(matches!(
-            result,
-            Err(LetPropError::MixedPolarity { .. })
-        ));
+        assert!(matches!(result, Err(LetPropError::MixedPolarity { .. })));
     }
 
     #[test]
@@ -481,16 +454,11 @@ mod tests {
             body: LetPropExpr::Or(
                 Box::new(atom("edge", &["x", "y"])),
                 // Recursive call passes wrong args
-                Box::new(LetPropExpr::Recursive {
-                    args: vec!["a".to_string()],
-                }),
+                Box::new(LetPropExpr::Recursive { args: vec!["a".to_string()] }),
             ),
         };
         let result = lower_to_mu_calculus(&pred);
-        assert!(matches!(
-            result,
-            Err(LetPropError::ArgumentMismatch { .. })
-        ));
+        assert!(matches!(result, Err(LetPropError::ArgumentMismatch { .. })));
     }
 
     #[test]
@@ -498,10 +466,7 @@ mod tests {
         let pred = RecursivePredicate {
             name: "reachable".to_string(),
             params: vec!["x".to_string(), "y".to_string()],
-            body: LetPropExpr::Or(
-                Box::new(atom("edge", &["x", "y"])),
-                Box::new(rec(&["x", "y"])),
-            ),
+            body: LetPropExpr::Or(Box::new(atom("edge", &["x", "y"])), Box::new(rec(&["x", "y"]))),
         };
         let pata = letprop_to_pata(&pred, 2).expect("should compile to PATA");
         assert!(pata.num_states() > 0);
@@ -511,10 +476,7 @@ mod tests {
     fn collect_relations_finds_atoms() {
         let expr = LetPropExpr::And(
             Box::new(atom("edge", &["x", "y"])),
-            Box::new(LetPropExpr::Or(
-                Box::new(atom("node", &["x"])),
-                Box::new(atom("safe", &[])),
-            )),
+            Box::new(LetPropExpr::Or(Box::new(atom("node", &["x"])), Box::new(atom("safe", &[])))),
         );
         let rels = collect_relations(&expr);
         assert_eq!(rels.len(), 3);

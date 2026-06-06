@@ -31,8 +31,8 @@ use std::hash::{Hash, Hasher};
 
 use crate::lint::DiagnosticId;
 
+use pathmap::ring::{AlgebraicResult, DistributiveLattice, Lattice};
 use pathmap::PathMap;
-use pathmap::ring::{AlgebraicResult, Lattice, DistributiveLattice};
 
 use crate::automata::codegen::terminal_to_variant_name;
 use crate::grammar::ir::{CastRule, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
@@ -93,13 +93,9 @@ pub enum DecisionAction {
         weight: f64,
     },
     /// Multiple rules compete at this node — need disambiguation.
-    Ambiguous {
-        candidates: Vec<AmbiguousCandidate>,
-    },
+    Ambiguous { candidates: Vec<AmbiguousCandidate> },
     /// Nonterminal boundary — dispatch based on FIRST set expansion.
-    NonterminalBoundary {
-        options: Vec<NTOption>,
-    },
+    NonterminalBoundary { options: Vec<NTOption> },
 }
 
 /// A candidate rule in an ambiguous dispatch point.
@@ -149,13 +145,13 @@ impl Lattice for DecisionAction {
                     weight: *weight,
                     remaining_items: 0,
                 });
-            }
+            },
             DecisionAction::Ambiguous { candidates: cs } => {
                 candidates.extend(cs.iter().cloned());
-            }
+            },
             DecisionAction::NonterminalBoundary { .. } => {
                 return AlgebraicResult::Identity(1);
-            }
+            },
         }
         match other {
             DecisionAction::Commit { rule_label, category, weight } => {
@@ -165,13 +161,13 @@ impl Lattice for DecisionAction {
                     weight: *weight,
                     remaining_items: 0,
                 });
-            }
+            },
             DecisionAction::Ambiguous { candidates: cs } => {
                 candidates.extend(cs.iter().cloned());
-            }
+            },
             DecisionAction::NonterminalBoundary { .. } => {
                 return AlgebraicResult::Identity(2);
-            }
+            },
         }
         AlgebraicResult::Element(DecisionAction::Ambiguous { candidates })
     }
@@ -234,7 +230,7 @@ impl DecisionAction {
             DecisionAction::Commit { rule_label, .. } => vec![rule_label.as_str()],
             DecisionAction::Ambiguous { candidates } => {
                 candidates.iter().map(|c| c.rule_label.as_str()).collect()
-            }
+            },
             DecisionAction::NonterminalBoundary { .. } => Vec::new(),
         };
         v.into_iter()
@@ -250,7 +246,7 @@ impl DecisionAction {
                     weight: *weight,
                     remaining_items: 0,
                 }]
-            }
+            },
             DecisionAction::Ambiguous { candidates } => candidates.clone(),
             _ => Vec::new(),
         }
@@ -273,17 +269,17 @@ impl Hash for DecisionAction {
             DecisionAction::Commit { rule_label, .. } => {
                 0u8.hash(state);
                 rule_label.hash(state);
-            }
+            },
             DecisionAction::Ambiguous { candidates } => {
                 1u8.hash(state);
                 for c in candidates {
                     c.rule_label.hash(state);
                 }
-            }
+            },
             DecisionAction::NonterminalBoundary { options } => {
                 2u8.hash(state);
                 options.len().hash(state);
-            }
+            },
         }
     }
 }
@@ -436,7 +432,7 @@ impl DecisionTreeBuilder {
                     if let Some(id) = self.encode_terminal(&variant) {
                         elements.push(PatternElement::Terminal { variant, id });
                     }
-                }
+                },
                 RDSyntaxItem::NonTerminal { category, .. } => {
                     if let Some(&cat_id) = self.category_id_map.get(category) {
                         elements.push(PatternElement::NonTerminal {
@@ -444,17 +440,13 @@ impl DecisionTreeBuilder {
                             category_id: cat_id,
                         });
                     }
-                }
+                },
                 RDSyntaxItem::IdentCapture { param_name } => {
-                    elements.push(PatternElement::IdentCapture {
-                        param_name: param_name.clone(),
-                    });
-                }
+                    elements.push(PatternElement::IdentCapture { param_name: param_name.clone() });
+                },
                 RDSyntaxItem::Binder { param_name, .. } => {
-                    elements.push(PatternElement::BinderCapture {
-                        param_name: param_name.clone(),
-                    });
-                }
+                    elements.push(PatternElement::BinderCapture { param_name: param_name.clone() });
+                },
                 RDSyntaxItem::Optional { inner } => {
                     elements.push(PatternElement::OptionalStart);
                     // Recursively encode inner items
@@ -475,7 +467,7 @@ impl DecisionTreeBuilder {
                         elements.extend(inner_elements);
                     }
                     elements.push(PatternElement::OptionalEnd);
-                }
+                },
                 // Collection, Sep, Map, Zip, SepList, BinderCollection
                 // are complex constructs — they don't participate in prefix dispatch.
                 // Rules with these items are handled by standalone functions.
@@ -487,9 +479,7 @@ impl DecisionTreeBuilder {
 
     /// Encode terminal prefix of a pattern as bytes, stopping at the first
     /// nonterminal boundary. Returns (bytes, boundary_info).
-    pub fn encode_terminal_prefix(
-        pattern: &[PatternElement],
-    ) -> (Vec<u8>, Option<NTBoundaryInfo>) {
+    pub fn encode_terminal_prefix(pattern: &[PatternElement]) -> (Vec<u8>, Option<NTBoundaryInfo>) {
         let mut bytes = Vec::with_capacity(pattern.len());
         for (i, elem) in pattern.iter().enumerate() {
             match elem {
@@ -508,7 +498,7 @@ impl DecisionTreeBuilder {
                             position: i,
                         }),
                     );
-                }
+                },
             }
         }
         (bytes, None)
@@ -583,7 +573,13 @@ impl DecisionTreeBuilder {
 
             // Handle nonterminal boundary: create continuation segment
             if let Some(boundary) = nt_boundary {
-                self.insert_nt_continuation(&rule.category, &rule.label, weight, &boundary, &prefix_bytes);
+                self.insert_nt_continuation(
+                    &rule.category,
+                    &rule.label,
+                    weight,
+                    &boundary,
+                    &prefix_bytes,
+                );
             }
         }
     }
@@ -599,9 +595,9 @@ impl DecisionTreeBuilder {
     ) {
         // Track the NT boundary record for CD02 segment merging.
         // Done first to avoid borrow conflict with ensure_tree below.
-        let record = NTBoundaryRecord {
+        let mut record = NTBoundaryRecord {
             nt_category: boundary.category.clone(),
-            resume_segment: 0, // placeholder; updated below
+            resume_segment: 0,
             remaining_pattern: boundary.remaining_pattern.clone(),
             rule_label: rule_label.to_string(),
             weight,
@@ -629,8 +625,7 @@ impl DecisionTreeBuilder {
         // For now, the NT boundary information is tracked in stats
         tree.stats.nonterminal_boundaries += 1;
 
-        // Update the record with the actual resume segment index
-        let mut record = record;
+        // Update the record with the actual resume segment index.
         record.resume_segment = resume_idx;
         self.nt_boundary_map
             .entry((category.to_string(), prefix_bytes.to_vec()))
@@ -652,8 +647,7 @@ impl DecisionTreeBuilder {
                 if let Some(first) = self.first_sets.get(&rule.source_category).cloned() {
                     let weight = self.rule_weight(&rule.label, &rule.result_category);
                     for token in &first.tokens {
-                        let variant = terminal_to_variant_name(token);
-                        if let Some(tok_id) = self.encode_terminal(&variant) {
+                        if let Some(tok_id) = wfst_token_byte(&self.token_ids, token) {
                             // Path: [source_first_token, operator_token]
                             let path = vec![tok_id, op_id];
                             let action = DecisionAction::Commit {
@@ -679,21 +673,84 @@ impl DecisionTreeBuilder {
         }
     }
 
+    /// Insert foreign-leading nonterminal rules.
+    ///
+    /// Rules such as `POutput . n:Name, p:Proc |- n "!" "(" p ")" : Proc`
+    /// are not prefix commits: runtime first delegates to `Name`, then the
+    /// Pratt/mixfix loop consumes `!` and fires `POutput`. Recording the
+    /// two-token path `[FIRST(Name), Bang]` keeps trie reachability aligned
+    /// with that runtime path for dead-rule analysis.
+    pub fn insert_foreign_leading_nt_rules(&mut self, rd_rules: &[RDRuleInfo]) {
+        for rule in rd_rules {
+            if self.dead_rules.contains(&rule.label) {
+                continue;
+            }
+            if rule.is_collection || rule.prefix_bp.is_some() || rule.items.len() < 2 {
+                continue;
+            }
+
+            let Some(RDSyntaxItem::NonTerminal { category: source_category, .. }) =
+                rule.items.first()
+            else {
+                continue;
+            };
+            if source_category == &rule.category {
+                continue;
+            }
+
+            let Some(RDSyntaxItem::Terminal(operator)) = rule.items.get(1) else {
+                continue;
+            };
+            let operator_variant = terminal_to_variant_name(operator);
+            let Some(op_id) = self.encode_terminal(&operator_variant) else {
+                continue;
+            };
+
+            let Some(source_first) = self.first_sets.get(source_category).cloned() else {
+                continue;
+            };
+            let weight = self.rule_weight(&rule.label, &rule.category);
+            for token in &source_first.tokens {
+                if let Some(tok_id) = wfst_token_byte(&self.token_ids, token) {
+                    let path = vec![tok_id, op_id];
+                    let action = DecisionAction::Commit {
+                        rule_label: rule.label.clone(),
+                        category: rule.category.clone(),
+                        weight,
+                    };
+                    let tree = self.ensure_tree(&rule.category);
+                    if let Some(existing) = tree.segments[0].get(&path) {
+                        let merged = match existing.pjoin(&action) {
+                            AlgebraicResult::Element(m) => m,
+                            AlgebraicResult::Identity(_) => existing.clone(),
+                            AlgebraicResult::None => action,
+                        };
+                        tree.segments[0].insert(&path, merged);
+                    } else {
+                        tree.segments[0].insert(&path, action);
+                    }
+                }
+            }
+        }
+    }
+
     /// Insert cast rules.
     pub fn insert_cast_rules(&mut self, cast_rules: &[CastRule]) {
         for rule in cast_rules {
             if self.dead_rules.contains(&rule.label) {
                 continue;
             }
-            // Cast: unique tokens in source FIRST but not target FIRST
+            // Cast/projection dispatch follows the generated prefix
+            // runtime's unified-bucket model: overlapping source/target
+            // FIRST tokens are forked, not suppressed. Older analyses used
+            // `source - target` here, which under-approximated rules like
+            // `ProcInt . i:Int |- i : Proc` when `Proc` also had Integer in
+            // its own FIRST set.
             let source_first = self.first_sets.get(&rule.source_category).cloned();
-            let target_first = self.first_sets.get(&rule.target_category).cloned();
-            if let (Some(sf), Some(tf)) = (source_first, target_first) {
-                let unique_tokens = sf.difference(&tf);
+            if let Some(sf) = source_first {
                 let weight = self.rule_weight(&rule.label, &rule.target_category);
-                for token in &unique_tokens.tokens {
-                    let variant = terminal_to_variant_name(token);
-                    if let Some(tok_id) = self.encode_terminal(&variant) {
+                for token in &sf.tokens {
+                    if let Some(tok_id) = wfst_token_byte(&self.token_ids, token) {
                         let path = vec![tok_id];
                         let action = DecisionAction::Commit {
                             rule_label: rule.label.clone(),
@@ -732,6 +789,7 @@ impl DecisionTreeBuilder {
     ) {
         self.insert_rd_rules(rd_rules);
         self.insert_cross_category_rules(cross_rules);
+        self.insert_foreign_leading_nt_rules(rd_rules);
         self.insert_cast_rules(cast_rules);
 
         // Compute statistics for each tree
@@ -830,7 +888,8 @@ pub fn merge_safe_nonterminal_boundaries(
         for (idx, record) in records.iter().enumerate() {
             // Convert remaining PatternElements back to RDSyntaxItems for
             // FIRST set computation (we need the terminal variant names)
-            let first_set = first_set_of_pattern_suffix(&record.remaining_pattern, first_sets, token_ids);
+            let first_set =
+                first_set_of_pattern_suffix(&record.remaining_pattern, first_sets, token_ids);
             suffix_firsts.push((idx, first_set));
         }
 
@@ -906,7 +965,7 @@ fn first_set_of_pattern_suffix(
                 result.insert(variant);
                 nullable = false;
                 break;
-            }
+            },
             PatternElement::NonTerminal { category, .. } => {
                 if let Some(cat_first) = first_sets.get(category) {
                     for token in &cat_first.tokens {
@@ -920,20 +979,20 @@ fn first_set_of_pattern_suffix(
                     nullable = false;
                     break;
                 }
-            }
+            },
             PatternElement::IdentCapture { .. } => {
                 result.insert("Ident");
                 nullable = false;
                 break;
-            }
+            },
             PatternElement::BinderCapture { .. } => {
                 result.insert("Ident");
                 nullable = false;
                 break;
-            }
+            },
             PatternElement::OptionalStart | PatternElement::OptionalEnd => {
                 // Optional markers don't contribute to FIRST; continue
-            }
+            },
         }
     }
 
@@ -1029,19 +1088,14 @@ pub fn detect_shared_nonterminal_prefixes(
             let mut discriminating_tokens: HashMap<String, Vec<String>> =
                 HashMap::with_capacity(group_records.len());
 
-            let mut suffix_firsts: Vec<(&str, FirstSet)> =
-                Vec::with_capacity(group_records.len());
+            let mut suffix_firsts: Vec<(&str, FirstSet)> = Vec::with_capacity(group_records.len());
 
             for record in group_records {
-                let first_set = first_set_of_pattern_suffix(
-                    &record.remaining_pattern,
-                    first_sets,
-                    token_ids,
-                );
+                let first_set =
+                    first_set_of_pattern_suffix(&record.remaining_pattern, first_sets, token_ids);
 
                 let token_names: Vec<String> = first_set.tokens.iter().cloned().collect();
-                discriminating_tokens
-                    .insert(record.rule_label.clone(), token_names);
+                discriminating_tokens.insert(record.rule_label.clone(), token_names);
                 suffix_firsts.push((record.rule_label.as_str(), first_set));
             }
 
@@ -1056,10 +1110,7 @@ pub fn detect_shared_nonterminal_prefixes(
                 }
             }
 
-            let rules: Vec<String> = group_records
-                .iter()
-                .map(|r| r.rule_label.clone())
-                .collect();
+            let rules: Vec<String> = group_records.iter().map(|r| r.rule_label.clone()).collect();
 
             results.push(SharedNonterminalPrefix {
                 category: category.clone(),
@@ -1121,10 +1172,7 @@ impl fmt::Display for SharedNonterminalPrefix {
 /// //     _ => return Err(...)
 /// // }
 /// ```
-pub fn format_cse_annotation(
-    shared: &SharedNonterminalPrefix,
-    token_ids: &TokenIdMap,
-) -> String {
+pub fn format_cse_annotation(shared: &SharedNonterminalPrefix, token_ids: &TokenIdMap) -> String {
     let mut buf = String::with_capacity(256);
 
     // Header comment with terminal prefix decoded
@@ -1166,7 +1214,9 @@ pub fn format_cse_annotation(
         buf.push_str("//     _ => return Err(...)\n");
         buf.push_str("// }\n");
     } else {
-        buf.push_str("// Note: discriminating FIRST sets overlap — NFA try-all needed after shared parse\n");
+        buf.push_str(
+            "// Note: discriminating FIRST sets overlap — NFA try-all needed after shared parse\n",
+        );
     }
 
     buf
@@ -1207,7 +1257,7 @@ pub fn jump_thread_commit_branches(
             match item {
                 crate::grammar::ir::RDSyntaxItem::Terminal(t) => {
                     terminals.push(crate::automata::codegen::terminal_to_variant_name(t));
-                }
+                },
                 // Stop at first non-terminal item
                 _ => break,
             }
@@ -1235,7 +1285,10 @@ pub fn jump_thread_commit_branches(
                     if byte <= MAX_TERMINAL_ID {
                         match token_ids.name(byte as u16) {
                             Some(name) => path_terminals.push(name.to_string()),
-                            None => { valid = false; break; }
+                            None => {
+                                valid = false;
+                                break;
+                            },
                         }
                     } else {
                         // Non-terminal byte — stop here
@@ -1310,7 +1363,7 @@ pub fn compute_jump_threading_info(
             match item {
                 crate::grammar::ir::RDSyntaxItem::Terminal(t) => {
                     terminals.push(crate::automata::codegen::terminal_to_variant_name(t));
-                }
+                },
                 _ => break,
             }
         }
@@ -1458,7 +1511,7 @@ pub fn prune_dead_rules(tree: &mut CategoryDecisionTree, dead: &HashSet<String>)
                     if dead.contains(rule_label) {
                         removals.push(path);
                     }
-                }
+                },
                 DecisionAction::Ambiguous { candidates } => {
                     let live: Vec<_> = candidates
                         .iter()
@@ -1470,8 +1523,8 @@ pub fn prune_dead_rules(tree: &mut CategoryDecisionTree, dead: &HashSet<String>)
                     } else if live.len() < candidates.len() {
                         // Will be updated below (can't mutate during iter)
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
         for path in removals {
@@ -1501,16 +1554,16 @@ pub fn compute_statistics(tree: &CategoryDecisionTree) -> TreeStats {
                     stats.deterministic_nodes += 1;
                     all_rule_labels.insert(rule_label.clone());
                     deterministic_labels.insert(rule_label.clone());
-                }
+                },
                 DecisionAction::Ambiguous { candidates } => {
                     stats.ambiguous_nodes += 1;
                     for c in candidates {
                         all_rule_labels.insert(c.rule_label.clone());
                     }
-                }
+                },
                 DecisionAction::NonterminalBoundary { .. } => {
                     stats.nonterminal_boundaries += 1;
-                }
+                },
             }
         }
     }
@@ -1526,7 +1579,11 @@ pub fn compute_statistics(tree: &CategoryDecisionTree) -> TreeStats {
     }
 
     // Min lookahead = max depth where all paths are deterministic at that depth
-    stats.min_lookahead = if stats.ambiguous_nodes == 0 { 1 } else { stats.max_depth };
+    stats.min_lookahead = if stats.ambiguous_nodes == 0 {
+        1
+    } else {
+        stats.max_depth
+    };
 
     stats
 }
@@ -1545,11 +1602,7 @@ const FLAT_TABLE_THRESHOLD: usize = 256;
 /// Actual codegen is performed by the trampoline integration, which queries
 /// `dispatch_strategy()` and generates code with frame management, segment
 /// splitting, and constructor emission. See `trampoline.rs` lines 545-913.
-pub fn emit_match_arms(
-    tree: &CategoryDecisionTree,
-    _token_ids: &TokenIdMap,
-    buf: &mut String,
-) {
+pub fn emit_match_arms(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf: &mut String) {
     if tree.segments.is_empty() || tree.segments[0].is_empty() {
         return;
     }
@@ -1592,7 +1645,7 @@ fn emit_action_code(action: &DecisionAction, _category: &str, buf: &mut String) 
     match action {
         DecisionAction::Commit { rule_label, .. } => {
             write!(buf, "/* COMMIT: {} */", rule_label).unwrap();
-        }
+        },
         DecisionAction::Ambiguous { candidates } => {
             write!(
                 buf,
@@ -1605,10 +1658,10 @@ fn emit_action_code(action: &DecisionAction, _category: &str, buf: &mut String) 
                     .join(", "),
             )
             .unwrap();
-        }
+        },
         DecisionAction::NonterminalBoundary { .. } => {
             write!(buf, "/* NT_BOUNDARY */").unwrap();
-        }
+        },
     }
 }
 
@@ -1663,34 +1716,25 @@ pub fn flatten_tree(tree: &CategoryDecisionTree) -> Vec<FlatState> {
     }
 
     // Build transitions and actions
-    let action_map: HashMap<Vec<u8>, &DecisionAction> = entries
-        .iter()
-        .map(|(p, a)| (p.clone(), a))
-        .collect();
+    let action_map: HashMap<Vec<u8>, &DecisionAction> =
+        entries.iter().map(|(p, a)| (p.clone(), a)).collect();
 
     let mut states: Vec<FlatState> = Vec::with_capacity(next_id as usize);
-    let mut sorted_prefixes: Vec<(Vec<u8>, StateId)> =
-        prefix_to_id.into_iter().collect();
+    let mut sorted_prefixes: Vec<(Vec<u8>, StateId)> = prefix_to_id.into_iter().collect();
     sorted_prefixes.sort_by_key(|(_, id)| *id);
 
     for (prefix, id) in &sorted_prefixes {
         // Find direct children (prefix + one byte)
         let mut transitions = Vec::new();
         for (other_prefix, other_id) in &sorted_prefixes {
-            if other_prefix.len() == prefix.len() + 1
-                && other_prefix.starts_with(prefix)
-            {
+            if other_prefix.len() == prefix.len() + 1 && other_prefix.starts_with(prefix) {
                 transitions.push((other_prefix[prefix.len()], *other_id));
             }
         }
 
         let action = action_map.get(prefix).map(|a| (*a).clone());
 
-        states.push(FlatState {
-            id: *id,
-            transitions,
-            action,
-        });
+        states.push(FlatState { id: *id, transitions, action });
     }
 
     states
@@ -1701,11 +1745,7 @@ pub fn flatten_tree(tree: &CategoryDecisionTree) -> Vec<FlatState> {
 /// Produces a human-readable summary for PRATTAIL_DUMP_PARSER debugging.
 /// Actual codegen is performed by the trampoline integration via
 /// `dispatch_strategy()`. See `trampoline.rs`.
-pub fn emit_flat_table(
-    tree: &CategoryDecisionTree,
-    _token_ids: &TokenIdMap,
-    buf: &mut String,
-) {
+pub fn emit_flat_table(tree: &CategoryDecisionTree, _token_ids: &TokenIdMap, buf: &mut String) {
     use std::fmt::Write;
 
     let states = flatten_tree(tree);
@@ -1716,12 +1756,7 @@ pub fn emit_flat_table(
     let cat_upper = tree.category.to_uppercase();
 
     // Emit state transition table
-    write!(
-        buf,
-        "const DISPATCH_TABLE_{}: &[(u8, u16)] = &[",
-        cat_upper,
-    )
-    .unwrap();
+    write!(buf, "const DISPATCH_TABLE_{}: &[(u8, u16)] = &[", cat_upper,).unwrap();
 
     for state in &states {
         for (byte, target) in &state.transitions {
@@ -1731,12 +1766,7 @@ pub fn emit_flat_table(
     buf.push_str("];");
 
     // Emit state metadata (offset into transition table + action tag)
-    write!(
-        buf,
-        "const STATE_META_{}: &[(u16, u16, u8)] = &[",
-        cat_upper,
-    )
-    .unwrap();
+    write!(buf, "const STATE_META_{}: &[(u16, u16, u8)] = &[", cat_upper,).unwrap();
 
     let mut offset: u16 = 0;
     for state in &states {
@@ -1763,10 +1793,7 @@ pub fn emit_flat_table(
 /// one entry. Categories with only cross-category or infix rules may not have
 /// a decision tree (they are handled by dispatch.rs / pratt.rs).
 #[cfg(test)]
-pub fn has_decision_tree(
-    trees: &HashMap<String, CategoryDecisionTree>,
-    category: &str,
-) -> bool {
+pub fn has_decision_tree(trees: &HashMap<String, CategoryDecisionTree>, category: &str) -> bool {
     trees
         .get(category)
         .map_or(false, |t| t.stats.total_states > 0)
@@ -1877,11 +1904,7 @@ pub fn precision_ambiguity_reports(
                 crate::lint::LintSeverity::Note,
                 &tree.category,
                 grammar_name,
-                format!(
-                    "ambiguity at [{}] between {}",
-                    path_str,
-                    labels.join(" and "),
-                ),
+                format!("ambiguity at [{}] between {}", path_str, labels.join(" and "),),
                 hint,
             ));
         }
@@ -1913,9 +1936,9 @@ pub fn unresolvable_ambiguity_reports(
     for (path_bytes, action) in &entries {
         if let DecisionAction::Ambiguous { candidates } = action {
             // Check if any path *extends* this one (i.e. this isn't a leaf)
-            let is_leaf = !entries.iter().any(|(other, _)| {
-                other.len() > path_bytes.len() && other.starts_with(path_bytes)
-            });
+            let is_leaf = !entries
+                .iter()
+                .any(|(other, _)| other.len() > path_bytes.len() && other.starts_with(path_bytes));
 
             if is_leaf {
                 // No deeper lookahead possible — genuinely unresolvable
@@ -1937,8 +1960,7 @@ pub fn unresolvable_ambiguity_reports(
                 } else {
                     path_names.join(", ")
                 };
-                let labels: Vec<&str> =
-                    candidates.iter().map(|c| c.rule_label.as_str()).collect();
+                let labels: Vec<&str> = candidates.iter().map(|c| c.rule_label.as_str()).collect();
 
                 diagnostics.push(dt_diagnostic(
                     DiagnosticId::D02,
@@ -1979,41 +2001,43 @@ pub fn unreachable_rule_detection(
             match action {
                 DecisionAction::Commit { rule_label, .. } => {
                     in_trie.insert(rule_label.clone());
-                }
+                },
                 DecisionAction::Ambiguous { candidates } => {
                     for c in candidates {
                         in_trie.insert(c.rule_label.clone());
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
     }
 
-    let unreachable: Vec<String> = all_rule_labels
-        .difference(&in_trie)
-        .cloned()
-        .collect();
+    let unreachable: Vec<String> = all_rule_labels.difference(&in_trie).cloned().collect();
 
     unreachable
         .into_iter()
-        .map(|label| dt_diagnostic(
-            DiagnosticId::D03,
-            "trie-unreachable-rule",
-            crate::lint::LintSeverity::Warning,
-            &tree.category,
-            grammar_name,
-            format!(
-                "rule {} is unreachable in trie dispatch — shadowed by higher-priority paths",
-                label,
-            ),
-            Some("check for duplicate prefix patterns or conflicting priorities".to_string()),
-        ))
+        .map(|label| {
+            dt_diagnostic(
+                DiagnosticId::D03,
+                "trie-unreachable-rule",
+                crate::lint::LintSeverity::Warning,
+                &tree.category,
+                grammar_name,
+                format!(
+                    "rule {} is unreachable in trie dispatch — shadowed by higher-priority paths",
+                    label,
+                ),
+                Some("check for duplicate prefix patterns or conflicting priorities".to_string()),
+            )
+        })
         .collect()
 }
 
 /// Layer 3: Minimum lookahead depth report.
-pub fn min_lookahead_report(tree: &CategoryDecisionTree, grammar_name: &str) -> crate::lint::LintDiagnostic {
+pub fn min_lookahead_report(
+    tree: &CategoryDecisionTree,
+    grammar_name: &str,
+) -> crate::lint::LintDiagnostic {
     let depth = tree.stats.min_lookahead;
     dt_diagnostic(
         DiagnosticId::D04,
@@ -2022,10 +2046,7 @@ pub fn min_lookahead_report(tree: &CategoryDecisionTree, grammar_name: &str) -> 
         &tree.category,
         grammar_name,
         if depth <= 1 {
-            format!(
-                "category {} is fully deterministic at depth 1 (LL(1))",
-                tree.category,
-            )
+            format!("category {} is fully deterministic at depth 1 (LL(1))", tree.category,)
         } else {
             format!(
                 "category {} requires minimum {}-token lookahead for deterministic dispatch",
@@ -2037,7 +2058,10 @@ pub fn min_lookahead_report(tree: &CategoryDecisionTree, grammar_name: &str) -> 
 }
 
 /// Layer 4: Grammar complexity metrics.
-pub fn complexity_metrics(tree: &CategoryDecisionTree, grammar_name: &str) -> crate::lint::LintDiagnostic {
+pub fn complexity_metrics(
+    tree: &CategoryDecisionTree,
+    grammar_name: &str,
+) -> crate::lint::LintDiagnostic {
     dt_diagnostic(
         DiagnosticId::D05,
         "decision-tree-summary",
@@ -2126,15 +2150,9 @@ pub fn wfst_consistency_check(
         // Skip tokens that dispatch exclusively to rule types intentionally excluded
         // from the trie (Variable, Cast, Grouping, CrossCategory). These are handled
         // by fallback paths in the parser, not by single-token trie lookup.
-        let all_excluded = predictions.iter().all(|wa| {
-            matches!(
-                wa.action,
-                crate::prediction::DispatchAction::Variable { .. }
-                    | crate::prediction::DispatchAction::Cast { .. }
-                    | crate::prediction::DispatchAction::Grouping { .. }
-                    | crate::prediction::DispatchAction::CrossCategory { .. }
-            )
-        });
+        let all_excluded = predictions
+            .iter()
+            .all(|wa| wfst_action_is_trie_excluded(&wa.action));
         if all_excluded {
             continue;
         }
@@ -2142,35 +2160,29 @@ pub fn wfst_consistency_check(
         // The WFST stores token variant names directly (e.g., "Float", "Integer").
         // Skip literal/variable token variants — rules starting with these
         // are handled by dedicated parser paths, not trie dispatch.
-        if matches!(
-            &*token_name,
-            "Integer" | "Float" | "Boolean" | "StringLit" | "Ident"
-        ) {
+        if matches!(&*token_name, "Integer" | "Float" | "Boolean" | "StringLit" | "Ident") {
             continue;
         }
 
-        let variant = terminal_to_variant_name(token_name);
-        if let Some(tok_id) = token_ids.get(&variant) {
-            if tok_id <= MAX_TERMINAL_ID as u16 {
-                let byte = tok_id as u8;
-                let path = [byte];
-                let trie_reachable = tree.segments.first().map_or(false, |s| s.contains(&path));
-                if !trie_reachable {
-                    diagnostics.push(dt_diagnostic(
-                        DiagnosticId::D06,
-                        "wfst-trie-inconsistency",
-                        crate::lint::LintSeverity::Warning,
-                        &tree.category,
-                        grammar_name,
-                        format!(
-                            "WFST predicts dispatch for token {} but trie has no path for it",
-                            token_name,
-                        ),
-                        Some(
-                            "WFST weights may be stale or the rule was removed".to_string(),
-                        ),
-                    ));
-                }
+        if wfst_predictions_are_category_literal_dispatch(tree, token_name, &predictions) {
+            continue;
+        }
+
+        if let Some(byte) = wfst_token_byte(token_ids, token_name) {
+            let trie_reachable = first_segment_has_terminal_prefix(tree, byte);
+            if !trie_reachable {
+                diagnostics.push(dt_diagnostic(
+                    DiagnosticId::D06,
+                    "wfst-trie-inconsistency",
+                    crate::lint::LintSeverity::Warning,
+                    &tree.category,
+                    grammar_name,
+                    format!(
+                        "WFST predicts dispatch for token {} but trie has no path for it",
+                        token_name,
+                    ),
+                    Some("WFST weights may be stale or the rule was removed".to_string()),
+                ));
             }
         }
     }
@@ -2178,8 +2190,57 @@ pub fn wfst_consistency_check(
     diagnostics
 }
 
+fn wfst_action_is_trie_excluded(action: &crate::prediction::DispatchAction) -> bool {
+    matches!(
+        action,
+        crate::prediction::DispatchAction::Variable { .. }
+            | crate::prediction::DispatchAction::Cast { .. }
+            | crate::prediction::DispatchAction::Grouping { .. }
+            | crate::prediction::DispatchAction::CrossCategory { .. }
+    )
+}
+
+fn wfst_predictions_are_category_literal_dispatch(
+    tree: &CategoryDecisionTree,
+    token_name: &str,
+    predictions: &[&crate::wfst::WeightedAction],
+) -> bool {
+    if token_name != tree.category {
+        return false;
+    }
+
+    let expected_rule_label = format!("{}Lit", tree.category);
+    let expected_parse_fn = format!("parse_{}_literal", tree.category.to_lowercase());
+
+    predictions.iter().all(|wa| {
+        matches!(
+            &wa.action,
+            crate::prediction::DispatchAction::Direct { rule_label, parse_fn }
+                if rule_label == &expected_rule_label && parse_fn == &expected_parse_fn
+        )
+    })
+}
+
+fn wfst_token_byte(token_ids: &TokenIdMap, token_name: &str) -> Option<u8> {
+    let tok_id = token_ids.get(token_name).or_else(|| {
+        let variant = terminal_to_variant_name(token_name);
+        token_ids.get(&variant)
+    })?;
+
+    (tok_id <= MAX_TERMINAL_ID as u16).then_some(tok_id as u8)
+}
+
+fn first_segment_has_terminal_prefix(tree: &CategoryDecisionTree, byte: u8) -> bool {
+    tree.segments
+        .first()
+        .map_or(false, |segment| segment.iter().any(|(path, _)| path.first() == Some(&byte)))
+}
+
 /// Layer 8: Optimization suggestions.
-pub fn optimization_suggestions(tree: &CategoryDecisionTree, grammar_name: &str) -> Vec<crate::lint::LintDiagnostic> {
+pub fn optimization_suggestions(
+    tree: &CategoryDecisionTree,
+    grammar_name: &str,
+) -> Vec<crate::lint::LintDiagnostic> {
     let mut suggestions = Vec::new();
 
     for segment in &tree.segments {
@@ -2195,8 +2256,7 @@ pub fn optimization_suggestions(tree: &CategoryDecisionTree, grammar_name: &str)
                         format!(
                             "rules {} and {} have ambiguous prefix — \
                              adding a distinguishing terminal would eliminate backtracking",
-                            candidates[0].rule_label,
-                            candidates[1].rule_label,
+                            candidates[0].rule_label, candidates[1].rule_label,
                         ),
                         Some(
                             "consider inserting a keyword before the divergence point".to_string(),
@@ -2228,14 +2288,16 @@ pub fn optimization_suggestions(tree: &CategoryDecisionTree, grammar_name: &str)
 }
 
 /// Layer 9: Conflict resolution guidance.
-pub fn conflict_resolution_guidance(tree: &CategoryDecisionTree, grammar_name: &str) -> Vec<crate::lint::LintDiagnostic> {
+pub fn conflict_resolution_guidance(
+    tree: &CategoryDecisionTree,
+    grammar_name: &str,
+) -> Vec<crate::lint::LintDiagnostic> {
     let mut guidance = Vec::new();
 
     for segment in &tree.segments {
         for (_path, action) in segment.iter() {
             if let DecisionAction::Ambiguous { candidates } = action {
-                let labels: Vec<&str> =
-                    candidates.iter().map(|c| c.rule_label.as_str()).collect();
+                let labels: Vec<&str> = candidates.iter().map(|c| c.rule_label.as_str()).collect();
                 guidance.push(dt_diagnostic(
                     DiagnosticId::D09,
                     "conflict-resolution-guide",
@@ -2274,9 +2336,13 @@ pub fn coverage_paths(tree: &CategoryDecisionTree) -> Vec<CoveragePath> {
         for (path_bytes, action) in segment.iter() {
             let rule_label = match action {
                 DecisionAction::Commit { rule_label, .. } => Some(rule_label.clone()),
-                DecisionAction::Ambiguous { candidates } => {
-                    Some(candidates.iter().map(|c| c.rule_label.as_str()).collect::<Vec<_>>().join("|"))
-                }
+                DecisionAction::Ambiguous { candidates } => Some(
+                    candidates
+                        .iter()
+                        .map(|c| c.rule_label.as_str())
+                        .collect::<Vec<_>>()
+                        .join("|"),
+                ),
                 DecisionAction::NonterminalBoundary { .. } => None,
             };
             paths.push(CoveragePath {
@@ -2323,7 +2389,10 @@ pub fn coverage_report_with_suggestions(
     let all_paths = coverage_paths(tree);
     let mut diagnostics = Vec::new();
     let total = all_paths.len();
-    let covered = all_paths.iter().filter(|p| covered_paths.contains(&p.path_bytes)).count();
+    let covered = all_paths
+        .iter()
+        .filter(|p| covered_paths.contains(&p.path_bytes))
+        .count();
     let uncovered = total - covered;
 
     if uncovered > 0 {
@@ -2358,7 +2427,11 @@ pub fn coverage_report_with_suggestions(
                 "coverage: {}/{} trie paths tested ({:.0}%), {} untested",
                 covered,
                 total,
-                if total > 0 { (covered as f64 / total as f64) * 100.0 } else { 100.0 },
+                if total > 0 {
+                    (covered as f64 / total as f64) * 100.0
+                } else {
+                    100.0
+                },
                 uncovered,
             ),
             Some(hint),
@@ -2377,7 +2450,7 @@ pub struct TestSuggestion {
     pub rule_label: Option<String>,
     /// Minimal token sequence that would exercise this path.
     /// Terminal tokens use their variant name (e.g., "KwIf"),
-    /// ident/binder captures use placeholder "x".
+    /// ident/binder captures use synthetic token "x".
     pub token_sequence: Vec<String>,
     /// Trie path ID (matching the coverage instrumentation).
     pub path_id: usize,
@@ -2408,12 +2481,13 @@ pub fn synthesize_test_inputs(
 
         for &byte in &cp.path_bytes {
             match byte {
-                b if b <= MAX_TERMINAL_ID => {
-                    match token_ids.name(b as u16) {
-                        Some(name) => token_sequence.push(name.to_string()),
-                        None => { valid = false; break; }
-                    }
-                }
+                b if b <= MAX_TERMINAL_ID => match token_ids.name(b as u16) {
+                    Some(name) => token_sequence.push(name.to_string()),
+                    None => {
+                        valid = false;
+                        break;
+                    },
+                },
                 IDENT_CAPTURE => token_sequence.push("x".to_string()),
                 BINDER_CAPTURE => token_sequence.push("x".to_string()),
                 nt_byte if nt_byte >= NT_BASE => {
@@ -2421,8 +2495,11 @@ pub fn synthesize_test_inputs(
                     let cat_idx = (nt_byte - NT_BASE) as usize;
                     let shortest = shortest_leaf_path(cat_idx, all_trees, token_ids);
                     token_sequence.extend(shortest);
-                }
-                _ => { valid = false; break; }
+                },
+                _ => {
+                    valid = false;
+                    break;
+                },
             }
         }
 
@@ -2482,14 +2559,18 @@ fn shortest_leaf_path(
         let mut ok = true;
         for &b in &path_bytes {
             match b {
-                b if b <= MAX_TERMINAL_ID => {
-                    match token_ids.name(b as u16) {
-                        Some(name) => tokens.push(name.to_string()),
-                        None => { ok = false; break; }
-                    }
-                }
+                b if b <= MAX_TERMINAL_ID => match token_ids.name(b as u16) {
+                    Some(name) => tokens.push(name.to_string()),
+                    None => {
+                        ok = false;
+                        break;
+                    },
+                },
                 IDENT_CAPTURE | BINDER_CAPTURE => tokens.push("x".to_string()),
-                _ => { ok = false; break; } // Skip NT-recursive for simplicity
+                _ => {
+                    ok = false;
+                    break;
+                }, // Skip NT-recursive for simplicity
             }
         }
         if ok {
@@ -2565,20 +2646,26 @@ impl IncrementalState {
         let mut cursor = &data[..];
 
         let read_u32 = |c: &mut &[u8]| -> Option<u32> {
-            if c.len() < 4 { return None; }
+            if c.len() < 4 {
+                return None;
+            }
             let val = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
             *c = &c[4..];
             Some(val)
         };
         let read_u128 = |c: &mut &[u8]| -> Option<u128> {
-            if c.len() < 16 { return None; }
+            if c.len() < 16 {
+                return None;
+            }
             let mut buf = [0u8; 16];
             buf.copy_from_slice(&c[..16]);
             *c = &c[16..];
             Some(u128::from_le_bytes(buf))
         };
         let read_bytes = |c: &mut &[u8], len: usize| -> Option<Vec<u8>> {
-            if c.len() < len { return None; }
+            if c.len() < len {
+                return None;
+            }
             let val = c[..len].to_vec();
             *c = &c[len..];
             Some(val)
@@ -2602,11 +2689,7 @@ impl IncrementalState {
             category_code.insert(name, code);
         }
 
-        Some(IncrementalState {
-            version,
-            category_hashes,
-            category_code,
-        })
+        Some(IncrementalState { version, category_hashes, category_code })
     }
 
     /// Save incremental state to a binary cache file.
@@ -2624,7 +2707,11 @@ impl IncrementalState {
             buf.write_all(&(name_bytes.len() as u32).to_le_bytes())?;
             buf.write_all(name_bytes)?;
             buf.write_all(&hash.to_le_bytes())?;
-            let code = self.category_code.get(name).map(|s| s.as_str()).unwrap_or("");
+            let code = self
+                .category_code
+                .get(name)
+                .map(|s| s.as_str())
+                .unwrap_or("");
             let code_bytes = code.as_bytes();
             buf.write_all(&(code_bytes.len() as u32).to_le_bytes())?;
             buf.write_all(code_bytes)?;
@@ -2650,8 +2737,8 @@ impl IncrementalState {
 pub fn build_decision_trees_from_spec(
     spec: &crate::LanguageSpec,
 ) -> Option<HashMap<String, CategoryDecisionTree>> {
-    use crate::prediction::{compute_first_sets, RuleInfo, FirstItem};
     use crate::pipeline::convert_syntax_item_to_rd;
+    use crate::prediction::{compute_first_sets, FirstItem, RuleInfo};
 
     let category_names: Vec<String> = spec.types.iter().map(|t| t.name.clone()).collect();
     if category_names.is_empty() {
@@ -2659,28 +2746,35 @@ pub fn build_decision_trees_from_spec(
     }
 
     // Build RuleInfo for FIRST set computation (mirrors pipeline.rs logic)
-    let rule_infos: Vec<RuleInfo> = spec.rules.iter().map(|r| {
-        RuleInfo {
+    let rule_infos: Vec<RuleInfo> = spec
+        .rules
+        .iter()
+        .map(|r| RuleInfo {
             label: r.label.clone(),
             category: r.category.clone(),
-            first_items: r.syntax.iter().take(1).map(|item| match item {
-                crate::SyntaxItemSpec::Terminal(t) => FirstItem::Terminal(t.clone()),
-                crate::SyntaxItemSpec::NonTerminal { category, .. } => {
-                    if category_names.contains(category) {
-                        FirstItem::NonTerminal(category.clone())
-                    } else {
-                        FirstItem::Ident
-                    }
-                }
-                _ => FirstItem::Ident,
-            }).collect(),
+            first_items: r
+                .syntax
+                .iter()
+                .take(1)
+                .map(|item| match item {
+                    crate::SyntaxItemSpec::Terminal(t) => FirstItem::Terminal(t.clone()),
+                    crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+                        if category_names.contains(category) {
+                            FirstItem::NonTerminal(category.clone())
+                        } else {
+                            FirstItem::Ident
+                        }
+                    },
+                    _ => FirstItem::Ident,
+                })
+                .collect(),
             is_infix: r.is_infix,
             is_var: r.is_var,
             is_literal: r.is_literal,
             is_cross_category: r.is_cross_category,
             is_cast: r.is_cast,
-        }
-    }).collect();
+        })
+        .collect();
 
     // Compute FIRST sets
     let first_sets = compute_first_sets(&rule_infos, &category_names);
@@ -2692,13 +2786,16 @@ pub fn build_decision_trees_from_spec(
             token_id_map.get_or_insert(tok);
         }
     }
-    for v in &["Eof", "RParen", "RBrace", "RBracket", "Semi", "Comma",
-               "LParen", "LBrace", "LBracket"] {
+    for v in &[
+        "Eof", "RParen", "RBrace", "RBracket", "Semi", "Comma", "LParen", "LBrace", "LBracket",
+    ] {
         token_id_map.get_or_insert(v);
     }
 
     // Build RD rules (non-infix, non-var, non-literal)
-    let rd_rules: Vec<RDRuleInfo> = spec.rules.iter()
+    let rd_rules: Vec<RDRuleInfo> = spec
+        .rules
+        .iter()
         .filter(|r| !r.is_infix && !r.is_var && !r.is_literal)
         .map(|rule| {
             RDRuleInfo {
@@ -2717,25 +2814,33 @@ pub fn build_decision_trees_from_spec(
         .collect();
 
     // Build cross-category rules
-    let cross_rules: Vec<CrossCategoryRule> = spec.rules.iter()
+    let cross_rules: Vec<CrossCategoryRule> = spec
+        .rules
+        .iter()
         .filter(|r| r.is_cross_category)
         .map(|r| CrossCategoryRule {
             label: r.label.clone(),
             source_category: r.cross_source_category.clone().unwrap_or_default(),
             result_category: r.category.clone(),
-            operator: r.syntax.iter().find_map(|item| {
-                if let crate::SyntaxItemSpec::Terminal(t) = item {
-                    Some(t.clone())
-                } else {
-                    None
-                }
-            }).unwrap_or_default(),
+            operator: r
+                .syntax
+                .iter()
+                .find_map(|item| {
+                    if let crate::SyntaxItemSpec::Terminal(t) = item {
+                        Some(t.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default(),
             needs_backtrack: false,
         })
         .collect();
 
     // Build cast rules
-    let cast_rules: Vec<CastRule> = spec.rules.iter()
+    let cast_rules: Vec<CastRule> = spec
+        .rules
+        .iter()
         .filter(|r| r.is_cast)
         .map(|r| CastRule {
             label: r.label.clone(),
@@ -2843,20 +2948,16 @@ impl CategoryDecisionTree {
                 match &entries[0].1 {
                     DecisionAction::Commit { rule_label, .. } => {
                         DispatchStrategy::Singleton { rule_label: rule_label.clone() }
-                    }
-                    DecisionAction::Ambiguous { candidates } => {
-                        DispatchStrategy::AmbiguousFanout {
-                            rule_labels: candidates.iter().map(|c| c.rule_label.clone()).collect(),
-                            shared_prefix_len: 0,
-                            shared_terminals: Vec::new(),
-                            live_rules_context: None,
-                        }
-                    }
-                    DecisionAction::NonterminalBoundary { .. } => {
-                        DispatchStrategy::NotPresent
-                    }
+                    },
+                    DecisionAction::Ambiguous { candidates } => DispatchStrategy::AmbiguousFanout {
+                        rule_labels: candidates.iter().map(|c| c.rule_label.clone()).collect(),
+                        shared_prefix_len: 0,
+                        shared_terminals: Vec::new(),
+                        live_rules_context: None,
+                    },
+                    DecisionAction::NonterminalBoundary { .. } => DispatchStrategy::NotPresent,
                 }
-            }
+            },
             _ => {
                 // Multiple paths → find shared prefix + check suffix disjointness
                 let min_len = entries.iter().map(|(p, _)| p.len()).min().unwrap_or(0);
@@ -2892,11 +2993,17 @@ impl CategoryDecisionTree {
                     }
                     let variant_name = match token_ids.name(branch_byte as u16) {
                         Some(n) => n.to_string(),
-                        None => { is_disjoint = false; break; }
+                        None => {
+                            is_disjoint = false;
+                            break;
+                        },
                     };
                     let rule_label = match action {
                         DecisionAction::Commit { rule_label, .. } => rule_label.clone(),
-                        _ => { is_disjoint = false; break; }
+                        _ => {
+                            is_disjoint = false;
+                            break;
+                        },
                     };
                     if suffix_map.insert(variant_name, rule_label).is_some() {
                         is_disjoint = false;
@@ -2917,13 +3024,13 @@ impl CategoryDecisionTree {
                         match action {
                             DecisionAction::Commit { rule_label, .. } => {
                                 rule_labels.push(rule_label.clone());
-                            }
+                            },
                             DecisionAction::Ambiguous { candidates } => {
                                 for c in candidates {
                                     rule_labels.push(c.rule_label.clone());
                                 }
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                     DispatchStrategy::AmbiguousFanout {
@@ -2933,7 +3040,7 @@ impl CategoryDecisionTree {
                         live_rules_context: None,
                     }
                 }
-            }
+            },
         }
     }
 
@@ -2987,13 +3094,13 @@ impl CategoryDecisionTree {
                     match &action {
                         DecisionAction::Commit { rule_label, .. } => {
                             entry.insert(rule_label.clone());
-                        }
+                        },
                         DecisionAction::Ambiguous { candidates } => {
                             for c in candidates {
                                 entry.insert(c.rule_label.clone());
                             }
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
             }
@@ -3026,10 +3133,7 @@ impl CategoryDecisionTree {
     ///
     /// Returns `Vec<(bp, reachable_count, total_count)>` sorted by BP ascending.
     /// The `bp_table` maps `(category, rule_label) → bp` for infix rules.
-    pub fn bp_stratification(
-        &self,
-        bp_table: &HashMap<String, u8>,
-    ) -> Vec<(u8, usize, usize)> {
+    pub fn bp_stratification(&self, bp_table: &HashMap<String, u8>) -> Vec<(u8, usize, usize)> {
         let reachable = self.reachable_rules();
         if reachable.is_empty() {
             return Vec::new();
@@ -3068,13 +3172,13 @@ impl CategoryDecisionTree {
                 match action {
                     DecisionAction::Commit { rule_label, .. } => {
                         reachable.insert(rule_label.clone());
-                    }
+                    },
                     DecisionAction::Ambiguous { candidates } => {
                         for c in candidates {
                             reachable.insert(c.rule_label.clone());
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
@@ -3105,17 +3209,14 @@ pub fn compute_weight_adjustments(
                 DispatchStrategy::Singleton { .. } => -0.5,
                 DispatchStrategy::DisjointSuffix { shared_prefix_len, .. } => {
                     -0.25 - (*shared_prefix_len as f64 * 0.05)
-                }
+                },
                 DispatchStrategy::AmbiguousFanout { shared_prefix_len, .. } => {
                     *shared_prefix_len as f64 * 0.1
-                }
+                },
                 DispatchStrategy::NotPresent => 0.0,
             };
             if adjustment.abs() > f64::EPSILON {
-                adjustments.insert(
-                    (cat_name.clone(), token_variant.clone()),
-                    adjustment,
-                );
+                adjustments.insert((cat_name.clone(), token_variant.clone()), adjustment);
             }
         }
     }
@@ -3223,7 +3324,7 @@ pub fn rules_for_token(
         Some(DecisionAction::Commit { rule_label, .. }) => vec![rule_label.clone()],
         Some(DecisionAction::Ambiguous { candidates }) => {
             candidates.iter().map(|c| c.rule_label.clone()).collect()
-        }
+        },
         _ => Vec::new(),
     }
 }
@@ -3346,7 +3447,10 @@ pub fn suffix_disjoint_dispatch(
             DecisionAction::Commit { rule_label, .. } => rule_label.clone(),
             _ => return None, // Ambiguous — not a simple dispatch
         };
-        if dispatch_map.insert(variant_name.to_string(), rule_label).is_some() {
+        if dispatch_map
+            .insert(variant_name.to_string(), rule_label)
+            .is_some()
+        {
             return None; // Duplicate branch byte — not disjoint
         }
     }
@@ -3374,9 +3478,8 @@ mod tests {
          *   "+" → "Plus", "-" → "Minus", "*" → "Star", "/" → "Slash"
          */
         for name in &[
-            "KwFloat", "LParen", "RParen", "Plus", "Minus", "Star", "Slash",
-            "Ident", "Integer", "Comma", "Colon", "Semi", "KwIf", "KwThen", "KwElse",
-            "KwLet", "KwIn", "Eq",
+            "KwFloat", "LParen", "RParen", "Plus", "Minus", "Star", "Slash", "Ident", "Integer",
+            "Comma", "Colon", "Semi", "KwIf", "KwThen", "KwElse", "KwLet", "KwIn", "Eq",
         ] {
             map.get_or_insert(name);
         }
@@ -3425,17 +3528,27 @@ mod tests {
             HashSet::new(),
         );
 
-        let rule = make_rd_rule("IfThenElse", "Int", vec![
-            RDSyntaxItem::Terminal("if".to_string()),
-            RDSyntaxItem::Terminal("then".to_string()),
-            RDSyntaxItem::Terminal("else".to_string()),
-        ]);
+        let rule = make_rd_rule(
+            "IfThenElse",
+            "Int",
+            vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("then".to_string()),
+                RDSyntaxItem::Terminal("else".to_string()),
+            ],
+        );
 
         let pattern = builder.pattern_from_rd_rule(&rule);
         assert_eq!(pattern.len(), 3);
-        assert!(matches!(pattern[0], PatternElement::Terminal { ref variant, .. } if variant == "KwIf"));
-        assert!(matches!(pattern[1], PatternElement::Terminal { ref variant, .. } if variant == "KwThen"));
-        assert!(matches!(pattern[2], PatternElement::Terminal { ref variant, .. } if variant == "KwElse"));
+        assert!(
+            matches!(pattern[0], PatternElement::Terminal { ref variant, .. } if variant == "KwIf")
+        );
+        assert!(
+            matches!(pattern[1], PatternElement::Terminal { ref variant, .. } if variant == "KwThen")
+        );
+        assert!(
+            matches!(pattern[2], PatternElement::Terminal { ref variant, .. } if variant == "KwElse")
+        );
 
         let (bytes, boundary) = DecisionTreeBuilder::encode_terminal_prefix(&pattern);
         assert_eq!(bytes.len(), 3);
@@ -3453,15 +3566,19 @@ mod tests {
             HashSet::new(),
         );
 
-        let rule = make_rd_rule("FloatCast", "Float", vec![
-            RDSyntaxItem::Terminal("float".to_string()),
-            RDSyntaxItem::Terminal("(".to_string()),
-            RDSyntaxItem::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "x".to_string(),
-            },
-            RDSyntaxItem::Terminal(")".to_string()),
-        ]);
+        let rule = make_rd_rule(
+            "FloatCast",
+            "Float",
+            vec![
+                RDSyntaxItem::Terminal("float".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "x".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ],
+        );
 
         let pattern = builder.pattern_from_rd_rule(&rule);
         assert_eq!(pattern.len(), 4);
@@ -3486,16 +3603,24 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("=".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("=".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
         ];
 
         builder.insert_rd_rules(&rules);
@@ -3517,21 +3642,29 @@ mod tests {
 
         // Two rules both start with "float" "("
         let rules = vec![
-            make_rd_rule("FloatId", "Float", vec![
-                RDSyntaxItem::Terminal("float".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::IdentCapture { param_name: "x".to_string() },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IntToFloat", "Float", vec![
-                RDSyntaxItem::Terminal("float".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "x".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "FloatId",
+                "Float",
+                vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::IdentCapture { param_name: "x".to_string() },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IntToFloat",
+                "Float",
+                vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "x".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
 
         builder.insert_rd_rules(&rules);
@@ -3545,20 +3678,12 @@ mod tests {
         let token_ids = make_token_ids();
         let first_sets = make_first_sets();
         let dead = HashSet::from(["DeadRule".to_string()]);
-        let mut builder = DecisionTreeBuilder::new(
-            token_ids,
-            first_sets,
-            vec!["Int".to_string()],
-            dead,
-        );
+        let mut builder =
+            DecisionTreeBuilder::new(token_ids, first_sets, vec!["Int".to_string()], dead);
 
         let rules = vec![
-            make_rd_rule("LiveRule", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-            ]),
-            make_rd_rule("DeadRule", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-            ]),
+            make_rd_rule("LiveRule", "Int", vec![RDSyntaxItem::Terminal("if".to_string())]),
+            make_rd_rule("DeadRule", "Int", vec![RDSyntaxItem::Terminal("let".to_string())]),
         ];
 
         builder.insert_rd_rules(&rules);
@@ -3566,6 +3691,92 @@ mod tests {
         let tree = builder.get_tree("Int").expect("should have Int tree");
         // Only LiveRule should be inserted
         assert_eq!(tree.segments[0].val_count(), 1);
+    }
+
+    #[test]
+    fn test_cast_rules_reachable_when_source_first_overlaps_target_first() {
+        let token_ids = make_token_ids();
+
+        let mut int_first = FirstSet::default();
+        int_first.insert("Integer");
+        int_first.insert("Ident");
+
+        let mut proc_first = FirstSet::default();
+        proc_first.insert("Integer");
+        proc_first.insert("Ident");
+        proc_first.insert("LParen");
+
+        let first_sets =
+            HashMap::from([("Int".to_string(), int_first), ("Proc".to_string(), proc_first)]);
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids,
+            first_sets,
+            vec!["Int".to_string(), "Proc".to_string()],
+            HashSet::new(),
+        );
+
+        builder.insert_cast_rules(&[CastRule {
+            label: "IntToProc".to_string(),
+            source_category: "Int".to_string(),
+            target_category: "Proc".to_string(),
+            shares_infix_with_target: false,
+        }]);
+
+        let tree = builder.get_tree("Proc").expect("should have Proc tree");
+        let reachable = tree.reachable_rules();
+        assert!(
+            reachable.contains("IntToProc"),
+            "cast projection should be reachable even when all source FIRST tokens overlap target FIRST"
+        );
+    }
+
+    #[test]
+    fn test_foreign_leading_nt_mixfix_rule_is_reachable() {
+        let mut token_ids = make_token_ids();
+        token_ids.get_or_insert("Bang");
+
+        let mut name_first = FirstSet::default();
+        name_first.insert("Ident");
+
+        let mut proc_first = FirstSet::default();
+        proc_first.insert("Ident");
+        proc_first.insert("KwNil");
+
+        let first_sets =
+            HashMap::from([("Name".to_string(), name_first), ("Proc".to_string(), proc_first)]);
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids,
+            first_sets,
+            vec!["Proc".to_string(), "Name".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![make_rd_rule(
+            "POutput",
+            "Proc",
+            vec![
+                RDSyntaxItem::NonTerminal {
+                    category: "Name".to_string(),
+                    param_name: "n".to_string(),
+                },
+                RDSyntaxItem::Terminal("!".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Proc".to_string(),
+                    param_name: "p".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ],
+        )];
+
+        builder.build_all(&rules, &[], &[]);
+
+        let tree = builder.get_tree("Proc").expect("should have Proc tree");
+        let reachable = tree.reachable_rules();
+        assert!(
+            reachable.contains("POutput"),
+            "foreign-leading mixfix rule should be reachable via source FIRST plus trigger"
+        );
     }
 
     #[test]
@@ -3580,15 +3791,23 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
         ];
 
         builder.build_all(&rules, &[], &[]);
@@ -3604,20 +3823,14 @@ mod tests {
         let tree = CategoryDecisionTree {
             category: "Int".to_string(),
             segments: vec![PathMap::new()],
-            stats: TreeStats {
-                total_states: 10,
-                ..Default::default()
-            },
+            stats: TreeStats { total_states: 10, ..Default::default() },
         };
         assert_eq!(emission_strategy(&tree), EmissionStrategy::MatchArms);
 
         let tree_large = CategoryDecisionTree {
             category: "Int".to_string(),
             segments: vec![PathMap::new()],
-            stats: TreeStats {
-                total_states: 300,
-                ..Default::default()
-            },
+            stats: TreeStats { total_states: 300, ..Default::default() },
         };
         assert_eq!(emission_strategy(&tree_large), EmissionStrategy::FlatTable);
     }
@@ -3638,9 +3851,13 @@ mod tests {
             ..Default::default()
         };
         state.record("Expr", 0x12345);
-        state.category_code.insert("Expr".to_string(), "fn parse_Expr() {}".to_string());
+        state
+            .category_code
+            .insert("Expr".to_string(), "fn parse_Expr() {}".to_string());
         state.record("Stmt", 0xABCDE);
-        state.category_code.insert("Stmt".to_string(), "fn parse_Stmt() {}".to_string());
+        state
+            .category_code
+            .insert("Stmt".to_string(), "fn parse_Stmt() {}".to_string());
 
         let tmp = std::env::temp_dir().join("prattail_test_cache");
         state.save(&tmp).expect("save should succeed");
@@ -3649,14 +3866,8 @@ mod tests {
         assert!(loaded.is_unchanged("Expr", 0x12345));
         assert!(loaded.is_unchanged("Stmt", 0xABCDE));
         assert!(!loaded.is_unchanged("Expr", 0x99999));
-        assert_eq!(
-            loaded.category_code.get("Expr").expect("Expr code"),
-            "fn parse_Expr() {}",
-        );
-        assert_eq!(
-            loaded.category_code.get("Stmt").expect("Stmt code"),
-            "fn parse_Stmt() {}",
-        );
+        assert_eq!(loaded.category_code.get("Expr").expect("Expr code"), "fn parse_Expr() {}",);
+        assert_eq!(loaded.category_code.get("Stmt").expect("Stmt code"), "fn parse_Stmt() {}",);
 
         // Version mismatch should invalidate
         let mut bad_version = state.clone();
@@ -3679,20 +3890,22 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "IfThenElse",
+            "Int",
+            vec![
                 RDSyntaxItem::Terminal("if".to_string()),
                 RDSyntaxItem::Terminal("then".to_string()),
                 RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-        ];
+            ],
+        )];
         builder.insert_rd_rules(&rules);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         match tree.dispatch_strategy("KwIf", &token_ids) {
             DispatchStrategy::Singleton { rule_label } => {
                 assert_eq!(rule_label, "IfThenElse");
-            }
+            },
             other => panic!("expected Singleton, got {:?}", other),
         }
 
@@ -3720,16 +3933,24 @@ mod tests {
          * After shared prefix "if" (dispatch token), next tokens are "+" and "-"
          * which are disjoint. */
         let rules = vec![
-            make_rd_rule("IfPlus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("+".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-            ]),
-            make_rd_rule("IfMinus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("-".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
+            make_rd_rule(
+                "IfPlus",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("+".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfMinus",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("-".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -3740,7 +3961,7 @@ mod tests {
                 assert_eq!(suffix_map.len(), 2);
                 assert_eq!(suffix_map.get("Plus").expect("Plus"), "IfPlus");
                 assert_eq!(suffix_map.get("Minus").expect("Minus"), "IfMinus");
-            }
+            },
             other => panic!("expected DisjointSuffix, got {:?}", other),
         }
     }
@@ -3761,30 +3982,42 @@ mod tests {
          *   IfParenMinus: if ( - )
          * Shared prefix = ["("], then "+" vs "-" disjoint. */
         let rules = vec![
-            make_rd_rule("IfParenPlus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("+".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfParenMinus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("-".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfParenPlus",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::Terminal("+".to_string()),
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfParenMinus",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::Terminal("-".to_string()),
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         match tree.dispatch_strategy("KwIf", &token_ids) {
-            DispatchStrategy::DisjointSuffix { shared_prefix_len, shared_terminals, suffix_map } => {
+            DispatchStrategy::DisjointSuffix {
+                shared_prefix_len,
+                shared_terminals,
+                suffix_map,
+            } => {
                 assert_eq!(shared_prefix_len, 1); // "(" is shared
                 assert_eq!(shared_terminals.len(), 1);
                 assert_eq!(suffix_map.len(), 2);
                 assert!(suffix_map.contains_key("Plus"));
                 assert!(suffix_map.contains_key("Minus"));
-            }
+            },
             other => panic!("expected DisjointSuffix with shared prefix, got {:?}", other),
         }
     }
@@ -3804,21 +4037,29 @@ mod tests {
          * The trie can't disambiguate at the terminal level since the
          * nonterminal is encoded as an NT byte, not a terminal. */
         let rules = vec![
-            make_rd_rule("FloatId", "Float", vec![
-                RDSyntaxItem::Terminal("float".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::IdentCapture { param_name: "x".to_string() },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("FloatCast", "Float", vec![
-                RDSyntaxItem::Terminal("float".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "x".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "FloatId",
+                "Float",
+                vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::IdentCapture { param_name: "x".to_string() },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "FloatCast",
+                "Float",
+                vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "x".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -3830,11 +4071,11 @@ mod tests {
             DispatchStrategy::AmbiguousFanout { rule_labels, shared_prefix_len, .. } => {
                 assert!(shared_prefix_len >= 1); // "(" is shared
                 assert!(rule_labels.len() >= 1); // at least one rule
-            }
+            },
             DispatchStrategy::DisjointSuffix { .. } => {
                 /* Also acceptable if the encoding makes the suffixes look disjoint
                  * (IdentCapture byte vs NT boundary truncation). */
-            }
+            },
             other => panic!("expected AmbiguousFanout or DisjointSuffix, got {:?}", other),
         }
     }
@@ -3851,15 +4092,23 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -3896,24 +4145,32 @@ mod tests {
         /* Two rules with EXACTLY identical terminal prefix → Ambiguous node.
          * Both end at an NT boundary after "if" "(" so pjoin merges them. */
         let rules = vec![
-            make_rd_rule("IfIntCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfFloatCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloatCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -3943,24 +4200,32 @@ mod tests {
          * The ambiguity is at a leaf (no deeper terminal children), so it's
          * unresolvable by additional terminal lookahead. */
         let rules = vec![
-            make_rd_rule("IfIntCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfFloatCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloatCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -3986,13 +4251,15 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "IfThenElse",
+            "Int",
+            vec![
                 RDSyntaxItem::Terminal("if".to_string()),
                 RDSyntaxItem::Terminal("then".to_string()),
                 RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-        ];
+            ],
+        )];
         builder.build_all(&rules, &[], &[]);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
@@ -4019,15 +4286,23 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -4053,13 +4328,15 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "IfThenElse",
+            "Int",
+            vec![
                 RDSyntaxItem::Terminal("if".to_string()),
                 RDSyntaxItem::Terminal("then".to_string()),
                 RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-        ];
+            ],
+        )];
         builder.build_all(&rules, &[], &[]);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
@@ -4080,15 +4357,23 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -4120,35 +4405,39 @@ mod tests {
 
         /* Two rules with identical terminal prefix at NT boundary → Ambiguous → D08 */
         let rules = vec![
-            make_rd_rule("IfIntCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfFloatCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloatCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         let diags = optimization_suggestions(tree, "test");
         let d08s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D08).collect();
-        assert!(
-            !d08s.is_empty(),
-            "D08 should fire for ambiguous rules: {:?}",
-            diags,
-        );
+        assert!(!d08s.is_empty(), "D08 should fire for ambiguous rules: {:?}", diags,);
     }
 
     #[test]
@@ -4163,37 +4452,45 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfFloatCast", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloatCast",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
         let diags = conflict_resolution_guidance(tree, "test");
         let d09s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D09).collect();
-        assert!(
-            !d09s.is_empty(),
-            "D09 should fire for conflicting rules: {:?}",
-            diags,
-        );
+        assert!(!d09s.is_empty(), "D09 should fire for conflicting rules: {:?}", diags,);
         /* Should contain resolution strategies */
-        assert!(d09s[0].hint.as_ref().expect("should have hint").contains("distinguishing terminal"));
+        assert!(d09s[0]
+            .hint
+            .as_ref()
+            .expect("should have hint")
+            .contains("distinguishing terminal"));
     }
 
     #[test]
@@ -4209,11 +4506,15 @@ mod tests {
             HashSet::new(),
         );
         builder_a.build_all(
-            &[make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ])],
+            &[make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            )],
             &[],
             &[],
         );
@@ -4227,15 +4528,23 @@ mod tests {
         );
         builder_b.build_all(
             &[
-                make_rd_rule("IfThenElse", "Int", vec![
-                    RDSyntaxItem::Terminal("if".to_string()),
-                    RDSyntaxItem::Terminal("then".to_string()),
-                    RDSyntaxItem::Terminal("else".to_string()),
-                ]),
-                make_rd_rule("LetIn", "Int", vec![
-                    RDSyntaxItem::Terminal("let".to_string()),
-                    RDSyntaxItem::Terminal("in".to_string()),
-                ]),
+                make_rd_rule(
+                    "IfThenElse",
+                    "Int",
+                    vec![
+                        RDSyntaxItem::Terminal("if".to_string()),
+                        RDSyntaxItem::Terminal("then".to_string()),
+                        RDSyntaxItem::Terminal("else".to_string()),
+                    ],
+                ),
+                make_rd_rule(
+                    "LetIn",
+                    "Int",
+                    vec![
+                        RDSyntaxItem::Terminal("let".to_string()),
+                        RDSyntaxItem::Terminal("in".to_string()),
+                    ],
+                ),
             ],
             &[],
             &[],
@@ -4265,11 +4574,15 @@ mod tests {
             HashSet::new(),
         );
         builder.build_all(
-            &[make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ])],
+            &[make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            )],
             &[],
             &[],
         );
@@ -4285,11 +4598,15 @@ mod tests {
             HashSet::new(),
         );
         builder2.build_all(
-            &[make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ])],
+            &[make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            )],
             &[],
             &[],
         );
@@ -4305,10 +4622,14 @@ mod tests {
             HashSet::new(),
         );
         builder3.build_all(
-            &[make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ])],
+            &[make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            )],
             &[],
             &[],
         );
@@ -4329,15 +4650,23 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -4367,13 +4696,15 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "IfThenElse",
+            "Int",
+            vec![
                 RDSyntaxItem::Terminal("if".to_string()),
                 RDSyntaxItem::Terminal("then".to_string()),
                 RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-        ];
+            ],
+        )];
         builder.build_all(&rules, &[], &[]);
 
         let tree = builder.get_tree("Int").expect("Int tree");
@@ -4412,9 +4743,7 @@ mod tests {
         DecisionAction::NonterminalBoundary {
             options: (0..count)
                 .map(|i| NTOption {
-                    kind: NTKind::NonTerminal {
-                        category: format!("Cat{}", i),
-                    },
+                    kind: NTKind::NonTerminal { category: format!("Cat{}", i) },
                     first_tokens: vec![i as u8],
                     resume_segment: i,
                     weight: 0.0,
@@ -4427,7 +4756,7 @@ mod tests {
         match action {
             DecisionAction::Commit { rule_label, .. } => {
                 assert_eq!(rule_label, expected_label);
-            }
+            },
             other => panic!("expected Commit({}), got {:?}", expected_label, other),
         }
     }
@@ -4441,7 +4770,7 @@ mod tests {
                 let mut exp: Vec<&str> = expected.to_vec();
                 exp.sort();
                 assert_eq!(labels, exp);
-            }
+            },
             other => panic!("expected Ambiguous({:?}), got {:?}", expected, other),
         }
     }
@@ -4452,9 +4781,7 @@ mod tests {
         labels
     }
 
-    fn assert_algebraic_element(
-        result: &AlgebraicResult<DecisionAction>,
-    ) -> &DecisionAction {
+    fn assert_algebraic_element(result: &AlgebraicResult<DecisionAction>) -> &DecisionAction {
         match result {
             AlgebraicResult::Element(ref a) => a,
             other => panic!("expected Element, got {:?}", other),
@@ -4462,17 +4789,10 @@ mod tests {
     }
 
     fn assert_algebraic_none(result: &AlgebraicResult<DecisionAction>) {
-        assert!(
-            result.is_none(),
-            "expected AlgebraicResult::None, got {:?}",
-            result
-        );
+        assert!(result.is_none(), "expected AlgebraicResult::None, got {:?}", result);
     }
 
-    fn assert_algebraic_identity(
-        result: &AlgebraicResult<DecisionAction>,
-        id: u64,
-    ) {
+    fn assert_algebraic_identity(result: &AlgebraicResult<DecisionAction>, id: u64) {
         match result {
             AlgebraicResult::Identity(mask) => assert_eq!(*mask, id),
             other => panic!("expected Identity({}), got {:?}", id, other),
@@ -4656,10 +4976,7 @@ mod tests {
     #[test]
     fn test_rule_labels() {
         let commit = make_commit("A", "Int");
-        assert_eq!(
-            commit.rule_labels().collect::<Vec<_>>(),
-            vec!["A"]
-        );
+        assert_eq!(commit.rule_labels().collect::<Vec<_>>(), vec!["A"]);
 
         let ambig = make_ambiguous(&[("A", "Int"), ("B", "Int")]);
         let mut labels: Vec<&str> = ambig.rule_labels().collect();
@@ -4721,22 +5038,17 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("JustIf", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-            ]),
-            make_rd_rule("JustLet", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-            ]),
+            make_rd_rule("JustIf", "Int", vec![RDSyntaxItem::Terminal("if".to_string())]),
+            make_rd_rule("JustLet", "Int", vec![RDSyntaxItem::Terminal("let".to_string())]),
         ];
         builder.insert_rd_rules(&rules);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
-        let action = query_dispatch_token(tree, "KwIf", &token_ids)
-            .expect("KwIf should be found");
+        let action = query_dispatch_token(tree, "KwIf", &token_ids).expect("KwIf should be found");
         assert_commit(action, "JustIf");
 
-        let action2 = query_dispatch_token(tree, "KwLet", &token_ids)
-            .expect("KwLet should be found");
+        let action2 =
+            query_dispatch_token(tree, "KwLet", &token_ids).expect("KwLet should be found");
         assert_commit(action2, "JustLet");
     }
 
@@ -4751,11 +5063,8 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("JustIf", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-            ]),
-        ];
+        let rules =
+            vec![make_rd_rule("JustIf", "Int", vec![RDSyntaxItem::Terminal("if".to_string())])];
         builder.insert_rd_rules(&rules);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
@@ -4777,11 +5086,8 @@ mod tests {
         );
 
         // Single rule per dispatch token → deterministic at single-byte paths
-        let rules = vec![
-            make_rd_rule("OnlyIf", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-            ]),
-        ];
+        let rules =
+            vec![make_rd_rule("OnlyIf", "Int", vec![RDSyntaxItem::Terminal("if".to_string())])];
         builder.insert_rd_rules(&rules);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
@@ -4801,11 +5107,8 @@ mod tests {
         );
 
         // Insert a single-terminal rule so query_dispatch_token works
-        let rules = vec![
-            make_rd_rule("OnlyIf", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-            ]),
-        ];
+        let rules =
+            vec![make_rd_rule("OnlyIf", "Int", vec![RDSyntaxItem::Terminal("if".to_string())])];
         builder.insert_rd_rules(&rules);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
@@ -4829,18 +5132,26 @@ mod tests {
 
         // Two rules: if ( + ) and if ( - ) → shared prefix "("
         let rules = vec![
-            make_rd_rule("IfPlus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("+".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfMinus", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal("-".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfPlus",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::Terminal("+".to_string()),
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfMinus",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::Terminal("-".to_string()),
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -4870,9 +5181,7 @@ mod tests {
             HashSet::new(),
         );
 
-        let rule = make_rd_rule("JustIf", "Int", vec![
-            RDSyntaxItem::Terminal("if".to_string()),
-        ]);
+        let rule = make_rd_rule("JustIf", "Int", vec![RDSyntaxItem::Terminal("if".to_string())]);
 
         let pattern = builder.pattern_from_rd_rule(&rule);
         assert_eq!(pattern.len(), 1);
@@ -4897,16 +5206,20 @@ mod tests {
             HashSet::new(),
         );
 
-        let rule = make_rd_rule("AllNT", "Int", vec![
-            RDSyntaxItem::NonTerminal {
-                category: "Int".to_string(),
-                param_name: "a".to_string(),
-            },
-            RDSyntaxItem::NonTerminal {
-                category: "Float".to_string(),
-                param_name: "b".to_string(),
-            },
-        ]);
+        let rule = make_rd_rule(
+            "AllNT",
+            "Int",
+            vec![
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::NonTerminal {
+                    category: "Float".to_string(),
+                    param_name: "b".to_string(),
+                },
+            ],
+        );
 
         let pattern = builder.pattern_from_rd_rule(&rule);
         assert_eq!(pattern.len(), 2);
@@ -4931,11 +5244,15 @@ mod tests {
             HashSet::new(),
         );
 
-        let rule = make_rd_rule("IfIdent", "Int", vec![
-            RDSyntaxItem::Terminal("if".to_string()),
-            RDSyntaxItem::IdentCapture { param_name: "x".to_string() },
-            RDSyntaxItem::Terminal(")".to_string()),
-        ]);
+        let rule = make_rd_rule(
+            "IfIdent",
+            "Int",
+            vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::IdentCapture { param_name: "x".to_string() },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ],
+        );
 
         let pattern = builder.pattern_from_rd_rule(&rule);
         assert_eq!(pattern.len(), 3);
@@ -4958,14 +5275,18 @@ mod tests {
             HashSet::new(),
         );
 
-        let rule = make_rd_rule("IfBinder", "Int", vec![
-            RDSyntaxItem::Terminal("if".to_string()),
-            RDSyntaxItem::Binder {
-                param_name: "x".to_string(),
-                binder_category: "Int".to_string(),
-            },
-            RDSyntaxItem::Terminal(")".to_string()),
-        ]);
+        let rule = make_rd_rule(
+            "IfBinder",
+            "Int",
+            vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Binder {
+                    param_name: "x".to_string(),
+                    binder_category: "Int".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ],
+        );
 
         let pattern = builder.pattern_from_rd_rule(&rule);
         assert_eq!(pattern.len(), 3);
@@ -4997,11 +5318,8 @@ mod tests {
         );
 
         // Use single-terminal rules so the trie has values at single-byte paths
-        let rules = vec![
-            make_rd_rule("JustIf", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-            ]),
-        ];
+        let rules =
+            vec![make_rd_rule("JustIf", "Int", vec![RDSyntaxItem::Terminal("if".to_string())])];
         builder.build_all(&rules, &[], &[]);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
@@ -5040,9 +5358,8 @@ mod tests {
         );
 
         // Only "if" in the trie (single-byte path)
-        let rules = vec![make_rd_rule("JustIf", "Int", vec![
-            RDSyntaxItem::Terminal("if".to_string()),
-        ])];
+        let rules =
+            vec![make_rd_rule("JustIf", "Int", vec![RDSyntaxItem::Terminal("if".to_string())])];
         builder.build_all(&rules, &[], &[]);
 
         let tree = builder.get_tree("Int").expect("should have Int tree");
@@ -5063,6 +5380,97 @@ mod tests {
         let d06s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D06).collect();
         assert!(!d06s.is_empty(), "D06 should fire for inconsistent token: {:?}", diags);
         assert!(d06s[0].message.contains("float"), "D06 message should mention the token");
+    }
+
+    #[test]
+    fn test_d06_accepts_variant_prefix_of_longer_trie_path() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::wfst::PredictionWfstBuilder;
+
+        let mut token_ids = make_token_ids();
+        token_ids.get_or_insert("At");
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets,
+            vec!["Name".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![make_rd_rule(
+            "NQuote",
+            "Name",
+            vec![
+                RDSyntaxItem::Terminal("@".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::Terminal(")".to_string()),
+            ],
+        )];
+        builder.build_all(&rules, &[], &[]);
+
+        let tree = builder.get_tree("Name").expect("should have Name tree");
+
+        let mut wfst_builder = PredictionWfstBuilder::new("Name", token_ids.clone());
+        wfst_builder.add_action(
+            "At",
+            DispatchAction::Direct {
+                rule_label: "NQuote".to_string(),
+                parse_fn: "parse_nquote".to_string(),
+            },
+            TropicalWeight(0.0),
+        );
+        let wfst = wfst_builder.build();
+
+        let diags = wfst_consistency_check(tree, &wfst, &token_ids, "test");
+        let d06s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D06).collect();
+        assert!(
+            d06s.is_empty(),
+            "D06 should accept a token prefix of a longer trie path: {:?}",
+            d06s
+        );
+    }
+
+    #[test]
+    fn test_d06_skips_category_named_literal_dispatch() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::wfst::PredictionWfstBuilder;
+
+        let mut token_ids = make_token_ids();
+        token_ids.get_or_insert("Fixed");
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets,
+            vec!["Fixed".to_string()],
+            HashSet::new(),
+        );
+
+        let rules =
+            vec![make_rd_rule("JustIf", "Fixed", vec![RDSyntaxItem::Terminal("if".to_string())])];
+        builder.build_all(&rules, &[], &[]);
+
+        let tree = builder.get_tree("Fixed").expect("should have Fixed tree");
+
+        let mut wfst_builder = PredictionWfstBuilder::new("Fixed", token_ids.clone());
+        wfst_builder.add_action(
+            "Fixed",
+            DispatchAction::Direct {
+                rule_label: "FixedLit".to_string(),
+                parse_fn: "parse_fixed_literal".to_string(),
+            },
+            TropicalWeight(0.0),
+        );
+        let wfst = wfst_builder.build();
+
+        let diags = wfst_consistency_check(tree, &wfst, &token_ids, "test");
+        let d06s: Vec<_> = diags.iter().filter(|d| d.id == DiagnosticId::D06).collect();
+        assert!(
+            d06s.is_empty(),
+            "D06 should skip category-named native literal dispatch: {:?}",
+            d06s
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -5092,12 +5500,12 @@ mod tests {
         let loaded = IncrementalState::load(&path);
         // Either None (can't read num_cats) or valid but empty
         match loaded {
-            None => {} // Expected for truncated data
+            None => {}, // Expected for truncated data
             Some(state) => {
                 // If load succeeds with just version + no categories, that's also fine
                 assert_eq!(state.version, CACHE_VERSION);
                 assert!(state.category_hashes.is_empty());
-            }
+            },
         }
         let _ = std::fs::remove_file(&path);
     }
@@ -5128,10 +5536,7 @@ mod tests {
             let hash = (i as u128) * 0x12345 + 42;
             assert!(loaded.is_unchanged(&cat, hash), "Cat{} hash mismatch", i);
             let expected_code = format!("fn parse_Cat{}() {{}}", i);
-            assert_eq!(
-                loaded.category_code.get(&cat).expect("category code"),
-                &expected_code,
-            );
+            assert_eq!(loaded.category_code.get(&cat).expect("category code"), &expected_code,);
         }
 
         let _ = std::fs::remove_file(&path);
@@ -5159,7 +5564,11 @@ mod tests {
         assert!(display.contains("7 deterministic"), "should contain deterministic: {}", display);
         assert!(display.contains("2 ambiguous"), "should contain ambiguous: {}", display);
         assert!(display.contains("max depth 4"), "should contain depth: {}", display);
-        assert!(display.contains("3/5 rules deterministic"), "should contain rule ratio: {}", display);
+        assert!(
+            display.contains("3/5 rules deterministic"),
+            "should contain rule ratio: {}",
+            display
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -5189,19 +5598,31 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
-            make_rd_rule("ParenExpr", "Int", vec![
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "ParenExpr",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -5209,16 +5630,8 @@ mod tests {
         let mut buf = String::new();
         emit_match_arms(tree, &token_ids, &mut buf);
         // Should contain "3" in dispatch token count or entries
-        assert!(
-            buf.contains("decision tree"),
-            "should contain decision tree label: {}",
-            buf
-        );
-        assert!(
-            buf.contains("3"),
-            "should mention 3 rules or tokens: {}",
-            buf
-        );
+        assert!(buf.contains("decision tree"), "should contain decision tree label: {}", buf);
+        assert!(buf.contains("3"), "should mention 3 rules or tokens: {}", buf);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -5237,19 +5650,31 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
-            make_rd_rule("ParenExpr", "Int", vec![
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "ParenExpr",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -5272,11 +5697,7 @@ mod tests {
             d07.message
         );
         // Should contain "untested"
-        assert!(
-            d07.message.contains("untested"),
-            "should mention untested: {}",
-            d07.message
-        );
+        assert!(d07.message.contains("untested"), "should mention untested: {}", d07.message);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -5288,23 +5709,19 @@ mod tests {
         use proptest::prelude::*;
 
         fn arb_candidate() -> impl Strategy<Value = AmbiguousCandidate> {
-            ("[A-Z][a-z]{2,6}", "[A-Z][a-z]{2,6}").prop_map(|(label, cat)| {
-                AmbiguousCandidate {
-                    rule_label: label,
-                    category: cat,
-                    weight: 0.0,
-                    remaining_items: 0,
-                }
+            ("[A-Z][a-z]{2,6}", "[A-Z][a-z]{2,6}").prop_map(|(label, cat)| AmbiguousCandidate {
+                rule_label: label,
+                category: cat,
+                weight: 0.0,
+                remaining_items: 0,
             })
         }
 
         fn arb_commit() -> impl Strategy<Value = DecisionAction> {
-            ("[A-Z][a-z]{2,6}", "[A-Z][a-z]{2,6}").prop_map(|(label, cat)| {
-                DecisionAction::Commit {
-                    rule_label: label,
-                    category: cat,
-                    weight: 0.0,
-                }
+            ("[A-Z][a-z]{2,6}", "[A-Z][a-z]{2,6}").prop_map(|(label, cat)| DecisionAction::Commit {
+                rule_label: label,
+                category: cat,
+                weight: 0.0,
             })
         }
 
@@ -5499,11 +5916,7 @@ mod tests {
         // ── Round-trip properties ───────────────────────────────────────
 
         fn arb_incremental_entry() -> impl Strategy<Value = (String, u128, String)> {
-            (
-                "[A-Z][a-z]{2,10}",
-                any::<u128>(),
-                "[a-z ]{5,30}",
-            )
+            ("[A-Z][a-z]{2,10}", any::<u128>(), "[a-z ]{5,30}")
         }
 
         proptest! {
@@ -5703,24 +6116,32 @@ mod tests {
         let first_sets = make_first_sets();
 
         let rules = vec![
-            make_rd_rule("IfIntRule", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfFloatRule", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(":".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntRule",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloatRule",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(":".to_string()),
+                ],
+            ),
         ];
 
         // Build the decision tree and track NT boundary info
@@ -5739,7 +6160,8 @@ mod tests {
 
         // Verify NT boundary map has our boundaries
         let nt_map = builder.nt_boundary_map();
-        let boundary_entries: Vec<_> = nt_map.iter()
+        let boundary_entries: Vec<_> = nt_map
+            .iter()
             .filter(|(_, records)| records.len() >= 2)
             .collect();
         assert!(
@@ -5749,24 +6171,23 @@ mod tests {
 
         // Perform segment merging using the builder's NT boundary data
         let mut trees = builder.trees().clone();
-        let merged = merge_safe_nonterminal_boundaries(
-            &builder,
-            &mut trees,
-            &first_sets,
-            &token_ids,
-        );
+        let merged =
+            merge_safe_nonterminal_boundaries(&builder, &mut trees, &first_sets, &token_ids);
 
-        assert!(
-            merged > 0,
-            "should have merged at least one NT boundary (disjoint FIRST sets)",
-        );
+        assert!(merged > 0, "should have merged at least one NT boundary (disjoint FIRST sets)",);
 
         // Verify that new paths exist in segment[0] for the merged FIRST tokens
         let int_tree = trees.get("Int").expect("should have Int tree");
-        let rparen_id = token_ids.get("RParen").expect("RParen should be in token IDs");
-        let colon_id = token_ids.get("Colon").expect("Colon should be in token IDs");
+        let rparen_id = token_ids
+            .get("RParen")
+            .expect("RParen should be in token IDs");
+        let colon_id = token_ids
+            .get("Colon")
+            .expect("Colon should be in token IDs");
         let kwif_id = token_ids.get("KwIf").expect("KwIf should be in token IDs");
-        let lparen_id = token_ids.get("LParen").expect("LParen should be in token IDs");
+        let lparen_id = token_ids
+            .get("LParen")
+            .expect("LParen should be in token IDs");
 
         // After merging, there should be paths like [KwIf, LParen, RParen] → IfIntRule
         // and [KwIf, LParen, Colon] → IfFloatRule
@@ -5818,24 +6239,32 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntRule", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfFloatRule", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntRule",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloatRule",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
 
         builder.insert_rd_rules(&rules);
@@ -5847,17 +6276,10 @@ mod tests {
 
         // Both suffixes have FIRST = { RParen } → overlap → no merge
         let mut trees = builder.trees().clone();
-        let merged = merge_safe_nonterminal_boundaries(
-            &builder,
-            &mut trees,
-            &first_sets,
-            &token_ids,
-        );
+        let merged =
+            merge_safe_nonterminal_boundaries(&builder, &mut trees, &first_sets, &token_ids);
 
-        assert_eq!(
-            merged, 0,
-            "should not merge when FIRST sets overlap (both have RParen)",
-        );
+        assert_eq!(merged, 0, "should not merge when FIRST sets overlap (both have RParen)",);
     }
 
     #[test]
@@ -5872,8 +6294,10 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("IfRule", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "IfRule",
+            "Int",
+            vec![
                 RDSyntaxItem::Terminal("if".to_string()),
                 RDSyntaxItem::Terminal("(".to_string()),
                 RDSyntaxItem::NonTerminal {
@@ -5881,8 +6305,8 @@ mod tests {
                     param_name: "x".to_string(),
                 },
                 RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-        ];
+            ],
+        )];
 
         builder.insert_rd_rules(&rules);
         for tree in builder.trees_mut().values_mut() {
@@ -5890,12 +6314,8 @@ mod tests {
         }
 
         let mut trees = builder.trees().clone();
-        let merged = merge_safe_nonterminal_boundaries(
-            &builder,
-            &mut trees,
-            &first_sets,
-            &token_ids,
-        );
+        let merged =
+            merge_safe_nonterminal_boundaries(&builder, &mut trees, &first_sets, &token_ids);
 
         assert_eq!(merged, 0, "single NT boundary should not be merged");
     }
@@ -5921,15 +6341,23 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfThenElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
-            make_rd_rule("LetIn", "Int", vec![
-                RDSyntaxItem::Terminal("let".to_string()),
-                RDSyntaxItem::Terminal("in".to_string()),
-            ]),
+            make_rd_rule(
+                "IfThenElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "LetIn",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("let".to_string()),
+                    RDSyntaxItem::Terminal("in".to_string()),
+                ],
+            ),
         ];
         builder.build_all(&rules, &[], &[]);
 
@@ -5978,8 +6406,10 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("IfParseX", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "IfParseX",
+            "Int",
+            vec![
                 RDSyntaxItem::Terminal("if".to_string()),
                 RDSyntaxItem::Terminal("(".to_string()),
                 RDSyntaxItem::NonTerminal {
@@ -5987,8 +6417,8 @@ mod tests {
                     param_name: "x".to_string(),
                 },
                 RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-        ];
+            ],
+        )];
         builder.build_all(&rules, &[], &[]);
 
         let trees = builder.into_trees();
@@ -6019,15 +6449,17 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("NtFirst", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "NtFirst",
+            "Int",
+            vec![
                 RDSyntaxItem::NonTerminal {
                     category: "Int".to_string(),
                     param_name: "x".to_string(),
                 },
                 RDSyntaxItem::Terminal("then".to_string()),
-            ]),
-        ];
+            ],
+        )];
         builder.build_all(&rules, &[], &[]);
 
         let trees = builder.into_trees();
@@ -6074,26 +6506,34 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntThen", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-            ]),
-            make_rd_rule("IfIntElse", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntThen",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfIntElse",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -6111,10 +6551,7 @@ mod tests {
         assert!(shared.rules.contains(&"IfIntElse".to_string()));
 
         // Both suffixes start with RParen → FIRST sets overlap → not disjoint
-        assert!(
-            !shared.all_disjoint,
-            "suffixes both start with RParen, should NOT be disjoint",
-        );
+        assert!(!shared.all_disjoint, "suffixes both start with RParen, should NOT be disjoint",);
     }
 
     #[test]
@@ -6138,48 +6575,64 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntColon", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(":".to_string()),
-            ]),
-            make_rd_rule("IfIntComma", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(",".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntColon",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(":".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfIntComma",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(",".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
         let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
-        assert!(
-            !results.is_empty(),
-            "should detect shared nonterminal prefix",
-        );
+        assert!(!results.is_empty(), "should detect shared nonterminal prefix",);
 
         let shared = &results[0];
         assert_eq!(shared.nonterminal, "Int");
         assert_eq!(shared.rules.len(), 2);
 
         // Colon vs Comma → disjoint
-        assert!(
-            shared.all_disjoint,
-            "Colon vs Comma suffixes should be disjoint",
-        );
+        assert!(shared.all_disjoint, "Colon vs Comma suffixes should be disjoint",);
 
         // Check discriminating tokens
-        let colon_tokens = shared.discriminating_tokens.get("IfIntColon").expect("IfIntColon tokens");
-        assert!(colon_tokens.contains(&"Colon".to_string()), "IfIntColon should have Colon: {:?}", colon_tokens);
-        let comma_tokens = shared.discriminating_tokens.get("IfIntComma").expect("IfIntComma tokens");
-        assert!(comma_tokens.contains(&"Comma".to_string()), "IfIntComma should have Comma: {:?}", comma_tokens);
+        let colon_tokens = shared
+            .discriminating_tokens
+            .get("IfIntColon")
+            .expect("IfIntColon tokens");
+        assert!(
+            colon_tokens.contains(&"Colon".to_string()),
+            "IfIntColon should have Colon: {:?}",
+            colon_tokens
+        );
+        let comma_tokens = shared
+            .discriminating_tokens
+            .get("IfIntComma")
+            .expect("IfIntComma tokens");
+        assert!(
+            comma_tokens.contains(&"Comma".to_string()),
+            "IfIntComma should have Comma: {:?}",
+            comma_tokens
+        );
     }
 
     #[test]
@@ -6204,24 +6657,32 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntRule", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-            make_rd_rule("IfFloatRule", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Float".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntRule",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfFloatRule",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Float".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -6247,8 +6708,10 @@ mod tests {
             HashSet::new(),
         );
 
-        let rules = vec![
-            make_rd_rule("IfParse", "Int", vec![
+        let rules = vec![make_rd_rule(
+            "IfParse",
+            "Int",
+            vec![
                 RDSyntaxItem::Terminal("if".to_string()),
                 RDSyntaxItem::Terminal("(".to_string()),
                 RDSyntaxItem::NonTerminal {
@@ -6256,8 +6719,8 @@ mod tests {
                     param_name: "x".to_string(),
                 },
                 RDSyntaxItem::Terminal(")".to_string()),
-            ]),
-        ];
+            ],
+        )];
         builder.insert_rd_rules(&rules);
 
         let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
@@ -6290,33 +6753,45 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntColon", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(":".to_string()),
-            ]),
-            make_rd_rule("IfIntComma", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(",".to_string()),
-            ]),
-            make_rd_rule("IfIntSemi", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "c".to_string(),
-                },
-                RDSyntaxItem::Terminal(";".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntColon",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(":".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfIntComma",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(",".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfIntSemi",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "c".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(";".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -6342,24 +6817,32 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntColon", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(":".to_string()),
-            ]),
-            make_rd_rule("IfIntComma", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(",".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntColon",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(":".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfIntComma",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(",".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 
@@ -6400,26 +6883,34 @@ mod tests {
         );
 
         let rules = vec![
-            make_rd_rule("IfIntA", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-                RDSyntaxItem::Terminal("then".to_string()),
-            ]),
-            make_rd_rule("IfIntB", "Int", vec![
-                RDSyntaxItem::Terminal("if".to_string()),
-                RDSyntaxItem::Terminal("(".to_string()),
-                RDSyntaxItem::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "b".to_string(),
-                },
-                RDSyntaxItem::Terminal(")".to_string()),
-                RDSyntaxItem::Terminal("else".to_string()),
-            ]),
+            make_rd_rule(
+                "IfIntA",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                    RDSyntaxItem::Terminal("then".to_string()),
+                ],
+            ),
+            make_rd_rule(
+                "IfIntB",
+                "Int",
+                vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                    RDSyntaxItem::Terminal("else".to_string()),
+                ],
+            ),
         ];
         builder.insert_rd_rules(&rules);
 

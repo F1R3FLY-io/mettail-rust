@@ -450,8 +450,8 @@ impl ChannelHandle {
         // Clone the receiver before moving the channel into Arc.
         // The cloned receiver shares the same underlying buffer.
         let recv_clone = channel.receiver();
-        let pending_check = Arc::new(move || !recv_clone.is_empty())
-            as Arc<dyn Fn() -> bool + Send + Sync>;
+        let pending_check =
+            Arc::new(move || !recv_clone.is_empty()) as Arc<dyn Fn() -> bool + Send + Sync>;
         Self {
             inner: Arc::new(channel),
             name,
@@ -655,7 +655,10 @@ impl ChannelMap {
 
     /// Iterate over all channel names.
     pub fn channel_names(&self) -> Vec<String> {
-        self.name_to_id.iter().map(|entry| entry.key().clone()).collect()
+        self.name_to_id
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Decrement the GC reference count for a channel.
@@ -730,7 +733,7 @@ impl fmt::Display for WaitPattern {
                     write!(f, "{}", id)?;
                 }
                 write!(f, ")")
-            }
+            },
         }
     }
 }
@@ -790,11 +793,7 @@ impl ChannelWaiter {
 
 impl fmt::Display for ChannelWaiter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Waiter({} on {} pattern={})",
-            self.thread_id, self.channel_id, self.pattern
-        )
+        write!(f, "Waiter({} on {} pattern={})", self.thread_id, self.channel_id, self.pattern)
     }
 }
 
@@ -822,9 +821,7 @@ pub struct WakeRegistry {
 impl WakeRegistry {
     /// Create a new empty wake registry.
     pub fn new() -> Self {
-        Self {
-            waiters: DashMap::new(),
-        }
+        Self { waiters: DashMap::new() }
     }
 
     /// Register a green thread as waiting on a channel.
@@ -832,10 +829,7 @@ impl WakeRegistry {
     /// A thread can wait on multiple channels (join pattern). Call this
     /// once per channel in the wait set.
     pub fn register(&self, channel_id: ChannelId, thread_id: GreenThreadId) {
-        self.waiters
-            .entry(channel_id)
-            .or_default()
-            .push(thread_id);
+        self.waiters.entry(channel_id).or_default().push(thread_id);
     }
 
     /// Unregister a green thread from a channel's waiter list.
@@ -879,10 +873,7 @@ impl WakeRegistry {
 
     /// Total number of registered waiters across all channels.
     pub fn total_waiters(&self) -> usize {
-        self.waiters
-            .iter()
-            .map(|entry| entry.value().len())
-            .sum()
+        self.waiters.iter().map(|entry| entry.value().len()).sum()
     }
 
     /// Register a join-pattern waiter: a thread waiting on ALL of the given channels.
@@ -891,11 +882,7 @@ impl WakeRegistry {
     /// the join set. The caller is responsible for maintaining the join-set mapping
     /// externally (e.g., in the coordinator's `join_sets` HashMap) so that
     /// `check_and_wake_join` can verify all-channel readiness.
-    pub fn register_join(
-        &self,
-        thread_id: GreenThreadId,
-        channels: &[ChannelId],
-    ) {
+    pub fn register_join(&self, thread_id: GreenThreadId, channels: &[ChannelId]) {
         for &ch_id in channels {
             self.register(ch_id, thread_id);
         }
@@ -1127,10 +1114,9 @@ mod tests {
 
         block.channels.push(ChannelSpec::new("ch1"));
         block.channels.push(ChannelSpec::typed("ch2", "i32"));
-        block.join_patterns.push(JoinPatternSpec {
-            name: "j1".to_string(),
-            channels: vec![],
-        });
+        block
+            .join_patterns
+            .push(JoinPatternSpec { name: "j1".to_string(), channels: vec![] });
 
         assert!(!block.is_empty());
         assert_eq!(block.len(), 3);
@@ -1163,31 +1149,19 @@ mod tests {
         ch.send("world".to_string()).expect("send should succeed");
         // Buffer is full at capacity 2; try_send would block on a third.
 
-        assert_eq!(
-            ch.recv_blocking().expect("recv should succeed"),
-            "hello"
-        );
-        assert_eq!(
-            ch.try_recv().expect("recv should succeed"),
-            "world"
-        );
+        assert_eq!(ch.recv_blocking().expect("recv should succeed"), "hello");
+        assert_eq!(ch.try_recv().expect("recv should succeed"), "world");
     }
 
     #[test]
     fn test_channel_from_capacity() {
-        let unbounded = Channel::<u8>::from_capacity(
-            ChannelId(10),
-            "ub",
-            &ChannelCapacity::Unbounded,
-        );
+        let unbounded =
+            Channel::<u8>::from_capacity(ChannelId(10), "ub", &ChannelCapacity::Unbounded);
         unbounded.send(1).expect("send should succeed");
         assert_eq!(unbounded.try_recv().expect("recv should succeed"), 1);
 
-        let bounded = Channel::<u8>::from_capacity(
-            ChannelId(11),
-            "bd",
-            &ChannelCapacity::Bounded(8),
-        );
+        let bounded =
+            Channel::<u8>::from_capacity(ChannelId(11), "bd", &ChannelCapacity::Bounded(8));
         bounded.send(2).expect("send should succeed");
         assert_eq!(bounded.try_recv().expect("recv should succeed"), 2);
     }
@@ -1248,7 +1222,9 @@ mod tests {
         let handle = ChannelHandle::new(ch);
 
         // Correct downcast to Arc.
-        let arc = handle.downcast_arc::<u32>().expect("downcast_arc should succeed");
+        let arc = handle
+            .downcast_arc::<u32>()
+            .expect("downcast_arc should succeed");
         assert_eq!(arc.try_recv().expect("recv should succeed"), 77);
 
         // Wrong type.
@@ -1359,29 +1335,16 @@ mod tests {
             vec![ChannelId(20), ChannelId(30)],
         );
         assert!(waiter.is_join());
-        assert_eq!(
-            waiter.all_channels(),
-            vec![ChannelId(10), ChannelId(20), ChannelId(30)]
-        );
+        assert_eq!(waiter.all_channels(), vec![ChannelId(10), ChannelId(20), ChannelId(30)]);
     }
 
     #[test]
     fn test_channel_waiter_display() {
         let single = ChannelWaiter::single(GreenThreadId(1), ChannelId(5));
-        assert_eq!(
-            single.to_string(),
-            "Waiter(gt#1 on ch#5 pattern=Single)"
-        );
+        assert_eq!(single.to_string(), "Waiter(gt#1 on ch#5 pattern=Single)");
 
-        let join = ChannelWaiter::join(
-            GreenThreadId(3),
-            ChannelId(10),
-            vec![ChannelId(20)],
-        );
-        assert_eq!(
-            join.to_string(),
-            "Waiter(gt#3 on ch#10 pattern=Join(ch#20))"
-        );
+        let join = ChannelWaiter::join(GreenThreadId(3), ChannelId(10), vec![ChannelId(20)]);
+        assert_eq!(join.to_string(), "Waiter(gt#3 on ch#10 pattern=Join(ch#20))");
     }
 
     #[test]
@@ -1454,10 +1417,7 @@ mod tests {
             h.join().expect("thread should not panic");
         }
 
-        assert_eq!(
-            map.channel_count(),
-            n_threads * channels_per_thread,
-        );
+        assert_eq!(map.channel_count(), n_threads * channels_per_thread,);
     }
 
     #[test]
@@ -1676,13 +1636,19 @@ mod tests {
 
         // Send on channel A only — still should not wake (B has no message).
         let ha = map.get_channel(ch_a).expect("channel A");
-        ha.downcast::<i32>().expect("downcast").send(1).expect("send");
+        ha.downcast::<i32>()
+            .expect("downcast")
+            .send(1)
+            .expect("send");
         let wakes = reg.check_and_wake_join(&map, &join_sets);
         assert!(wakes.is_empty(), "should not wake when only one join channel has data");
 
         // Send on channel B too — NOW should wake.
         let hb = map.get_channel(ch_b).expect("channel B");
-        hb.downcast::<i32>().expect("downcast").send(2).expect("send");
+        hb.downcast::<i32>()
+            .expect("downcast")
+            .send(2)
+            .expect("send");
         let wakes = reg.check_and_wake_join(&map, &join_sets);
         assert_eq!(wakes.len(), 1);
         assert_eq!(wakes[0].0, tid);
@@ -1708,9 +1674,15 @@ mod tests {
 
         // Only 2 of 3 channels have messages — should not wake.
         let ha = map.get_channel(ch_a).expect("ch_a");
-        ha.downcast::<String>().expect("downcast").send("a".to_string()).expect("send");
+        ha.downcast::<String>()
+            .expect("downcast")
+            .send("a".to_string())
+            .expect("send");
         let hc = map.get_channel(ch_c).expect("ch_c");
-        hc.downcast::<String>().expect("downcast").send("c".to_string()).expect("send");
+        hc.downcast::<String>()
+            .expect("downcast")
+            .send("c".to_string())
+            .expect("send");
 
         let wakes = reg.check_and_wake_join(&map, &join_sets);
         assert!(wakes.is_empty(), "should not wake with 2/3 channels ready");
@@ -1737,7 +1709,10 @@ mod tests {
 
         // Send a message.
         let ha = map.get_channel(ch_a).expect("ch_a");
-        ha.downcast::<i32>().expect("downcast").send(42).expect("send");
+        ha.downcast::<i32>()
+            .expect("downcast")
+            .send(42)
+            .expect("send");
 
         let wakes = reg.check_and_wake_join(&map, &join_sets);
         // Only the join waiter should be woken; the single waiter is not in join_sets.

@@ -160,10 +160,7 @@ impl VpaState {
 
     /// Create a labeled state.
     pub fn labeled(id: usize, label: impl Into<String>) -> Self {
-        VpaState {
-            id,
-            label: Some(label.into()),
-        }
+        VpaState { id, label: Some(label.into()) }
     }
 }
 
@@ -395,13 +392,17 @@ impl<W: Semiring> WeightedVpa<W> {
             }
 
             // Follow call transitions.
-            for targets in self.call_transitions.iter().filter_map(|((s, _), t)| {
-                if *s == state {
-                    Some(t)
-                } else {
-                    None
-                }
-            }) {
+            for targets in
+                self.call_transitions.iter().filter_map(
+                    |((s, _), t)| {
+                        if *s == state {
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    },
+                )
+            {
                 for &(t, _, _) in targets {
                     if visited.insert(t) {
                         queue.push_back(t);
@@ -411,15 +412,15 @@ impl<W: Semiring> WeightedVpa<W> {
 
             // Follow return transitions.
             for targets in
-                self.return_transitions
-                    .iter()
-                    .filter_map(|((s, _, _), t)| {
+                self.return_transitions.iter().filter_map(
+                    |((s, _, _), t)| {
                         if *s == state {
                             Some(t)
                         } else {
                             None
                         }
-                    })
+                    },
+                )
             {
                 for &(t, _) in targets {
                     if visited.insert(t) {
@@ -511,9 +512,7 @@ impl<W: Semiring> WeightedVpa<W> {
                 let remapped: Vec<(usize, String, W)> = targets
                     .iter()
                     .filter_map(|&(t, ref gamma, w)| {
-                        old_to_new
-                            .get(&t)
-                            .map(|&new_t| (new_t, gamma.clone(), w))
+                        old_to_new.get(&t).map(|&new_t| (new_t, gamma.clone(), w))
                     })
                     .collect();
                 if !remapped.is_empty() {
@@ -598,55 +597,50 @@ impl<W: Semiring> WeightedVpa<W> {
                             for &(t, tw) in targets {
                                 let run_w = weight.times(&tw);
                                 let key = (t, stack.clone());
-                                let entry =
-                                    next_configs.entry(key).or_insert_with(W::zero);
+                                let entry = next_configs.entry(key).or_insert_with(W::zero);
                                 *entry = entry.plus(&run_w);
                             }
                         }
                     }
-                }
+                },
                 Some(SymbolKind::Call) => {
                     for ((state, stack), weight) in &configs {
-                        if let Some(targets) =
-                            self.call_transitions.get(&(*state, sym_str.clone()))
+                        if let Some(targets) = self.call_transitions.get(&(*state, sym_str.clone()))
                         {
                             for &(t, ref gamma, tw) in targets {
                                 let run_w = weight.times(&tw);
                                 let mut new_stack = stack.clone();
                                 new_stack.push(gamma.clone());
                                 let key = (t, new_stack);
-                                let entry =
-                                    next_configs.entry(key).or_insert_with(W::zero);
+                                let entry = next_configs.entry(key).or_insert_with(W::zero);
                                 *entry = entry.plus(&run_w);
                             }
                         }
                     }
-                }
+                },
                 Some(SymbolKind::Return) => {
                     for ((state, stack), weight) in &configs {
                         if stack.len() > 1 {
                             let top = &stack[stack.len() - 1];
-                            if let Some(targets) = self.return_transitions.get(&(
-                                *state,
-                                sym_str.clone(),
-                                top.clone(),
-                            )) {
+                            if let Some(targets) =
+                                self.return_transitions
+                                    .get(&(*state, sym_str.clone(), top.clone()))
+                            {
                                 for &(t, tw) in targets {
                                     let run_w = weight.times(&tw);
                                     let mut new_stack = stack.clone();
                                     new_stack.pop();
                                     let key = (t, new_stack);
-                                    let entry =
-                                        next_configs.entry(key).or_insert_with(W::zero);
+                                    let entry = next_configs.entry(key).or_insert_with(W::zero);
                                     *entry = entry.plus(&run_w);
                                 }
                             }
                         }
                     }
-                }
+                },
                 None => {
                     // Unknown symbol — all configurations die.
-                }
+                },
             }
 
             configs = next_configs;
@@ -704,11 +698,7 @@ impl<W: Semiring> WeightedVpa<W> {
         // Compute initial weight for the initial macro-state.
         let mut initial_w = W::zero();
         for &q in &initial_macro {
-            let w = self
-                .initial_weights
-                .get(&q)
-                .copied()
-                .unwrap_or_else(W::one);
+            let w = self.initial_weights.get(&q).copied().unwrap_or_else(W::one);
             initial_w = initial_w.plus(&w);
         }
         det.initial_weights.insert(initial_id, initial_w);
@@ -749,41 +739,33 @@ impl<W: Semiring> WeightedVpa<W> {
                 let mut next_macro = BTreeSet::new();
                 let mut combined_weight = W::zero();
                 for &q in &current_macro {
-                    if let Some(targets) =
-                        self.internal_transitions.get(&(q, sym.clone()))
-                    {
+                    if let Some(targets) = self.internal_transitions.get(&(q, sym.clone())) {
                         for &(t, tw) in targets {
                             next_macro.insert(t);
                             combined_weight = combined_weight.plus(&tw);
                         }
                     }
                 }
-                let next_id =
-                    *macro_to_id
-                        .entry(next_macro.clone())
-                        .or_insert_with(|| {
-                            let id = det.add_state(None);
-                            if next_macro
-                                .iter()
-                                .any(|s| self.accepting_states.contains(s))
-                            {
-                                det.accepting_states.insert(id);
-                                let mut aw = W::zero();
-                                for &q in &next_macro {
-                                    if self.accepting_states.contains(&q) {
-                                        let w = self
-                                            .accepting_weights
-                                            .get(&q)
-                                            .copied()
-                                            .unwrap_or_else(W::one);
-                                        aw = aw.plus(&w);
-                                    }
-                                }
-                                det.accepting_weights.insert(id, aw);
+                let next_id = *macro_to_id.entry(next_macro.clone()).or_insert_with(|| {
+                    let id = det.add_state(None);
+                    if next_macro.iter().any(|s| self.accepting_states.contains(s)) {
+                        det.accepting_states.insert(id);
+                        let mut aw = W::zero();
+                        for &q in &next_macro {
+                            if self.accepting_states.contains(&q) {
+                                let w = self
+                                    .accepting_weights
+                                    .get(&q)
+                                    .copied()
+                                    .unwrap_or_else(W::one);
+                                aw = aw.plus(&w);
                             }
-                            worklist.push_back(next_macro.clone());
-                            id
-                        });
+                        }
+                        det.accepting_weights.insert(id, aw);
+                    }
+                    worklist.push_back(next_macro.clone());
+                    id
+                });
                 det.internal_transitions
                     .entry((current_id, sym.clone()))
                     .or_insert_with(Vec::new)
@@ -795,41 +777,33 @@ impl<W: Semiring> WeightedVpa<W> {
                 let mut next_macro = BTreeSet::new();
                 let mut combined_weight = W::zero();
                 for &q in &current_macro {
-                    if let Some(targets) =
-                        self.call_transitions.get(&(q, sym.clone()))
-                    {
+                    if let Some(targets) = self.call_transitions.get(&(q, sym.clone())) {
                         for &(t, _, tw) in targets {
                             next_macro.insert(t);
                             combined_weight = combined_weight.plus(&tw);
                         }
                     }
                 }
-                let next_id =
-                    *macro_to_id
-                        .entry(next_macro.clone())
-                        .or_insert_with(|| {
-                            let id = det.add_state(None);
-                            if next_macro
-                                .iter()
-                                .any(|s| self.accepting_states.contains(s))
-                            {
-                                det.accepting_states.insert(id);
-                                let mut aw = W::zero();
-                                for &q in &next_macro {
-                                    if self.accepting_states.contains(&q) {
-                                        let w = self
-                                            .accepting_weights
-                                            .get(&q)
-                                            .copied()
-                                            .unwrap_or_else(W::one);
-                                        aw = aw.plus(&w);
-                                    }
-                                }
-                                det.accepting_weights.insert(id, aw);
+                let next_id = *macro_to_id.entry(next_macro.clone()).or_insert_with(|| {
+                    let id = det.add_state(None);
+                    if next_macro.iter().any(|s| self.accepting_states.contains(s)) {
+                        det.accepting_states.insert(id);
+                        let mut aw = W::zero();
+                        for &q in &next_macro {
+                            if self.accepting_states.contains(&q) {
+                                let w = self
+                                    .accepting_weights
+                                    .get(&q)
+                                    .copied()
+                                    .unwrap_or_else(W::one);
+                                aw = aw.plus(&w);
                             }
-                            worklist.push_back(next_macro.clone());
-                            id
-                        });
+                        }
+                        det.accepting_weights.insert(id, aw);
+                    }
+                    worklist.push_back(next_macro.clone());
+                    id
+                });
                 let stack_sym = format!("M{}", current_id);
                 det.call_transitions
                     .entry((current_id, sym.clone()))
@@ -839,35 +813,33 @@ impl<W: Semiring> WeightedVpa<W> {
 
             // Return transitions.
             for sym in &ret_syms {
-                let mut all_stack_syms: Vec<String> = macro_to_id
-                    .values()
-                    .map(|id| format!("M{}", id))
-                    .collect();
+                let mut all_stack_syms: Vec<String> =
+                    macro_to_id.values().map(|id| format!("M{}", id)).collect();
                 all_stack_syms.push(self.initial_stack_symbol.clone());
                 all_stack_syms.sort();
                 all_stack_syms.dedup();
 
                 for stack_sym in &all_stack_syms {
-                    if det
-                        .return_transitions
-                        .contains_key(&(current_id, sym.clone(), stack_sym.clone()))
-                    {
+                    if det.return_transitions.contains_key(&(
+                        current_id,
+                        sym.clone(),
+                        stack_sym.clone(),
+                    )) {
                         continue;
                     }
 
-                    let caller_macro_opt: Option<&BTreeSet<usize>> =
-                        if stack_sym.starts_with('M') {
-                            if let Ok(caller_id) = stack_sym[1..].parse::<usize>() {
-                                macro_to_id
-                                    .iter()
-                                    .find(|(_, &id)| id == caller_id)
-                                    .map(|(m, _)| m)
-                            } else {
-                                None
-                            }
+                    let caller_macro_opt: Option<&BTreeSet<usize>> = if stack_sym.starts_with('M') {
+                        if let Ok(caller_id) = stack_sym[1..].parse::<usize>() {
+                            macro_to_id
+                                .iter()
+                                .find(|(_, &id)| id == caller_id)
+                                .map(|(m, _)| m)
                         } else {
                             None
-                        };
+                        }
+                    } else {
+                        None
+                    };
 
                     let mut next_macro = BTreeSet::new();
                     let mut combined_weight = W::zero();
@@ -879,17 +851,13 @@ impl<W: Semiring> WeightedVpa<W> {
                                         self.call_transitions.get(&(caller_q, csym.clone()))
                                     {
                                         for &(_, ref pushed_gamma, _cw) in call_targets {
-                                            if let Some(ret_targets) =
-                                                self.return_transitions.get(&(
-                                                    q,
-                                                    sym.clone(),
-                                                    pushed_gamma.clone(),
-                                                ))
+                                            if let Some(ret_targets) = self
+                                                .return_transitions
+                                                .get(&(q, sym.clone(), pushed_gamma.clone()))
                                             {
                                                 for &(t, tw) in ret_targets {
                                                     next_macro.insert(t);
-                                                    combined_weight =
-                                                        combined_weight.plus(&tw);
+                                                    combined_weight = combined_weight.plus(&tw);
                                                 }
                                             }
                                         }
@@ -899,32 +867,26 @@ impl<W: Semiring> WeightedVpa<W> {
                         }
                     }
 
-                    let next_id =
-                        *macro_to_id
-                            .entry(next_macro.clone())
-                            .or_insert_with(|| {
-                                let id = det.add_state(None);
-                                if next_macro
-                                    .iter()
-                                    .any(|s| self.accepting_states.contains(s))
-                                {
-                                    det.accepting_states.insert(id);
-                                    let mut aw = W::zero();
-                                    for &q in &next_macro {
-                                        if self.accepting_states.contains(&q) {
-                                            let w = self
-                                                .accepting_weights
-                                                .get(&q)
-                                                .copied()
-                                                .unwrap_or_else(W::one);
-                                            aw = aw.plus(&w);
-                                        }
-                                    }
-                                    det.accepting_weights.insert(id, aw);
+                    let next_id = *macro_to_id.entry(next_macro.clone()).or_insert_with(|| {
+                        let id = det.add_state(None);
+                        if next_macro.iter().any(|s| self.accepting_states.contains(s)) {
+                            det.accepting_states.insert(id);
+                            let mut aw = W::zero();
+                            for &q in &next_macro {
+                                if self.accepting_states.contains(&q) {
+                                    let w = self
+                                        .accepting_weights
+                                        .get(&q)
+                                        .copied()
+                                        .unwrap_or_else(W::one);
+                                    aw = aw.plus(&w);
                                 }
-                                worklist.push_back(next_macro.clone());
-                                id
-                            });
+                            }
+                            det.accepting_weights.insert(id, aw);
+                        }
+                        worklist.push_back(next_macro.clone());
+                        id
+                    });
                     det.return_transitions
                         .entry((current_id, sym.clone(), stack_sym.clone()))
                         .or_insert_with(Vec::new)
@@ -1003,12 +965,12 @@ impl<W: Semiring> WeightedVpa<W> {
                     let sum = total_a.plus(&total_b);
                     // Inclusion holds iff a ⊕ b = b.
                     sum.approx_eq(&total_b, 1e-10)
-                }
+                },
                 _ => {
                     // other is dead or not accepting → other's weight is zero.
                     // self has non-zero weight → inclusion violated.
                     false
-                }
+                },
             }
         };
 
@@ -1091,14 +1053,7 @@ impl<W: Semiring> WeightedVpa<W> {
                             let new_wb = wb.times(&twb);
                             let next = (ta, Some(tb), stack_a.clone(), stack_b.clone());
                             if visited.insert(next.clone()) {
-                                if !check_acceptance(
-                                    ta,
-                                    Some(tb),
-                                    &new_wa,
-                                    &new_wb,
-                                    self,
-                                    other,
-                                ) {
+                                if !check_acceptance(ta, Some(tb), &new_wa, &new_wb, self, other) {
                                     return false;
                                 }
                                 queue.push_back((next, new_wa, new_wb));
@@ -1138,14 +1093,7 @@ impl<W: Semiring> WeightedVpa<W> {
                             // other dead.
                             let next = (ta, None, sa, stack_b.clone());
                             if visited.insert(next.clone()) {
-                                if !check_acceptance(
-                                    ta,
-                                    None,
-                                    &new_wa,
-                                    &W::zero(),
-                                    self,
-                                    other,
-                                ) {
+                                if !check_acceptance(ta, None, &new_wa, &W::zero(), self, other) {
                                     return false;
                                 }
                                 queue.push_back((next, new_wa, W::zero()));
@@ -1196,7 +1144,7 @@ impl<W: Semiring> WeightedVpa<W> {
                                 .get(&(qb, sym.clone(), top_b.clone()))
                                 .cloned()
                                 .unwrap_or_default()
-                        }
+                        },
                         _ => Vec::new(), // Dead or stack empty.
                     };
 
@@ -1208,14 +1156,7 @@ impl<W: Semiring> WeightedVpa<W> {
                         if b_targets.is_empty() {
                             let next = (ta, None, sa, stack_b.clone());
                             if visited.insert(next.clone()) {
-                                if !check_acceptance(
-                                    ta,
-                                    None,
-                                    &new_wa,
-                                    &W::zero(),
-                                    self,
-                                    other,
-                                ) {
+                                if !check_acceptance(ta, None, &new_wa, &W::zero(), self, other) {
                                     return false;
                                 }
                                 queue.push_back((next, new_wa, W::zero()));
@@ -1281,10 +1222,7 @@ impl<W: Semiring> fmt::Display for WeightedVpa<W> {
 /// # Returns
 ///
 /// A new `Vpa` with the appropriate alphabet partition.
-pub fn construct_vpa(
-    call_return_pairs: &[(String, String)],
-    internal_symbols: &[String],
-) -> Vpa {
+pub fn construct_vpa(call_return_pairs: &[(String, String)], internal_symbols: &[String]) -> Vpa {
     // Build the partitioned alphabet from the call/return pairs and internal symbols.
     let mut call_symbols = HashSet::with_capacity(call_return_pairs.len());
     let mut return_symbols = HashSet::with_capacity(call_return_pairs.len());
@@ -1612,7 +1550,10 @@ fn determinize_impl<W: Semiring>(vpa: &WeightedVpa<W>) -> WeightedVpa<W> {
     macro_to_id.insert(initial_macro.clone(), initial_id);
     det.initial_states.insert(initial_id);
 
-    if initial_macro.iter().any(|s| vpa.accepting_states.contains(s)) {
+    if initial_macro
+        .iter()
+        .any(|s| vpa.accepting_states.contains(s))
+    {
         det.accepting_states.insert(initial_id);
     }
 
@@ -1687,20 +1628,19 @@ fn determinize_impl<W: Semiring>(vpa: &WeightedVpa<W>) -> WeightedVpa<W> {
         for sym in &ret_syms {
             // Collect all determinized stack symbols we have seen so far
             // (M{id} for each macro-state, plus the initial stack symbol).
-            let mut all_stack_syms: Vec<String> = macro_to_id
-                .values()
-                .map(|id| format!("M{}", id))
-                .collect();
+            let mut all_stack_syms: Vec<String> =
+                macro_to_id.values().map(|id| format!("M{}", id)).collect();
             all_stack_syms.push(vpa.initial_stack_symbol.clone());
             all_stack_syms.sort();
             all_stack_syms.dedup();
 
             for stack_sym in &all_stack_syms {
                 // Already have a transition for this (current_id, sym, stack_sym)?
-                if det
-                    .return_transitions
-                    .contains_key(&(current_id, sym.clone(), stack_sym.clone()))
-                {
+                if det.return_transitions.contains_key(&(
+                    current_id,
+                    sym.clone(),
+                    stack_sym.clone(),
+                )) {
                     continue;
                 }
 
@@ -1727,13 +1667,11 @@ fn determinize_impl<W: Semiring>(vpa: &WeightedVpa<W>) -> WeightedVpa<W> {
                                     vpa.call_transitions.get(&(caller_q, csym.clone()))
                                 {
                                     for (_, pushed_gamma, _) in call_targets {
-                                        if let Some(ret_targets) =
-                                            vpa.return_transitions.get(&(
-                                                q,
-                                                sym.clone(),
-                                                pushed_gamma.clone(),
-                                            ))
-                                        {
+                                        if let Some(ret_targets) = vpa.return_transitions.get(&(
+                                            q,
+                                            sym.clone(),
+                                            pushed_gamma.clone(),
+                                        )) {
                                             for &(t, _) in ret_targets {
                                                 next_macro.insert(t);
                                             }
@@ -1748,17 +1686,14 @@ fn determinize_impl<W: Semiring>(vpa: &WeightedVpa<W>) -> WeightedVpa<W> {
                 // is read at the bottom of the stack, we go to dead.
                 // (next_macro stays empty → maps to dead state.)
 
-                let next_id =
-                    *macro_to_id
-                        .entry(next_macro.clone())
-                        .or_insert_with(|| {
-                            let id = det.add_state(None);
-                            if next_macro.iter().any(|s| vpa.accepting_states.contains(s)) {
-                                det.accepting_states.insert(id);
-                            }
-                            worklist.push_back(next_macro.clone());
-                            id
-                        });
+                let next_id = *macro_to_id.entry(next_macro.clone()).or_insert_with(|| {
+                    let id = det.add_state(None);
+                    if next_macro.iter().any(|s| vpa.accepting_states.contains(s)) {
+                        det.accepting_states.insert(id);
+                    }
+                    worklist.push_back(next_macro.clone());
+                    id
+                });
                 det.return_transitions
                     .entry((current_id, sym.clone(), stack_sym.clone()))
                     .or_insert_with(Vec::new)
@@ -2059,32 +1994,32 @@ pub fn build_alphabet_from_syntax(
         match item {
             crate::SyntaxItemSpec::Terminal(t) => {
                 out.push(t.clone());
-            }
+            },
             crate::SyntaxItemSpec::Collection { separator, .. } => {
                 out.push(separator.clone());
-            }
+            },
             crate::SyntaxItemSpec::Sep { body, separator, .. } => {
                 out.push(separator.clone());
                 collect_terminals(body, out);
-            }
+            },
             crate::SyntaxItemSpec::Map { body_items } => {
                 for sub in body_items {
                     collect_terminals(sub, out);
                 }
-            }
+            },
             crate::SyntaxItemSpec::Zip { body, .. } => {
                 collect_terminals(body, out);
-            }
+            },
             crate::SyntaxItemSpec::Optional { inner } => {
                 for sub in inner {
                     collect_terminals(sub, out);
                 }
-            }
+            },
             crate::SyntaxItemSpec::BinderCollection { separator, .. } => {
                 out.push(separator.clone());
-            }
+            },
             // NonTerminal, IdentCapture, Binder — no terminals to extract.
-            _ => {}
+            _ => {},
         }
     }
 
@@ -2097,13 +2032,13 @@ pub fn build_alphabet_from_syntax(
             match tok.as_str() {
                 "(" | "{" | "[" => {
                     call_symbols.insert(tok);
-                }
+                },
                 ")" | "}" | "]" => {
                     return_symbols.insert(tok);
-                }
+                },
                 _ => {
                     internal_symbols.insert(tok);
-                }
+                },
             }
         }
     }
@@ -2164,9 +2099,7 @@ pub fn analyze_from_bundle(
     let delimiter_pairs: &[(&str, &str)] = &[("(", ")"), ("{", "}"), ("[", "]")];
     let call_return_pairs: Vec<(String, String)> = delimiter_pairs
         .iter()
-        .filter(|(c, r)| {
-            alphabet.call_symbols.contains(*c) && alphabet.return_symbols.contains(*r)
-        })
+        .filter(|(c, r)| alphabet.call_symbols.contains(*c) && alphabet.return_symbols.contains(*r))
         .map(|(c, r)| (c.to_string(), r.to_string()))
         .collect();
 
@@ -2304,8 +2237,8 @@ pub fn build_skip_table<T>(
                 if let Some(opener) = stack.pop() {
                     table[opener] = Some(i);
                 }
-            }
-            SymbolKind::Internal => {}
+            },
+            SymbolKind::Internal => {},
         }
     }
     table
@@ -2369,8 +2302,7 @@ pub fn build_token_tree<T: Clone>(
             match classify(&tokens[i].0) {
                 SymbolKind::Call => {
                     if let Some(closer) = skip_table[i] {
-                        let children =
-                            build_range(tokens, skip_table, classify, i + 1, closer);
+                        let children = build_range(tokens, skip_table, classify, i + 1, closer);
                         result.push(TokenTree::Group {
                             open: tokens[i].clone(),
                             close: tokens[closer].clone(),
@@ -2379,17 +2311,14 @@ pub fn build_token_tree<T: Clone>(
                         i = closer + 1;
                     } else {
                         // Unmatched opener — demote to leaf.
-                        result.push(TokenTree::Token(
-                            tokens[i].0.clone(),
-                            tokens[i].1,
-                        ));
+                        result.push(TokenTree::Token(tokens[i].0.clone(), tokens[i].1));
                         i += 1;
                     }
-                }
+                },
                 _ => {
                     result.push(TokenTree::Token(tokens[i].0.clone(), tokens[i].1));
                     i += 1;
-                }
+                },
             }
         }
         result
@@ -2450,10 +2379,7 @@ mod tests {
     /// Helper: build a VPA that accepts well-matched parentheses with internal
     /// symbols via `construct_vpa`.
     fn build_paren_vpa() -> Vpa {
-        construct_vpa(
-            &[("(".to_string(), ")".to_string())],
-            &["+".to_string(), "id".to_string()],
-        )
+        construct_vpa(&[("(".to_string(), ")".to_string())], &["+".to_string(), "id".to_string()])
     }
 
     /// Helper: manually build a VPA that accepts ONLY the empty word.
@@ -2498,11 +2424,10 @@ mod tests {
                             }
                         }
                     }
-                }
+                },
                 Some(SymbolKind::Call) => {
                     for (state, stack) in &configs {
-                        if let Some(targets) =
-                            vpa.call_transitions.get(&(*state, sym_str.clone()))
+                        if let Some(targets) = vpa.call_transitions.get(&(*state, sym_str.clone()))
                         {
                             for (t, gamma, _) in targets {
                                 let mut new_stack = stack.clone();
@@ -2511,16 +2436,15 @@ mod tests {
                             }
                         }
                     }
-                }
+                },
                 Some(SymbolKind::Return) => {
                     for (state, stack) in &configs {
                         if stack.len() > 1 {
                             let top = &stack[stack.len() - 1];
-                            if let Some(targets) = vpa.return_transitions.get(&(
-                                *state,
-                                sym_str.clone(),
-                                top.clone(),
-                            )) {
+                            if let Some(targets) =
+                                vpa.return_transitions
+                                    .get(&(*state, sym_str.clone(), top.clone()))
+                            {
                                 for &(t, _) in targets {
                                     let mut new_stack = stack.clone();
                                     new_stack.pop();
@@ -2529,10 +2453,10 @@ mod tests {
                             }
                         }
                     }
-                }
+                },
                 None => {
                     // Unknown symbol — no transitions possible.
-                }
+                },
             }
 
             configs = next_configs;
@@ -2555,22 +2479,13 @@ mod tests {
         assert!(simulate(&vpa, &["(", ")"]), "() should be accepted");
 
         // Well-matched: "(())"
-        assert!(
-            simulate(&vpa, &["(", "(", ")", ")"]),
-            "(()) should be accepted"
-        );
+        assert!(simulate(&vpa, &["(", "(", ")", ")"]), "(()) should be accepted");
 
         // Well-matched: "( id + id )"
-        assert!(
-            simulate(&vpa, &["(", "id", "+", "id", ")"]),
-            "(id+id) should be accepted"
-        );
+        assert!(simulate(&vpa, &["(", "id", "+", "id", ")"]), "(id+id) should be accepted");
 
         // Internal symbols only: "id + id"
-        assert!(
-            simulate(&vpa, &["id", "+", "id"]),
-            "id+id should be accepted"
-        );
+        assert!(simulate(&vpa, &["id", "+", "id"]), "id+id should be accepted");
 
         // Mismatched: "(" alone — stack not at initial height.
         assert!(!simulate(&vpa, &["("]), "( alone should be rejected");
@@ -2590,10 +2505,7 @@ mod tests {
         // Two independently constructed VPAs with the same language should be equivalent.
         let vpa1 = build_paren_vpa();
         let vpa2 = build_paren_vpa();
-        assert!(
-            check_equivalence(&vpa1, &vpa2),
-            "identical VPAs should be equivalent"
-        );
+        assert!(check_equivalence(&vpa1, &vpa2), "identical VPAs should be equivalent");
     }
 
     #[test]
@@ -2613,29 +2525,17 @@ mod tests {
         let comp = complement(&vpa);
 
         // The original accepts the empty string; the complement should reject it.
-        assert!(
-            simulate(&vpa, &[]),
-            "original should accept empty string"
-        );
+        assert!(simulate(&vpa, &[]), "original should accept empty string");
         // After complement, the complement should reject the empty string.
-        assert!(
-            !simulate(&comp, &[]),
-            "complement should reject empty string"
-        );
+        assert!(!simulate(&comp, &[]), "complement should reject empty string");
 
         // The original accepts "()"; the complement should reject it.
         assert!(simulate(&vpa, &["(", ")"]), "original should accept ()");
-        assert!(
-            !simulate(&comp, &["(", ")"]),
-            "complement should reject ()"
-        );
+        assert!(!simulate(&comp, &["(", ")"]), "complement should reject ()");
 
         // The original accepts "id"; the complement should reject it.
         assert!(simulate(&vpa, &["id"]), "original should accept id");
-        assert!(
-            !simulate(&comp, &["id"]),
-            "complement should reject id"
-        );
+        assert!(!simulate(&comp, &["id"]), "complement should reject id");
     }
 
     #[test]
@@ -2647,10 +2547,7 @@ mod tests {
         let inter = intersect(&well_matched, &eps_only);
 
         // Empty string is in both languages.
-        assert!(
-            simulate(&inter, &[]),
-            "intersection should accept empty string"
-        );
+        assert!(simulate(&inter, &[]), "intersection should accept empty string");
 
         // "()" is in well_matched but not in eps_only.
         assert!(
@@ -2674,18 +2571,9 @@ mod tests {
         // The determinized VPA should accept the same words.
         assert!(simulate(&det, &[]), "det should accept empty string");
         assert!(simulate(&det, &["(", ")"]), "det should accept ()");
-        assert!(
-            simulate(&det, &["(", "(", ")", ")"]),
-            "det should accept (())"
-        );
-        assert!(
-            simulate(&det, &["(", "id", "+", "id", ")"]),
-            "det should accept (id+id)"
-        );
-        assert!(
-            simulate(&det, &["id", "+", "id"]),
-            "det should accept id+id"
-        );
+        assert!(simulate(&det, &["(", "(", ")", ")"]), "det should accept (())");
+        assert!(simulate(&det, &["(", "id", "+", "id", ")"]), "det should accept (id+id)");
+        assert!(simulate(&det, &["id", "+", "id"]), "det should accept id+id");
 
         // And reject the same words.
         assert!(!simulate(&det, &["("]), "det should reject (");
@@ -2742,29 +2630,14 @@ mod tests {
         );
 
         let det = nfa_vpa.determinize();
-        assert!(
-            det.is_deterministic(),
-            "determinized VPA should be deterministic"
-        );
+        assert!(det.is_deterministic(), "determinized VPA should be deterministic");
 
         // Both words should still be accepted.
-        assert!(
-            simulate(&det, &["(", ")"]),
-            "det should accept () from path 1"
-        );
-        assert!(
-            simulate(&det, &["id"]),
-            "det should accept id from path 2"
-        );
+        assert!(simulate(&det, &["(", ")"]), "det should accept () from path 1");
+        assert!(simulate(&det, &["id"]), "det should accept id from path 2");
         // And words not in either path should be rejected.
-        assert!(
-            !simulate(&det, &["("]),
-            "det should reject unmatched ("
-        );
-        assert!(
-            !simulate(&det, &[")"]),
-            "det should reject unmatched )"
-        );
+        assert!(!simulate(&det, &["("]), "det should reject unmatched (");
+        assert!(!simulate(&det, &[")"]), "det should reject unmatched )");
     }
 
     #[test]
@@ -2772,10 +2645,7 @@ mod tests {
         // construct_vpa produces a deterministic VPA (one initial state,
         // at most one target per transition key).
         let vpa = build_paren_vpa();
-        assert!(
-            vpa.is_deterministic(),
-            "construct_vpa should produce a deterministic VPA"
-        );
+        assert!(vpa.is_deterministic(), "construct_vpa should produce a deterministic VPA");
     }
 
     #[test]
@@ -2855,14 +2725,8 @@ mod tests {
         // q0 and q1 should be reachable, but NOT the isolated state.
         // Note: reachable_states returns states with compacted IDs from the
         // original, so we check by label.
-        assert!(
-            reachable_ids.contains(&q0),
-            "q0 (start) should be reachable"
-        );
-        assert!(
-            reachable_ids.contains(&q1),
-            "q1 (reachable) should be reachable"
-        );
+        assert!(reachable_ids.contains(&q0), "q0 (start) should be reachable");
+        assert!(reachable_ids.contains(&q1), "q1 (reachable) should be reachable");
         assert_eq!(reachable.len(), 2, "only 2 states should be reachable");
     }
 
@@ -2896,10 +2760,7 @@ mod tests {
         // The trimmed VPA should still accept "id".
         assert!(simulate(&trimmed, &["id"]), "trimmed should accept id");
         // And still reject empty string (q0 is not accepting).
-        assert!(
-            !simulate(&trimmed, &[]),
-            "trimmed should reject empty string"
-        );
+        assert!(!simulate(&trimmed, &[]), "trimmed should reject empty string");
     }
 
     #[test]
@@ -2926,12 +2787,7 @@ mod tests {
                 input
             );
         }
-        for input in &[
-            vec!["("],
-            vec![")"],
-            vec!["(", "("],
-            vec![")", "("],
-        ] {
+        for input in &[vec!["("], vec![")"], vec!["(", "("], vec![")", "("]] {
             assert_eq!(
                 simulate(&vpa, input),
                 simulate(&trimmed, input),
@@ -2949,10 +2805,7 @@ mod tests {
         let det = vpa.determinize();
         let trimmed = det.trim();
 
-        assert!(
-            trimmed.is_deterministic(),
-            "determinize + trim should remain deterministic"
-        );
+        assert!(trimmed.is_deterministic(), "determinize + trim should remain deterministic");
 
         // Language equivalence via simulation on representative words.
         for input in &[
@@ -2978,25 +2831,13 @@ mod tests {
         let eps = build_epsilon_only_vpa();
         let det = eps.determinize();
 
-        assert!(
-            det.is_deterministic(),
-            "determinized epsilon-only VPA should be deterministic"
-        );
-        assert!(
-            simulate(&det, &[]),
-            "det of epsilon-only should accept empty string"
-        );
+        assert!(det.is_deterministic(), "determinized epsilon-only VPA should be deterministic");
+        assert!(simulate(&det, &[]), "det of epsilon-only should accept empty string");
         // It should reject any non-empty input (even symbols in the alphabet).
         // Note: the epsilon-only VPA has no transitions, so determinize produces
         // a dead sink for all symbols, which is non-accepting.
-        assert!(
-            !simulate(&det, &["("]),
-            "det of epsilon-only should reject ("
-        );
-        assert!(
-            !simulate(&det, &["+"]),
-            "det of epsilon-only should reject +"
-        );
+        assert!(!simulate(&det, &["("]), "det of epsilon-only should reject (");
+        assert!(!simulate(&det, &["+"]), "det of epsilon-only should reject +");
     }
 
     #[test]
@@ -3007,11 +2848,7 @@ mod tests {
         let _q0 = vpa.add_state(None);
         // No initial states set.
         let trimmed = vpa.trim();
-        assert_eq!(
-            trimmed.num_states(),
-            0,
-            "VPA with no initial states should trim to 0 states"
-        );
+        assert_eq!(trimmed.num_states(), 0, "VPA with no initial states should trim to 0 states");
     }
 
     #[test]
@@ -3054,18 +2891,9 @@ mod tests {
             ],
         )];
         let alphabet = build_alphabet_from_syntax(&syntax);
-        assert!(
-            alphabet.call_symbols.contains("("),
-            "( should be classified as call"
-        );
-        assert!(
-            alphabet.return_symbols.contains(")"),
-            ") should be classified as return"
-        );
-        assert!(
-            alphabet.internal_symbols.contains("+"),
-            "+ should be classified as internal"
-        );
+        assert!(alphabet.call_symbols.contains("("), "( should be classified as call");
+        assert!(alphabet.return_symbols.contains(")"), ") should be classified as return");
+        assert!(alphabet.internal_symbols.contains("+"), "+ should be classified as internal");
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -3140,10 +2968,7 @@ mod tests {
 
         // Unknown symbol: should be zero.
         let unknown_result = wvpa.weighted_run(&["unknown"]);
-        assert!(
-            unknown_result.is_zero(),
-            "weighted_run on unknown symbol should be zero"
-        );
+        assert!(unknown_result.is_zero(), "weighted_run on unknown symbol should be zero");
     }
 
     #[test]
@@ -3164,14 +2989,10 @@ mod tests {
         wvpa.initial_weights.insert(q0, TropicalWeight::one());
         wvpa.accepting_weights.insert(q2, TropicalWeight::one());
 
-        wvpa.call_transitions.insert(
-            (q0, "(".to_string()),
-            vec![(q1, "G".to_string(), TropicalWeight::new(1.0))],
-        );
-        wvpa.return_transitions.insert(
-            (q1, ")".to_string(), "G".to_string()),
-            vec![(q2, TropicalWeight::new(2.0))],
-        );
+        wvpa.call_transitions
+            .insert((q0, "(".to_string()), vec![(q1, "G".to_string(), TropicalWeight::new(1.0))]);
+        wvpa.return_transitions
+            .insert((q1, ")".to_string(), "G".to_string()), vec![(q2, TropicalWeight::new(2.0))]);
 
         let result = wvpa.weighted_run(&["(", ")"]);
         // 0.0 + 1.0 + 2.0 + 0.0 = 3.0
@@ -3206,15 +3027,11 @@ mod tests {
         wvpa.accepting_weights.insert(q3, TropicalWeight::one());
 
         // q0 --a(cost=5.0)--> q2
-        wvpa.internal_transitions.insert(
-            (q0, "a".to_string()),
-            vec![(q2, TropicalWeight::new(5.0))],
-        );
+        wvpa.internal_transitions
+            .insert((q0, "a".to_string()), vec![(q2, TropicalWeight::new(5.0))]);
         // q1 --a(cost=3.0)--> q3
-        wvpa.internal_transitions.insert(
-            (q1, "a".to_string()),
-            vec![(q3, TropicalWeight::new(3.0))],
-        );
+        wvpa.internal_transitions
+            .insert((q1, "a".to_string()), vec![(q3, TropicalWeight::new(3.0))]);
 
         assert!(
             !wvpa.is_deterministic(),
@@ -3230,10 +3047,7 @@ mod tests {
         // The determinized VPA should still recognize "a".
         let result = det.weighted_run(&["a"]);
         // Both paths contribute: min(5.0, 3.0) = 3.0 (tropical plus = min).
-        assert!(
-            !result.is_zero(),
-            "determinized weighted VPA should accept 'a'"
-        );
+        assert!(!result.is_zero(), "determinized weighted VPA should accept 'a'");
     }
 
     #[test]
@@ -3286,11 +3100,7 @@ mod tests {
             line: 1,
             column: byte_offset,
         };
-        crate::runtime_types::Range {
-            start: pos,
-            end: pos,
-            file_id: None,
-        }
+        crate::runtime_types::Range { start: pos, end: pos, file_id: None }
     }
 
     fn classify_test_token(tok: &str) -> SymbolKind {
@@ -3383,11 +3193,7 @@ mod tests {
 
         let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
 
-        assert_eq!(
-            table[0],
-            Some(4),
-            "opener at 0 should match closer at 4"
-        );
+        assert_eq!(table[0], Some(4), "opener at 0 should match closer at 4");
         assert_eq!(table[1], None, "leaf 'a' should have no skip");
         assert_eq!(table[2], None, "leaf '+' should have no skip");
         assert_eq!(table[3], None, "leaf 'b' should have no skip");
@@ -3407,16 +3213,8 @@ mod tests {
 
         let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
 
-        assert_eq!(
-            table[0],
-            Some(4),
-            "outer opener at 0 should match outer closer at 4"
-        );
-        assert_eq!(
-            table[1],
-            Some(3),
-            "inner opener at 1 should match inner closer at 3"
-        );
+        assert_eq!(table[0], Some(4), "outer opener at 0 should match outer closer at 4");
+        assert_eq!(table[1], Some(3), "inner opener at 1 should match inner closer at 3");
         assert_eq!(table[2], None, "leaf 'a' should have no skip");
         assert_eq!(table[3], None, "closer at 3 should have no skip entry");
         assert_eq!(table[4], None, "closer at 4 should have no skip entry");
@@ -3434,15 +3232,9 @@ mod tests {
 
         let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
 
-        assert_eq!(
-            table[0], None,
-            "unmatched opener at 0 should be None"
-        );
+        assert_eq!(table[0], None, "unmatched opener at 0 should be None");
         assert_eq!(table[1], None, "leaf 'a' should have no skip");
-        assert_eq!(
-            table[2], None,
-            "unmatched opener at 2 should be None"
-        );
+        assert_eq!(table[2], None, "unmatched opener at 2 should be None");
         assert_eq!(table[3], None, "leaf 'b' should have no skip");
     }
 
@@ -3461,11 +3253,7 @@ mod tests {
 
         assert_eq!(tree.len(), 1, "should produce exactly 1 top-level Group");
         match &tree[0] {
-            TokenTree::Group {
-                open,
-                close,
-                children,
-            } => {
+            TokenTree::Group { open, close, children } => {
                 assert_eq!(open.0, "(", "group opener should be '('");
                 assert_eq!(close.0, ")", "group closer should be ')'");
                 assert_eq!(children.len(), 3, "group should contain 3 children: a, +, b");
@@ -3474,17 +3262,14 @@ mod tests {
                     match child {
                         TokenTree::Token(tok, _) => {
                             let expected = ["a", "+", "b"][i];
-                            assert_eq!(
-                                *tok, expected,
-                                "child {i} should be '{expected}'"
-                            );
-                        }
+                            assert_eq!(*tok, expected, "child {i} should be '{expected}'");
+                        },
                         TokenTree::Group { .. } => {
                             panic!("child {i} should be a Token, not a Group");
-                        }
+                        },
                     }
                 }
-            }
+            },
             TokenTree::Token(_, _) => panic!("expected a Group, got a Token"),
         }
     }
@@ -3505,11 +3290,7 @@ mod tests {
 
         assert_eq!(tree.len(), 1, "should produce exactly 1 top-level Group");
         match &tree[0] {
-            TokenTree::Group {
-                open,
-                close,
-                children,
-            } => {
+            TokenTree::Group { open, close, children } => {
                 assert_eq!(open.0, "(");
                 assert_eq!(close.0, ")");
                 assert_eq!(
@@ -3536,12 +3317,12 @@ mod tests {
                             TokenTree::Token(tok, _) => assert_eq!(*tok, "a"),
                             TokenTree::Group { .. } => {
                                 panic!("inner child should be Token 'a'");
-                            }
+                            },
                         }
-                    }
+                    },
                     TokenTree::Token(_, _) => {
                         panic!("first child of outer group should be a nested Group");
-                    }
+                    },
                 }
 
                 // Second child: leaf "b"
@@ -3549,9 +3330,9 @@ mod tests {
                     TokenTree::Token(tok, _) => assert_eq!(*tok, "b"),
                     TokenTree::Group { .. } => {
                         panic!("second child of outer group should be leaf 'b'");
-                    }
+                    },
                 }
-            }
+            },
             TokenTree::Token(_, _) => panic!("expected a Group, got a Token"),
         }
     }
@@ -3559,32 +3340,22 @@ mod tests {
     #[test]
     fn test_token_tree_unmatched_opener() {
         // Token stream: ( a b — unmatched opener is demoted to leaf Token
-        let tokens: Vec<(&str, _)> = vec![
-            ("(", test_range(0)),
-            ("a", test_range(1)),
-            ("b", test_range(2)),
-        ];
+        let tokens: Vec<(&str, _)> =
+            vec![("(", test_range(0)), ("a", test_range(1)), ("b", test_range(2))];
         let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
         let tree = build_token_tree(&tokens, &table, |tok| classify_test_token(tok));
 
-        assert_eq!(
-            tree.len(),
-            3,
-            "unmatched opener should produce 3 leaf tokens"
-        );
+        assert_eq!(tree.len(), 3, "unmatched opener should produce 3 leaf tokens");
         // All nodes should be leaf tokens since the opener is unmatched
         for (i, node) in tree.iter().enumerate() {
             match node {
                 TokenTree::Token(tok, _) => {
                     let expected = ["(", "a", "b"][i];
-                    assert_eq!(
-                        *tok, expected,
-                        "leaf {i} should be '{expected}'"
-                    );
-                }
+                    assert_eq!(*tok, expected, "leaf {i} should be '{expected}'");
+                },
                 TokenTree::Group { .. } => {
                     panic!("node {i} should be a demoted leaf Token, not a Group");
-                }
+                },
             }
         }
     }

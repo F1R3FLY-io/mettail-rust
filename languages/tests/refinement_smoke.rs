@@ -17,9 +17,7 @@
 //! registry surface, which is the principal B8 deliverable.
 
 use mettail_languages::refinementsmoke::register_refinements;
-use mettail_runtime::{
-    clear_refinement_registry, evaluate_refinement_predicate,
-};
+use mettail_runtime::{clear_refinement_registry, evaluate_refinement_predicate};
 
 #[test]
 fn refinement_predicate_admits_in_domain_value() {

@@ -70,29 +70,17 @@ pub struct TreeState {
 impl TreeState {
     /// Create a new non-final state.
     pub fn new(id: usize) -> Self {
-        TreeState {
-            id,
-            label: None,
-            is_final: false,
-        }
+        TreeState { id, label: None, is_final: false }
     }
 
     /// Create a final (accepting) state.
     pub fn final_state(id: usize) -> Self {
-        TreeState {
-            id,
-            label: None,
-            is_final: true,
-        }
+        TreeState { id, label: None, is_final: true }
     }
 
     /// Create a labeled state.
     pub fn labeled(id: usize, label: impl Into<String>, is_final: bool) -> Self {
-        TreeState {
-            id,
-            label: Some(label.into()),
-            is_final,
-        }
+        TreeState { id, label: Some(label.into()), is_final }
     }
 }
 
@@ -170,11 +158,7 @@ impl<W: Semiring> TreeTransition<W> {
 impl<W: Semiring> fmt::Display for TreeTransition<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.child_states.is_empty() {
-            write!(
-                f,
-                "{} → s{} [{:?}]",
-                self.symbol, self.target_state, self.weight,
-            )
+            write!(f, "{} → s{} [{:?}]", self.symbol, self.target_state, self.weight,)
         } else {
             let children: Vec<String> = self
                 .child_states
@@ -319,10 +303,7 @@ pub struct Term {
 impl Term {
     /// Create an internal node with children.
     pub fn new(symbol: impl Into<String>, children: Vec<Term>) -> Self {
-        Term {
-            symbol: symbol.into(),
-            children,
-        }
+        Term { symbol: symbol.into(), children }
     }
 
     /// Create a leaf (nullary / constant) node.
@@ -429,11 +410,11 @@ pub fn bottom_up_evaluate<W: Semiring>(
             match child_maps[i].get(&required_state) {
                 Some(child_weight) => {
                     combined_weight = combined_weight.times(child_weight);
-                }
+                },
                 None => {
                     all_children_match = false;
                     break;
-                }
+                },
             }
         }
 
@@ -562,13 +543,8 @@ fn propagate_recursive<W: Semiring>(
     // Recurse into children in pre-order.
     let mut next_index = node_index + 1;
     for (i, child) in term.children.iter().enumerate() {
-        next_index = propagate_recursive(
-            automaton,
-            child,
-            &child_state_maps[i],
-            annotations,
-            next_index,
-        );
+        next_index =
+            propagate_recursive(automaton, child, &child_state_maps[i], annotations, next_index);
     }
 
     next_index
@@ -620,7 +596,11 @@ impl WeightHeat for crate::automata::semiring::CountingWeight {
 impl WeightHeat for crate::automata::semiring::BooleanWeight {
     #[inline]
     fn to_heat(&self) -> f64 {
-        if self.0 { 1.0 } else { 0.0 }
+        if self.0 {
+            1.0
+        } else {
+            0.0
+        }
     }
 }
 
@@ -649,14 +629,22 @@ impl WeightHeat for crate::automata::semiring::ComplexityWeight {
 impl WeightHeat for crate::automata::semiring::ViterbiWeight {
     #[inline]
     fn to_heat(&self) -> f64 {
-        if self.is_zero() { 0.0 } else { self.0 }
+        if self.is_zero() {
+            0.0
+        } else {
+            self.0
+        }
     }
 }
 
 impl WeightHeat for crate::automata::semiring::ArcticWeight {
     #[inline]
     fn to_heat(&self) -> f64 {
-        if self.is_zero() { 0.0 } else { self.0 }
+        if self.is_zero() {
+            0.0
+        } else {
+            self.0
+        }
     }
 }
 
@@ -972,9 +960,7 @@ pub fn analyze_from_bundle(
         collect_nonterminal_children(syntax_items, &cat_to_state, &mut child_states);
 
         let arity = child_states.len();
-        wta.ranked_alphabet
-            .entry(label.clone())
-            .or_insert(arity);
+        wta.ranked_alphabet.entry(label.clone()).or_insert(arity);
 
         wta.transitions.push(TreeTransition {
             symbol: label.clone(),
@@ -1038,33 +1024,39 @@ fn collect_nonterminal_children(
                 if let Some(&sid) = cat_to_state.get(category) {
                     out.push(sid);
                 }
-            }
+            },
             crate::SyntaxItemSpec::Optional { inner } => {
                 collect_nonterminal_children(inner, cat_to_state, out);
-            }
+            },
             crate::SyntaxItemSpec::Sep { body, .. } => {
-                collect_nonterminal_children(std::slice::from_ref(body.as_ref()), cat_to_state, out);
-            }
+                collect_nonterminal_children(
+                    std::slice::from_ref(body.as_ref()),
+                    cat_to_state,
+                    out,
+                );
+            },
             crate::SyntaxItemSpec::Map { body_items } => {
                 collect_nonterminal_children(body_items, cat_to_state, out);
-            }
+            },
             crate::SyntaxItemSpec::Zip { body, .. } => {
-                collect_nonterminal_children(std::slice::from_ref(body.as_ref()), cat_to_state, out);
-            }
+                collect_nonterminal_children(
+                    std::slice::from_ref(body.as_ref()),
+                    cat_to_state,
+                    out,
+                );
+            },
             crate::SyntaxItemSpec::Binder { category, .. } => {
                 if let Some(&sid) = cat_to_state.get(category) {
                     out.push(sid);
                 }
-            }
-            crate::SyntaxItemSpec::Collection {
-                element_category, ..
-            } => {
+            },
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
                 if let Some(&sid) = cat_to_state.get(element_category) {
                     out.push(sid);
                 }
-            }
+            },
             // Terminal, IdentCapture, BinderCollection — no child states.
-            _ => {}
+            _ => {},
         }
     }
 }
@@ -1105,9 +1097,7 @@ pub fn token_tree_to_term<T: std::fmt::Debug>(
             symbol: token_to_symbol(tok),
             children: vec![],
         },
-        crate::vpa::TokenTree::Group {
-            open, children, ..
-        } => Term {
+        crate::vpa::TokenTree::Group { open, children, .. } => Term {
             symbol: token_to_symbol(&open.0),
             children: children
                 .iter()
@@ -1279,10 +1269,18 @@ mod tests {
         wta.add_transition(TreeTransition::leaf("Lit", q_int, TropicalWeight::one()));
         wta.add_transition(TreeTransition::unary("Neg", q_int, q_int, TropicalWeight(1.0)));
         wta.add_transition(TreeTransition::binary(
-            "Add", q_int, q_int, q_expr, TropicalWeight(2.0),
+            "Add",
+            q_int,
+            q_int,
+            q_expr,
+            TropicalWeight(2.0),
         ));
         wta.add_transition(TreeTransition::binary(
-            "Mul", q_int, q_int, q_expr, TropicalWeight(3.0),
+            "Mul",
+            q_int,
+            q_int,
+            q_expr,
+            TropicalWeight(3.0),
         ));
 
         (wta, q_int, q_expr)
@@ -1315,10 +1313,8 @@ mod tests {
         assert!(result.is_empty(), "unknown symbol should yield no reachable states");
 
         // Also test arity mismatch: Add with 3 children.
-        let term_bad_arity = Term::new(
-            "Add",
-            vec![Term::leaf("Lit"), Term::leaf("Lit"), Term::leaf("Lit")],
-        );
+        let term_bad_arity =
+            Term::new("Add", vec![Term::leaf("Lit"), Term::leaf("Lit"), Term::leaf("Lit")]);
         let result2 = bottom_up_evaluate(&wta, &term_bad_arity);
         assert!(result2.is_empty(), "arity mismatch should yield no reachable states");
     }
@@ -1333,13 +1329,8 @@ mod tests {
         //   Add(q0, q0) → q1 [2.0 + 1.0 + 0.0 = 3.0]
         let (wta, _q_int, q_expr) = build_expr_wta();
 
-        let term = Term::new(
-            "Add",
-            vec![
-                Term::new("Neg", vec![Term::leaf("Lit")]),
-                Term::leaf("Lit"),
-            ],
-        );
+        let term =
+            Term::new("Add", vec![Term::new("Neg", vec![Term::leaf("Lit")]), Term::leaf("Lit")]);
         let result = bottom_up_evaluate(&wta, &term);
 
         assert!(result.contains_key(&q_expr));
@@ -1378,16 +1369,10 @@ mod tests {
 
         // Children (indices 1, 2) should have q_int.
         // Weight = root_weight(2.0) ⊗ trans.weight(2.0) = 4.0 (tropical: 2+2)
-        assert!(
-            annotations[1].contains_key(&q_int),
-            "left child should be assigned q_int"
-        );
+        assert!(annotations[1].contains_key(&q_int), "left child should be assigned q_int");
         assert_eq!(annotations[1][&q_int], TropicalWeight(4.0));
 
-        assert!(
-            annotations[2].contains_key(&q_int),
-            "right child should be assigned q_int"
-        );
+        assert!(annotations[2].contains_key(&q_int), "right child should be assigned q_int");
         assert_eq!(annotations[2][&q_int], TropicalWeight(4.0));
     }
 
@@ -1439,9 +1424,9 @@ mod tests {
         let q0 = wta.add_state(false);
         let q1 = wta.add_state(true);
 
-        wta.add_transition(TreeTransition::leaf("A", q0, TropicalWeight(0.0)));  // idx 0
-        wta.add_transition(TreeTransition::leaf("B", q0, TropicalWeight(1.0)));  // idx 1
-        wta.add_transition(TreeTransition::leaf("C", q0, TropicalWeight(5.0)));  // idx 2
+        wta.add_transition(TreeTransition::leaf("A", q0, TropicalWeight(0.0))); // idx 0
+        wta.add_transition(TreeTransition::leaf("B", q0, TropicalWeight(1.0))); // idx 1
+        wta.add_transition(TreeTransition::leaf("C", q0, TropicalWeight(5.0))); // idx 2
         wta.add_transition(TreeTransition::unary("D", q0, q1, TropicalWeight(10.0))); // idx 3
 
         let report = wta.hot_path_analysis();
@@ -1465,7 +1450,7 @@ mod tests {
         let q0 = wta.add_state(false);
         let q1 = wta.add_state(true);
 
-        wta.add_transition(TreeTransition::leaf("Hot", q0, TropicalWeight(0.0)));   // idx 0
+        wta.add_transition(TreeTransition::leaf("Hot", q0, TropicalWeight(0.0))); // idx 0
         wta.add_transition(TreeTransition::leaf("Cold1", q0, TropicalWeight(10.0))); // idx 1
         wta.add_transition(TreeTransition::leaf("Cold2", q0, TropicalWeight(20.0))); // idx 2
         wta.add_transition(TreeTransition::unary("Cold3", q0, q1, TropicalWeight(30.0))); // idx 3
@@ -1473,7 +1458,8 @@ mod tests {
         let report = wta.hot_path_analysis();
 
         assert_eq!(
-            report.specialization_candidates.len(), 1,
+            report.specialization_candidates.len(),
+            1,
             "only the hot transition should be a candidate"
         );
         let candidate = &report.specialization_candidates[0];
@@ -1566,7 +1552,7 @@ mod tests {
         let q0 = wta.add_state(false);
         let q1 = wta.add_state(true);
 
-        wta.add_transition(TreeTransition::leaf("Hot", q0, TropicalWeight(0.0)));   // idx 0
+        wta.add_transition(TreeTransition::leaf("Hot", q0, TropicalWeight(0.0))); // idx 0
         wta.add_transition(TreeTransition::leaf("Cold", q0, TropicalWeight(50.0))); // idx 1
         wta.add_transition(TreeTransition::unary("Wrap", q0, q1, TropicalWeight(100.0))); // idx 2
 
@@ -1581,10 +1567,10 @@ mod tests {
         );
         // Should have at least one state labeled with "fast_".
         assert!(
-            specialized.states.iter().any(|s| s
-                .label
-                .as_ref()
-                .map_or(false, |l| l.starts_with("fast_"))),
+            specialized
+                .states
+                .iter()
+                .any(|s| s.label.as_ref().map_or(false, |l| l.starts_with("fast_"))),
             "should have labeled fast-path states"
         );
     }
@@ -1621,10 +1607,7 @@ mod tests {
         let any_match = specialized_accepting
             .iter()
             .any(|(_, w)| **w == original_result[&q_expr]);
-        assert!(
-            any_match,
-            "specialized automaton should preserve the original weight"
-        );
+        assert!(any_match, "specialized automaton should preserve the original weight");
     }
 
     #[test]
@@ -1674,7 +1657,8 @@ mod tests {
         // The Hot transition (count=100, heat=100.0) should be a candidate.
         // Mean heat = (100+1+1+1)/4 = 25.75, threshold = 51.5. Only Hot exceeds.
         assert_eq!(
-            report.specialization_candidates.len(), 1,
+            report.specialization_candidates.len(),
+            1,
             "only the 100-count transition should be a candidate"
         );
         assert_eq!(report.specialization_candidates[0].parent_symbol, "Hot");
@@ -1722,10 +1706,7 @@ mod tests {
             assert_eq!(term.children.len(), 1);
             assert_eq!(term.children[0].symbol, "Plus");
             assert!(term.children[0].children.is_empty());
-            assert_eq!(
-                term,
-                Term::new("LParen", vec![Term::leaf("Plus")])
-            );
+            assert_eq!(term, Term::new("LParen", vec![Term::leaf("Plus")]));
         }
 
         #[test]
@@ -1762,10 +1743,7 @@ mod tests {
                 term,
                 Term::new(
                     "LParen",
-                    vec![
-                        Term::new("LBrace", vec![Term::leaf("Ident")]),
-                        Term::leaf("Comma"),
-                    ],
+                    vec![Term::new("LBrace", vec![Term::leaf("Ident")]), Term::leaf("Comma"),],
                 )
             );
         }

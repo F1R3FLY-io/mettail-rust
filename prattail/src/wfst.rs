@@ -164,17 +164,14 @@ impl CanonicalActionShape {
     pub fn from_action(action: &crate::prediction::DispatchAction) -> Self {
         match action {
             crate::prediction::DispatchAction::Direct { .. } => CanonicalActionShape::Direct,
-            crate::prediction::DispatchAction::Lookahead {
-                alternatives,
-                fallback,
-            } => CanonicalActionShape::Lookahead {
-                alternative_count: alternatives.len(),
-                has_fallback: fallback.is_some(),
+            crate::prediction::DispatchAction::Lookahead { alternatives, fallback } => {
+                CanonicalActionShape::Lookahead {
+                    alternative_count: alternatives.len(),
+                    has_fallback: fallback.is_some(),
+                }
             },
-            crate::prediction::DispatchAction::CrossCategory {
-                needs_backtrack, ..
-            } => CanonicalActionShape::CrossCategory {
-                needs_backtrack: *needs_backtrack,
+            crate::prediction::DispatchAction::CrossCategory { needs_backtrack, .. } => {
+                CanonicalActionShape::CrossCategory { needs_backtrack: *needs_backtrack }
             },
             crate::prediction::DispatchAction::Cast { .. } => CanonicalActionShape::Cast,
             crate::prediction::DispatchAction::Grouping { .. } => CanonicalActionShape::Grouping,
@@ -290,8 +287,7 @@ impl PredictionWfst {
                             next_debruijn += 1;
                             // Record the action shape at this De Bruijn index
                             if let Some(wa) = self.actions.get(t.action_idx as usize) {
-                                action_shapes
-                                    .push(CanonicalActionShape::from_action(&wa.action));
+                                action_shapes.push(CanonicalActionShape::from_action(&wa.action));
                             }
                             idx
                         });
@@ -308,11 +304,7 @@ impl PredictionWfst {
             })
             .collect();
 
-        CanonicalWfstStructure {
-            states,
-            start: self.start,
-            action_shapes,
-        }
+        CanonicalWfstStructure { states, start: self.start, action_shapes }
     }
 
     /// Compute a hash of the canonical WFST structure.
@@ -371,7 +363,10 @@ impl PredictionWfst {
     /// The total derivation count for a token is the number of actions
     /// returned by `predict()` — this method annotates each action with
     /// that count for downstream use in product semiring compositions.
-    pub fn predict_with_confidence(&self, token_name: &str) -> Vec<(&WeightedAction, crate::automata::semiring::CountingWeight)> {
+    pub fn predict_with_confidence(
+        &self,
+        token_name: &str,
+    ) -> Vec<(&WeightedAction, crate::automata::semiring::CountingWeight)> {
         let actions = self.predict(token_name);
         let count = crate::automata::semiring::CountingWeight::new(actions.len() as u64);
         actions.into_iter().map(|a| (a, count)).collect()
@@ -493,7 +488,8 @@ impl PredictionWfst {
                     if t.input == token2_id {
                         if let Some(action) = self.actions.get(t.action_idx as usize) {
                             // Accumulated weight = weight of first hop + weight of second hop
-                            let total_weight = TropicalWeight::new(weight1.value() + t.weight.value());
+                            let total_weight =
+                                TropicalWeight::new(weight1.value() + t.weight.value());
                             results.push((action, total_weight));
                         }
                     }
@@ -526,7 +522,7 @@ impl PredictionWfst {
                 } else {
                     None
                 }
-            }
+            },
             _ => {
                 let actions = self.predict_two_token(tokens[0], tokens[1]);
                 if actions.len() == 1 {
@@ -534,7 +530,7 @@ impl PredictionWfst {
                 } else {
                     None
                 }
-            }
+            },
         }
     }
 
@@ -686,7 +682,9 @@ impl PredictionWfst {
         let mut token_best: std::collections::HashMap<u16, TropicalWeight> =
             std::collections::HashMap::new();
         for trans in &start_state.transitions {
-            let entry = token_best.entry(trans.input).or_insert(TropicalWeight::zero());
+            let entry = token_best
+                .entry(trans.input)
+                .or_insert(TropicalWeight::zero());
             if trans.weight < *entry || entry.is_zero() {
                 *entry = trans.weight;
             }
@@ -757,7 +755,7 @@ impl PredictionWfst {
     /// without additional serialization.
     ///
     /// For runtime prediction, the action table is pre-populated with
-    /// `DispatchAction::Direct` placeholders. The caller can override specific
+    /// reconstructed `DispatchAction::Direct` entries. The caller can override specific
     /// actions via `with_trained_weights()`.
     pub fn from_flat(
         category: &str,
@@ -785,7 +783,7 @@ impl PredictionWfst {
                 let (token_id, target_state, weight) = transitions[trans_start + i];
                 let action_idx = actions.len() as u32;
 
-                // Create a placeholder action — the label is derived from token name
+                // Reconstruct a direct action; the label is derived from the token name.
                 let token_name = token_names
                     .get(token_id as usize)
                     .map(|s| s.to_string())
@@ -911,9 +909,7 @@ impl PredictionWfst {
 
         for state in &self.states {
             let sig = StateSignature::from_state(state);
-            let representative = *sig_to_representative
-                .entry(sig)
-                .or_insert(state.id);
+            let representative = *sig_to_representative.entry(sig).or_insert(state.id);
             state_mapping.push(representative);
         }
 
@@ -1073,9 +1069,7 @@ impl PredictionWfst {
                 .fold(f64::INFINITY, f64::min);
             let threshold = best_weight + beam_width;
             let before = state.transitions.len();
-            state
-                .transitions
-                .retain(|t| t.weight.value() <= threshold);
+            state.transitions.retain(|t| t.weight.value() <= threshold);
             total_pruned += before - state.transitions.len();
         }
         total_pruned
@@ -1253,7 +1247,9 @@ impl PredictionWfst {
     pub fn to_dot(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
-        let safe_cat = self.category.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+        let safe_cat = self
+            .category
+            .replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
         writeln!(out, "digraph PredictionWfst_{} {{", safe_cat).unwrap();
         writeln!(out, "  rankdir=LR;").unwrap();
         writeln!(out, "  node [shape=circle, fontname=\"Helvetica\"];").unwrap();
@@ -1287,10 +1283,7 @@ impl PredictionWfst {
                 let token_label = if t.input == crate::token_id::EPSILON_TOKEN {
                     "ε".to_string()
                 } else {
-                    self.token_map
-                        .name(t.input)
-                        .unwrap_or("?")
-                        .to_string()
+                    self.token_map.name(t.input).unwrap_or("?").to_string()
                 };
                 let action_label = self
                     .actions
@@ -1428,7 +1421,8 @@ impl PredictionWfstBuilder {
         let token2_id = self.token_map.get_or_insert(token2);
         let action_idx = self.actions.len() as u32;
         self.actions.push(WeightedAction { action, weight });
-        self.two_token_transitions.push((token1_id, token2_id, action_idx, weight));
+        self.two_token_transitions
+            .push((token1_id, token2_id, action_idx, weight));
     }
 
     /// Build the prediction WFST.
@@ -1444,7 +1438,7 @@ impl PredictionWfstBuilder {
         // Estimate capacity: single-token finals + two-token intermediates + finals
         let estimated_states = 1 + self.transitions.len() + self.two_token_transitions.len() * 2;
         let mut states = Vec::with_capacity(estimated_states);
-        states.push(WfstState::new(0)); // placeholder for start
+        states.push(WfstState::new(0)); // overwritten with populated start state below
 
         // Single-token paths: start → final
         for (token_id, action_idx, weight) in &self.transitions {
@@ -1470,11 +1464,11 @@ impl PredictionWfstBuilder {
                 let mid_id = *intermediate_map.entry(*token1_id).or_insert_with(|| {
                     let mid = states.len() as WfstStateId;
                     states.push(WfstState::new(mid)); // non-final intermediate
-                    // Add transition from start to intermediate (weight on first hop)
+                                                      // Add transition from start to intermediate (weight on first hop)
                     start_state.transitions.push(WeightedTransition {
                         from: 0,
                         input: *token1_id,
-                        action_idx: 0, // placeholder — intermediate, not an action
+                        action_idx: 0, // sentinel: intermediate edge, not an action
                         to: mid,
                         weight: TropicalWeight::new(0.0), // weight deferred to second hop
                     });
@@ -1486,13 +1480,15 @@ impl PredictionWfstBuilder {
                 states.push(WfstState::final_state(final_id, TropicalWeight::one()));
 
                 // Add transition from intermediate to final (carries the action weight)
-                states[mid_id as usize].transitions.push(WeightedTransition {
-                    from: mid_id,
-                    input: *token2_id,
-                    action_idx: *action_idx,
-                    to: final_id,
-                    weight: *weight,
-                });
+                states[mid_id as usize]
+                    .transitions
+                    .push(WeightedTransition {
+                        from: mid_id,
+                        input: *token2_id,
+                        action_idx: *action_idx,
+                        to: final_id,
+                        weight: *weight,
+                    });
             }
         }
 
@@ -1541,7 +1537,8 @@ pub fn build_prediction_wfsts(
         let mut builder = PredictionWfstBuilder::new(category, token_map.clone());
 
         if let Some(category_actions) = dispatch_actions.get(category) {
-            let mut token_order: Vec<(&String, &DispatchAction)> = category_actions.iter().collect();
+            let mut token_order: Vec<(&String, &DispatchAction)> =
+                category_actions.iter().collect();
             // Sort for deterministic ordering (HashMap iteration order is arbitrary)
             token_order.sort_by(|(a, _), (b, _)| a.cmp(b));
 
@@ -1622,7 +1619,8 @@ pub fn enrich_with_two_token_paths(
             // Terminal items[1] contribute their variant name directly.
             // NonTerminal items[1] contribute FIRST(category) tokens.
             // IdentCapture/Binder contribute "Ident".
-            let mut per_rule_second_tokens: Vec<(&str, Vec<String>)> = Vec::with_capacity(rules.len());
+            let mut per_rule_second_tokens: Vec<(&str, Vec<String>)> =
+                Vec::with_capacity(rules.len());
             let mut all_valid = true;
 
             for rule in rules {
@@ -1648,7 +1646,10 @@ pub fn enrich_with_two_token_paths(
             let mut token_to_rule: HashMap<String, Vec<&str>> = HashMap::new();
             for (rule_label, tokens) in &per_rule_second_tokens {
                 for token in tokens {
-                    token_to_rule.entry(token.clone()).or_default().push(rule_label);
+                    token_to_rule
+                        .entry(token.clone())
+                        .or_default()
+                        .push(rule_label);
                 }
             }
 
@@ -1657,7 +1658,8 @@ pub fn enrich_with_two_token_paths(
             }
 
             // Disjoint! Add two-token paths for each (token2 → rule) mapping.
-            let dispatch_token_variant = crate::automata::codegen::terminal_to_variant_name(dispatch_token);
+            let dispatch_token_variant =
+                crate::automata::codegen::terminal_to_variant_name(dispatch_token);
             let token1_id = match wfst.token_map.get(&dispatch_token_variant) {
                 Some(id) => id,
                 None => wfst.token_map.get_or_insert(&dispatch_token_variant),
@@ -1672,7 +1674,7 @@ pub fn enrich_with_two_token_paths(
                 start.transitions.push(WeightedTransition {
                     from: wfst.start,
                     input: token1_id,
-                    action_idx: 0, // placeholder for intermediate
+                    action_idx: 0, // sentinel: intermediate edge, not an action
                     to: mid_id,
                     weight: TropicalWeight::new(0.0),
                 });
@@ -1682,7 +1684,10 @@ pub fn enrich_with_two_token_paths(
                 let rule_label = rule_labels[0];
 
                 // Find the existing action for this rule to clone it
-                let action = wfst.actions.iter().find(|a| a.action.rule_label() == rule_label);
+                let action = wfst
+                    .actions
+                    .iter()
+                    .find(|a| a.action.rule_label() == rule_label);
                 let (dispatch_action, weight) = if let Some(wa) = action {
                     (wa.action.clone(), wa.weight)
                 } else {
@@ -1700,23 +1705,24 @@ pub fn enrich_with_two_token_paths(
 
                 // Create final state
                 let final_id = wfst.states.len() as WfstStateId;
-                wfst.states.push(WfstState::final_state(final_id, TropicalWeight::one()));
+                wfst.states
+                    .push(WfstState::final_state(final_id, TropicalWeight::one()));
 
                 // Register the action
                 let action_idx = wfst.actions.len() as u32;
-                wfst.actions.push(WeightedAction {
-                    action: dispatch_action,
-                    weight,
-                });
+                wfst.actions
+                    .push(WeightedAction { action: dispatch_action, weight });
 
                 // Add intermediate → final transition
-                wfst.states[mid_id as usize].transitions.push(WeightedTransition {
-                    from: mid_id,
-                    input: token2_id,
-                    action_idx,
-                    to: final_id,
-                    weight,
-                });
+                wfst.states[mid_id as usize]
+                    .transitions
+                    .push(WeightedTransition {
+                        from: mid_id,
+                        input: token2_id,
+                        action_idx,
+                        to: final_id,
+                        weight,
+                    });
 
                 total_added += 1;
             }
@@ -2035,7 +2041,10 @@ mod tests {
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Ident",
-            DispatchAction::Direct { rule_label: "VarRef".to_string(), parse_fn: "parse_varref".to_string() },
+            DispatchAction::Direct {
+                rule_label: "VarRef".to_string(),
+                parse_fn: "parse_varref".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
 
@@ -2065,13 +2074,18 @@ mod tests {
         );
         builder.add_action(
             "Ident",
-            DispatchAction::Direct { rule_label: "VarRef".to_string(), parse_fn: "parse_varref".to_string() },
+            DispatchAction::Direct {
+                rule_label: "VarRef".to_string(),
+                parse_fn: "parse_varref".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
         let wfst = builder.build();
-        assert!((wfst.confidence_gap("Ident")).abs() < 1e-9,
-            "equal weights should produce zero gap");
+        assert!(
+            (wfst.confidence_gap("Ident")).abs() < 1e-9,
+            "equal weights should produce zero gap"
+        );
     }
 
     #[test]
@@ -2415,9 +2429,9 @@ mod tests {
                 source_location: None,
                 is_auto_injected: false,
             }],
-            BeamWidthConfig::Explicit(1.5),          // beam_width
-            None,                                    // log_semiring_model_path
-            crate::LiteralPatterns::default(),       // literal_patterns
+            BeamWidthConfig::Explicit(1.5),    // beam_width
+            None,                              // log_semiring_model_path
+            crate::LiteralPatterns::default(), // literal_patterns
         );
 
         assert_eq!(spec.beam_width, BeamWidthConfig::Explicit(1.5));
@@ -2623,8 +2637,7 @@ mod tests {
         // same target, same weight), they should merge.
 
         // Build a WFST with two disjoint tokens
-        let token_map =
-            TokenIdMap::from_names(vec!["Plus", "Minus"].into_iter().map(String::from));
+        let token_map = TokenIdMap::from_names(vec!["Plus", "Minus"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Plus",
@@ -2754,9 +2767,7 @@ mod tests {
             },
             TropicalWeight::new(0.0),
         );
-        let mut wfst = builder
-            .with_beam_width(TropicalWeight::new(1.5))
-            .build();
+        let mut wfst = builder.with_beam_width(TropicalWeight::new(1.5)).build();
 
         wfst.minimize();
         assert_eq!(wfst.beam_width(), Some(TropicalWeight::new(1.5)));
@@ -2969,10 +2980,26 @@ mod tests {
     #[test]
     fn test_b6_valid_continuations_basic() {
         // B6: valid_continuations returns all tokens with dispatch actions
-        let token_map = TokenIdMap::from_names(vec!["A".to_string(), "B".to_string(), "C".to_string()].into_iter());
+        let token_map = TokenIdMap::from_names(
+            vec!["A".to_string(), "B".to_string(), "C".to_string()].into_iter(),
+        );
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
-        builder.add_action("A", DispatchAction::Direct { rule_label: "R1".into(), parse_fn: "p1".into() }, TropicalWeight::new(1.0));
-        builder.add_action("B", DispatchAction::Direct { rule_label: "R2".into(), parse_fn: "p2".into() }, TropicalWeight::new(0.0));
+        builder.add_action(
+            "A",
+            DispatchAction::Direct {
+                rule_label: "R1".into(),
+                parse_fn: "p1".into(),
+            },
+            TropicalWeight::new(1.0),
+        );
+        builder.add_action(
+            "B",
+            DispatchAction::Direct {
+                rule_label: "R2".into(),
+                parse_fn: "p2".into(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst = builder.build();
 
         let conts = wfst.valid_continuations();
@@ -3000,7 +3027,14 @@ mod tests {
         // B6: has_valid_dispatch checks if token is recognized
         let token_map = TokenIdMap::from_names(vec!["A".to_string(), "B".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
-        builder.add_action("A", DispatchAction::Direct { rule_label: "R1".into(), parse_fn: "p1".into() }, TropicalWeight::new(0.0));
+        builder.add_action(
+            "A",
+            DispatchAction::Direct {
+                rule_label: "R1".into(),
+                parse_fn: "p1".into(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst = builder.build();
 
         assert!(wfst.has_valid_dispatch("A"), "A should have valid dispatch");
@@ -3013,7 +3047,14 @@ mod tests {
         // B6: parse_progress returns 0.0 at start, 1.0 at final
         let token_map = TokenIdMap::from_names(vec!["A".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
-        builder.add_action("A", DispatchAction::Direct { rule_label: "R1".into(), parse_fn: "p1".into() }, TropicalWeight::new(0.0));
+        builder.add_action(
+            "A",
+            DispatchAction::Direct {
+                rule_label: "R1".into(),
+                parse_fn: "p1".into(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst = builder.build();
 
         // Start state = 0
@@ -3054,8 +3095,12 @@ mod tests {
         let beam = entropy_to_beam_width(2.5, 1.0, 0.5, 0.5, 10.0);
         // beam = 1.0 + 0.5 * (2.5 - 0.5) = 1.0 + 1.0 = 2.0
         let expected = 2.0;
-        assert!((beam.expect("should have beam") - expected).abs() < 1e-10,
-            "expected beam={}, got {:?}", expected, beam);
+        assert!(
+            (beam.expect("should have beam") - expected).abs() < 1e-10,
+            "expected beam={}, got {:?}",
+            expected,
+            beam
+        );
     }
 
     #[test]
@@ -3068,8 +3113,13 @@ mod tests {
     #[test]
     fn test_a7_entropy_to_beam_width_constants() {
         // A7: Default constants produce reasonable results
-        let beam = entropy_to_beam_width(3.0, ENTROPY_BEAM_BASE, ENTROPY_BEAM_SCALE,
-            ENTROPY_BEAM_LOW_THRESHOLD, ENTROPY_BEAM_MAX);
+        let beam = entropy_to_beam_width(
+            3.0,
+            ENTROPY_BEAM_BASE,
+            ENTROPY_BEAM_SCALE,
+            ENTROPY_BEAM_LOW_THRESHOLD,
+            ENTROPY_BEAM_MAX,
+        );
         // beam = 1.0 + 0.5 * (3.0 - 0.5) = 1.0 + 1.25 = 2.25
         assert!((beam.expect("should have beam") - 2.25).abs() < 1e-10);
     }
@@ -3091,10 +3141,16 @@ mod tests {
 
         let (entropy_nats, entropy_bits) = wfst.compute_entropy();
         // Single action with weight 0 → deterministic, entropy ≈ 0
-        assert!(entropy_nats.abs() < 0.1,
-            "single action should have near-zero entropy, got {}", entropy_nats);
-        assert!(entropy_bits.abs() < 0.1,
-            "single action should have near-zero bits, got {}", entropy_bits);
+        assert!(
+            entropy_nats.abs() < 0.1,
+            "single action should have near-zero entropy, got {}",
+            entropy_nats
+        );
+        assert!(
+            entropy_bits.abs() < 0.1,
+            "single action should have near-zero bits, got {}",
+            entropy_bits
+        );
     }
 
     #[test]
@@ -3122,8 +3178,11 @@ mod tests {
 
         let (_entropy_nats, entropy_bits) = wfst.compute_entropy();
         // Two equal-weight paths: H = ln(2) ≈ 0.693 nats ≈ 1.0 bits
-        assert!((entropy_bits - 1.0).abs() < 0.15,
-            "two equal actions should have ~1 bit entropy, got {}", entropy_bits);
+        assert!(
+            (entropy_bits - 1.0).abs() < 0.15,
+            "two equal actions should have ~1 bit entropy, got {}",
+            entropy_bits
+        );
     }
 
     #[test]
@@ -3152,8 +3211,11 @@ mod tests {
 
         let (_entropy_nats, entropy_bits) = wfst.compute_entropy();
         // Heavily skewed → entropy << 1 bit
-        assert!(entropy_bits < 0.5,
-            "skewed distribution should have low entropy, got {}", entropy_bits);
+        assert!(
+            entropy_bits < 0.5,
+            "skewed distribution should have low entropy, got {}",
+            entropy_bits
+        );
     }
 
     #[test]
@@ -3172,9 +3234,8 @@ mod tests {
     #[test]
     fn test_d3_prediction_wfst_dot_basic() {
         // D3: A simple 2-action WFST should produce valid DOT with correct structure
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident".to_string(), "LParen".to_string()].into_iter(),
-        );
+        let token_map =
+            TokenIdMap::from_names(vec!["Ident".to_string(), "LParen".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Proc", token_map);
         builder.add_action(
             "Ident",
@@ -3210,9 +3271,7 @@ mod tests {
     #[test]
     fn test_d3_prediction_wfst_dot_ambiguous_red_edges() {
         // D3: Ambiguous transitions (weight > 0.0) should be colored red
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident".to_string()].into_iter(),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Ident".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Ident",
@@ -3256,9 +3315,7 @@ mod tests {
     #[test]
     fn test_d3_prediction_wfst_dot_weight_format() {
         // D3: Weights should be formatted with 2 decimal places
-        let token_map = TokenIdMap::from_names(
-            vec!["X".to_string()].into_iter(),
-        );
+        let token_map = TokenIdMap::from_names(vec!["X".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("W", token_map);
         builder.add_action(
             "X",
@@ -3283,7 +3340,10 @@ mod tests {
         category: &str,
         token_actions: &[(&str, &str, &str, f64)], // (token, rule_label, parse_fn, weight)
     ) -> PredictionWfst {
-        let token_names: Vec<String> = token_actions.iter().map(|(t, _, _, _)| t.to_string()).collect();
+        let token_names: Vec<String> = token_actions
+            .iter()
+            .map(|(t, _, _, _)| t.to_string())
+            .collect();
         let token_map = TokenIdMap::from_names(token_names.into_iter());
         let mut builder = PredictionWfstBuilder::new(category, token_map);
         for (tok, label, parse_fn, weight) in token_actions {
@@ -3303,21 +3363,30 @@ mod tests {
     fn test_canonical_structure_same_topology_different_labels() {
         // Two WFSTs with identical topology but different action labels
         // should produce identical canonical structures.
-        let wfst_int = build_test_wfst("Int", &[
-            ("Plus", "AddInt", "parse_add_int", 0.0),
-            ("Minus", "SubInt", "parse_sub_int", 0.0),
-            ("Ident", "VarInt", "parse_var_int", 1.0),
-        ]);
-        let wfst_float = build_test_wfst("Float", &[
-            ("Plus", "AddFloat", "parse_add_float", 0.0),
-            ("Minus", "SubFloat", "parse_sub_float", 0.0),
-            ("Ident", "VarFloat", "parse_var_float", 1.0),
-        ]);
+        let wfst_int = build_test_wfst(
+            "Int",
+            &[
+                ("Plus", "AddInt", "parse_add_int", 0.0),
+                ("Minus", "SubInt", "parse_sub_int", 0.0),
+                ("Ident", "VarInt", "parse_var_int", 1.0),
+            ],
+        );
+        let wfst_float = build_test_wfst(
+            "Float",
+            &[
+                ("Plus", "AddFloat", "parse_add_float", 0.0),
+                ("Minus", "SubFloat", "parse_sub_float", 0.0),
+                ("Ident", "VarFloat", "parse_var_float", 1.0),
+            ],
+        );
 
         let canon_int = wfst_int.canonical_structure();
         let canon_float = wfst_float.canonical_structure();
 
-        assert_eq!(canon_int, canon_float, "Isomorphic WFSTs should have equal canonical structures");
+        assert_eq!(
+            canon_int, canon_float,
+            "Isomorphic WFSTs should have equal canonical structures"
+        );
         assert_eq!(
             wfst_int.canonical_hash(),
             wfst_float.canonical_hash(),
@@ -3328,45 +3397,56 @@ mod tests {
     #[test]
     fn test_canonical_structure_different_topology() {
         // Two WFSTs with different topologies should have different canonical structures.
-        let wfst_a = build_test_wfst("A", &[
-            ("Plus", "Add", "pa", 0.0),
-            ("Minus", "Sub", "ps", 0.0),
-        ]);
-        let wfst_b = build_test_wfst("B", &[
-            ("Plus", "Add", "pa", 0.0),
-            ("Star", "Mul", "pm", 0.0), // Different token
-        ]);
+        let wfst_a =
+            build_test_wfst("A", &[("Plus", "Add", "pa", 0.0), ("Minus", "Sub", "ps", 0.0)]);
+        let wfst_b = build_test_wfst(
+            "B",
+            &[
+                ("Plus", "Add", "pa", 0.0),
+                ("Star", "Mul", "pm", 0.0), // Different token
+            ],
+        );
 
         let canon_a = wfst_a.canonical_structure();
         let canon_b = wfst_b.canonical_structure();
 
-        assert_ne!(canon_a, canon_b, "Different topologies should produce different canonical structures");
+        assert_ne!(
+            canon_a, canon_b,
+            "Different topologies should produce different canonical structures"
+        );
     }
 
     #[test]
     fn test_canonical_structure_different_weights() {
         // Same tokens and actions but different weights → different canonical structures.
-        let wfst_a = build_test_wfst("A", &[
-            ("Plus", "Add", "pa", 0.0),
-        ]);
-        let wfst_b = build_test_wfst("B", &[
-            ("Plus", "Add", "pa", 1.0), // Different weight
-        ]);
+        let wfst_a = build_test_wfst("A", &[("Plus", "Add", "pa", 0.0)]);
+        let wfst_b = build_test_wfst(
+            "B",
+            &[
+                ("Plus", "Add", "pa", 1.0), // Different weight
+            ],
+        );
 
         let canon_a = wfst_a.canonical_structure();
         let canon_b = wfst_b.canonical_structure();
 
-        assert_ne!(canon_a, canon_b, "Different weights should produce different canonical structures");
+        assert_ne!(
+            canon_a, canon_b,
+            "Different weights should produce different canonical structures"
+        );
     }
 
     #[test]
     fn test_canonical_structure_debruijn_indexing() {
         // Verify De Bruijn indices are assigned in encounter order.
-        let wfst = build_test_wfst("Test", &[
-            ("Plus", "Add", "pa", 0.0),
-            ("Minus", "Sub", "ps", 0.5),
-            ("Star", "Mul", "pm", 1.0),
-        ]);
+        let wfst = build_test_wfst(
+            "Test",
+            &[
+                ("Plus", "Add", "pa", 0.0),
+                ("Minus", "Sub", "ps", 0.5),
+                ("Star", "Mul", "pm", 1.0),
+            ],
+        );
 
         let canonical = wfst.canonical_structure();
 
@@ -3413,19 +3493,13 @@ mod tests {
         let canon_a = wfst_a.canonical_structure();
         let canon_b = wfst_b.canonical_structure();
 
-        assert_ne!(
-            canon_a, canon_b,
-            "WFSTs with different action shapes should not be isomorphic"
-        );
+        assert_ne!(canon_a, canon_b, "WFSTs with different action shapes should not be isomorphic");
     }
 
     #[test]
     fn test_canonical_hash_deterministic() {
         // Same WFST should always produce the same hash.
-        let wfst = build_test_wfst("Test", &[
-            ("A", "R1", "p1", 0.0),
-            ("B", "R2", "p2", 1.0),
-        ]);
+        let wfst = build_test_wfst("Test", &[("A", "R1", "p1", 0.0), ("B", "R2", "p2", 1.0)]);
         let h1 = wfst.canonical_hash();
         let h2 = wfst.canonical_hash();
         assert_eq!(h1, h2, "Canonical hash should be deterministic");
@@ -3439,7 +3513,9 @@ mod tests {
     fn test_two_token_builder_creates_intermediate_states() {
         // Two-token paths should create intermediate (non-final) states
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer", "Boolean"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer", "Boolean"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
@@ -3447,26 +3523,41 @@ mod tests {
         // Single-token action
         builder.add_action(
             "Integer",
-            DispatchAction::Direct { rule_label: "IntLit".to_string(), parse_fn: "parse_intlit".to_string() },
+            DispatchAction::Direct {
+                rule_label: "IntLit".to_string(),
+                parse_fn: "parse_intlit".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
 
         // Two-token actions: Float → ( → FloatId, Float → Boolean → BoolToFloat
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "parse_floatid".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Boolean",
-            DispatchAction::Direct { rule_label: "BoolToFloat".to_string(), parse_fn: "parse_booltofloat".to_string() },
+            "Float",
+            "Boolean",
+            DispatchAction::Direct {
+                rule_label: "BoolToFloat".to_string(),
+                parse_fn: "parse_booltofloat".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
         let wfst = builder.build();
 
         // Should have: start(0) + 1 single-token final + 1 intermediate(Float) + 2 two-token finals
-        assert_eq!(wfst.num_states(), 5, "expected 5 states: start + 1 single final + 1 intermediate + 2 two-token finals");
+        assert_eq!(
+            wfst.num_states(),
+            5,
+            "expected 5 states: start + 1 single final + 1 intermediate + 2 two-token finals"
+        );
 
         // The intermediate state should NOT be final
         let intermediate = wfst.states.iter().find(|s| !s.is_final && s.id != 0);
@@ -3481,20 +3572,30 @@ mod tests {
     fn test_predict_two_token_resolves_ambiguity() {
         // predict_two_token should return narrowed results via intermediate states
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
 
         // Two ambiguous rules sharing dispatch token "Float"
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "parse_floatid".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Integer",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "parse_inttofloat".to_string() },
+            "Float",
+            "Integer",
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "parse_inttofloat".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -3514,14 +3615,15 @@ mod tests {
     #[test]
     fn test_predict_two_token_fallback_to_single() {
         // When no intermediate states exist for token1, fall back to single-token predict
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus", "Minus"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Plus", "Minus"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Plus",
-            DispatchAction::Direct { rule_label: "Add".to_string(), parse_fn: "parse_add".to_string() },
+            DispatchAction::Direct {
+                rule_label: "Add".to_string(),
+                parse_fn: "parse_add".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
 
@@ -3537,13 +3639,19 @@ mod tests {
     fn test_predict_two_token_unknown_token2_fallback() {
         // When token2 is not found in intermediate transitions, fall back to single-token
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Unknown"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Unknown"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "parse_floatid".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
 
@@ -3556,35 +3664,45 @@ mod tests {
         // So it returns empty. predict_two_token should also handle this gracefully.
         let results = wfst.predict_two_token("Float", "Unknown");
         // Falls back to predict("Float"), which finds no actions via final states
-        assert!(results.is_empty(), "unknown token2 should result in empty or single-token fallback");
+        assert!(
+            results.is_empty(),
+            "unknown token2 should result in empty or single-token fallback"
+        );
     }
 
     #[test]
     fn test_is_deterministic_after_two_tokens() {
         // is_deterministic_after should return Some when two-token path yields singleton
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "parse_floatid".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Integer",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "parse_inttofloat".to_string() },
+            "Float",
+            "Integer",
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "parse_inttofloat".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
         let wfst = builder.build();
 
         // Two-token: Float + LParen → FloatId (deterministic)
-        assert_eq!(
-            wfst.is_deterministic_after(&["Float", "LParen"]),
-            Some("FloatId".to_string()),
-        );
+        assert_eq!(wfst.is_deterministic_after(&["Float", "LParen"]), Some("FloatId".to_string()),);
         // Two-token: Float + Integer → IntToFloat (deterministic)
         assert_eq!(
             wfst.is_deterministic_after(&["Float", "Integer"]),
@@ -3599,18 +3717,28 @@ mod tests {
     #[test]
     fn test_live_actions_after_returns_narrowed_set() {
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "parse_floatid".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Integer",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "parse_inttofloat".to_string() },
+            "Float",
+            "Integer",
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "parse_inttofloat".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -3646,8 +3774,13 @@ mod tests {
                     RDSyntaxItem::Terminal("if".to_string()),
                     RDSyntaxItem::Terminal("(".to_string()),
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
             RDRuleInfo {
                 label: "IfNot".to_string(),
@@ -3656,23 +3789,33 @@ mod tests {
                     RDSyntaxItem::Terminal("if".to_string()),
                     RDSyntaxItem::Terminal("!".to_string()),
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
         ];
 
-        let token_map = TokenIdMap::from_names(
-            vec!["KwIf", "LParen", "Bang"].into_iter().map(String::from),
-        );
+        let token_map =
+            TokenIdMap::from_names(vec!["KwIf", "LParen", "Bang"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Stmt", token_map);
         builder.add_action(
             "KwIf",
-            DispatchAction::Direct { rule_label: "IfThen".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "IfThen".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "KwIf",
-            DispatchAction::Direct { rule_label: "IfNot".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "IfNot".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
         let mut wfsts = HashMap::new();
@@ -3680,9 +3823,8 @@ mod tests {
 
         let first_sets = HashMap::new(); // Not needed for terminal second items
 
-        let added = enrich_with_two_token_paths(
-            &mut wfsts, &rd_rules, &["Stmt".to_string()], &first_sets,
-        );
+        let added =
+            enrich_with_two_token_paths(&mut wfsts, &rd_rules, &["Stmt".to_string()], &first_sets);
 
         assert!(added >= 2, "should add at least 2 two-token paths, got {}", added);
 
@@ -3712,20 +3854,36 @@ mod tests {
                 category: "Val".to_string(),
                 items: vec![
                     RDSyntaxItem::Terminal("float".to_string()),
-                    RDSyntaxItem::NonTerminal { category: "Expr".to_string(), param_name: "e".to_string() },
+                    RDSyntaxItem::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "e".to_string(),
+                    },
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
             RDRuleInfo {
                 label: "FloatList".to_string(),
                 category: "Val".to_string(),
                 items: vec![
                     RDSyntaxItem::Terminal("float".to_string()),
-                    RDSyntaxItem::NonTerminal { category: "List".to_string(), param_name: "l".to_string() },
+                    RDSyntaxItem::NonTerminal {
+                        category: "List".to_string(),
+                        param_name: "l".to_string(),
+                    },
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
         ];
 
@@ -3739,25 +3897,32 @@ mod tests {
         list_first.insert("Ident"); // overlaps with Expr
         first_sets_overlapping.insert("List".to_string(), list_first);
 
-        let token_map = TokenIdMap::from_names(
-            vec!["KwFloat"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["KwFloat"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Val", token_map);
         builder.add_action(
             "KwFloat",
-            DispatchAction::Direct { rule_label: "FloatExpr".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatExpr".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "KwFloat",
-            DispatchAction::Direct { rule_label: "FloatList".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatList".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
         let mut wfsts_overlap = HashMap::new();
         wfsts_overlap.insert("Val".to_string(), builder.build());
 
         let added = enrich_with_two_token_paths(
-            &mut wfsts_overlap, &rd_rules_overlapping, &["Val".to_string()], &first_sets_overlapping,
+            &mut wfsts_overlap,
+            &rd_rules_overlapping,
+            &["Val".to_string()],
+            &first_sets_overlapping,
         );
         assert_eq!(added, 0, "overlapping FIRST sets should NOT be enriched");
 
@@ -3771,20 +3936,36 @@ mod tests {
                 category: "Val".to_string(),
                 items: vec![
                     RDSyntaxItem::Terminal("float".to_string()),
-                    RDSyntaxItem::NonTerminal { category: "Expr".to_string(), param_name: "e".to_string() },
+                    RDSyntaxItem::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "e".to_string(),
+                    },
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
             RDRuleInfo {
                 label: "FloatList".to_string(),
                 category: "Val".to_string(),
                 items: vec![
                     RDSyntaxItem::Terminal("float".to_string()),
-                    RDSyntaxItem::NonTerminal { category: "List".to_string(), param_name: "l".to_string() },
+                    RDSyntaxItem::NonTerminal {
+                        category: "List".to_string(),
+                        param_name: "l".to_string(),
+                    },
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
         ];
 
@@ -3798,25 +3979,32 @@ mod tests {
         list_first2.insert("Ident");
         first_sets_disjoint.insert("List".to_string(), list_first2);
 
-        let token_map2 = TokenIdMap::from_names(
-            vec!["KwFloat"].into_iter().map(String::from),
-        );
+        let token_map2 = TokenIdMap::from_names(vec!["KwFloat"].into_iter().map(String::from));
         let mut builder2 = PredictionWfstBuilder::new("Val", token_map2);
         builder2.add_action(
             "KwFloat",
-            DispatchAction::Direct { rule_label: "FloatExpr".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatExpr".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder2.add_action(
             "KwFloat",
-            DispatchAction::Direct { rule_label: "FloatList".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatList".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
         let mut wfsts_disjoint = HashMap::new();
         wfsts_disjoint.insert("Val".to_string(), builder2.build());
 
         let added = enrich_with_two_token_paths(
-            &mut wfsts_disjoint, &rd_rules_disjoint, &["Val".to_string()], &first_sets_disjoint,
+            &mut wfsts_disjoint,
+            &rd_rules_disjoint,
+            &["Val".to_string()],
+            &first_sets_disjoint,
         );
         assert_eq!(added, 4, "disjoint FIRST sets should add 4 two-token paths (2+2)");
 
@@ -3849,18 +4037,31 @@ mod tests {
                     RDSyntaxItem::Terminal("cmd".to_string()),
                     RDSyntaxItem::Terminal("(".to_string()),
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
             RDRuleInfo {
                 label: "CmdExpr".to_string(),
                 category: "Cmd".to_string(),
                 items: vec![
                     RDSyntaxItem::Terminal("cmd".to_string()),
-                    RDSyntaxItem::NonTerminal { category: "Expr".to_string(), param_name: "e".to_string() },
+                    RDSyntaxItem::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "e".to_string(),
+                    },
                 ],
-                has_binder: false, has_multi_binder: false, is_collection: false,
-                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
             },
         ];
 
@@ -3870,26 +4071,29 @@ mod tests {
         first_sets.insert("Expr".to_string(), expr_first);
 
         // terminal_to_variant_name("cmd") = "KwCmd"
-        let token_map = TokenIdMap::from_names(
-            vec!["KwCmd"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["KwCmd"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Cmd", token_map);
         builder.add_action(
             "KwCmd",
-            DispatchAction::Direct { rule_label: "CmdParen".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "CmdParen".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "KwCmd",
-            DispatchAction::Direct { rule_label: "CmdExpr".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "CmdExpr".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
         let mut wfsts = HashMap::new();
         wfsts.insert("Cmd".to_string(), builder.build());
 
-        let added = enrich_with_two_token_paths(
-            &mut wfsts, &rd_rules, &["Cmd".to_string()], &first_sets,
-        );
+        let added =
+            enrich_with_two_token_paths(&mut wfsts, &rd_rules, &["Cmd".to_string()], &first_sets);
         assert_eq!(added, 2, "mixed terminal+nonterminal should add 2 paths");
 
         let wfst = wfsts.get("Cmd").expect("Cmd WFST exists");
@@ -3906,7 +4110,9 @@ mod tests {
     fn test_two_token_mixed_single_and_two_token_paths() {
         // WFST with both single-token and two-token paths for the same first token
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
@@ -3923,8 +4129,12 @@ mod tests {
 
         // Two-token path: Float + LParen → FloatId
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "parse_floatid".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
 
@@ -3953,23 +4163,30 @@ mod tests {
     #[test]
     fn test_context_labels_assignment() {
         // Assign context labels and verify bit positions
-        let token_map = TokenIdMap::from_names(
-            vec!["Float"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Float"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "BoolToFloat".to_string(), parse_fn: "p3".to_string() },
+            DispatchAction::Direct {
+                rule_label: "BoolToFloat".to_string(),
+                parse_fn: "p3".to_string(),
+            },
             TropicalWeight::new(1.0),
         );
 
@@ -3985,18 +4202,22 @@ mod tests {
     #[test]
     fn test_live_rules_context_all_alive() {
         // All rules alive when querying the shared dispatch token
-        let token_map = TokenIdMap::from_names(
-            vec!["Float"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Float"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -4013,19 +4234,29 @@ mod tests {
     fn test_live_rules_context_narrowed_by_two_token() {
         // Two-token paths narrow the live set to a singleton
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         // Two rules share dispatch token "Float"
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Integer",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            "Float",
+            "Integer",
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -4048,18 +4279,28 @@ mod tests {
     fn test_is_deterministic_context_singleton() {
         // is_deterministic_context returns Some when ContextWeight is singleton
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Integer",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            "Float",
+            "Integer",
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -4079,18 +4320,22 @@ mod tests {
     #[test]
     fn test_is_deterministic_context_ambiguous() {
         // is_deterministic_context returns None when multiple rules survive
-        let token_map = TokenIdMap::from_names(
-            vec!["Float"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Float"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -4105,18 +4350,28 @@ mod tests {
     fn test_context_narrowing_reports_count() {
         // context_narrowing returns the correct count
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Integer",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            "Float",
+            "Integer",
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -4135,13 +4390,14 @@ mod tests {
     #[test]
     fn test_context_labels_empty_no_crash() {
         // When no context labels are assigned, queries return zero ContextWeight
-        let token_map = TokenIdMap::from_names(
-            vec!["Float"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Float"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
 
@@ -4156,13 +4412,14 @@ mod tests {
     #[test]
     fn test_context_labels_unknown_token() {
         // Query with unknown token returns zero ContextWeight
-        let token_map = TokenIdMap::from_names(
-            vec!["Float"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Float"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Float",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         let mut wfst = builder.build();
@@ -4181,19 +4438,29 @@ mod tests {
         // Verify that nfa_alternative_order works correctly on a narrowed
         // candidate set (simulates what the trampoline does in Sprint 4).
         let token_map = TokenIdMap::from_names(
-            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+            vec!["Float", "LParen", "Integer"]
+                .into_iter()
+                .map(String::from),
         );
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         // Three rules share "Float", but two-token paths narrow to singletons
         builder.add_two_token_action(
-            "Float", "LParen",
-            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            "Float",
+            "LParen",
+            DispatchAction::Direct {
+                rule_label: "FloatId".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_two_token_action(
-            "Float", "Integer",
-            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            "Float",
+            "Integer",
+            DispatchAction::Direct {
+                rule_label: "IntToFloat".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
 
@@ -4216,10 +4483,15 @@ mod tests {
 
         // At two-token level, narrowing gives singletons
         let ctx2 = wfst.live_rules_context_after(&["Float", "LParen"]);
-        let narrowed2: Vec<&str> = all_labels.iter().copied().filter(|label| {
-            wfst.context_labels.get(*label)
-                .map_or(true, |&bit| ctx2.contains(bit))
-        }).collect();
+        let narrowed2: Vec<&str> = all_labels
+            .iter()
+            .copied()
+            .filter(|label| {
+                wfst.context_labels
+                    .get(*label)
+                    .map_or(true, |&bit| ctx2.contains(bit))
+            })
+            .collect();
         assert_eq!(narrowed2.len(), 1, "two-token narrows to FloatId");
         assert_eq!(narrowed2[0], "FloatId");
     }
@@ -4228,24 +4500,31 @@ mod tests {
     fn test_narrowed_candidate_excludes_dead_rules() {
         // Verify that ContextWeight filtering correctly excludes rules
         // not in the live set.
-        let token_map = TokenIdMap::from_names(
-            vec!["KwFn"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["KwFn"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Stmt", token_map);
         builder.add_action(
             "KwFn",
-            DispatchAction::Direct { rule_label: "FnDecl".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FnDecl".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "KwFn",
-            DispatchAction::Direct { rule_label: "FnExpr".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FnExpr".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.5),
         );
         builder.add_action(
             "KwFn",
-            DispatchAction::Direct { rule_label: "FnType".to_string(), parse_fn: "p3".to_string() },
+            DispatchAction::Direct {
+                rule_label: "FnType".to_string(),
+                parse_fn: "p3".to_string(),
+            },
             TropicalWeight::new(1.0),
         );
 
@@ -4263,10 +4542,15 @@ mod tests {
         assert_eq!(narrowed_ctx.count(), 2);
 
         let all_labels = vec!["FnDecl", "FnExpr", "FnType"];
-        let narrowed: Vec<&str> = all_labels.iter().copied().filter(|label| {
-            wfst.context_labels.get(*label)
-                .map_or(true, |&bit| narrowed_ctx.contains(bit))
-        }).collect();
+        let narrowed: Vec<&str> = all_labels
+            .iter()
+            .copied()
+            .filter(|label| {
+                wfst.context_labels
+                    .get(*label)
+                    .map_or(true, |&bit| narrowed_ctx.contains(bit))
+            })
+            .collect();
         assert_eq!(narrowed.len(), 2);
         assert!(narrowed.contains(&"FnDecl"));
         assert!(narrowed.contains(&"FnExpr"));
@@ -4277,19 +4561,23 @@ mod tests {
     fn test_narrowed_preserves_order() {
         // After narrowing, nfa_alternative_order on the narrowed set preserves
         // WFST weight ordering.
-        let token_map = TokenIdMap::from_names(
-            vec!["KwLet"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["KwLet"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Stmt", token_map);
         builder.add_action(
             "KwLet",
-            DispatchAction::Direct { rule_label: "LetMut".to_string(), parse_fn: "p1".to_string() },
+            DispatchAction::Direct {
+                rule_label: "LetMut".to_string(),
+                parse_fn: "p1".to_string(),
+            },
             TropicalWeight::new(0.0),
         );
         builder.add_action(
             "KwLet",
-            DispatchAction::Direct { rule_label: "LetConst".to_string(), parse_fn: "p2".to_string() },
+            DispatchAction::Direct {
+                rule_label: "LetConst".to_string(),
+                parse_fn: "p2".to_string(),
+            },
             TropicalWeight::new(0.3),
         );
 

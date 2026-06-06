@@ -137,17 +137,22 @@ impl<W: Semiring + fmt::Display> fmt::Display for WpdsRule<W> {
         match self {
             WpdsRule::Pop { from_gamma, weight } => {
                 write!(f, "⟨p, {}⟩ ↪ ⟨p', ε⟩  [w={}]", from_gamma, weight)
-            }
+            },
             WpdsRule::Replace { from_gamma, to_gamma, weight } => {
                 write!(f, "⟨p, {}⟩ ↪ ⟨p', {}⟩  [w={}]", from_gamma, to_gamma, weight)
-            }
-            WpdsRule::Push { from_gamma, to_gamma_bottom, to_gamma_top, weight } => {
+            },
+            WpdsRule::Push {
+                from_gamma,
+                to_gamma_bottom,
+                to_gamma_top,
+                weight,
+            } => {
                 write!(
                     f,
                     "⟨p, {}⟩ ↪ ⟨p', {} {}⟩  [w={}]",
                     from_gamma, to_gamma_bottom, to_gamma_top, weight
                 )
-            }
+            },
         }
     }
 }
@@ -300,11 +305,21 @@ impl<W: Semiring> PAutomaton<W> {
     }
 
     /// Add a transition.
-    pub fn add_transition(&mut self, from: PAutomatonStateId, symbol: StackSymbol, to: PAutomatonStateId, weight: W) {
+    pub fn add_transition(
+        &mut self,
+        from: PAutomatonStateId,
+        symbol: StackSymbol,
+        to: PAutomatonStateId,
+        weight: W,
+    ) {
         let idx = self.transitions.len();
         self.symbols_present.insert(symbol.clone());
-        self.transitions.push(PAutomatonTransition { from, symbol, to, weight });
-        self.transitions_by_source.entry(from).or_default().push(idx);
+        self.transitions
+            .push(PAutomatonTransition { from, symbol, to, weight });
+        self.transitions_by_source
+            .entry(from)
+            .or_default()
+            .push(idx);
     }
 
     /// Mark a state as final.
@@ -508,7 +523,7 @@ pub fn build_wpds<W: Semiring>(
                             to_gamma: next,
                             weight: W::one(),
                         });
-                    }
+                    },
                     SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } => {
                         let continuation = StackSymbol::rule_position(cat, label, next_pos);
                         wpds.ensure_symbol(continuation.clone());
@@ -517,9 +532,7 @@ pub fn build_wpds<W: Semiring>(
                             // Same-category recursion: Replace to continuation.
                             // Matches Reps et al. (2007) — intraprocedural transitions
                             // use Replace; only cross-category calls use Push.
-                            if (rule_spec.is_infix || rule_spec.is_postfix)
-                                && !skipped_pratt_lhs
-                            {
+                            if (rule_spec.is_infix || rule_spec.is_postfix) && !skipped_pratt_lhs {
                                 skipped_pratt_lhs = true;
                             }
                             wpds.add_rule(WpdsRule::Replace {
@@ -538,7 +551,7 @@ pub fn build_wpds<W: Semiring>(
                                 weight: W::one(),
                             });
                         }
-                    }
+                    },
                     SyntaxItemSpec::Binder { category: ref b_cat, .. } => {
                         if b_cat == cat {
                             let next = StackSymbol::rule_position(cat, label, next_pos);
@@ -560,7 +573,7 @@ pub fn build_wpds<W: Semiring>(
                                 weight: W::one(),
                             });
                         }
-                    }
+                    },
                     SyntaxItemSpec::Collection { element_category: ref e_cat, .. } => {
                         if e_cat == cat {
                             // Same-category collection: Replace (intraprocedural).
@@ -583,7 +596,7 @@ pub fn build_wpds<W: Semiring>(
                                 weight: W::one(),
                             });
                         }
-                    }
+                    },
                     SyntaxItemSpec::IdentCapture { .. }
                     | SyntaxItemSpec::BinderCollection { .. } => {
                         // These consume an identifier token — intraprocedural
@@ -594,7 +607,7 @@ pub fn build_wpds<W: Semiring>(
                             to_gamma: next,
                             weight: W::one(),
                         });
-                    }
+                    },
                     SyntaxItemSpec::Sep { body, .. } => {
                         // Separated list: model as single cross-category or replace
                         build_syntax_item_rules(&mut wpds, cat, label, &current, pos, body);
@@ -607,33 +620,43 @@ pub fn build_wpds<W: Semiring>(
                             to_gamma: next,
                             weight: W::one(),
                         });
-                    }
+                    },
                     SyntaxItemSpec::Map { .. } => {
-                        // Structured body: treat as sequence
+                        // Structured body: summarize nested cross-category calls
+                        // at this rule position, then continue to the next item.
                         let next = StackSymbol::rule_position(cat, label, next_pos);
                         wpds.ensure_symbol(next.clone());
+                        for ref_cat in cross_category_refs(item, cat) {
+                            let callee_entry = StackSymbol::category_entry(&ref_cat);
+                            wpds.ensure_symbol(callee_entry.clone());
+                            wpds.add_rule(WpdsRule::Push {
+                                from_gamma: current.clone(),
+                                to_gamma_bottom: next.clone(),
+                                to_gamma_top: callee_entry,
+                                weight: W::one(),
+                            });
+                        }
                         wpds.add_rule(WpdsRule::Replace {
                             from_gamma: current,
                             to_gamma: next,
                             weight: W::one(),
                         });
-                    }
-                    SyntaxItemSpec::Zip { left_category, right_category, .. } => {
-                        // Dual-accumulator: model cross-category calls for each category
+                    },
+                    SyntaxItemSpec::Zip { .. } => {
+                        // Dual-accumulator: model all nested cross-category calls
+                        // without expanding the collection into extra WPDS states.
                         let continuation = StackSymbol::rule_position(cat, label, next_pos);
                         wpds.ensure_symbol(continuation.clone());
 
-                        for ref_cat in [left_category.as_str(), right_category.as_str()] {
-                            if ref_cat != cat {
-                                let callee_entry = StackSymbol::category_entry(ref_cat);
-                                wpds.ensure_symbol(callee_entry.clone());
-                                wpds.add_rule(WpdsRule::Push {
-                                    from_gamma: current.clone(),
-                                    to_gamma_bottom: continuation.clone(),
-                                    to_gamma_top: callee_entry,
-                                    weight: W::one(),
-                                });
-                            }
+                        for ref_cat in cross_category_refs(item, cat) {
+                            let callee_entry = StackSymbol::category_entry(&ref_cat);
+                            wpds.ensure_symbol(callee_entry.clone());
+                            wpds.add_rule(WpdsRule::Push {
+                                from_gamma: current.clone(),
+                                to_gamma_bottom: continuation.clone(),
+                                to_gamma_top: callee_entry,
+                                weight: W::one(),
+                            });
                         }
                         // Also allow intraprocedural transition (same-category or completed)
                         wpds.add_rule(WpdsRule::Replace {
@@ -641,8 +664,8 @@ pub fn build_wpds<W: Semiring>(
                             to_gamma: continuation,
                             weight: W::one(),
                         });
-                    }
-                    SyntaxItemSpec::Optional { inner } => {
+                    },
+                    SyntaxItemSpec::Optional { .. } => {
                         // Optional group: both skip and enter paths
                         let next = StackSymbol::rule_position(cat, label, next_pos);
                         wpds.ensure_symbol(next.clone());
@@ -653,19 +676,17 @@ pub fn build_wpds<W: Semiring>(
                             weight: W::one(),
                         });
                         // Enter path: model cross-category references inside optional
-                        for sub_item in inner {
-                            if let Some(ref_cat) = cross_category_ref(sub_item, cat) {
-                                let callee_entry = StackSymbol::category_entry(&ref_cat);
-                                wpds.ensure_symbol(callee_entry.clone());
-                                wpds.add_rule(WpdsRule::Push {
-                                    from_gamma: current.clone(),
-                                    to_gamma_bottom: next.clone(),
-                                    to_gamma_top: callee_entry,
-                                    weight: W::one(),
-                                });
-                            }
+                        for ref_cat in cross_category_refs(item, cat) {
+                            let callee_entry = StackSymbol::category_entry(&ref_cat);
+                            wpds.ensure_symbol(callee_entry.clone());
+                            wpds.add_rule(WpdsRule::Push {
+                                from_gamma: current.clone(),
+                                to_gamma_bottom: next.clone(),
+                                to_gamma_top: callee_entry,
+                                weight: W::one(),
+                            });
                         }
-                    }
+                    },
                     SyntaxItemSpec::GuardExpression { .. } => {
                         // Phase 2F: guard expressions are self-contained
                         // (consumed by the predicate sublanguage parser).
@@ -678,7 +699,7 @@ pub fn build_wpds<W: Semiring>(
                             to_gamma: next,
                             weight: W::one(),
                         });
-                    }
+                    },
                 }
                 pos = next_pos;
             }
@@ -686,10 +707,7 @@ pub fn build_wpds<W: Semiring>(
             // Rule completion: Pop (return to caller)
             let final_pos = StackSymbol::rule_position(cat, label, pos);
             wpds.ensure_symbol(final_pos.clone());
-            wpds.add_rule(WpdsRule::Pop {
-                from_gamma: final_pos,
-                weight: W::one(),
-            });
+            wpds.add_rule(WpdsRule::Pop { from_gamma: final_pos, weight: W::one() });
         }
     }
 
@@ -707,30 +725,66 @@ pub fn build_wpds<W: Semiring>(
         if !has_rules {
             let cat_entry = StackSymbol::category_entry(cat);
             wpds.ensure_symbol(cat_entry.clone());
-            wpds.add_rule(WpdsRule::Pop {
-                from_gamma: cat_entry,
-                weight: W::one(),
-            });
+            wpds.add_rule(WpdsRule::Pop { from_gamma: cat_entry, weight: W::one() });
         }
     }
 
     wpds
 }
 
-/// Extract cross-category reference from a syntax item, if any.
-fn cross_category_ref(item: &SyntaxItemSpec, current_cat: &str) -> Option<String> {
+/// Collect cross-category references from a syntax item, including nested
+/// Sep/Map/Zip/Optional bodies summarized at the enclosing WPDS position.
+fn collect_cross_category_refs(
+    item: &SyntaxItemSpec,
+    current_cat: &str,
+    refs: &mut HashSet<String>,
+) {
     match item {
-        SyntaxItemSpec::NonTerminal { category, .. } if category != current_cat => {
-            Some(category.clone())
-        }
-        SyntaxItemSpec::Binder { category, .. } if category != current_cat => {
-            Some(category.clone())
-        }
-        SyntaxItemSpec::Collection { element_category, .. } if element_category != current_cat => {
-            Some(element_category.clone())
-        }
-        _ => None,
+        SyntaxItemSpec::NonTerminal { category, .. } | SyntaxItemSpec::Binder { category, .. } => {
+            if category != current_cat {
+                refs.insert(category.clone());
+            }
+        },
+        SyntaxItemSpec::Collection { element_category, .. } => {
+            if element_category != current_cat {
+                refs.insert(element_category.clone());
+            }
+        },
+        SyntaxItemSpec::Sep { body, .. } => {
+            collect_cross_category_refs(body, current_cat, refs);
+        },
+        SyntaxItemSpec::Map { body_items } => {
+            for nested in body_items {
+                collect_cross_category_refs(nested, current_cat, refs);
+            }
+        },
+        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
+            if left_category != current_cat {
+                refs.insert(left_category.clone());
+            }
+            if right_category != current_cat {
+                refs.insert(right_category.clone());
+            }
+            collect_cross_category_refs(body, current_cat, refs);
+        },
+        SyntaxItemSpec::Optional { inner } => {
+            for nested in inner {
+                collect_cross_category_refs(nested, current_cat, refs);
+            }
+        },
+        SyntaxItemSpec::Terminal(_)
+        | SyntaxItemSpec::IdentCapture { .. }
+        | SyntaxItemSpec::BinderCollection { .. }
+        | SyntaxItemSpec::GuardExpression { .. } => {},
     }
+}
+
+fn cross_category_refs(item: &SyntaxItemSpec, current_cat: &str) -> Vec<String> {
+    let mut refs = HashSet::new();
+    collect_cross_category_refs(item, current_cat, &mut refs);
+    let mut refs: Vec<String> = refs.into_iter().collect();
+    refs.sort();
+    refs
 }
 
 /// Build WPDS rules for a nested syntax item (e.g., Sep body).
@@ -742,7 +796,7 @@ fn build_syntax_item_rules<W: Semiring>(
     pos: u32,
     item: &SyntaxItemSpec,
 ) {
-    if let Some(ref_cat) = cross_category_ref(item, cat) {
+    for ref_cat in cross_category_refs(item, cat) {
         let continuation = StackSymbol::rule_position(cat, label, pos + 1);
         let callee_entry = StackSymbol::category_entry(&ref_cat);
         wpds.ensure_symbol(continuation.clone());
@@ -787,7 +841,9 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
 
     // Initial transition: (p, initial_symbol, q_final) with weight one()
     automaton.add_transition(p_state, wpds.initial_symbol.clone(), q_final, W::one());
-    automaton.symbol_to_state.insert(wpds.initial_symbol.clone(), q_final);
+    automaton
+        .symbol_to_state
+        .insert(wpds.initial_symbol.clone(), q_final);
 
     // Worklist of transitions to process: (from, symbol, to, weight)
     let mut worklist: VecDeque<(PAutomatonStateId, StackSymbol, PAutomatonStateId, W)> =
@@ -797,10 +853,7 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
     // Track existing transitions for convergence: (from, symbol, to) → weight
     let mut existing: HashMap<(PAutomatonStateId, StackSymbol, PAutomatonStateId), W> =
         HashMap::new();
-    existing.insert(
-        (p_state, wpds.initial_symbol.clone(), q_final),
-        W::one(),
-    );
+    existing.insert((p_state, wpds.initial_symbol.clone(), q_final), W::one());
 
     // Fresh state allocation for push rules: from_gamma → fresh_state
     let mut push_states: HashMap<StackSymbol, PAutomatonStateId> = HashMap::new();
@@ -855,22 +908,16 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
                                 } else {
                                     false
                                 }
-                            }
+                            },
                             None => {
                                 existing.insert(key.clone(), prop_weight);
                                 true
-                            }
+                            },
                         };
 
                         if should_add {
-                            let combined =
-                                existing.get(&key).expect("just inserted").clone();
-                            automaton.add_transition(
-                                p_state,
-                                sym.clone(),
-                                target,
-                                combined,
-                            );
+                            let combined = existing.get(&key).expect("just inserted").clone();
+                            automaton.add_transition(p_state, sym.clone(), target, combined);
                             automaton
                                 .symbol_to_state
                                 .entry(sym.clone())
@@ -878,7 +925,7 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
                             worklist.push_back((p_state, sym, target, combined));
                         }
                     }
-                }
+                },
                 WpdsRule::Replace { to_gamma, weight, .. } => {
                     // Replace: ⟨p, γ⟩ → ⟨p', γ'⟩
                     // Add transition (p, γ', to) with weight f(r) ⊗ w
@@ -894,27 +941,32 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
                             } else {
                                 false
                             }
-                        }
+                        },
                         None => {
                             existing.insert(key.clone(), new_weight);
                             true
-                        }
+                        },
                     };
 
                     if should_add {
                         let combined = existing.get(&key).expect("just inserted").clone();
                         automaton.add_transition(p_state, to_gamma.clone(), to, combined);
-                        automaton.symbol_to_state.entry(to_gamma.clone()).or_insert(to);
+                        automaton
+                            .symbol_to_state
+                            .entry(to_gamma.clone())
+                            .or_insert(to);
                         worklist.push_back((p_state, to_gamma.clone(), to, combined));
                     }
-                }
-                WpdsRule::Push { to_gamma_bottom, to_gamma_top, weight, .. } => {
+                },
+                WpdsRule::Push {
+                    to_gamma_bottom, to_gamma_top, weight, ..
+                } => {
                     // Push: ⟨p, γ⟩ → ⟨p', γ_bottom γ_top⟩
                     // Need: (p, γ_top, q_r) and (q_r, γ_bottom, to)
                     // where q_r is a fresh state for this push rule's source
-                    let q_r = *push_states.entry(gamma.clone()).or_insert_with(|| {
-                        automaton.add_state()
-                    });
+                    let q_r = *push_states
+                        .entry(gamma.clone())
+                        .or_insert_with(|| automaton.add_state());
 
                     // Add (q_r, γ_bottom, to) with weight w
                     let bottom_key = (q_r, to_gamma_bottom.clone(), to);
@@ -927,11 +979,11 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
                             } else {
                                 false
                             }
-                        }
+                        },
                         None => {
                             existing.insert(bottom_key.clone(), w.clone());
                             true
-                        }
+                        },
                     };
 
                     if bottom_new {
@@ -952,33 +1004,20 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
                                     } else {
                                         false
                                     }
-                                }
+                                },
                                 None => {
                                     existing.insert(prop_key.clone(), bw.clone());
                                     true
-                                }
+                                },
                             };
                             if should_prop {
-                                let pw = existing
-                                    .get(&prop_key)
-                                    .expect("just inserted")
-                                    .clone();
-                                automaton.add_transition(
-                                    p_state,
-                                    to_gamma_bottom.clone(),
-                                    to,
-                                    pw,
-                                );
+                                let pw = existing.get(&prop_key).expect("just inserted").clone();
+                                automaton.add_transition(p_state, to_gamma_bottom.clone(), to, pw);
                                 automaton
                                     .symbol_to_state
                                     .entry(to_gamma_bottom.clone())
                                     .or_insert(to);
-                                worklist.push_back((
-                                    p_state,
-                                    to_gamma_bottom.clone(),
-                                    to,
-                                    pw,
-                                ));
+                                worklist.push_back((p_state, to_gamma_bottom.clone(), to, pw));
                             }
                         }
                     }
@@ -994,20 +1033,23 @@ pub fn poststar<W: Semiring>(wpds: &Wpds<W>) -> PAutomaton<W> {
                             } else {
                                 false
                             }
-                        }
+                        },
                         None => {
                             existing.insert(top_key.clone(), *weight);
                             true
-                        }
+                        },
                     };
 
                     if top_new {
                         let tw = existing.get(&top_key).expect("just inserted").clone();
                         automaton.add_transition(p_state, to_gamma_top.clone(), q_r, tw);
-                        automaton.symbol_to_state.entry(to_gamma_top.clone()).or_insert(q_r);
+                        automaton
+                            .symbol_to_state
+                            .entry(to_gamma_top.clone())
+                            .or_insert(q_r);
                         worklist.push_back((p_state, to_gamma_top.clone(), q_r, tw));
                     }
-                }
+                },
             }
         }
     }
@@ -1060,11 +1102,11 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
                     } else {
                         false
                     }
-                }
+                },
                 None => {
                     existing.insert(key.clone(), new_weight);
                     true
-                }
+                },
             };
             if changed {
                 let cw = *existing.get(&key).expect("just inserted");
@@ -1088,7 +1130,7 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
             match rule {
                 WpdsRule::Pop { .. } => {
                     // Pop rules are already handled in Phase 1.
-                }
+                },
                 WpdsRule::Replace { from_gamma, to_gamma, weight } => {
                     // Replace: ⟨p, from_gamma⟩ → ⟨p', to_gamma⟩
                     // If (p', to_gamma, q) exists, add (p, from_gamma, q) with f(r) ⊗ w
@@ -1112,11 +1154,11 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
                                     } else {
                                         false
                                     }
-                                }
+                                },
                                 None => {
                                     existing.insert(key.clone(), new_weight);
                                     true
-                                }
+                                },
                             };
                             if should_add {
                                 let cw = *existing.get(&key).expect("just inserted");
@@ -1125,8 +1167,13 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
                             }
                         }
                     }
-                }
-                WpdsRule::Push { from_gamma, to_gamma_bottom, to_gamma_top, weight } => {
+                },
+                WpdsRule::Push {
+                    from_gamma,
+                    to_gamma_bottom,
+                    to_gamma_top,
+                    weight,
+                } => {
                     // Push: ⟨p, from_gamma⟩ → ⟨p', γ_bottom γ_top⟩
                     // If (p', γ_top, q') and (q', γ_bottom, q) exist,
                     // add (p, from_gamma, q) with f(r) ⊗ w₁ ⊗ w₂
@@ -1158,11 +1205,11 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
                                         } else {
                                             false
                                         }
-                                    }
+                                    },
                                     None => {
                                         existing.insert(key.clone(), new_weight);
                                         true
-                                    }
+                                    },
                                 };
                                 if should_add {
                                     let cw = *existing.get(&key).expect("just inserted");
@@ -1172,7 +1219,7 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
                             }
                         }
                     }
-                }
+                },
             }
         }
     }
@@ -1267,11 +1314,14 @@ pub fn stringsum<W: Semiring>(
                     let matches = match token.as_str() {
                         t if t.chars().all(|c| c.is_ascii_digit()) && rule.is_literal => true,
                         t if t.starts_with('"') && rule.is_literal => true,
-                        t if t.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                        t if t
+                            .chars()
+                            .next()
+                            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
                             && rule.is_var =>
                         {
                             true
-                        }
+                        },
                         _ => false,
                     };
                     if matches {
@@ -1349,12 +1399,7 @@ pub fn extract_call_graph<W: Semiring>(wpds: &Wpds<W>) -> WpdsCallGraph {
     let mut categories: HashSet<String> = HashSet::new();
 
     for rule in &wpds.rules {
-        if let WpdsRule::Push {
-            from_gamma,
-            to_gamma_top,
-            ..
-        } = rule
-        {
+        if let WpdsRule::Push { from_gamma, to_gamma_top, .. } = rule {
             let caller = &from_gamma.category;
             let callee = &to_gamma_top.category;
             // Same-category NTs are Replace (not Push), so no self-edges
@@ -1403,13 +1448,7 @@ pub fn extract_call_graph<W: Semiring>(wpds: &Wpds<W>) -> WpdsCallGraph {
     // Tarjan SCC decomposition
     let sccs = tarjan_scc(&categories, &edges);
 
-    WpdsCallGraph {
-        edges,
-        fan_out,
-        fan_in,
-        sccs,
-        categories,
-    }
+    WpdsCallGraph { edges, fan_out, fan_in, sccs, categories }
 }
 
 /// Tarjan's strongly connected components algorithm on the call graph.
@@ -1425,10 +1464,9 @@ fn tarjan_scc(categories: &HashSet<String>, edges: &[CallEdge]) -> Vec<Vec<Strin
 
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
     for edge in edges {
-        if let (Some(&from), Some(&to)) = (
-            cat_index.get(edge.caller_cat.as_str()),
-            cat_index.get(edge.callee_cat.as_str()),
-        ) {
+        if let (Some(&from), Some(&to)) =
+            (cat_index.get(edge.caller_cat.as_str()), cat_index.get(edge.callee_cat.as_str()))
+        {
             adj[from].push(to);
         }
     }
@@ -1577,14 +1615,11 @@ pub fn shortest_path_witness(
                 }
             }
             path
-        }
+        },
         None => {
             // No path exists from any reachable category
-            vec![format!(
-                "{} has no path from any reachable category",
-                target_cat
-            )]
-        }
+            vec![format!("{} has no path from any reachable category", target_cat)]
+        },
     }
 }
 
@@ -1711,10 +1746,7 @@ pub struct CycleInfo {
 /// Direct = |SCC|=1 with self-edge. Mutual = |SCC|>1.
 /// Left-recursion check: a category is left-recursive if it has a Replace rule
 /// from position-0 back to its own category entry.
-pub fn classify_cycles<W: Semiring>(
-    call_graph: &WpdsCallGraph,
-    wpds: &Wpds<W>,
-) -> Vec<CycleInfo> {
+pub fn classify_cycles<W: Semiring>(call_graph: &WpdsCallGraph, wpds: &Wpds<W>) -> Vec<CycleInfo> {
     let mut cycles = Vec::new();
 
     for scc in &call_graph.sccs {
@@ -1757,12 +1789,7 @@ fn has_left_recursion<W: Semiring>(category: &str, wpds: &Wpds<W>) -> bool {
     // Simplified check: any Replace rule from entry symbol to a rule@0 that
     // then has a Replace back to entry or another position-0.
     for rule in &wpds.rules {
-        if let WpdsRule::Replace {
-            from_gamma,
-            to_gamma,
-            ..
-        } = rule
-        {
+        if let WpdsRule::Replace { from_gamma, to_gamma, .. } = rule {
             if *from_gamma == entry && to_gamma.category == category && to_gamma.position == 0 {
                 // Entry dispatches to rule@0; now check if rule@0 can reach entry
                 // without consuming input (another Replace chain to entry)
@@ -1788,12 +1815,7 @@ fn has_replace_path_to_entry<W: Semiring>(
 
     while let Some(current) = queue.pop_front() {
         for rule in &wpds.rules {
-            if let WpdsRule::Replace {
-                from_gamma,
-                to_gamma,
-                ..
-            } = rule
-            {
+            if let WpdsRule::Replace { from_gamma, to_gamma, .. } = rule {
                 if *from_gamma == current {
                     if *to_gamma == *target {
                         return true;
@@ -1837,13 +1859,7 @@ pub fn compute_calling_contexts<W: Semiring>(
     let mut contexts: HashMap<String, Vec<CallingContext>> = HashMap::new();
 
     for rule in &wpds.rules {
-        if let WpdsRule::Push {
-            from_gamma,
-            to_gamma_top,
-            weight,
-            ..
-        } = rule
-        {
+        if let WpdsRule::Push { from_gamma, to_gamma_top, weight, .. } = rule {
             if !from_gamma.category.is_empty() && !to_gamma_top.category.is_empty() {
                 contexts
                     .entry(to_gamma_top.category.clone())
@@ -1984,7 +2000,10 @@ pub fn build_context_rule_tables(
     // Group rules by category
     let mut rules_by_cat: HashMap<&str, Vec<&str>> = HashMap::new();
     for (label, cat) in all_rules {
-        rules_by_cat.entry(cat.as_str()).or_default().push(label.as_str());
+        rules_by_cat
+            .entry(cat.as_str())
+            .or_default()
+            .push(label.as_str());
     }
 
     for (cat, contexts) in calling_contexts {
@@ -2073,12 +2092,7 @@ pub fn analyze_cross_category_bp<W: Semiring>(
     let mut bp_map: HashMap<(String, String), Vec<u8>> = HashMap::new();
 
     for rule in &wpds.rules {
-        if let WpdsRule::Push {
-            from_gamma,
-            to_gamma_top,
-            ..
-        } = rule
-        {
+        if let WpdsRule::Push { from_gamma, to_gamma_top, .. } = rule {
             let caller = &from_gamma.category;
             let callee = &to_gamma_top.category;
             if !caller.is_empty() && !callee.is_empty() && caller != callee {
@@ -2123,7 +2137,8 @@ pub fn analyze_context_ambiguity(
             .get(cat)
             .map(|c| {
                 // Count unique caller categories
-                let unique_callers: HashSet<&str> = c.iter().map(|x| x.caller_category.as_str()).collect();
+                let unique_callers: HashSet<&str> =
+                    c.iter().map(|x| x.caller_category.as_str()).collect();
                 unique_callers.len()
             })
             .unwrap_or(0);
@@ -2152,11 +2167,7 @@ pub struct WpdsUnreachableRule {
 
 impl fmt::Display for WpdsUnreachableRule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "rule `{}` in `{}` is WPDS-unreachable",
-            self.rule_label, self.category
-        )?;
+        write!(f, "rule `{}` in `{}` is WPDS-unreachable", self.rule_label, self.category)?;
         if !self.missing_contexts.is_empty() {
             write!(f, " (missing callers: {})", self.missing_contexts.join(", "))?;
         }
@@ -2317,8 +2328,7 @@ pub fn analyze_wpds(
     let cross_category_bp = analyze_cross_category_bp(&bool_wpds);
 
     // CS-05: Analyze per-category context ambiguity
-    let context_unambiguous =
-        analyze_context_ambiguity(&calling_contexts, &reachable_categories);
+    let context_unambiguous = analyze_context_ambiguity(&calling_contexts, &reachable_categories);
 
     // CEK-3: Build bidirectional mapping between trampoline frames and WPDS stack symbols
     let cek_bijection = build_cek_bijection(spec);
@@ -2364,10 +2374,7 @@ fn find_missing_callers(
     }
 
     // Missing callers are those in `callers` but not in `actual_callers`
-    callers
-        .difference(&actual_callers)
-        .cloned()
-        .collect()
+    callers.difference(&actual_callers).cloned().collect()
 }
 
 /// Check if a syntax item references a given category.
@@ -2377,10 +2384,12 @@ fn references_category(item: &SyntaxItemSpec, target: &str) -> bool {
         SyntaxItemSpec::Binder { category, .. } => category == target,
         SyntaxItemSpec::Collection { element_category, .. } => element_category == target,
         SyntaxItemSpec::Sep { body, .. } => references_category(body, target),
-        SyntaxItemSpec::Map { body_items } => body_items.iter().any(|i| references_category(i, target)),
+        SyntaxItemSpec::Map { body_items } => {
+            body_items.iter().any(|i| references_category(i, target))
+        },
         SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             left_category == target || right_category == target || references_category(body, target)
-        }
+        },
         SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| references_category(i, target)),
         _ => false,
     }
@@ -2456,9 +2465,9 @@ impl CekWpdsBijection {
         // Every frame→symbol entry must have a corresponding symbol→frame entry.
         // Aliases (unprefixed convenience names) are valid if the symbol maps back
         // to *any* frame name that resolves to the same symbol.
-        self.frame_to_symbol.iter().all(|(_frame, sym)| {
-            self.symbol_to_frame.contains_key(sym)
-        })
+        self.frame_to_symbol
+            .iter()
+            .all(|(_frame, sym)| self.symbol_to_frame.contains_key(sym))
     }
 
     /// Number of mappings in the bijection.
@@ -2556,8 +2565,7 @@ pub fn build_cek_bijection(spec: &LanguageSpec) -> CekWpdsBijection {
                     if let SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } = item {
                         if nt_cat == cat {
                             // Continuation is at wpds_pos + 1
-                            let symbol =
-                                StackSymbol::rule_position(cat, label, wpds_pos + 1);
+                            let symbol = StackSymbol::rule_position(cat, label, wpds_pos + 1);
                             bijection.insert(frame.clone(), symbol);
                             break;
                         }
@@ -2577,12 +2585,11 @@ pub fn build_cek_bijection(spec: &LanguageSpec) -> CekWpdsBijection {
                     match item {
                         SyntaxItemSpec::Collection { .. } => {
                             // Collection item maps to position wpds_pos + 1
-                            let symbol =
-                                StackSymbol::rule_position(cat, label, wpds_pos + 1);
+                            let symbol = StackSymbol::rule_position(cat, label, wpds_pos + 1);
                             bijection.insert(frame.clone(), symbol);
                             break;
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                     wpds_pos += 1;
                 }
@@ -2590,12 +2597,16 @@ pub fn build_cek_bijection(spec: &LanguageSpec) -> CekWpdsBijection {
             }
 
             // Mixfix rules: detected by having 3+ NonTerminals and 2+ terminals
-            let nt_count = rule_spec.syntax.iter().filter(|item| {
-                matches!(item, SyntaxItemSpec::NonTerminal { .. })
-            }).count();
-            let terminal_count = rule_spec.syntax.iter().filter(|item| {
-                matches!(item, SyntaxItemSpec::Terminal(_))
-            }).count();
+            let nt_count = rule_spec
+                .syntax
+                .iter()
+                .filter(|item| matches!(item, SyntaxItemSpec::NonTerminal { .. }))
+                .count();
+            let terminal_count = rule_spec
+                .syntax
+                .iter()
+                .filter(|item| matches!(item, SyntaxItemSpec::Terminal(_)))
+                .count();
             let is_mixfix = nt_count >= 3 && terminal_count >= 2;
 
             if is_mixfix {
@@ -2615,21 +2626,17 @@ pub fn build_cek_bijection(spec: &LanguageSpec) -> CekWpdsBijection {
                             } else if nt_cat == cat {
                                 // This is a mixfix operand step
                                 let frame = format!("Mixfix_{}_{}", label, mixfix_index);
-                                let symbol = StackSymbol::rule_position(
-                                    cat,
-                                    label,
-                                    wpds_pos + 1,
-                                );
+                                let symbol = StackSymbol::rule_position(cat, label, wpds_pos + 1);
                                 bijection.insert(frame, symbol);
                                 mixfix_index += 1;
                             }
-                        }
+                        },
                         SyntaxItemSpec::Terminal(_) => {
                             if !skipped_first_terminal && skipped_first_nt {
                                 skipped_first_terminal = true;
                             }
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                     wpds_pos += 1;
                 }
@@ -2648,8 +2655,7 @@ pub fn build_cek_bijection(spec: &LanguageSpec) -> CekWpdsBijection {
                         // Same-category NT: creates a trampoline split point
                         let frame = format!("RD_{}_{}", label, segment_index);
                         // The continuation in WPDS is at wpds_pos + 1
-                        let symbol =
-                            StackSymbol::rule_position(cat, label, wpds_pos + 1);
+                        let symbol = StackSymbol::rule_position(cat, label, wpds_pos + 1);
                         bijection.insert(frame, symbol);
                         segment_index += 1;
                     }
@@ -2827,6 +2833,105 @@ mod tests {
         LanguageSpec::new("TypedCalc".to_string(), types, inputs)
     }
 
+    /// Build a class-3 shaped grammar where Name is reachable only through a
+    /// nested Sep(Zip(Map(...))) collection body in a Proc rule.
+    fn nested_zip_collection_spec() -> LanguageSpec {
+        let types = vec![
+            CategorySpec {
+                name: "Proc".to_string(),
+                native_type: None,
+                is_primary: true,
+                has_var: true,
+            },
+            CategorySpec {
+                name: "Name".to_string(),
+                native_type: None,
+                is_primary: false,
+                has_var: true,
+            },
+        ];
+
+        let inputs = vec![
+            RuleSpecInput {
+                label: "PZero".to_string(),
+                category: "Proc".to_string(),
+                syntax: vec![SyntaxItemSpec::Terminal("0".to_string())],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+                source_location: None,
+                is_auto_injected: false,
+            },
+            RuleSpecInput {
+                label: "TaggedInputs".to_string(),
+                category: "Proc".to_string(),
+                syntax: vec![
+                    SyntaxItemSpec::Terminal("with".to_string()),
+                    SyntaxItemSpec::Sep {
+                        body: Box::new(SyntaxItemSpec::Zip {
+                            left_name: "ns".to_string(),
+                            right_name: "xs".to_string(),
+                            left_category: "Name".to_string(),
+                            right_category: "Proc".to_string(),
+                            body: Box::new(SyntaxItemSpec::Map {
+                                body_items: vec![
+                                    SyntaxItemSpec::NonTerminal {
+                                        category: "Name".to_string(),
+                                        param_name: "n".to_string(),
+                                    },
+                                    SyntaxItemSpec::Terminal("?".to_string()),
+                                    SyntaxItemSpec::Binder {
+                                        param_name: "x".to_string(),
+                                        category: "Proc".to_string(),
+                                        is_multi: false,
+                                    },
+                                ],
+                            }),
+                        }),
+                        separator: ",".to_string(),
+                        kind: crate::grammar::ir::CollectionKind::Vec,
+                    },
+                    SyntaxItemSpec::Terminal(".".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Proc".to_string(),
+                        param_name: "body".to_string(),
+                    },
+                ],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+                source_location: None,
+                is_auto_injected: false,
+            },
+            RuleSpecInput {
+                label: "NQuote".to_string(),
+                category: "Name".to_string(),
+                syntax: vec![
+                    SyntaxItemSpec::Terminal("@".to_string()),
+                    SyntaxItemSpec::Terminal("(".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Proc".to_string(),
+                        param_name: "p".to_string(),
+                    },
+                    SyntaxItemSpec::Terminal(")".to_string()),
+                ],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+                source_location: None,
+                is_auto_injected: false,
+            },
+        ];
+
+        LanguageSpec::new("NestedZipCollection".to_string(), types, inputs)
+    }
+
     /// Build a grammar with an unreachable category: Expr has rules, Orphan has rules
     /// but nothing references Orphan.
     fn orphan_grammar_spec() -> LanguageSpec {
@@ -2923,11 +3028,13 @@ mod tests {
 
         // Should have both Expr and Type category entries
         assert!(
-            wpds.symbol_index.contains_key(&StackSymbol::category_entry("Expr")),
+            wpds.symbol_index
+                .contains_key(&StackSymbol::category_entry("Expr")),
             "should have Expr entry symbol"
         );
         assert!(
-            wpds.symbol_index.contains_key(&StackSymbol::category_entry("Type")),
+            wpds.symbol_index
+                .contains_key(&StackSymbol::category_entry("Type")),
             "should have Type entry symbol"
         );
     }
@@ -2948,10 +3055,7 @@ mod tests {
             })
             .count();
 
-        assert_eq!(
-            push_to_orphan, 0,
-            "no rule should push to Orphan category"
-        );
+        assert_eq!(push_to_orphan, 0, "no rule should push to Orphan category");
     }
 
     // ── Phase 2: poststar reachability ──
@@ -2984,10 +3088,7 @@ mod tests {
         let expr_sym = StackSymbol::category_entry("Expr");
         let type_sym = StackSymbol::category_entry("Type");
 
-        assert!(
-            !post.symbol_weight(&expr_sym).is_zero(),
-            "Expr should be reachable"
-        );
+        assert!(!post.symbol_weight(&expr_sym).is_zero(), "Expr should be reachable");
         assert!(
             !post.symbol_weight(&type_sym).is_zero(),
             "Type should be reachable (called by Cast rule in Expr)"
@@ -3004,10 +3105,7 @@ mod tests {
 
         // Expr should be reachable
         let expr_sym = StackSymbol::category_entry("Expr");
-        assert!(
-            !post.symbol_weight(&expr_sym).is_zero(),
-            "Expr should be reachable"
-        );
+        assert!(!post.symbol_weight(&expr_sym).is_zero(), "Expr should be reachable");
 
         // Orphan should NOT be reachable (no rule calls it)
         let orphan_sym = StackSymbol::category_entry("Orphan");
@@ -3028,10 +3126,7 @@ mod tests {
         // Expr should have finite weight
         let expr_sym = StackSymbol::category_entry("Expr");
         let w = post.symbol_weight(&expr_sym);
-        assert!(
-            !w.is_zero(),
-            "Expr should have non-zero tropical weight"
-        );
+        assert!(!w.is_zero(), "Expr should have non-zero tropical weight");
     }
 
     #[test]
@@ -3045,11 +3140,7 @@ mod tests {
         // Expr should have counting weight >= 1 (at least one derivation path)
         let expr_sym = StackSymbol::category_entry("Expr");
         let w = post.symbol_weight(&expr_sym);
-        assert!(
-            !w.is_zero(),
-            "Expr should have non-zero counting weight, got {:?}",
-            w
-        );
+        assert!(!w.is_zero(), "Expr should have non-zero counting weight, got {:?}", w);
     }
 
     // ── Phase 3: Stringsum ──
@@ -3061,9 +3152,7 @@ mod tests {
         let wpds: Wpds<CountingWeight> = build_wpds(&spec, &wfsts, |_| CountingWeight::one());
         let post = poststar(&wpds);
 
-        let input = StringsumInput {
-            tokens: vec!["42".to_string()],
-        };
+        let input = StringsumInput { tokens: vec!["42".to_string()] };
 
         let result = stringsum(&wpds, &post, &input, &spec);
 
@@ -3082,10 +3171,7 @@ mod tests {
         let analysis = analyze_wpds(&spec, &wfsts);
 
         assert_eq!(analysis.grammar_name, "Calculator");
-        assert!(
-            analysis.reachable_categories.contains("Expr"),
-            "Expr should be reachable"
-        );
+        assert!(analysis.reachable_categories.contains("Expr"), "Expr should be reachable");
         assert!(
             analysis.unreachable_rules.is_empty(),
             "calculator should have no unreachable rules: {:?}",
@@ -3100,10 +3186,7 @@ mod tests {
 
         let analysis = analyze_wpds(&spec, &wfsts);
 
-        assert!(
-            analysis.reachable_categories.contains("Expr"),
-            "Expr should be reachable"
-        );
+        assert!(analysis.reachable_categories.contains("Expr"), "Expr should be reachable");
         // Orphan category should not be reachable
         assert!(
             !analysis.reachable_categories.contains("Orphan"),
@@ -3127,10 +3210,7 @@ mod tests {
 
         let analysis = analyze_wpds(&spec, &wfsts);
 
-        assert!(
-            analysis.reachable_categories.contains("Expr"),
-            "Expr should be reachable"
-        );
+        assert!(analysis.reachable_categories.contains("Expr"), "Expr should be reachable");
         assert!(
             analysis.reachable_categories.contains("Type"),
             "Type should be reachable (called from Cast rule)"
@@ -3138,6 +3218,28 @@ mod tests {
         assert!(
             analysis.unreachable_rules.is_empty(),
             "typed grammar should have no unreachable rules: {:?}",
+            analysis.unreachable_rules
+        );
+    }
+
+    #[test]
+    fn test_analyze_wpds_nested_zip_collection_reaches_element_category() {
+        let spec = nested_zip_collection_spec();
+        let wfsts = HashMap::new();
+
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        assert!(
+            analysis.reachable_categories.contains("Name"),
+            "Name should be reachable through nested Sep(Zip(Map(...))) body: {:?}",
+            analysis.reachable_categories
+        );
+        assert!(
+            !analysis
+                .unreachable_rules
+                .iter()
+                .any(|rule| rule.rule_label == "NQuote"),
+            "NQuote should not be WPDS-unreachable: {:?}",
             analysis.unreachable_rules
         );
     }
@@ -3212,12 +3314,12 @@ mod tests {
         assert!(
             cg.edges.is_empty(),
             "calculator should have no cross-category call edges, got {:?}",
-            cg.edges.iter().map(|e| format!("{}→{}", e.caller_cat, e.callee_cat)).collect::<Vec<_>>()
+            cg.edges
+                .iter()
+                .map(|e| format!("{}→{}", e.caller_cat, e.callee_cat))
+                .collect::<Vec<_>>()
         );
-        assert!(
-            cg.categories.contains("Expr"),
-            "Expr should be in the call graph categories"
-        );
+        assert!(cg.categories.contains("Expr"), "Expr should be in the call graph categories");
     }
 
     #[test]
@@ -3228,10 +3330,7 @@ mod tests {
         let wpds: Wpds<BooleanWeight> = build_wpds(&spec, &wfsts, |_| BooleanWeight::one());
         let cg = extract_call_graph(&wpds);
 
-        assert!(
-            !cg.edges.is_empty(),
-            "typed grammar should have cross-category call edges"
-        );
+        assert!(!cg.edges.is_empty(), "typed grammar should have cross-category call edges");
         let expr_to_type = cg
             .edges
             .iter()
@@ -3239,7 +3338,10 @@ mod tests {
         assert!(
             expr_to_type.is_some(),
             "should have Expr→Type edge, got: {:?}",
-            cg.edges.iter().map(|e| format!("{}→{}", e.caller_cat, e.callee_cat)).collect::<Vec<_>>()
+            cg.edges
+                .iter()
+                .map(|e| format!("{}→{}", e.caller_cat, e.callee_cat))
+                .collect::<Vec<_>>()
         );
         assert!(
             expr_to_type.expect("just checked").call_sites >= 1,
@@ -3273,7 +3375,10 @@ mod tests {
         assert!(
             orphan_edges.is_empty(),
             "Orphan should have no call edges, got {:?}",
-            orphan_edges.iter().map(|e| format!("{}→{}", e.caller_cat, e.callee_cat)).collect::<Vec<_>>()
+            orphan_edges
+                .iter()
+                .map(|e| format!("{}→{}", e.caller_cat, e.callee_cat))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3343,7 +3448,9 @@ mod tests {
         let wfsts = HashMap::new();
         let analysis = analyze_wpds(&spec, &wfsts);
 
-        let expr_bounds = analysis.depth_bounds.get("Expr")
+        let expr_bounds = analysis
+            .depth_bounds
+            .get("Expr")
             .expect("Expr should have depth bounds");
         assert_eq!(expr_bounds.min_depth, 0, "primary category should have min_depth=0");
     }
@@ -3354,11 +3461,15 @@ mod tests {
         let wfsts = HashMap::new();
         let analysis = analyze_wpds(&spec, &wfsts);
 
-        let expr_bounds = analysis.depth_bounds.get("Expr")
+        let expr_bounds = analysis
+            .depth_bounds
+            .get("Expr")
             .expect("Expr should have depth bounds");
         assert_eq!(expr_bounds.min_depth, 0, "primary Expr should have min_depth=0");
 
-        let type_bounds = analysis.depth_bounds.get("Type")
+        let type_bounds = analysis
+            .depth_bounds
+            .get("Type")
             .expect("Type should have depth bounds");
         assert_eq!(type_bounds.min_depth, 1, "Type called from Expr should have min_depth=1");
         assert!(!type_bounds.is_recursive, "Type should not be recursive");
@@ -3372,8 +3483,10 @@ mod tests {
 
         // Orphan has no incoming edges, so it should have max_depth = None (unreachable)
         if let Some(orphan_bounds) = analysis.depth_bounds.get("Orphan") {
-            assert!(orphan_bounds.max_depth.is_none(),
-                "Orphan should have unbounded max_depth (unreachable)");
+            assert!(
+                orphan_bounds.max_depth.is_none(),
+                "Orphan should have unbounded max_depth (unreachable)"
+            );
         }
     }
 
@@ -3388,7 +3501,11 @@ mod tests {
         assert!(
             analysis.cycles.is_empty(),
             "typed grammar (Expr→Type DAG) should have no cycles, got {:?}",
-            analysis.cycles.iter().map(|c| format!("{:?}: {:?}", c.kind, c.categories)).collect::<Vec<_>>()
+            analysis
+                .cycles
+                .iter()
+                .map(|c| format!("{:?}: {:?}", c.kind, c.categories))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -3399,10 +3516,7 @@ mod tests {
         let wfsts = HashMap::new();
         let analysis = analyze_wpds(&spec, &wfsts);
 
-        assert!(
-            analysis.cycles.is_empty(),
-            "calculator should have no cross-category cycles"
-        );
+        assert!(analysis.cycles.is_empty(), "calculator should have no cross-category cycles");
     }
 
     /// Build a mutual-recursion grammar: Expr → "x" | Decl "in" Expr; Decl → "let" Expr
@@ -3491,16 +3605,12 @@ mod tests {
             !analysis.cycles.is_empty(),
             "mutual recursion grammar should have at least one cycle"
         );
-        let mutual_cycle = analysis.cycles.iter()
-            .find(|c| c.kind == CycleKind::Mutual);
-        assert!(
-            mutual_cycle.is_some(),
-            "should have a Mutual cycle, got: {:?}",
-            analysis.cycles
-        );
+        let mutual_cycle = analysis.cycles.iter().find(|c| c.kind == CycleKind::Mutual);
+        assert!(mutual_cycle.is_some(), "should have a Mutual cycle, got: {:?}", analysis.cycles);
         let cycle = mutual_cycle.expect("just checked");
         assert!(
-            cycle.categories.contains(&"Expr".to_string()) && cycle.categories.contains(&"Decl".to_string()),
+            cycle.categories.contains(&"Expr".to_string())
+                && cycle.categories.contains(&"Decl".to_string()),
             "mutual cycle should contain both Expr and Decl, got {:?}",
             cycle.categories
         );
@@ -3529,15 +3639,9 @@ mod tests {
 
         // Type is called from Expr.Cast
         let type_contexts = analysis.calling_contexts.get("Type");
-        assert!(
-            type_contexts.is_some(),
-            "Type should have calling contexts"
-        );
+        assert!(type_contexts.is_some(), "Type should have calling contexts");
         let contexts = type_contexts.expect("just checked");
-        assert!(
-            !contexts.is_empty(),
-            "Type should have at least one caller"
-        );
+        assert!(!contexts.is_empty(), "Type should have at least one caller");
         assert!(
             contexts.iter().any(|c| c.caller_category == "Expr"),
             "Type should be called from Expr"
@@ -3569,17 +3673,21 @@ mod tests {
         let wfsts = HashMap::new();
         let analysis = analyze_wpds(&spec, &wfsts);
 
-        let expr_bounds = analysis.depth_bounds.get("Expr")
+        let expr_bounds = analysis
+            .depth_bounds
+            .get("Expr")
             .expect("Expr should have depth bounds");
-        assert!(expr_bounds.is_recursive,
-            "Expr in mutual recursion should be recursive");
-        assert!(expr_bounds.max_depth.is_none(),
-            "recursive Expr should have unbounded max_depth");
+        assert!(expr_bounds.is_recursive, "Expr in mutual recursion should be recursive");
+        assert!(
+            expr_bounds.max_depth.is_none(),
+            "recursive Expr should have unbounded max_depth"
+        );
 
-        let decl_bounds = analysis.depth_bounds.get("Decl")
+        let decl_bounds = analysis
+            .depth_bounds
+            .get("Decl")
             .expect("Decl should have depth bounds");
-        assert!(decl_bounds.is_recursive,
-            "Decl in mutual recursion should be recursive");
+        assert!(decl_bounds.is_recursive, "Decl in mutual recursion should be recursive");
     }
 
     // ── CS-01: Context-sensitive rule tables ──
@@ -3592,15 +3700,9 @@ mod tests {
 
         // Type is called from Expr, so it should have a context rule table
         let type_table = analysis.context_rule_tables.get("Type");
-        assert!(
-            type_table.is_some(),
-            "Type should have a context rule table (called from Expr)"
-        );
+        assert!(type_table.is_some(), "Type should have a context rule table (called from Expr)");
         let table = type_table.expect("just checked");
-        assert!(
-            !table.entries.is_empty(),
-            "Type context rule table should have entries"
-        );
+        assert!(!table.entries.is_empty(), "Type context rule table should have entries");
         // Should have entries for "Expr" (caller) and "top-level"
         assert!(
             table.entries.iter().any(|e| e.context_tag == "Expr"),
@@ -3672,15 +3774,9 @@ mod tests {
 
         // Each edge should have BP hints (0 = prefix, 1 = non-prefix)
         for ((caller, callee), bp_values) in &analysis.cross_category_bp {
-            assert!(
-                !bp_values.is_empty(),
-                "BP values for {caller}→{callee} should not be empty"
-            );
+            assert!(!bp_values.is_empty(), "BP values for {caller}→{callee} should not be empty");
             for &bp in bp_values {
-                assert!(
-                    bp <= 1,
-                    "BP hint should be 0 (prefix) or 1 (non-prefix), got {bp}"
-                );
+                assert!(bp <= 1, "BP hint should be 0 (prefix) or 1 (non-prefix), got {bp}");
             }
         }
     }
@@ -3695,10 +3791,7 @@ mod tests {
         for ((_caller, _callee), bp_values) in &analysis.cross_category_bp {
             // After dedup, no adjacent duplicates
             for window in bp_values.windows(2) {
-                assert_ne!(
-                    window[0], window[1],
-                    "BP values should be deduplicated"
-                );
+                assert_ne!(window[0], window[1], "BP values should be deduplicated");
             }
         }
     }
@@ -3718,10 +3811,7 @@ mod tests {
             .get("Expr")
             .copied()
             .unwrap_or(false);
-        assert!(
-            expr_unambiguous,
-            "top-level-only category should be context-unambiguous"
-        );
+        assert!(expr_unambiguous, "top-level-only category should be context-unambiguous");
     }
 
     #[test]
@@ -3760,10 +3850,7 @@ mod tests {
 
         // Orphan, if present, should also be unambiguous (no callers)
         if let Some(&unambiguous) = analysis.context_unambiguous.get("Orphan") {
-            assert!(
-                unambiguous,
-                "orphan category with no callers should be context-unambiguous"
-            );
+            assert!(unambiguous, "orphan category with no callers should be context-unambiguous");
         }
     }
 
@@ -3819,10 +3906,7 @@ mod tests {
         bij.insert("RD_Add_0".to_string(), sym.clone());
 
         assert_eq!(bij.frame_variant_to_stack_symbol("RD_Add_0"), Some(&sym));
-        assert_eq!(
-            bij.stack_symbol_to_frame_variant(&sym),
-            Some(&"RD_Add_0".to_string())
-        );
+        assert_eq!(bij.stack_symbol_to_frame_variant(&sym), Some(&"RD_Add_0".to_string()));
         assert!(bij.is_complete());
     }
 
@@ -3837,26 +3921,11 @@ mod tests {
     #[test]
     fn test_cek_bijection_multiple_entries() {
         let mut bij = CekWpdsBijection::new();
-        bij.insert(
-            "InfixRHS".to_string(),
-            StackSymbol::rule_position("Expr", "__infix__", 1),
-        );
-        bij.insert(
-            "GroupClose".to_string(),
-            StackSymbol::rule_position("Expr", "__group__", 1),
-        );
-        bij.insert(
-            "UnaryPrefix_Neg".to_string(),
-            StackSymbol::rule_position("Expr", "Neg", 1),
-        );
-        bij.insert(
-            "RD_Let_0".to_string(),
-            StackSymbol::rule_position("Expr", "Let", 1),
-        );
-        bij.insert(
-            "RD_Let_1".to_string(),
-            StackSymbol::rule_position("Expr", "Let", 2),
-        );
+        bij.insert("InfixRHS".to_string(), StackSymbol::rule_position("Expr", "__infix__", 1));
+        bij.insert("GroupClose".to_string(), StackSymbol::rule_position("Expr", "__group__", 1));
+        bij.insert("UnaryPrefix_Neg".to_string(), StackSymbol::rule_position("Expr", "Neg", 1));
+        bij.insert("RD_Let_0".to_string(), StackSymbol::rule_position("Expr", "Let", 1));
+        bij.insert("RD_Let_1".to_string(), StackSymbol::rule_position("Expr", "Let", 2));
 
         assert_eq!(bij.len(), 5);
         assert!(bij.is_complete());

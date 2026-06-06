@@ -82,7 +82,11 @@ fn detect_cubic_transitivity(lang: &LanguageDef) -> Vec<AntipatternWarning> {
             .iter()
             .filter_map(|h| {
                 if let ascent_syntax_export::HeadItemNode::HeadClause(cl) = h {
-                    let args: Vec<String> = cl.args.iter().map(|a| quote::quote!(#a).to_string()).collect();
+                    let args: Vec<String> = cl
+                        .args
+                        .iter()
+                        .map(|a| quote::quote!(#a).to_string())
+                        .collect();
                     Some((cl.rel.to_string(), args))
                 } else {
                     None
@@ -296,22 +300,31 @@ fn detect_deep_congruence_chains(lang: &LanguageDef) -> Vec<AntipatternWarning> 
                 GrammarItem::NonTerminal { ident, .. } => {
                     let target = ident.to_string();
                     if category_set.contains(&target) {
-                        field_graph.entry(src_cat.clone()).or_default().insert(target);
+                        field_graph
+                            .entry(src_cat.clone())
+                            .or_default()
+                            .insert(target);
                     }
-                }
+                },
                 GrammarItem::Binder { category } => {
                     let target = category.to_string();
                     if category_set.contains(&target) {
-                        field_graph.entry(src_cat.clone()).or_default().insert(target);
+                        field_graph
+                            .entry(src_cat.clone())
+                            .or_default()
+                            .insert(target);
                     }
-                }
+                },
                 GrammarItem::Collection { element_type, .. } => {
                     let target = element_type.to_string();
                     if category_set.contains(&target) {
-                        field_graph.entry(src_cat.clone()).or_default().insert(target);
+                        field_graph
+                            .entry(src_cat.clone())
+                            .or_default()
+                            .insert(target);
                     }
-                }
-                GrammarItem::Terminal(_) => {}
+                },
+                GrammarItem::Terminal(_) => {},
             }
         }
 
@@ -319,7 +332,10 @@ fn detect_deep_congruence_chains(lang: &LanguageDef) -> Vec<AntipatternWarning> 
         if let Some(params) = &rule.term_context {
             for param in params {
                 let targets = collect_category_refs_from_term_param(param, &category_set);
-                field_graph.entry(src_cat.clone()).or_default().extend(targets);
+                field_graph
+                    .entry(src_cat.clone())
+                    .or_default()
+                    .extend(targets);
             }
         }
     }
@@ -353,13 +369,7 @@ fn detect_deep_congruence_chains(lang: &LanguageDef) -> Vec<AntipatternWarning> 
 
     for cat in &category_set {
         if !max_depths.contains_key(cat) {
-            compute_chain_depth(
-                cat,
-                &field_graph,
-                &mut max_depths,
-                &mut visited,
-                &mut on_stack,
-            );
+            compute_chain_depth(cat, &field_graph, &mut max_depths, &mut visited, &mut on_stack);
         }
     }
 
@@ -413,7 +423,7 @@ fn collect_category_refs_from_term_param(
         TermParam::Simple { ty, .. } => collect_category_refs_from_type_expr(ty, category_set),
         TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
             collect_category_refs_from_type_expr(ty, category_set)
-        }
+        },
         TermParam::GuardBody { .. } => Vec::new(),
         TermParam::Optional { params: inner } => {
             // Opt-Group: an Optional contributes the union of inner-param
@@ -426,7 +436,7 @@ fn collect_category_refs_from_term_param(
                 refs.extend(collect_category_refs_from_term_param(p, category_set));
             }
             refs
-        }
+        },
     }
 }
 
@@ -443,26 +453,22 @@ fn collect_category_refs_from_type_expr(
             } else {
                 Vec::new()
             }
-        }
+        },
         TypeExpr::Arrow { domain, codomain } => {
             let mut refs = collect_category_refs_from_type_expr(domain, category_set);
             refs.extend(collect_category_refs_from_type_expr(codomain, category_set));
             refs
-        }
-        TypeExpr::MultiBinder(inner) => {
-            collect_category_refs_from_type_expr(inner, category_set)
-        }
+        },
+        TypeExpr::MultiBinder(inner) => collect_category_refs_from_type_expr(inner, category_set),
         TypeExpr::Collection { element, .. } => {
             collect_category_refs_from_type_expr(element, category_set)
-        }
+        },
         TypeExpr::Map { key, value } => {
             let mut refs = collect_category_refs_from_type_expr(key, category_set);
             refs.extend(collect_category_refs_from_type_expr(value, category_set));
             refs
-        }
-        TypeExpr::Refined { base, .. } => {
-            collect_category_refs_from_type_expr(base, category_set)
-        }
+        },
+        TypeExpr::Refined { base, .. } => collect_category_refs_from_type_expr(base, category_set),
     }
 }
 
@@ -606,29 +612,16 @@ fn detect_clone_storm(lang: &LanguageDef) -> Vec<AntipatternWarning> {
 
         // Check old-style grammar items for collection fields
         for item in &rule.items {
-            if let GrammarItem::Collection {
-                coll_type,
-                element_type,
-                ..
-            } = item
-            {
+            if let GrammarItem::Collection { coll_type, element_type, .. } = item {
                 if warned.insert((constructor.clone(), category.clone())) {
-                    let coll_name = match coll_type {
-                        CollectionType::Vec => "Vec",
-                        CollectionType::HashBag | CollectionType::HashMap => "HashBag",
-                        CollectionType::HashSet => "HashSet",
-                        CollectionType::HashMap => "HashMap",
-                    };
+                    let coll_name = collection_type_name(coll_type);
                     warnings.push(AntipatternWarning {
                         code: "C-AP05",
                         message: format!(
                             "clone storm: constructor `{}` (category `{}`) has a `{}({})` \
                              collection field — congruence rules will clone the entire \
                              collection on every rule firing",
-                            constructor,
-                            category,
-                            coll_name,
-                            element_type,
+                            constructor, category, coll_name, element_type,
                         ),
                         hint: Some(format!(
                             "consider wrapping the collection field in `Rc<{}<{}>>` or \
@@ -689,7 +682,7 @@ fn extract_collection_from_param(param: &TermParam) -> Option<(String, String)> 
                 }
             }
             return None;
-        }
+        },
     };
     extract_collection_from_type_expr(ty)
 }
@@ -698,15 +691,19 @@ fn extract_collection_from_param(param: &TermParam) -> Option<(String, String)> 
 fn extract_collection_from_type_expr(ty: &TypeExpr) -> Option<(String, String)> {
     match ty {
         TypeExpr::Collection { coll_type, element } => {
-            let coll_name = match coll_type {
-                CollectionType::Vec => "Vec",
-                CollectionType::HashBag | CollectionType::HashMap => "HashBag",
-                CollectionType::HashSet => "HashSet",
-                CollectionType::HashMap => "HashMap",
-            };
+            let coll_name = collection_type_name(coll_type);
             Some((coll_name.to_string(), element.to_string()))
-        }
+        },
         _ => None,
+    }
+}
+
+fn collection_type_name(coll_type: &CollectionType) -> &'static str {
+    match coll_type {
+        CollectionType::Vec => "Vec",
+        CollectionType::HashBag => "HashBag",
+        CollectionType::HashSet => "HashSet",
+        CollectionType::HashMap => "HashMap",
     }
 }
 
@@ -772,10 +769,7 @@ mod tests {
             .collect();
 
         let mut lang = minimal_lang();
-        lang.logic = Some(LogicBlock {
-            relations,
-            content: tokens,
-        });
+        lang.logic = Some(LogicBlock { relations, content: tokens });
         lang
     }
 
@@ -808,10 +802,7 @@ mod tests {
         );
 
         let warnings = detect_cubic_transitivity(&lang);
-        assert!(
-            !warnings.is_empty(),
-            "should detect transitivity pattern in path relation"
-        );
+        assert!(!warnings.is_empty(), "should detect transitivity pattern in path relation");
         assert!(warnings.iter().all(|w| w.code == "C-AP01"));
         assert!(warnings[0].message.contains("path"));
         assert!(warnings[0].message.contains("cubic transitivity"));
@@ -860,10 +851,7 @@ mod tests {
         );
 
         let warnings = detect_extension_along_equality(&lang);
-        assert!(
-            !warnings.is_empty(),
-            "should detect extension-along-equality with eq_proc"
-        );
+        assert!(!warnings.is_empty(), "should detect extension-along-equality with eq_proc");
         assert!(warnings.iter().all(|w| w.code == "C-AP02"));
         assert!(warnings[0].message.contains("eq_proc"));
     }
@@ -900,13 +888,11 @@ mod tests {
     #[test]
     fn cap03_detects_self_recursive_category() {
         let mut lang = minimal_lang();
-        lang.types = vec![
-            LangType {
-                name: make_ident("Expr"),
-                native_type: None,
-                collection_kind: None,
-            },
-        ];
+        lang.types = vec![LangType {
+            name: make_ident("Expr"),
+            native_type: None,
+            collection_kind: None,
+        }];
         // Constructor: Add . Expr ::= Expr "+" Expr ;
         lang.terms = vec![GrammarRule {
             label: make_ident("Add"),
@@ -929,10 +915,7 @@ mod tests {
         }];
 
         let warnings = detect_deep_congruence_chains(&lang);
-        assert!(
-            !warnings.is_empty(),
-            "should detect self-recursive constructor field"
-        );
+        assert!(!warnings.is_empty(), "should detect self-recursive constructor field");
         assert!(warnings.iter().any(|w| w.code == "C-AP03"));
         assert!(warnings[0].message.contains("self-recursive"));
     }
@@ -1040,7 +1023,6 @@ mod tests {
                 args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
             }),
             is_auto_injected: false,
-
         }];
 
         let warnings = detect_unbounded_rewrite_growth(&lang);
@@ -1111,7 +1093,6 @@ mod tests {
                     args: vec![Pattern::Term(PatternTerm::Var(make_ident("P")))],
                 }),
                 is_auto_injected: false,
-
             },
             mettail_ast::language::RewriteRule {
                 name: make_ident("UnwrapAll"),
@@ -1123,7 +1104,6 @@ mod tests {
                 }),
                 right: Pattern::Term(PatternTerm::Var(make_ident("P"))),
                 is_auto_injected: false,
-
             },
         ];
 
@@ -1167,13 +1147,45 @@ mod tests {
         }];
 
         let warnings = detect_clone_storm(&lang);
-        assert!(
-            !warnings.is_empty(),
-            "should detect collection field in constructor"
-        );
+        assert!(!warnings.is_empty(), "should detect collection field in constructor");
         assert!(warnings.iter().all(|w| w.code == "C-AP05"));
         assert!(warnings[0].message.contains("PPar"));
         assert!(warnings[0].message.contains("HashBag"));
+    }
+
+    #[test]
+    fn cap05_reports_hashmap_collection_field_as_hashmap() {
+        let mut lang = minimal_lang();
+        lang.types = vec![LangType {
+            name: make_ident("Proc"),
+            native_type: None,
+            collection_kind: None,
+        }];
+        lang.terms = vec![GrammarRule {
+            label: make_ident("PMap"),
+            category: make_ident("Proc"),
+            items: vec![GrammarItem::Collection {
+                coll_type: CollectionType::HashMap,
+                element_type: make_ident("Proc"),
+                separator: ",".to_string(),
+                delimiters: None,
+            }],
+            bindings: Vec::new(),
+            term_context: None,
+            syntax_pattern: None,
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
+        }];
+
+        let warnings = detect_clone_storm(&lang);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].message.contains("HashMap(Proc)"));
+        assert!(!warnings[0].message.contains("HashBag(Proc)"));
     }
 
     #[test]

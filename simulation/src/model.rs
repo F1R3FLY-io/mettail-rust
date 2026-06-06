@@ -228,9 +228,7 @@ impl LanguageStateMachine {
         let channels: Vec<ModelChannel> = metadata
             .channels()
             .iter()
-            .map(|c| ModelChannel {
-                category: c.category.to_string(),
-            })
+            .map(|c| ModelChannel { category: c.category.to_string() })
             .collect();
 
         let join_patterns: Vec<ModelJoinPattern> = metadata
@@ -284,10 +282,7 @@ impl LanguageStateMachine {
     /// These are equations without freshness or relation conditions,
     /// representing unconditional axioms of the language.
     pub fn unconditional_equation_count(&self) -> usize {
-        self.equations
-            .iter()
-            .filter(|e| !e.has_conditions)
-            .count()
+        self.equations.iter().filter(|e| !e.has_conditions).count()
     }
 
     /// Get all rewrite rule names (including None for unnamed rules).
@@ -337,10 +332,9 @@ impl LanguageStateMachine {
     /// whose `handled_types` is empty (i.e., the `for [...]` clause was
     /// omitted in the source) is treated as handling *all* categories.
     pub fn theory_for(&self, category: &str) -> Option<&ModelTheory> {
-        self.theories.iter().find(|t| {
-            t.handled_types.is_empty()
-                || t.handled_types.iter().any(|c| c == category)
-        })
+        self.theories
+            .iter()
+            .find(|t| t.handled_types.is_empty() || t.handled_types.iter().any(|c| c == category))
     }
 
     /// Number of rewrite rules that are guarded.
@@ -377,8 +371,7 @@ impl LanguageStateMachine {
     /// Languages without a `guards { }` block produce empty vectors
     /// for the guard-related fields — same as `from_metadata`.
     pub fn from_def(def: &mettail_ast::language::LanguageDef) -> Self {
-        let categories: Vec<String> =
-            def.types.iter().map(|t| t.name.to_string()).collect();
+        let categories: Vec<String> = def.types.iter().map(|t| t.name.to_string()).collect();
 
         let rewrite_rules: Vec<ModelRewriteRule> = def
             .rewrites
@@ -391,9 +384,10 @@ impl LanguageStateMachine {
                 // rules are auto-generated downstream by the macro
                 // pipeline and never appear directly in `def.rewrites`.
                 is_congruence: false,
-                is_guarded: rw.premises.iter().any(|p| {
-                    matches!(p, mettail_ast::language::Premise::BehavioralGuard(_))
-                }),
+                is_guarded: rw
+                    .premises
+                    .iter()
+                    .any(|p| matches!(p, mettail_ast::language::Premise::BehavioralGuard(_))),
             })
             .collect();
 
@@ -404,32 +398,28 @@ impl LanguageStateMachine {
                 lhs_display: format!("{:?}", eq.left),
                 rhs_display: format!("{:?}", eq.right),
                 has_conditions: !eq.premises.is_empty(),
-                is_guarded: eq.premises.iter().any(|p| {
-                    matches!(p, mettail_ast::language::Premise::BehavioralGuard(_))
-                }),
+                is_guarded: eq
+                    .premises
+                    .iter()
+                    .any(|p| matches!(p, mettail_ast::language::Premise::BehavioralGuard(_))),
             })
             .collect();
 
         // Guard configuration extraction. When `guard_config` is
         // None, all guard-related fields are empty (the no-guards
         // path mirrors `from_metadata`'s behavior).
-        let (
-            builtin_predicates,
-            theories,
-            channels,
-            join_patterns,
-            connectives,
-        ) = if let Some(gc) = &def.guard_config {
-            (
-                builtin_predicates_from_def(gc),
-                theories_from_def(gc),
-                channels_from_def(gc),
-                join_patterns_from_def(gc),
-                connectives_from_def(gc),
-            )
-        } else {
-            (vec![], vec![], vec![], vec![], vec![])
-        };
+        let (builtin_predicates, theories, channels, join_patterns, connectives) =
+            if let Some(gc) = &def.guard_config {
+                (
+                    builtin_predicates_from_def(gc),
+                    theories_from_def(gc),
+                    channels_from_def(gc),
+                    join_patterns_from_def(gc),
+                    connectives_from_def(gc),
+                )
+            } else {
+                (vec![], vec![], vec![], vec![], vec![])
+            };
 
         LanguageStateMachine {
             categories,
@@ -474,9 +464,7 @@ fn builtin_predicates_from_def(
         .unwrap_or_default()
 }
 
-fn theories_from_def(
-    gc: &mettail_ast::language::GuardConfig,
-) -> Vec<ModelTheory> {
+fn theories_from_def(gc: &mettail_ast::language::GuardConfig) -> Vec<ModelTheory> {
     gc.theories
         .iter()
         .map(|t| ModelTheory {
@@ -491,25 +479,19 @@ fn theories_from_def(
         .collect()
 }
 
-fn channels_from_def(
-    gc: &mettail_ast::language::GuardConfig,
-) -> Vec<ModelChannel> {
+fn channels_from_def(gc: &mettail_ast::language::GuardConfig) -> Vec<ModelChannel> {
     gc.channels
         .as_ref()
         .map(|cc| {
             cc.channel_categories
                 .iter()
-                .map(|c| ModelChannel {
-                    category: c.category.to_string(),
-                })
+                .map(|c| ModelChannel { category: c.category.to_string() })
                 .collect()
         })
         .unwrap_or_default()
 }
 
-fn join_patterns_from_def(
-    gc: &mettail_ast::language::GuardConfig,
-) -> Vec<ModelJoinPattern> {
+fn join_patterns_from_def(gc: &mettail_ast::language::GuardConfig) -> Vec<ModelJoinPattern> {
     gc.channels
         .as_ref()
         .map(|cc| {
@@ -528,9 +510,7 @@ fn join_patterns_from_def(
         .unwrap_or_default()
 }
 
-fn connectives_from_def(
-    gc: &mettail_ast::language::GuardConfig,
-) -> Vec<ModelConnective> {
+fn connectives_from_def(gc: &mettail_ast::language::GuardConfig) -> Vec<ModelConnective> {
     gc.connectives
         .as_ref()
         .map(|decls| {
@@ -574,10 +554,7 @@ pub enum ModelOp {
 /// # Returns
 ///
 /// A boxed proptest strategy producing `Vec<ModelOp>`.
-pub fn arb_model_ops(
-    model: &LanguageStateMachine,
-    max_ops: usize,
-) -> BoxedStrategy<Vec<ModelOp>> {
+pub fn arb_model_ops(model: &LanguageStateMachine, max_ops: usize) -> BoxedStrategy<Vec<ModelOp>> {
     let num_rules = model.rewrite_rules.len();
 
     // Build a strategy for a single ModelOp.
@@ -612,8 +589,7 @@ pub fn arb_model_ops(
 mod tests {
     use super::*;
     use mettail_runtime::{
-        EquationDef, LanguageMetadata, LogicRelationDef, LogicRuleDef, RewriteDef, TermDef,
-        TypeDef,
+        EquationDef, LanguageMetadata, LogicRelationDef, LogicRuleDef, RewriteDef, TermDef, TypeDef,
     };
 
     /// Stub metadata for Calculator-like language with known structure.
@@ -1129,14 +1105,8 @@ mod tests {
     }];
 
     static GUARDED_CONNECTIVES: &[ConnectiveDef] = &[
-        ConnectiveDef {
-            role: "and",
-            keywords: &["and", "∧"],
-        },
-        ConnectiveDef {
-            role: "not",
-            keywords: &["not", "¬"],
-        },
+        ConnectiveDef { role: "and", keywords: &["and", "∧"] },
+        ConnectiveDef { role: "not", keywords: &["not", "¬"] },
     ];
 
     impl LanguageMetadata for GuardedStubMetadata {
@@ -1203,10 +1173,7 @@ mod tests {
         assert_eq!(model.theories[0].theory_type, "PresburgerAlgebra");
         assert_eq!(model.theories[0].handled_types, vec!["Int".to_string()]);
         assert_eq!(model.theories[1].name, "patterns");
-        assert_eq!(
-            model.theories[1].handled_types,
-            vec!["Proc".to_string(), "Name".to_string()]
-        );
+        assert_eq!(model.theories[1].handled_types, vec!["Proc".to_string(), "Name".to_string()]);
 
         // Channels / joins
         assert_eq!(model.channels.len(), 1);
@@ -1219,10 +1186,7 @@ mod tests {
         // Connectives
         assert_eq!(model.connectives.len(), 2);
         assert_eq!(model.connectives[0].role, "and");
-        assert_eq!(
-            model.connectives[0].keywords,
-            vec!["and".to_string(), "∧".to_string()]
-        );
+        assert_eq!(model.connectives[0].keywords, vec!["and".to_string(), "∧".to_string()]);
         assert_eq!(model.connectives[1].role, "not");
     }
 
@@ -1232,15 +1196,9 @@ mod tests {
         let model = LanguageStateMachine::from_metadata(&metadata);
 
         // Int is handled by `arithmetic`
-        assert_eq!(
-            model.theory_for("Int").map(|t| t.name.as_str()),
-            Some("arithmetic")
-        );
+        assert_eq!(model.theory_for("Int").map(|t| t.name.as_str()), Some("arithmetic"));
         // Proc is handled by `patterns`
-        assert_eq!(
-            model.theory_for("Proc").map(|t| t.name.as_str()),
-            Some("patterns")
-        );
+        assert_eq!(model.theory_for("Proc").map(|t| t.name.as_str()), Some("patterns"));
         // Category not in any `handled_types` returns None
         assert!(model.theory_for("Nonexistent").is_none());
     }
@@ -1391,8 +1349,7 @@ mod tests {
             let def = parse2::<LanguageDef>(input).expect("parse ok");
             let model = LanguageStateMachine::from_def(&def);
             assert_eq!(model.connectives.len(), 2);
-            let roles: Vec<&str> =
-                model.connectives.iter().map(|c| c.role.as_str()).collect();
+            let roles: Vec<&str> = model.connectives.iter().map(|c| c.role.as_str()).collect();
             assert!(roles.contains(&"and"));
             assert!(roles.contains(&"or"));
         }

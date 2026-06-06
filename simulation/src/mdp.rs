@@ -134,10 +134,7 @@ impl MDP {
             "MDP discount factor must be in [0, 1), got {}",
             discount
         );
-        MDP {
-            states: Vec::new(),
-            discount,
-        }
+        MDP { states: Vec::new(), discount }
     }
 
     /// Add a state and return its ID.
@@ -169,7 +166,9 @@ impl MDP {
             self.states[state].name
         );
         let action_id = self.states[state].actions.len();
-        self.states[state].actions.push(ActionDesc::new(action_id, name, outcomes));
+        self.states[state]
+            .actions
+            .push(ActionDesc::new(action_id, name, outcomes));
         action_id
     }
 
@@ -226,7 +225,11 @@ pub struct ValueIterationResult {
 
 impl fmt::Display for ValueIterationResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "ValueIteration: {} iterations, residual={:.2e}", self.iterations, self.residual)?;
+        writeln!(
+            f,
+            "ValueIteration: {} iterations, residual={:.2e}",
+            self.iterations, self.residual
+        )?;
         for (i, (v, p)) in self.values.iter().zip(self.policy.iter()).enumerate() {
             match p {
                 Some(a) => writeln!(f, "  s{}: V={:.4}, action={}", i, v, a)?,
@@ -244,11 +247,7 @@ impl fmt::Display for ValueIterationResult {
 /// is reached.
 ///
 /// Returns the optimal value function and policy.
-pub fn value_iteration(
-    mdp: &MDP,
-    epsilon: f64,
-    max_iterations: usize,
-) -> ValueIterationResult {
+pub fn value_iteration(mdp: &MDP, epsilon: f64, max_iterations: usize) -> ValueIterationResult {
     let n = mdp.num_states();
     let gamma = mdp.discount;
 
@@ -272,7 +271,9 @@ pub fn value_iteration(
             let mut best_action: Option<ActionId> = None;
 
             for action in &state.actions {
-                let q_value: f64 = action.outcomes.iter()
+                let q_value: f64 = action
+                    .outcomes
+                    .iter()
                     .map(|o| o.probability * (o.reward + gamma * values[o.next_state]))
                     .sum();
 
@@ -300,12 +301,7 @@ pub fn value_iteration(
         }
     }
 
-    ValueIterationResult {
-        values,
-        policy,
-        iterations,
-        residual,
-    }
+    ValueIterationResult { values, policy, iterations, residual }
 }
 
 /// Extract the Q-values for all state-action pairs.
@@ -317,7 +313,9 @@ pub fn q_values(mdp: &MDP, values: &[f64]) -> HashMap<(StateId, ActionId), f64> 
 
     for state in &mdp.states {
         for action in &state.actions {
-            let qval: f64 = action.outcomes.iter()
+            let qval: f64 = action
+                .outcomes
+                .iter()
                 .map(|o| o.probability * (o.reward + gamma * values[o.next_state]))
                 .sum();
             q.insert((state.id, action.id), qval);
@@ -385,8 +383,8 @@ pub fn simulate_policy<R: rand::Rng>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
     /// Build a simple grid MDP:
     /// States: 0 (start), 1 (middle), 2 (goal, terminal)
@@ -399,19 +397,10 @@ mod tests {
         let s1 = mdp.add_state("middle");
         let s2 = mdp.add_terminal_state("goal");
 
-        mdp.add_action(s0, "right", vec![
-            Outcome::new(0.8, s1, -1.0),
-            Outcome::new(0.2, s0, -1.0),
-        ]);
+        mdp.add_action(s0, "right", vec![Outcome::new(0.8, s1, -1.0), Outcome::new(0.2, s0, -1.0)]);
 
-        mdp.add_action(s1, "right", vec![
-            Outcome::new(0.9, s2, 10.0),
-            Outcome::new(0.1, s1, -1.0),
-        ]);
-        mdp.add_action(s1, "left", vec![
-            Outcome::new(0.9, s0, -1.0),
-            Outcome::new(0.1, s1, -1.0),
-        ]);
+        mdp.add_action(s1, "right", vec![Outcome::new(0.9, s2, 10.0), Outcome::new(0.1, s1, -1.0)]);
+        mdp.add_action(s1, "left", vec![Outcome::new(0.9, s0, -1.0), Outcome::new(0.1, s1, -1.0)]);
 
         mdp
     }
@@ -449,7 +438,12 @@ mod tests {
         // Q(middle, right) should be higher than Q(middle, left)
         let q_right = q[&(1, 0)];
         let q_left = q[&(1, 1)];
-        assert!(q_right > q_left, "Q(middle, right) = {} should > Q(middle, left) = {}", q_right, q_left);
+        assert!(
+            q_right > q_left,
+            "Q(middle, right) = {} should > Q(middle, left) = {}",
+            q_right,
+            q_left
+        );
     }
 
     #[test]
@@ -461,15 +455,18 @@ mod tests {
         let (trajectory, total_return) = simulate_policy(&mdp, &result.policy, 0, 100, &mut rng);
         assert!(!trajectory.is_empty(), "should have at least one step");
         // Following optimal policy, the agent should eventually reach the goal
-        let final_state = trajectory.last()
-            .map(|(_, _, _)| {
-                // The trajectory records the state the action was taken FROM,
-                // so the final state is the outcome of the last action
-                // We need to check the MDP structure to determine the final state
-                true // At least it ran
-            });
+        let final_state = trajectory.last().map(|(_, _, _)| {
+            // The trajectory records the state the action was taken FROM,
+            // so the final state is the outcome of the last action
+            // We need to check the MDP structure to determine the final state
+            true // At least it ran
+        });
         assert!(final_state.is_some());
         // Total return should be positive (reward 10 at goal outweighs -1 step costs)
-        assert!(total_return > 0.0, "optimal policy should yield positive return, got {}", total_return);
+        assert!(
+            total_return > 0.0,
+            "optimal policy should yield positive return, got {}",
+            total_return
+        );
     }
 }

@@ -81,7 +81,7 @@ impl std::fmt::Display for VerificationProperty {
             VerificationProperty::WeightConsistency => write!(f, "WeightConsistency"),
             VerificationProperty::DispatchDeterminismPreservation => {
                 write!(f, "DispatchDeterminismPreservation")
-            }
+            },
         }
     }
 }
@@ -180,10 +180,7 @@ pub fn verify_composition(
 
     let all_pass = p1.holds && p2.holds && p3.holds && p4.holds;
 
-    CompositionVerificationReport {
-        results: vec![p1, p2, p3, p4],
-        all_pass,
-    }
+    CompositionVerificationReport { results: vec![p1, p2, p3, p4], all_pass }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -255,7 +252,7 @@ fn check_containment(
                     });
                 }
                 continue;
-            }
+            },
         };
 
         // Collect merged actions per token for efficient lookup
@@ -376,14 +373,11 @@ fn verify_weight_consistency(
     const WEIGHT_TOLERANCE: f64 = 1e-9;
 
     for category in shared_categories {
-        let (wfst_a, wfst_b, merged_wfst) = match (
-            wfsts_a.get(category),
-            wfsts_b.get(category),
-            wfsts_merged.get(category),
-        ) {
-            (Some(a), Some(b), Some(m)) => (a, b, m),
-            _ => continue, // Only check categories present in both sources and merged
-        };
+        let (wfst_a, wfst_b, merged_wfst) =
+            match (wfsts_a.get(category), wfsts_b.get(category), wfsts_merged.get(category)) {
+                (Some(a), Some(b), Some(m)) => (a, b, m),
+                _ => continue, // Only check categories present in both sources and merged
+            };
 
         // Build (token, label) -> best weight maps for A, B, and merged
         let weights_a = collect_token_action_weights(wfst_a);
@@ -399,13 +393,13 @@ fn verify_weight_consistency(
                 (Some(wa), Some(wb)) => {
                     // Both sources: expect the minimum (tropical plus)
                     wa.min(wb)
-                }
+                },
                 (Some(wa), None) => wa,
                 (None, Some(wb)) => wb,
                 (None, None) => {
                     // Action not found in either source — this is a P2 issue, skip here
                     continue;
-                }
+                },
             };
 
             if (*merged_best_weight - expected).abs() > WEIGHT_TOLERANCE {
@@ -434,9 +428,7 @@ fn verify_weight_consistency(
 ///
 /// For duplicate `(token, label)` pairs (rare but possible with union),
 /// keeps the minimum weight, consistent with tropical semantics.
-fn collect_token_action_weights(
-    wfst: &PredictionWfst,
-) -> HashMap<(String, String), f64> {
+fn collect_token_action_weights(wfst: &PredictionWfst) -> HashMap<(String, String), f64> {
     let mut weights = HashMap::new();
     for (token_name, _token_id) in wfst.token_map.iter() {
         for action in wfst.predict(token_name) {
@@ -542,10 +534,7 @@ mod tests {
     // ── Test helpers ─────────────────────────────────────────────────────────
 
     /// Build a simple WFST with the given (token, rule_label, weight) triples.
-    fn build_wfst(
-        category: &str,
-        actions: &[(&str, &str, f64)],
-    ) -> PredictionWfst {
+    fn build_wfst(category: &str, actions: &[(&str, &str, f64)]) -> PredictionWfst {
         let token_names: Vec<String> = actions.iter().map(|(t, _, _)| t.to_string()).collect();
         let token_map = TokenIdMap::from_names(token_names.into_iter());
         let mut builder = PredictionWfstBuilder::new(category, token_map);
@@ -563,9 +552,7 @@ mod tests {
     }
 
     /// Build a HashMap of WFSTs from a list of (category, actions) pairs.
-    fn build_wfst_map(
-        entries: &[(&str, &[(&str, &str, f64)])],
-    ) -> HashMap<String, PredictionWfst> {
+    fn build_wfst_map(entries: &[(&str, &[(&str, &str, f64)])]) -> HashMap<String, PredictionWfst> {
         entries
             .iter()
             .map(|(cat, actions)| (cat.to_string(), build_wfst(cat, actions)))
@@ -587,8 +574,7 @@ mod tests {
             wfsts_merged.insert(k.clone(), v.clone());
         }
 
-        let report =
-            verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
+        let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
 
         assert!(report.all_pass, "Expected all properties to pass for disjoint categories");
         for result in &report.results {
@@ -628,15 +614,13 @@ mod tests {
 
     #[test]
     fn test_p1_fails_missing_action() {
-        let wfsts_a =
-            build_wfst_map(&[("Expr", &[("Plus", "Add", 0.0), ("Minus", "Sub", 0.0)])]);
+        let wfsts_a = build_wfst_map(&[("Expr", &[("Plus", "Add", 0.0), ("Minus", "Sub", 0.0)])]);
         let wfsts_b = build_wfst_map(&[]);
 
         // Merged is missing "Sub" action — only has "Plus"
         let wfsts_merged = build_wfst_map(&[("Expr", &[("Plus", "Add", 0.0)])]);
 
-        let report =
-            verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
+        let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
 
         let p1 = report
             .results
@@ -670,8 +654,7 @@ mod tests {
         let wfsts_merged =
             build_wfst_map(&[("Expr", &[("Plus", "Add", 0.0), ("Star", "Phantom", 0.5)])]);
 
-        let report =
-            verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
+        let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
 
         let p2 = report
             .results
@@ -682,10 +665,7 @@ mod tests {
         assert!(!p2.holds, "P2 should fail when merged has phantom actions");
         assert!(!p2.violations.is_empty(), "P2 should have violations");
 
-        let has_phantom_violation = p2
-            .violations
-            .iter()
-            .any(|v| v.message.contains("Phantom"));
+        let has_phantom_violation = p2.violations.iter().any(|v| v.message.contains("Phantom"));
         assert!(
             has_phantom_violation,
             "P2 violation should mention 'Phantom', got: {:?}",
@@ -773,8 +753,7 @@ mod tests {
         let wfsts_merged: HashMap<String, PredictionWfst> =
             [("Expr".to_string(), merged_wfst)].into_iter().collect();
 
-        let report =
-            verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
+        let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
 
         let p4 = report
             .results
@@ -782,10 +761,7 @@ mod tests {
             .find(|r| r.property == VerificationProperty::DispatchDeterminismPreservation)
             .expect("P4 result should exist");
 
-        assert!(
-            !p4.holds,
-            "P4 should detect determinism regression for 'Plus'"
-        );
+        assert!(!p4.holds, "P4 should detect determinism regression for 'Plus'");
         assert!(!p4.violations.is_empty(), "P4 should have violations");
 
         let has_plus_violation = p4
@@ -812,8 +788,7 @@ mod tests {
         let wfsts_merged: HashMap<String, PredictionWfst> =
             [("Expr".to_string(), merged_wfst)].into_iter().collect();
 
-        let report =
-            verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
+        let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
 
         let p4 = report
             .results
@@ -838,8 +813,7 @@ mod tests {
         // Merged is empty — missing the "Expr" category entirely
         let wfsts_merged: HashMap<String, PredictionWfst> = HashMap::new();
 
-        let report =
-            verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
+        let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
 
         let p1 = report
             .results
@@ -880,11 +854,7 @@ mod tests {
         let shared = vec!["Expr".to_string()];
         let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &shared);
 
-        assert!(
-            report.all_pass,
-            "Full round-trip should pass all properties.\n{}",
-            report
-        );
+        assert!(report.all_pass, "Full round-trip should pass all properties.\n{}", report);
     }
 
     // ── Test 11: Display formatting ─────────────────────────────────────────
@@ -895,8 +865,7 @@ mod tests {
         let wfsts_b = build_wfst_map(&[]);
         let wfsts_merged: HashMap<String, PredictionWfst> = HashMap::new();
 
-        let report =
-            verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
+        let report = verify_composition(&wfsts_a, &wfsts_b, &wfsts_merged, &[]);
 
         let display = format!("{}", report);
         assert!(display.contains("Composition Verification Report"));

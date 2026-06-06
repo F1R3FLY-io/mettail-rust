@@ -335,8 +335,12 @@ impl GreenThread {
     ) -> Self {
         let mut thread = Self::with_control(id, category, control);
         for (name, value) in env.iter() {
-            let addr_id = thread.local_store.alloc_with(StoreValue::Simple(value.clone()));
-            thread.eval_bindings.insert(name.clone(), StoreAddr::Local(addr_id));
+            let addr_id = thread
+                .local_store
+                .alloc_with(StoreValue::Simple(value.clone()));
+            thread
+                .eval_bindings
+                .insert(name.clone(), StoreAddr::Local(addr_id));
         }
         thread
     }
@@ -371,9 +375,9 @@ impl GreenThread {
             // CESK: O(1) fork of persistent local store (structural sharing)
             local_store: self.local_store.fork(),
             global_store: Arc::clone(&self.global_store), // Same shared global store
-            eval_bindings: self.eval_bindings.clone(), // O(1) im clone
-            refcount_gc: RefCountGc::new(), // Child starts with fresh refcounts
-            memo_cache: self.memo_cache.clone(), // O(1) im clone, children benefit
+            eval_bindings: self.eval_bindings.clone(),    // O(1) im clone
+            refcount_gc: RefCountGc::new(),               // Child starts with fresh refcounts
+            memo_cache: self.memo_cache.clone(),          // O(1) im clone, children benefit
             step_count: 0,
             step_limit: self.step_limit,
             pending_fork: None,
@@ -425,9 +429,7 @@ impl GreenThread {
             self.id,
             self.state,
         );
-        self.state = CekThreadState::Completed {
-            result_display: result,
-        };
+        self.state = CekThreadState::Completed { result_display: result };
     }
 
     /// Transition to `Failed` with an error message.
@@ -454,10 +456,7 @@ impl GreenThread {
     /// Whether this thread is in a terminal state (`Completed` or `Failed`).
     #[inline]
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self.state,
-            CekThreadState::Completed { .. } | CekThreadState::Failed { .. }
-        )
+        matches!(self.state, CekThreadState::Completed { .. } | CekThreadState::Failed { .. })
     }
 
     /// Continuation stack depth.
@@ -493,11 +492,7 @@ impl GreenThread {
     /// update so forked threads sharing the same spine are unaffected.
     pub fn set_env(&mut self, category: &str, name: &str, value: String) {
         let cat_key = category.to_string();
-        let inner = self
-            .environment
-            .get(&cat_key)
-            .cloned()
-            .unwrap_or_default();
+        let inner = self.environment.get(&cat_key).cloned().unwrap_or_default();
         let inner = inner.update(name.to_string(), value);
         self.environment = self.environment.update(cat_key, inner);
     }
@@ -578,12 +573,10 @@ impl GreenThread {
     /// Resolve a variable to a ChannelId (for send/receive operations).
     ///
     /// `env[ch] → StoreAddr::Global(id) → global_store[id] → ChannelRef(ch_id)`
-    pub fn resolve_channel_id(
-        &self,
-        var_name: &str,
-    ) -> Option<crate::channel::ChannelId> {
+    pub fn resolve_channel_id(&self, var_name: &str) -> Option<crate::channel::ChannelId> {
         self.eval_bindings.get(var_name).and_then(|addr| {
-            self.resolve_addr(*addr).and_then(|val| val.as_channel_ref())
+            self.resolve_addr(*addr)
+                .and_then(|val| val.as_channel_ref())
         })
     }
 
@@ -657,11 +650,8 @@ impl GreenThread {
                                     (k, promoted)
                                 })
                                 .collect();
-                            StoreValue::Closure {
-                                env_snapshot: promoted_env,
-                                body,
-                            }
-                        }
+                            StoreValue::Closure { env_snapshot: promoted_env, body }
+                        },
                         other => other,
                     };
                     let global_id = self.global_store.alloc_with(promoted_value);
@@ -669,7 +659,7 @@ impl GreenThread {
                 } else {
                     local_addr // Not found in local store, return as-is
                 }
-            }
+            },
         }
     }
 
@@ -683,12 +673,8 @@ impl GreenThread {
         match &self.eval_state {
             EvalState::Accepted => return StepResult::Accepted,
             EvalState::Aborted { .. } => return StepResult::Aborted,
-            EvalState::Error { message } => {
-                return StepResult::Error {
-                    message: message.clone(),
-                }
-            }
-            _ => {}
+            EvalState::Error { message } => return StepResult::Error { message: message.clone() },
+            _ => {},
         }
 
         // Determine transition based on current eval state
@@ -696,7 +682,7 @@ impl GreenThread {
             EvalState::Ready => {
                 self.eval_state = EvalState::Reducing;
                 StepResult::Continue
-            }
+            },
             EvalState::Reducing => {
                 // Check memo cache for ground terms
                 if let Some(cached) = self.memo_cache.get(&self.control).cloned() {
@@ -718,69 +704,55 @@ impl GreenThread {
                         StepResult::Continue
                     }
                 }
-            }
+            },
             EvalState::Descending => {
                 self.eval_state = EvalState::Reducing;
                 StepResult::Continue
-            }
+            },
             EvalState::Ascending => {
                 if let Some(frame) = self.continuation.pop_back() {
                     match frame {
-                        EvalFrame::BinOp {
-                            operator,
-                            lhs_display,
-                        } => {
+                        EvalFrame::BinOp { operator, lhs_display } => {
                             self.control =
                                 format!("({} {} {})", lhs_display, operator, self.control);
                             self.eval_state = EvalState::Reducing;
-                        }
+                        },
                         EvalFrame::UnaryOp { operator } => {
                             self.control = format!("({} {})", operator, self.control);
                             self.eval_state = EvalState::Reducing;
-                        }
+                        },
                         EvalFrame::MatchScrutinee { .. } => {
                             self.eval_state = EvalState::Reducing;
-                        }
-                        EvalFrame::LetBody {
-                            var_name,
-                            body_display,
-                        } => {
+                        },
+                        EvalFrame::LetBody { var_name, body_display } => {
                             // CESK: allocate value in local store, map var → addr
                             let addr_id = self
                                 .local_store
                                 .alloc_with(StoreValue::Simple(self.control.clone()));
                             let addr = StoreAddr::Local(addr_id);
                             self.refcount_gc.inc_ref(addr_id);
-                            self.eval_bindings =
-                                self.eval_bindings.update(var_name, addr);
+                            self.eval_bindings = self.eval_bindings.update(var_name, addr);
                             self.control = body_display;
                             self.eval_state = EvalState::Reducing;
-                        }
+                        },
                         EvalFrame::SetCont { var_name } => {
                             // CESK mutation: overwrite store cell at env[var_name]
                             if let Some(addr) = self.eval_bindings.get(&var_name) {
                                 match addr {
                                     StoreAddr::Local(id) => {
-                                        self.local_store.set(
-                                            *id,
-                                            StoreValue::Simple(self.control.clone()),
-                                        );
-                                    }
+                                        self.local_store
+                                            .set(*id, StoreValue::Simple(self.control.clone()));
+                                    },
                                     StoreAddr::Global(id) => {
-                                        self.global_store.set(
-                                            *id,
-                                            StoreValue::Simple(self.control.clone()),
-                                        );
-                                    }
+                                        self.global_store
+                                            .set(*id, StoreValue::Simple(self.control.clone()));
+                                    },
                                 }
                             }
                             self.control = "void".to_string();
                             self.eval_state = EvalState::Reducing;
-                        }
-                        EvalFrame::Parallel {
-                            remaining,
-                            mut completed,
-                        } => {
+                        },
+                        EvalFrame::Parallel { remaining, mut completed } => {
                             completed.push(self.control.clone());
                             if remaining.is_empty() {
                                 // All subterms evaluated — reconstruct parallel term
@@ -796,16 +768,16 @@ impl GreenThread {
                                 });
                                 self.eval_state = EvalState::Reducing;
                             }
-                        }
+                        },
                         EvalFrame::RewriteCont { .. } => {
                             self.eval_state = EvalState::Reducing;
-                        }
+                        },
                     }
                 } else {
                     self.eval_state = EvalState::Accepted;
                 }
                 StepResult::Continue
-            }
+            },
             _ => StepResult::Error {
                 message: format!("unexpected eval state: {}", self.eval_state),
             },
@@ -860,16 +832,13 @@ impl GreenThread {
         // Check for pending channel waits (blocking receive).
         if !self.channel_waiters.is_empty() {
             let waiting_on = self.channel_waiters.clone();
-            self.state = CekThreadState::Suspended {
-                waiting_on: waiting_on.clone(),
-            };
+            self.state = CekThreadState::Suspended { waiting_on: waiting_on.clone() };
             return QuantumResult::Suspended { waiting_on };
         }
 
-        // If control is empty, this is a stub thread (no CEK term).
-        // Fall back to old stack-popping behavior for backward compatibility.
+        // If control is empty, run the legacy EvalFrame/continuation stack path.
         if self.control.is_empty() && matches!(self.eval_state, EvalState::Ready) {
-            return self.run_quantum_stub(max_steps);
+            return self.run_quantum_legacy_stacks(max_steps);
         }
 
         // CEK evaluation loop
@@ -883,28 +852,26 @@ impl GreenThread {
             match self.cek_step() {
                 StepResult::Continue => {
                     self.step_count += 1;
-                }
+                },
                 StepResult::Accepted => {
                     let result = self.control.clone();
                     self.complete(result.clone());
                     return QuantumResult::Completed { result };
-                }
+                },
                 StepResult::Aborted => {
                     let error = "evaluation aborted".to_string();
                     self.fail(error.clone());
                     return QuantumResult::Failed { error };
-                }
+                },
                 StepResult::Error { message } => {
                     self.fail(message.clone());
                     return QuantumResult::Failed { error: message };
-                }
+                },
             }
 
             // Check for parallel fork request (GS-2)
             if let Some(children) = self.take_pending_fork() {
-                self.state = CekThreadState::Forked {
-                    children: Vec::new(),
-                };
+                self.state = CekThreadState::Forked { children: Vec::new() };
                 return QuantumResult::Forked { children };
             }
         }
@@ -912,15 +879,13 @@ impl GreenThread {
         QuantumResult::Yielded
     }
 
-    /// Stub quantum execution for threads without CEK control terms.
+    /// Legacy quantum execution for threads without CEK control terms.
     /// Preserves backward compatibility with tests that use EvalFrame-based stacks.
-    fn run_quantum_stub(&mut self, max_steps: usize) -> QuantumResult {
+    fn run_quantum_legacy_stacks(&mut self, max_steps: usize) -> QuantumResult {
         for _ in 0..max_steps {
             if !self.channel_waiters.is_empty() {
                 let waiting_on = self.channel_waiters.clone();
-                self.state = CekThreadState::Suspended {
-                    waiting_on: waiting_on.clone(),
-                };
+                self.state = CekThreadState::Suspended { waiting_on: waiting_on.clone() };
                 return QuantumResult::Suspended { waiting_on };
             }
 
@@ -933,9 +898,7 @@ impl GreenThread {
             }
 
             let result = "()".to_string();
-            self.state = CekThreadState::Completed {
-                result_display: result.clone(),
-            };
+            self.state = CekThreadState::Completed { result_display: result.clone() };
             return QuantumResult::Completed { result };
         }
         QuantumResult::Yielded
@@ -957,12 +920,8 @@ impl GreenThread {
             self.id,
             self.state,
         );
-        self.state = CekThreadState::Forked {
-            children: Vec::new(),
-        };
-        QuantumResult::Forked {
-            children: categories,
-        }
+        self.state = CekThreadState::Forked { children: Vec::new() };
+        QuantumResult::Forked { children: categories }
     }
 }
 
@@ -999,10 +958,7 @@ impl fmt::Debug for GreenThreadRegistry {
         f.debug_struct("GreenThreadRegistry")
             .field("thread_count", &self.threads.len())
             .field("next_id", &self.next_id.load(Ordering::Relaxed))
-            .field(
-                "creation_counter",
-                &self.creation_counter.load(Ordering::Relaxed),
-            )
+            .field("creation_counter", &self.creation_counter.load(Ordering::Relaxed))
             .finish()
     }
 }
@@ -1044,11 +1000,7 @@ impl GreenThreadRegistry {
     ///
     /// The parent thread's state is **not** modified. The caller should
     /// transition the parent to `Forked` or another appropriate state.
-    pub fn spawn_child(
-        &self,
-        parent_id: GreenThreadId,
-        category: String,
-    ) -> Option<GreenThreadId> {
+    pub fn spawn_child(&self, parent_id: GreenThreadId, category: String) -> Option<GreenThreadId> {
         let child_id = GreenThreadId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let created_at = self.creation_counter.fetch_add(1, Ordering::Relaxed);
 
@@ -1074,10 +1026,7 @@ impl GreenThreadRegistry {
     ///
     /// Returns `None` if the ID is not in the registry. The returned `RefMut`
     /// holds an exclusive shard lock; drop it promptly to avoid contention.
-    pub fn get_mut(
-        &self,
-        id: GreenThreadId,
-    ) -> Option<RefMut<'_, GreenThreadId, GreenThread>> {
+    pub fn get_mut(&self, id: GreenThreadId) -> Option<RefMut<'_, GreenThreadId, GreenThread>> {
         self.threads.get_mut(&id)
     }
 
@@ -1142,9 +1091,7 @@ mod tests {
     /// Helper: create a test EvalFrame (RewriteCont) for backward-compatible tests
     /// that previously used string-based continuation/eval stacks.
     fn test_frame(name: &str) -> EvalFrame {
-        EvalFrame::RewriteCont {
-            rule_name: name.to_string(),
-        }
+        EvalFrame::RewriteCont { rule_name: name.to_string() }
     }
 
     // ── GreenThread::new creates Ready thread ──────────────────────────────
@@ -1247,12 +1194,7 @@ mod tests {
         let channels = vec![ChannelId(1), ChannelId(2)];
         thread.suspend(channels.clone());
 
-        assert_eq!(
-            thread.state,
-            CekThreadState::Suspended {
-                waiting_on: channels.clone()
-            }
-        );
+        assert_eq!(thread.state, CekThreadState::Suspended { waiting_on: channels.clone() });
         assert_eq!(thread.channel_waiters, channels);
         assert!(!thread.is_runnable());
         assert!(!thread.is_terminal());
@@ -1271,12 +1213,7 @@ mod tests {
         thread.state = CekThreadState::Running;
 
         thread.complete("42".to_string());
-        assert_eq!(
-            thread.state,
-            CekThreadState::Completed {
-                result_display: "42".to_string()
-            }
-        );
+        assert_eq!(thread.state, CekThreadState::Completed { result_display: "42".to_string() });
         assert!(thread.is_terminal());
         assert!(!thread.is_runnable());
     }
@@ -1287,12 +1224,7 @@ mod tests {
         thread.state = CekThreadState::Running;
 
         thread.fail("division by zero".to_string());
-        assert_eq!(
-            thread.state,
-            CekThreadState::Failed {
-                error: "division by zero".to_string()
-            }
-        );
+        assert_eq!(thread.state, CekThreadState::Failed { error: "division by zero".to_string() });
         assert!(thread.is_terminal());
         assert!(!thread.is_runnable());
     }
@@ -1309,16 +1241,10 @@ mod tests {
         thread.push_continuation(test_frame("RD_Let_0"));
         assert_eq!(thread.stack_depth(), 2);
 
-        assert_eq!(
-            thread.pop_continuation(),
-            Some(test_frame("RD_Let_0"))
-        );
+        assert_eq!(thread.pop_continuation(), Some(test_frame("RD_Let_0")));
         assert_eq!(thread.stack_depth(), 1);
 
-        assert_eq!(
-            thread.pop_continuation(),
-            Some(test_frame("InfixRHS"))
-        );
+        assert_eq!(thread.pop_continuation(), Some(test_frame("InfixRHS")));
         assert_eq!(thread.stack_depth(), 0);
         assert_eq!(thread.pop_continuation(), None);
     }
@@ -1333,9 +1259,7 @@ mod tests {
         thread.state = CekThreadState::Running;
         assert!(!thread.is_runnable());
 
-        thread.state = CekThreadState::Suspended {
-            waiting_on: vec![],
-        };
+        thread.state = CekThreadState::Suspended { waiting_on: vec![] };
         assert!(!thread.is_runnable());
 
         thread.state = CekThreadState::Ready;
@@ -1350,19 +1274,13 @@ mod tests {
         thread.state = CekThreadState::Running;
         assert!(!thread.is_terminal());
 
-        thread.state = CekThreadState::Completed {
-            result_display: "ok".to_string(),
-        };
+        thread.state = CekThreadState::Completed { result_display: "ok".to_string() };
         assert!(thread.is_terminal());
 
-        thread.state = CekThreadState::Failed {
-            error: "oops".to_string(),
-        };
+        thread.state = CekThreadState::Failed { error: "oops".to_string() };
         assert!(thread.is_terminal());
 
-        thread.state = CekThreadState::Forked {
-            children: vec![GreenThreadId(1)],
-        };
+        thread.state = CekThreadState::Forked { children: vec![GreenThreadId(1)] };
         assert!(!thread.is_terminal());
     }
 
@@ -1454,27 +1372,21 @@ mod tests {
         // Transition id2 to Suspended (active).
         {
             let mut t = registry.get_mut(id2).expect("exists");
-            t.state = CekThreadState::Suspended {
-                waiting_on: vec![ChannelId(0)],
-            };
+            t.state = CekThreadState::Suspended { waiting_on: vec![ChannelId(0)] };
         }
         assert_eq!(registry.active_count(), 3); // Suspended is active
 
         // Transition id3 to Completed (not active).
         {
             let mut t = registry.get_mut(id3).expect("exists");
-            t.state = CekThreadState::Completed {
-                result_display: "done".to_string(),
-            };
+            t.state = CekThreadState::Completed { result_display: "done".to_string() };
         }
         assert_eq!(registry.active_count(), 2);
 
         // Transition id1 to Failed (not active).
         {
             let mut t = registry.get_mut(id1).expect("exists");
-            t.state = CekThreadState::Failed {
-                error: "err".to_string(),
-            };
+            t.state = CekThreadState::Failed { error: "err".to_string() };
         }
         assert_eq!(registry.active_count(), 1); // Only id2 (Suspended)
     }
@@ -1563,29 +1475,14 @@ mod tests {
 
         // Parent stack is unchanged.
         assert_eq!(parent.stack_depth(), 2);
-        assert_eq!(
-            parent.pop_continuation(),
-            Some(test_frame("Frame_B"))
-        );
-        assert_eq!(
-            parent.pop_continuation(),
-            Some(test_frame("Frame_A"))
-        );
+        assert_eq!(parent.pop_continuation(), Some(test_frame("Frame_B")));
+        assert_eq!(parent.pop_continuation(), Some(test_frame("Frame_A")));
         assert_eq!(parent.stack_depth(), 0);
 
         // Child still has all 3.
-        assert_eq!(
-            child.pop_continuation(),
-            Some(test_frame("Frame_C"))
-        );
-        assert_eq!(
-            child.pop_continuation(),
-            Some(test_frame("Frame_B"))
-        );
-        assert_eq!(
-            child.pop_continuation(),
-            Some(test_frame("Frame_A"))
-        );
+        assert_eq!(child.pop_continuation(), Some(test_frame("Frame_C")));
+        assert_eq!(child.pop_continuation(), Some(test_frame("Frame_B")));
+        assert_eq!(child.pop_continuation(), Some(test_frame("Frame_A")));
     }
 
     // ── CekThreadState display ─────────────────────────────────────────────
@@ -1602,17 +1499,11 @@ mod tests {
             "Suspended(waiting_on=[ch#1, ch#2])"
         );
         assert_eq!(
-            CekThreadState::Completed {
-                result_display: "42".to_string()
-            }
-            .to_string(),
+            CekThreadState::Completed { result_display: "42".to_string() }.to_string(),
             "Completed(42)"
         );
         assert_eq!(
-            CekThreadState::Failed {
-                error: "oops".to_string()
-            }
-            .to_string(),
+            CekThreadState::Failed { error: "oops".to_string() }.to_string(),
             "Failed(oops)"
         );
         assert_eq!(
@@ -1704,14 +1595,9 @@ mod tests {
     fn test_run_quantum_completes_when_stacks_empty() {
         let mut thread = GreenThread::new(GreenThreadId(0), "Expr");
         thread.state = CekThreadState::Running;
-        // Both stacks empty, no control term → should complete immediately via stub.
+        // Both stacks empty, no control term -> should complete immediately.
         let result = thread.run_quantum(100);
-        assert_eq!(
-            result,
-            QuantumResult::Completed {
-                result: "()".to_string()
-            }
-        );
+        assert_eq!(result, QuantumResult::Completed { result: "()".to_string() });
         assert!(thread.is_terminal());
     }
 
@@ -1719,9 +1605,11 @@ mod tests {
     fn test_run_quantum_yields_on_exhaustion() {
         let mut thread = GreenThread::new(GreenThreadId(0), "Expr");
         thread.state = CekThreadState::Running;
-        // Push enough work to exhaust the quantum (stub path).
+        // Push enough legacy stack work to exhaust the quantum.
         for i in 0..10 {
-            thread.eval_stack.push_back(test_frame(&format!("frame_{}", i)));
+            thread
+                .eval_stack
+                .push_back(test_frame(&format!("frame_{}", i)));
         }
         // Quantum of 5 → should yield with 5 frames remaining.
         let result = thread.run_quantum(5);
@@ -1744,10 +1632,7 @@ mod tests {
                 waiting_on: vec![ChannelId(10), ChannelId(20)]
             }
         );
-        assert!(matches!(
-            thread.state,
-            CekThreadState::Suspended { .. }
-        ));
+        assert!(matches!(thread.state, CekThreadState::Suspended { .. }));
     }
 
     #[test]
@@ -1758,14 +1643,9 @@ mod tests {
         thread.eval_stack.push_back(test_frame("eval_b"));
         thread.push_continuation(test_frame("cont_x"));
 
-        // Quantum of 10: consumes 2 eval frames + 1 continuation + completes (stub path).
+        // Quantum of 10: consumes 2 eval frames + 1 continuation + completes.
         let result = thread.run_quantum(10);
-        assert_eq!(
-            result,
-            QuantumResult::Completed {
-                result: "()".to_string()
-            }
-        );
+        assert_eq!(result, QuantumResult::Completed { result: "()".to_string() });
         assert_eq!(thread.eval_stack.len(), 0);
         assert_eq!(thread.stack_depth(), 0);
     }
@@ -1783,12 +1663,7 @@ mod tests {
         assert_eq!(thread.eval_stack.len(), 0);
         // Continuation is still empty, so next quantum would complete.
         let result = thread.run_quantum(1);
-        assert_eq!(
-            result,
-            QuantumResult::Completed {
-                result: "()".to_string()
-            }
-        );
+        assert_eq!(result, QuantumResult::Completed { result: "()".to_string() });
     }
 
     #[test]
@@ -1802,10 +1677,7 @@ mod tests {
                 children: vec!["Proc".to_string(), "Proc".to_string()]
             }
         );
-        assert!(matches!(
-            thread.state,
-            CekThreadState::Forked { .. }
-        ));
+        assert!(matches!(thread.state, CekThreadState::Forked { .. }));
     }
 
     // ── Property-Based Tests (proptest) ──────────────────────────────────
@@ -1934,9 +1806,14 @@ mod tests {
         let parent_id = registry.spawn("Proc".to_string());
 
         // Set some env on parent
-        registry.get_mut(parent_id).expect("parent").set_env("Proc", "x", "42".to_string());
+        registry
+            .get_mut(parent_id)
+            .expect("parent")
+            .set_env("Proc", "x", "42".to_string());
 
-        let child_id = registry.spawn_child(parent_id, "Proc".to_string()).expect("fork should succeed");
+        let child_id = registry
+            .spawn_child(parent_id, "Proc".to_string())
+            .expect("fork should succeed");
 
         // Parent and child are independent threads
         assert_ne!(parent_id, child_id);
@@ -1951,7 +1828,10 @@ mod tests {
         assert_eq!(child.get_env("Proc", "x"), Some(&"42".to_string()));
 
         // Both should be runnable
-        assert!(registry.get(parent_id).expect("parent exists").is_runnable());
+        assert!(registry
+            .get(parent_id)
+            .expect("parent exists")
+            .is_runnable());
         assert!(child.is_runnable());
     }
 
@@ -1987,11 +1867,11 @@ mod tests {
         assert_eq!(registry.get(tid).expect("t").state, CekThreadState::Running);
 
         // Running → Suspended
-        registry.get_mut(tid).expect("thread").suspend(vec![ChannelId(99)]);
-        assert!(matches!(
-            registry.get(tid).expect("t").state,
-            CekThreadState::Suspended { .. }
-        ));
+        registry
+            .get_mut(tid)
+            .expect("thread")
+            .suspend(vec![ChannelId(99)]);
+        assert!(matches!(registry.get(tid).expect("t").state, CekThreadState::Suspended { .. }));
         assert!(!registry.get(tid).expect("t").is_runnable());
 
         // Suspended → Ready (resume)
@@ -2001,7 +1881,10 @@ mod tests {
 
         // Ready → Running → Completed
         registry.get_mut(tid).expect("thread").state = CekThreadState::Running;
-        registry.get_mut(tid).expect("thread").complete("done".to_string());
+        registry
+            .get_mut(tid)
+            .expect("thread")
+            .complete("done".to_string());
         assert!(registry.get(tid).expect("t").is_terminal());
     }
 
@@ -2114,12 +1997,7 @@ mod tests {
         thread.state = CekThreadState::Running;
 
         let result = thread.run_quantum(100);
-        assert_eq!(
-            result,
-            QuantumResult::Completed {
-                result: "42".to_string()
-            }
-        );
+        assert_eq!(result, QuantumResult::Completed { result: "42".to_string() });
         assert!(thread.is_terminal());
     }
 
@@ -2143,7 +2021,9 @@ mod tests {
     #[test]
     fn test_fork_shares_memo_cache() {
         let mut parent = GreenThread::with_control(GreenThreadId(0), "Expr", "a".to_string());
-        parent.memo_cache = parent.memo_cache.update("a".to_string(), "cached_a".to_string());
+        parent.memo_cache = parent
+            .memo_cache
+            .update("a".to_string(), "cached_a".to_string());
 
         let child = parent.fork(GreenThreadId(1), "Expr");
 
@@ -2152,7 +2032,9 @@ mod tests {
 
         // Mutating child's cache doesn't affect parent
         let mut child = child;
-        child.memo_cache = child.memo_cache.update("b".to_string(), "cached_b".to_string());
+        child.memo_cache = child
+            .memo_cache
+            .update("b".to_string(), "cached_b".to_string());
         assert!(parent.memo_cache.get("b").is_none());
         assert_eq!(parent.memo_cache.len(), 1);
         assert_eq!(child.memo_cache.len(), 2);
@@ -2192,17 +2074,22 @@ mod tests {
 
         // pending_fork should be set with the remaining sub-terms
         assert!(thread.pending_fork.is_some());
-        let fork_terms = thread.pending_fork.as_ref().expect("pending_fork should be set");
+        let fork_terms = thread
+            .pending_fork
+            .as_ref()
+            .expect("pending_fork should be set");
         assert_eq!(fork_terms, &vec!["Q".to_string(), "R".to_string()]);
 
         // Completed list should include our control term "P"
         // The Parallel frame pushed back should have empty remaining and updated completed
-        let frame = thread.pop_continuation().expect("should have stashed frame");
+        let frame = thread
+            .pop_continuation()
+            .expect("should have stashed frame");
         match frame {
             EvalFrame::Parallel { remaining, completed } => {
                 assert!(remaining.is_empty());
                 assert_eq!(completed, vec!["S".to_string(), "P".to_string()]);
-            }
+            },
             other => panic!("expected Parallel frame, got {:?}", other),
         }
     }
@@ -2251,7 +2138,10 @@ mod tests {
         assert_eq!(result, StepResult::Continue);
         assert_eq!(thread.control, "x + 1");
         // cek_step allocates the control value in local_store and binds var → StoreAddr.
-        let x_addr = thread.eval_bindings.get("x").expect("x binding missing after LetBody");
+        let x_addr = thread
+            .eval_bindings
+            .get("x")
+            .expect("x binding missing after LetBody");
         if let StoreAddr::Local(id) = x_addr {
             assert_eq!(thread.local_store.get(*id), Some(&StoreValue::Simple("42".to_string())));
         } else {
@@ -2263,8 +2153,11 @@ mod tests {
     /// GS-1: Memo cache hit during Reducing state returns cached result.
     #[test]
     fn test_cek_step_memo_cache_hit() {
-        let mut thread = GreenThread::with_control(GreenThreadId(0), "Expr", "cached_term".to_string());
-        thread.memo_cache = thread.memo_cache.update("cached_term".to_string(), "result".to_string());
+        let mut thread =
+            GreenThread::with_control(GreenThreadId(0), "Expr", "cached_term".to_string());
+        thread.memo_cache = thread
+            .memo_cache
+            .update("cached_term".to_string(), "result".to_string());
         thread.eval_state = EvalState::Reducing;
 
         // No continuation → should accept with cached result
@@ -2277,8 +2170,11 @@ mod tests {
     /// GS-1: Memo cache hit with continuation → ascend.
     #[test]
     fn test_cek_step_memo_cache_hit_with_continuation() {
-        let mut thread = GreenThread::with_control(GreenThreadId(0), "Expr", "cached_term".to_string());
-        thread.memo_cache = thread.memo_cache.update("cached_term".to_string(), "result".to_string());
+        let mut thread =
+            GreenThread::with_control(GreenThreadId(0), "Expr", "cached_term".to_string());
+        thread.memo_cache = thread
+            .memo_cache
+            .update("cached_term".to_string(), "result".to_string());
         thread.eval_state = EvalState::Reducing;
         thread.push_continuation(test_frame("some_frame"));
 
@@ -2291,7 +2187,8 @@ mod tests {
     /// GS-1: Step limit triggers failure via run_quantum.
     #[test]
     fn test_run_quantum_cek_step_limit() {
-        let mut thread = GreenThread::with_control(GreenThreadId(0), "Expr", "divergent".to_string());
+        let mut thread =
+            GreenThread::with_control(GreenThreadId(0), "Expr", "divergent".to_string());
         thread.state = CekThreadState::Running;
         thread.step_limit = 5;
         // Push enough frames to create a cycle
@@ -2303,7 +2200,7 @@ mod tests {
         match result {
             QuantumResult::Failed { error } => {
                 assert!(error.contains("step limit exceeded"), "error was: {}", error);
-            }
+            },
             other => panic!("expected Failed, got {:?}", other),
         }
     }
@@ -2313,9 +2210,7 @@ mod tests {
     fn test_cek_step_unary_ascend() {
         let mut thread = GreenThread::with_control(GreenThreadId(0), "Expr", "5".to_string());
         thread.eval_state = EvalState::Ascending;
-        thread.push_continuation(EvalFrame::UnaryOp {
-            operator: "-".to_string(),
-        });
+        thread.push_continuation(EvalFrame::UnaryOp { operator: "-".to_string() });
 
         let result = thread.cek_step();
         assert_eq!(result, StepResult::Continue);
@@ -2354,7 +2249,7 @@ mod tests {
         match result {
             QuantumResult::Forked { children } => {
                 assert_eq!(children, vec!["Q".to_string(), "R".to_string()]);
-            }
+            },
             other => panic!("expected Forked, got {:?}", other),
         }
         assert!(matches!(thread.state, CekThreadState::Forked { .. }));
@@ -2377,9 +2272,7 @@ mod tests {
     #[test]
     fn test_cek_step_error_idempotent() {
         let mut thread = GreenThread::with_control(GreenThreadId(0), "Expr", "x".to_string());
-        thread.eval_state = EvalState::Error {
-            message: "test error".to_string(),
-        };
+        thread.eval_state = EvalState::Error { message: "test error".to_string() };
 
         let r = thread.cek_step();
         match r {
@@ -2548,7 +2441,7 @@ mod tests {
             let tid = registry.spawn("Expr".to_string());
             let mut thread = registry.get_mut(tid).expect("thread exists");
             thread.state = CekThreadState::Running;
-            // Empty stacks, no control → completes via stub.
+            // Empty stacks and no control term complete immediately.
             match thread.run_quantum(10) {
                 QuantumResult::Completed { .. } => completed += 1,
                 other => panic!("expected Completed, got {:?}", other),
@@ -2637,7 +2530,7 @@ mod tests {
                         "child should complete"
                     );
                 }
-            }
+            },
             other => panic!("expected Forked, got {:?}", other),
         }
     }
@@ -2645,9 +2538,8 @@ mod tests {
     /// GS-6: E2E — Channel send records activity for event-driven wake.
     #[test]
     fn test_e2e_channel_send_tracking() {
-        let mut thread = GreenThread::with_control(
-            GreenThreadId(0), "Proc", "send_term".to_string(),
-        );
+        let mut thread =
+            GreenThread::with_control(GreenThreadId(0), "Proc", "send_term".to_string());
         // Simulate channel sends during evaluation.
         thread.record_channel_send(ChannelId(1));
         thread.record_channel_send(ChannelId(2));

@@ -38,7 +38,7 @@ pub fn add_codepoint_range(
                 // Single-byte: direct transition from → to
                 let r = ranges[0];
                 add_byte_range_transition(nfa, from, to, r);
-            }
+            },
             n => {
                 // Multi-byte: chain intermediate states
                 // from →[r₀]→ s₁ →[r₁]→ s₂ ... →[rₙ₋₁]→ to
@@ -52,7 +52,7 @@ pub fn add_codepoint_range(
                     add_byte_range_transition(nfa, current, next, r);
                     current = next;
                 }
-            }
+            },
         }
     }
 }
@@ -76,10 +76,7 @@ fn add_byte_range_transition(nfa: &mut Nfa, from: StateId, to: StateId, r: Utf8R
 /// Each `(start, end)` pair represents an inclusive codepoint range.
 /// All ranges share the same start and accept states; alternation is
 /// implicit via multiple transition paths from `start`.
-pub fn codepoint_ranges_to_fragment(
-    nfa: &mut Nfa,
-    ranges: &[(char, char)],
-) -> NfaFragment {
+pub fn codepoint_ranges_to_fragment(nfa: &mut Nfa, ranges: &[(char, char)]) -> NfaFragment {
     let start = nfa.add_state(NfaState::new());
     let accept = nfa.add_state(NfaState::new());
     for &(lo, hi) in ranges {
@@ -111,9 +108,11 @@ pub fn resolve_property(name: &str) -> Result<Vec<(char, char)>, String> {
         .map_err(|e| format!("unknown Unicode property '{}': {}", name, e))?;
 
     match hir.into_kind() {
-        HirKind::Class(Class::Unicode(class)) => {
-            Ok(class.ranges().iter().map(|r| (r.start(), r.end())).collect())
-        }
+        HirKind::Class(Class::Unicode(class)) => Ok(class
+            .ranges()
+            .iter()
+            .map(|r| (r.start(), r.end()))
+            .collect()),
         _ => Err(format!("unexpected HIR for property '{}'", name)),
     }
 }
@@ -218,8 +217,8 @@ pub fn decode_char_at(input: &str, pos: usize) -> Option<(char, usize)> {
 mod tests {
     use super::*;
     use crate::automata::{
-        minimize::minimize_dfa, partition::compute_equivalence_classes, subset::subset_construction,
-        Nfa, TokenKind, DEAD_STATE,
+        minimize::minimize_dfa, partition::compute_equivalence_classes,
+        subset::subset_construction, Nfa, TokenKind, DEAD_STATE,
     };
 
     /// Build a DFA from an NFA and test if a byte sequence is accepted.
@@ -334,11 +333,17 @@ mod tests {
         let ranges = resolve_property("White_Space").expect("White_Space should resolve");
         assert!(!ranges.is_empty());
         // NBSP (U+00A0) should be in White_Space
-        assert!(ranges.iter().any(|&(lo, hi)| lo <= '\u{00A0}' && '\u{00A0}' <= hi));
+        assert!(ranges
+            .iter()
+            .any(|&(lo, hi)| lo <= '\u{00A0}' && '\u{00A0}' <= hi));
         // EN QUAD (U+2000) should be in White_Space
-        assert!(ranges.iter().any(|&(lo, hi)| lo <= '\u{2000}' && '\u{2000}' <= hi));
+        assert!(ranges
+            .iter()
+            .any(|&(lo, hi)| lo <= '\u{2000}' && '\u{2000}' <= hi));
         // IDEOGRAPHIC SPACE (U+3000) should be in White_Space
-        assert!(ranges.iter().any(|&(lo, hi)| lo <= '\u{3000}' && '\u{3000}' <= hi));
+        assert!(ranges
+            .iter()
+            .any(|&(lo, hi)| lo <= '\u{3000}' && '\u{3000}' <= hi));
     }
 
     #[test]
@@ -357,7 +362,9 @@ mod tests {
         // ASCII digits
         assert!(ranges.iter().any(|&(lo, hi)| lo <= '0' && '0' <= hi));
         // Arabic-Indic digits (U+0660-U+0669)
-        assert!(ranges.iter().any(|&(lo, hi)| lo <= '\u{0663}' && '\u{0663}' <= hi));
+        assert!(ranges
+            .iter()
+            .any(|&(lo, hi)| lo <= '\u{0663}' && '\u{0663}' <= hi));
     }
 
     #[test]

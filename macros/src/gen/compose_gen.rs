@@ -166,10 +166,7 @@ fn generate_term_wrapper(def: &ComposeDef) -> TokenStream {
             let variant = &lang.variant_name;
             let path = &lang.module_path;
             let sub_term = format_ident!("{}Term", variant);
-            let fn_name = format_ident!(
-                "as_{}",
-                to_snake_case(&variant.to_string())
-            );
+            let fn_name = format_ident!("as_{}", to_snake_case(&variant.to_string()));
             quote! {
                 /// Downcast to the sub-language term, if this term belongs to that language.
                 pub fn #fn_name(&self) -> Option<&#path::#sub_term> {

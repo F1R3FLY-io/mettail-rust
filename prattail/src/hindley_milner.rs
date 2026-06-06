@@ -92,12 +92,12 @@ impl HmType {
                 if !bound.contains(v) {
                     acc.push(v.clone());
                 }
-            }
-            HmType::Mono(_) => {}
+            },
+            HmType::Mono(_) => {},
             HmType::Arrow(a, b) => {
                 a.collect_free_tvs(acc, bound);
                 b.collect_free_tvs(acc, bound);
-            }
+            },
             HmType::Forall(vars, body) => {
                 for v in vars {
                     bound.push(v.clone());
@@ -106,7 +106,7 @@ impl HmType {
                 for _ in vars {
                     bound.pop();
                 }
-            }
+            },
         }
     }
 }
@@ -133,10 +133,7 @@ impl Substitution {
         match ty {
             HmType::Var(v) => self.bindings.get(v).cloned().unwrap_or_else(|| ty.clone()),
             HmType::Mono(_) => ty.clone(),
-            HmType::Arrow(a, b) => HmType::Arrow(
-                Box::new(self.apply(a)),
-                Box::new(self.apply(b)),
-            ),
+            HmType::Arrow(a, b) => HmType::Arrow(Box::new(self.apply(a)), Box::new(self.apply(b))),
             HmType::Forall(vars, body) => {
                 // Drop any binding for a quantified variable before
                 // descending — the universal binder shadows the
@@ -146,7 +143,7 @@ impl Substitution {
                     shadowed.bindings.remove(v);
                 }
                 HmType::Forall(vars.clone(), Box::new(shadowed.apply(body)))
-            }
+            },
         }
     }
 
@@ -162,7 +159,10 @@ impl Substitution {
             result.bindings.insert(k.clone(), self.apply(v));
         }
         for (k, v) in &self.bindings {
-            result.bindings.entry(k.clone()).or_insert_with(|| v.clone());
+            result
+                .bindings
+                .entry(k.clone())
+                .or_insert_with(|| v.clone());
         }
         result
     }
@@ -183,19 +183,15 @@ pub enum HmError {
 impl std::fmt::Display for HmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HmError::UnificationFailure { left, right } => write!(
-                f,
-                "HM unification failure: cannot unify {:?} with {:?}",
-                left, right
-            ),
-            HmError::OccursCheck { var, ty } => write!(
-                f,
-                "HM occurs check: type variable `{}` appears in {:?}",
-                var, ty
-            ),
+            HmError::UnificationFailure { left, right } => {
+                write!(f, "HM unification failure: cannot unify {:?} with {:?}", left, right)
+            },
+            HmError::OccursCheck { var, ty } => {
+                write!(f, "HM occurs check: type variable `{}` appears in {:?}", var, ty)
+            },
             HmError::UnboundVariable { name } => {
                 write!(f, "HM unbound variable: {}", name)
-            }
+            },
         }
     }
 }
@@ -210,16 +206,13 @@ pub fn unify(left: &HmType, right: &HmType) -> Result<Substitution, HmError> {
         (HmType::Var(a), HmType::Var(b)) if a == b => Ok(Substitution::empty()),
         (HmType::Var(v), other) | (other, HmType::Var(v)) => {
             if other.free_type_vars().contains(v) {
-                Err(HmError::OccursCheck {
-                    var: v.clone(),
-                    ty: other.clone(),
-                })
+                Err(HmError::OccursCheck { var: v.clone(), ty: other.clone() })
             } else {
                 let mut s = Substitution::empty();
                 s.insert(v.clone(), other.clone());
                 Ok(s)
             }
-        }
+        },
         (HmType::Mono(a), HmType::Mono(b)) if a == b => Ok(Substitution::empty()),
         (HmType::Arrow(a1, b1), HmType::Arrow(a2, b2)) => {
             let s1 = unify(a1, a2)?;
@@ -227,11 +220,8 @@ pub fn unify(left: &HmType, right: &HmType) -> Result<Substitution, HmError> {
             let b2_sub = s1.apply(b2);
             let s2 = unify(&b1_sub, &b2_sub)?;
             Ok(s2.compose(&s1))
-        }
-        _ => Err(HmError::UnificationFailure {
-            left: left.clone(),
-            right: right.clone(),
-        }),
+        },
+        _ => Err(HmError::UnificationFailure { left: left.clone(), right: right.clone() }),
     }
 }
 
@@ -320,7 +310,7 @@ pub fn infer(env: &HmEnv, term: &HmTerm) -> Result<(Substitution, HmType), HmErr
             let (s, body_ty) = infer(&inner_env, body)?;
             let param_ty_sub = s.apply(&param_ty);
             Ok((s, HmType::arrow(param_ty_sub, body_ty)))
-        }
+        },
 
         HmTerm::App { f, arg } => {
             let (s1, f_ty) = infer(env, f)?;
@@ -333,7 +323,7 @@ pub fn infer(env: &HmEnv, term: &HmTerm) -> Result<(Substitution, HmType), HmErr
             let final_subst = s3.compose(&s2.compose(&s1));
             let final_result_ty = s3.apply(&result_ty);
             Ok((final_subst, final_result_ty))
-        }
+        },
 
         HmTerm::Let { name, value, body } => infer_simple_let(env, name, value, body),
     }
@@ -400,34 +390,19 @@ impl TypeSystem for HindleyMilnerTypeSystem {
         }
     }
 
-    fn is_subtype(
-        &self,
-        _env: &Self::TypeEnv,
-        sub: &Self::Type,
-        sup: &Self::Type,
-    ) -> bool {
+    fn is_subtype(&self, _env: &Self::TypeEnv, sub: &Self::Type, sup: &Self::Type) -> bool {
         // HM has no proper subtyping — types are equal iff they
         // unify. Forall types are instantiated to a unifiable monotype.
         unify(sub, sup).is_ok()
     }
 
-    fn join(
-        &self,
-        _env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type> {
+    fn join(&self, _env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
         // HM join = unification: the most general unifier IS the
         // least common supertype because there is no subtyping.
         unify(a, b).ok().map(|s| s.apply(a))
     }
 
-    fn meet(
-        &self,
-        _env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type> {
+    fn meet(&self, _env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
         // HM meet = unification (same as join — no subtyping).
         unify(a, b).ok().map(|s| s.apply(a))
     }
@@ -451,10 +426,7 @@ mod tests {
     #[test]
     fn unify_distinct_monotypes_fails() {
         let result = unify(&HmType::mono("Int"), &HmType::mono("Bool"));
-        assert!(matches!(
-            result,
-            Err(HmError::UnificationFailure { .. })
-        ));
+        assert!(matches!(result, Err(HmError::UnificationFailure { .. })));
     }
 
     #[test]
@@ -566,10 +538,7 @@ mod tests {
         s2.insert("b".to_string(), HmType::var("a"));
 
         let composed = s1.compose(&s2);
-        assert_eq!(
-            composed.apply(&HmType::var("b")),
-            HmType::mono("Int")
-        );
+        assert_eq!(composed.apply(&HmType::var("b")), HmType::mono("Int"));
     }
 
     #[test]

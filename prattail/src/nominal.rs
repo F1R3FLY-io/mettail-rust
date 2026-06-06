@@ -75,11 +75,7 @@ impl Orbit {
 
 impl fmt::Display for Orbit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "orbit{}({}, support={})",
-            self.id, self.representative, self.support_size,
-        )
+        write!(f, "orbit{}({}, support={})", self.id, self.representative, self.support_size,)
     }
 }
 
@@ -134,14 +130,19 @@ impl fmt::Display for NominalState {
             write!(
                 f,
                 "n{}{}({}, orbit={}, supp={{{}}})",
-                self.id, acc, label, self.orbit_id,
+                self.id,
+                acc,
+                label,
+                self.orbit_id,
                 support_str.join(", "),
             )
         } else {
             write!(
                 f,
                 "n{}{}(orbit={}, supp={{{}}})",
-                self.id, acc, self.orbit_id,
+                self.id,
+                acc,
+                self.orbit_id,
                 support_str.join(", "),
             )
         }
@@ -307,12 +308,18 @@ impl NominalAutomaton {
     /// Add an orbit and return its ID.
     pub fn add_orbit(&mut self, representative: impl Into<String>, support_size: usize) -> usize {
         let id = self.orbits.len();
-        self.orbits.push(Orbit::new(id, representative, support_size));
+        self.orbits
+            .push(Orbit::new(id, representative, support_size));
         id
     }
 
     /// Add a state and return its ID.
-    pub fn add_state(&mut self, orbit_id: usize, support: HashSet<String>, is_accepting: bool) -> usize {
+    pub fn add_state(
+        &mut self,
+        orbit_id: usize,
+        support: HashSet<String>,
+        is_accepting: bool,
+    ) -> usize {
         let id = self.states.len();
         let state = if is_accepting {
             NominalState::accepting(id, orbit_id, support)
@@ -472,10 +479,8 @@ impl NominalAutomaton {
         let mut narrowed_scope: Vec<String> = used_set.iter().cloned().collect();
         narrowed_scope.sort();
 
-        let mut eliminated_names: Vec<String> = original_set
-            .difference(&used_set)
-            .cloned()
-            .collect();
+        let mut eliminated_names: Vec<String> =
+            original_set.difference(&used_set).cloned().collect();
         eliminated_names.sort();
 
         let savings = eliminated_names.len();
@@ -523,11 +528,8 @@ impl NominalAutomaton {
             old_to_new.insert(old_id, new_id);
 
             // Narrow the support: keep only names in the used set.
-            let narrowed_support: HashSet<String> = state
-                .support
-                .intersection(&used_names)
-                .cloned()
-                .collect();
+            let narrowed_support: HashSet<String> =
+                state.support.intersection(&used_names).cloned().collect();
 
             let mut new_state = NominalState::new(new_id, state.orbit_id, narrowed_support);
             new_state.is_accepting = state.is_accepting;
@@ -639,13 +641,13 @@ pub fn construct_nominal(
     let mut automaton = NominalAutomaton::new();
 
     for (id, (representative, support_size)) in orbit_descs.iter().enumerate() {
-        automaton.orbits.push(Orbit::new(id, representative.clone(), *support_size));
+        automaton
+            .orbits
+            .push(Orbit::new(id, representative.clone(), *support_size));
 
-        // Build a representative support set: generate placeholder names a0..a(n-1)
+        // Build a representative support set: generate synthetic names a0..a(n-1)
         // with cardinality equal to support_size.
-        let support: HashSet<String> = (0..*support_size)
-            .map(|i| format!("a{}", i))
-            .collect();
+        let support: HashSet<String> = (0..*support_size).map(|i| format!("a{}", i)).collect();
 
         let is_accepting = accepting.contains(&id);
         let state = if is_accepting {
@@ -725,11 +727,7 @@ pub fn construct_nominal(
 /// # Returns
 ///
 /// `true` if `name` is fresh at `state_id` (not in the state's support).
-pub fn check_freshness(
-    automaton: &NominalAutomaton,
-    state_id: usize,
-    name: &str,
-) -> bool {
+pub fn check_freshness(automaton: &NominalAutomaton, state_id: usize, name: &str) -> bool {
     if let Some(state) = automaton.states.get(state_id) {
         !state.support.contains(name)
     } else {
@@ -804,7 +802,11 @@ pub fn analyze_from_bundle(
                     "binder '{}' appears in {} categories: {}",
                     name,
                     cats.len(),
-                    cat_list.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", "),
+                    cat_list
+                        .iter()
+                        .map(|c| c.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
                 );
                 scope_violations.push((name.clone(), context));
             }
@@ -854,7 +856,7 @@ fn collect_binders_recursive(
                     .entry(param_name.clone())
                     .or_default()
                     .insert(category.to_string());
-            }
+            },
             crate::SyntaxItemSpec::BinderCollection { param_name, .. } => {
                 binder_to_rules
                     .entry(param_name.clone())
@@ -864,7 +866,7 @@ fn collect_binders_recursive(
                     .entry(param_name.clone())
                     .or_default()
                     .insert(category.to_string());
-            }
+            },
             crate::SyntaxItemSpec::Optional { inner } => {
                 collect_binders_recursive(
                     inner,
@@ -873,7 +875,7 @@ fn collect_binders_recursive(
                     binder_to_rules,
                     binder_categories,
                 );
-            }
+            },
             crate::SyntaxItemSpec::Map { body_items } => {
                 collect_binders_recursive(
                     body_items,
@@ -882,7 +884,7 @@ fn collect_binders_recursive(
                     binder_to_rules,
                     binder_categories,
                 );
-            }
+            },
             crate::SyntaxItemSpec::Sep { body, .. } => {
                 collect_binders_recursive(
                     std::slice::from_ref(body.as_ref()),
@@ -891,7 +893,7 @@ fn collect_binders_recursive(
                     binder_to_rules,
                     binder_categories,
                 );
-            }
+            },
             crate::SyntaxItemSpec::Zip { body, .. } => {
                 collect_binders_recursive(
                     std::slice::from_ref(body.as_ref()),
@@ -900,8 +902,8 @@ fn collect_binders_recursive(
                     binder_to_rules,
                     binder_categories,
                 );
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 }
@@ -946,11 +948,8 @@ mod tests {
 
     #[test]
     fn construct_nominal_basic() {
-        let orbit_descs = vec![
-            ("empty".to_string(), 0),
-            ("{x}".to_string(), 1),
-            ("{x,y}".to_string(), 2),
-        ];
+        let orbit_descs =
+            vec![("empty".to_string(), 0), ("{x}".to_string(), 1), ("{x,y}".to_string(), 2)];
         let transitions = vec![
             (0, "bind".to_string(), ["fresh_a".to_string()].into_iter().collect(), 1),
             (1, "bind".to_string(), ["fresh_b".to_string()].into_iter().collect(), 2),
@@ -970,13 +969,9 @@ mod tests {
     fn construct_nominal_freshness_on_transitions() {
         // A simple automaton: orbit 0 (empty support) transitions to orbit 1
         // (support size 1) via a "bind" transition with a fresh name.
-        let orbit_descs = vec![
-            ("empty".to_string(), 0),
-            ("{x}".to_string(), 1),
-        ];
-        let transitions = vec![
-            (0, "bind_x".to_string(), ["x".to_string()].into_iter().collect(), 1),
-        ];
+        let orbit_descs = vec![("empty".to_string(), 0), ("{x}".to_string(), 1)];
+        let transitions =
+            vec![(0, "bind_x".to_string(), ["x".to_string()].into_iter().collect(), 1)];
         let na = construct_nominal(&orbit_descs, &transitions, 0, &[1])
             .expect("valid nominal automaton");
 
@@ -993,13 +988,8 @@ mod tests {
         // Orbit 1 has support_size = 1, so its representative state has
         // support = {"a0"}. A transition from orbit 1 with fresh_names = {"a0"}
         // violates equivariance (a0 is already in the source support).
-        let orbit_descs = vec![
-            ("empty".to_string(), 0),
-            ("{x}".to_string(), 1),
-        ];
-        let transitions = vec![
-            (1, "bad".to_string(), ["a0".to_string()].into_iter().collect(), 0),
-        ];
+        let orbit_descs = vec![("empty".to_string(), 0), ("{x}".to_string(), 1)];
+        let transitions = vec![(1, "bad".to_string(), ["a0".to_string()].into_iter().collect(), 0)];
         let err = construct_nominal(&orbit_descs, &transitions, 0, &[]).unwrap_err();
         assert!(err.contains("Fresh name 'a0' in transition from orbit 1"), "{err}");
     }
@@ -1085,17 +1075,11 @@ mod tests {
 
         // "x" is a fresh name in transition 0.
         let x_usage = usages.get("x").expect("x should be tracked");
-        assert!(
-            x_usage.transitions_using.contains(&0),
-            "x is a fresh name in transition 0",
-        );
+        assert!(x_usage.transitions_using.contains(&0), "x is a fresh name in transition 0",);
 
         // "y" is a fresh name in transition 1.
         let y_usage = usages.get("y").expect("y should be tracked");
-        assert!(
-            y_usage.transitions_using.contains(&1),
-            "y is a fresh name in transition 1",
-        );
+        assert!(y_usage.transitions_using.contains(&1), "y is a fresh name in transition 1",);
     }
 
     #[test]
@@ -1162,21 +1146,12 @@ mod tests {
 
         // q1 (now state 1) should still have "x" in its support.
         let q1_new = &narrowed.states[1];
-        assert!(
-            q1_new.support.contains("x"),
-            "x should be preserved in narrowed q1",
-        );
+        assert!(q1_new.support.contains("x"), "x should be preserved in narrowed q1",);
 
         // q2 (now state 2) should still have "x" and "y".
         let q2_new = &narrowed.states[2];
-        assert!(
-            q2_new.support.contains("x"),
-            "x should be preserved in narrowed q2",
-        );
-        assert!(
-            q2_new.support.contains("y"),
-            "y should be preserved in narrowed q2",
-        );
+        assert!(q2_new.support.contains("x"), "x should be preserved in narrowed q2",);
+        assert!(q2_new.support.contains("y"), "y should be preserved in narrowed q2",);
     }
 
     #[test]

@@ -263,23 +263,16 @@ pub struct WalkerStats {
     /// Pairs that differ on ≥ 2 discriminators (multi-axis divergence).
     pub merge_miss_multi_diff_total: u64,
 
-    // ── F.13 H11b diagnostic: cross-cat census ─────────────────────────
-    /// Number of cross-cat Fork branches that would be filtered by H11b's
-    /// dispatch_branch_seen mechanism (i.e., branches whose target
-    /// `(source_cat, pos, inner_bp)` was already emitted by an earlier
-    /// cursor at this dispatch site).
-    pub fork_branches_dropped_pre_emit: u64,
-    /// Number of cross-cat Fork branches whose target `(cat, pos)` already
-    /// has at least one SPPF Symbol interned. Coarser signal than
-    /// `dropped_pre_emit` — confirms structural redundancy.
-    pub fork_target_symbol_already_in_sppf: u64,
-
     // ── F.13 H13 Step 0 diagnostic: edge-kind-relaxed merge would-merge ──
     /// Number of merge-miss pairs (intra-`pos`, multi-discriminator) whose
     /// `incoming_edge_stack.last()` differs by `GssEdgeId` but would
-    /// match under the H13 EdgeKind-relaxed equivalence. If this count
-    /// is ≥ 60% of `merge_miss_pairs_considered_total`, H13 Step 2
-    /// (actual merge relaxation) is justified. Otherwise H13 is REJECTED.
+    /// match under the H13 EdgeKind-relaxed equivalence. Cross-cat
+    /// projections compare the full `EdgeKind`, including `wrap_cat` and
+    /// `wrap_rule`; the formal wrap-sensitive counterexample shows that
+    /// `(source,bp)` alone is not a sound observable edge equivalence.
+    /// If this count is ≥ 60% of `merge_miss_pairs_considered_total`,
+    /// H13 Step 2 (actual merge relaxation) is justified. Otherwise H13
+    /// is REJECTED.
     pub merge_miss_pairs_edge_kind_equivalent: u64,
 
     // ── F.13 Stage 3.A (2026-05-23): 7-axis sole-cause attribution ──
@@ -425,7 +418,7 @@ pub struct WalkerStats {
 
     /// Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27): force-ratio
     /// projection. Counterfactual measurement of how many Fork-arm
-    /// children would be created as lazy `BranchCursorThunk` records vs
+    /// children would be created as compact deferred branch records vs
     /// how many would actually be forced (materialized into
     /// `BranchCursor`) under the planned weight-keyed lazy traversal
     /// (see `prattail/docs/design/plans/lazy-weight-guided-walker.md`
@@ -738,8 +731,7 @@ impl EdgeKindProjection {
         if new_id_u != u32::MAX {
             let need = (new_id_u as usize).saturating_add(1);
             if self.projected_id_by_actual.len() < need {
-                self.projected_id_by_actual
-                    .resize(need, STACK_ID_ROOT);
+                self.projected_id_by_actual.resize(need, STACK_ID_ROOT);
             }
             self.projected_id_by_actual[new_id_u as usize] = projected_new;
             if new_id_u.saturating_add(1) > self.actual_node_count_seen {
@@ -852,13 +844,9 @@ impl TomitaKeyProjection {
         if count == 0 {
             return;
         }
-        let entry = self
-            .per_step_distinct_keys
-            .entry(key)
-            .or_insert(0);
+        let entry = self.per_step_distinct_keys.entry(key).or_insert(0);
         *entry = entry.saturating_add(count);
-        self.cumulative_cursors_ingested =
-            self.cumulative_cursors_ingested.saturating_add(count);
+        self.cumulative_cursors_ingested = self.cumulative_cursors_ingested.saturating_add(count);
     }
 
     /// End the current step: roll per-step distinct count into cumulative.
@@ -868,11 +856,7 @@ impl TomitaKeyProjection {
         if distinct == 0 {
             return;
         }
-        let cursors_this_step: u64 = self
-            .per_step_distinct_keys
-            .values()
-            .copied()
-            .sum();
+        let cursors_this_step: u64 = self.per_step_distinct_keys.values().copied().sum();
         self.cumulative_per_step_distinct_keys = self
             .cumulative_per_step_distinct_keys
             .saturating_add(distinct);
@@ -975,16 +959,14 @@ impl ContinuationSizeProjection {
         self.apply_action_size_sum_bytes = self
             .apply_action_size_sum_bytes
             .saturating_add(size_bytes as u64);
-        self.apply_action_observations =
-            self.apply_action_observations.saturating_add(1);
+        self.apply_action_observations = self.apply_action_observations.saturating_add(1);
         let size_u64 = size_bytes as u64;
         if size_u64 > self.apply_action_size_max_bytes {
             self.apply_action_size_max_bytes = size_u64;
         }
         if variant_index < self.action_variant_counts.len() {
-            self.action_variant_counts[variant_index] = self
-                .action_variant_counts[variant_index]
-                .saturating_add(1);
+            self.action_variant_counts[variant_index] =
+                self.action_variant_counts[variant_index].saturating_add(1);
         }
         if fork_children > 0 {
             self.step_continuations_emitted = self
@@ -998,8 +980,7 @@ impl ContinuationSizeProjection {
         if self.apply_action_observations == 0 {
             0.0
         } else {
-            (self.apply_action_size_sum_bytes as f64)
-                / (self.apply_action_observations as f64)
+            (self.apply_action_size_sum_bytes as f64) / (self.apply_action_observations as f64)
         }
     }
 
@@ -1014,14 +995,8 @@ impl ContinuationSizeProjection {
         let p50_bucket = continuation_size_bucket(p50_max);
         let p99_bucket = continuation_size_bucket(p99_max);
         // Cumulative through p50_bucket.
-        let cum_p50: u64 = self.apply_action_size_histogram
-            [..=p50_bucket]
-            .iter()
-            .sum();
-        let cum_p99: u64 = self.apply_action_size_histogram
-            [..=p99_bucket]
-            .iter()
-            .sum();
+        let cum_p50: u64 = self.apply_action_size_histogram[..=p50_bucket].iter().sum();
+        let cum_p99: u64 = self.apply_action_size_histogram[..=p99_bucket].iter().sum();
         let p50_ok = (cum_p50 as f64) / (total as f64) >= 0.50;
         let p99_ok = (cum_p99 as f64) / (total as f64) >= 0.99;
         p50_ok && p99_ok
@@ -1032,8 +1007,8 @@ impl ContinuationSizeProjection {
 /// gate for weight-keyed lazy Fork-arm traversal.
 ///
 /// Counts:
-/// - `created`: per Fork-arm child that WOULD be enqueued as a
-///   `BranchCursorThunk` in the planned lazy walker. Incremented at
+/// - `created`: per Fork-arm child that would be enqueued as a
+///   compact deferred branch record in the planned lazy walker. Incremented at
 ///   every `children.push(child)` site in `wpda_walker.rs` Fork arm
 ///   (lines 5855-7323; 23 sites total).
 /// - `forced`: per cursor that actually enters `apply_action_to_cursor`.
@@ -1094,8 +1069,7 @@ impl ThunkForceRatioProjection {
     pub fn observe_created(&mut self, kind_index: usize) {
         self.created = self.created.saturating_add(1);
         let idx = if kind_index < 15 { kind_index } else { 14 };
-        self.by_action_kind[idx] =
-            self.by_action_kind[idx].saturating_add(1);
+        self.by_action_kind[idx] = self.by_action_kind[idx].saturating_add(1);
     }
 
     /// Record one cursor entering `apply_action_to_cursor` (= thunk
@@ -1121,7 +1095,7 @@ impl ThunkForceRatioProjection {
 
     /// Projected memory savings as a multiplier (eager_bytes /
     /// lazy_bytes) under the substitution `BranchCursor (~3 KB) →
-    /// BranchCursorThunk (~64 B avg)`. Conservative — assumes deferred
+    /// compact deferred branch record (~64 B avg)`. Conservative — assumes deferred
     /// thunks stay in the heap for the parse duration (worst case).
     pub fn projected_memory_savings_multiplier(&self) -> f64 {
         const BYTES_PER_BRANCH_CURSOR: f64 = 3072.0;
@@ -1129,15 +1103,11 @@ impl ThunkForceRatioProjection {
         if self.created == 0 {
             return 0.0;
         }
-        let eager_bytes =
-            (self.created as f64) * BYTES_PER_BRANCH_CURSOR;
-        let forced_materialized_bytes =
-            (self.forced as f64) * BYTES_PER_BRANCH_CURSOR;
-        let deferred_thunk_bytes = ((self.created - self.forced.min(self.created))
-            as f64)
-            * BYTES_PER_THUNK;
-        let lazy_bytes =
-            forced_materialized_bytes + deferred_thunk_bytes;
+        let eager_bytes = (self.created as f64) * BYTES_PER_BRANCH_CURSOR;
+        let forced_materialized_bytes = (self.forced as f64) * BYTES_PER_BRANCH_CURSOR;
+        let deferred_thunk_bytes =
+            ((self.created - self.forced.min(self.created)) as f64) * BYTES_PER_THUNK;
+        let lazy_bytes = forced_materialized_bytes + deferred_thunk_bytes;
         if lazy_bytes <= 0.0 {
             0.0
         } else {
@@ -1267,9 +1237,7 @@ impl fmt::Display for WalkerStats {
         writeln!(
             f,
             "  fork_total={}  recovery_dispatches={}  cross_cat_branches={}",
-            self.fork_total,
-            self.fork_recovery_dispatches,
-            self.fork_cross_cat_projection_branches,
+            self.fork_total, self.fork_recovery_dispatches, self.fork_cross_cat_projection_branches,
         )?;
         writeln!(
             f,
@@ -1281,8 +1249,7 @@ impl fmt::Display for WalkerStats {
             self.fork_kind_other,
         )?;
         // Phase F.13 chain_10000 Exp 10 S0-bis (2026-05-26).
-        let node_only_total: u64 =
-            self.merge_miss_node_only_by_context.iter().sum();
+        let node_only_total: u64 = self.merge_miss_node_only_by_context.iter().sum();
         if node_only_total > 0 {
             let d = node_only_total as f64;
             writeln!(
@@ -1298,8 +1265,7 @@ impl fmt::Display for WalkerStats {
                 100.0 * self.merge_miss_node_only_by_context[3] as f64 / d,
             )?;
         }
-        let edge_only_total: u64 =
-            self.merge_miss_edge_only_by_context.iter().sum();
+        let edge_only_total: u64 = self.merge_miss_edge_only_by_context.iter().sum();
         if edge_only_total > 0 {
             let d = edge_only_total as f64;
             writeln!(
@@ -1327,39 +1293,33 @@ impl fmt::Display for WalkerStats {
             const SZ_BRANCH_CURSOR: u64 = 512; // BranchCursor (post path-tree arenas)
             const SZ_CACHE_ENTRY_BASE: u64 = 256;
             const SZ_COHORT_MEMBER_STATE: u64 = 96; // CohortMemberState
-            const SZ_WORKER_SNAPSHOT: u64 = 96;     // WorkerSnapshot
+            const SZ_WORKER_SNAPSHOT: u64 = 96; // WorkerSnapshot
             const SZ_COHORT_CONTINUATION: u64 = 64; // CohortContinuation (Exp 9 S1.a)
             const SZ_PATH_TREE_NODE: u64 = 16;
-            const SZ_SPPF_NODE: u64 = 56;          // largest variant ~48-56 B
+            const SZ_SPPF_NODE: u64 = 56; // largest variant ~48-56 B
             const SZ_SPPF_LINK: u64 = 8;
             let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
             let branch_b = self.mem_attr_branch_cursors_max * SZ_BRANCH_CURSOR;
             let cache_base_b = self.mem_attr_cache_entries_max * SZ_CACHE_ENTRY_BASE;
-            let pending_b =
-                self.mem_attr_cache_pending_members_sum_max * SZ_COHORT_MEMBER_STATE;
-            let snap_b =
-                self.mem_attr_cache_worker_snapshots_sum_max * SZ_WORKER_SNAPSHOT;
-            let cont_b = self.mem_attr_cache_deferred_continuations_sum_max
-                * SZ_COHORT_CONTINUATION;
-            let sppf_stack_b =
-                self.mem_attr_sppf_stack_arena_nodes_max * SZ_PATH_TREE_NODE;
+            let pending_b = self.mem_attr_cache_pending_members_sum_max * SZ_COHORT_MEMBER_STATE;
+            let snap_b = self.mem_attr_cache_worker_snapshots_sum_max * SZ_WORKER_SNAPSHOT;
+            let cont_b =
+                self.mem_attr_cache_deferred_continuations_sum_max * SZ_COHORT_CONTINUATION;
+            let sppf_stack_b = self.mem_attr_sppf_stack_arena_nodes_max * SZ_PATH_TREE_NODE;
             let edge_stack_b =
                 self.mem_attr_incoming_edge_stack_arena_nodes_max * SZ_PATH_TREE_NODE;
             let sppf_nodes_b = self.mem_attr_sppf_nodes_max * SZ_SPPF_NODE;
             let sppf_links_b = self.mem_attr_sppf_symbol_packings_max * SZ_SPPF_LINK;
-            const SZ_GSS_NODE: u64 = 64;  // WpdaGssNode {pos, symbol, ...}
-            const SZ_GSS_EDGE: u64 = 64;  // WpdaGssEdge {from, to, weight, ...}
+            const SZ_GSS_NODE: u64 = 64; // WpdaGssNode {pos, symbol, ...}
+            const SZ_GSS_EDGE: u64 = 64; // WpdaGssEdge {from, to, weight, ...}
             const SZ_FXHASHSET_ENTRY: u64 = 24;
             const SZ_RECOVERY_DELTA: u64 = 64;
             const SZ_SPPF_TERM_ENTRY: u64 = 32;
             let gss_nodes_b = self.mem_attr_gss_nodes_max * SZ_GSS_NODE;
             let gss_edges_b = self.mem_attr_gss_edges_max * SZ_GSS_EDGE;
-            let vd_arcs_b = self.mem_attr_visited_dispatch_unique_arcs_max
-                * SZ_FXHASHSET_ENTRY;
             let vd_entries_b =
                 self.mem_attr_visited_dispatch_total_entries_max * SZ_FXHASHSET_ENTRY;
-            let rd_arcs_b =
-                self.mem_attr_recovery_deltas_unique_arcs_max * SZ_RECOVERY_DELTA;
+            let rd_arcs_b = self.mem_attr_recovery_deltas_unique_arcs_max * SZ_RECOVERY_DELTA;
             let sppf_terms_b = self.mem_attr_sppf_symbol_terms_max * SZ_SPPF_TERM_ENTRY;
             let total_b = branch_b
                 + cache_base_b
@@ -1508,20 +1468,13 @@ impl fmt::Display for WalkerStats {
             )?;
             // Exp 16 round 3: extra structures previously uncounted.
             let text_arena_b = self.mem_attr_sppf_text_arena_bytes_max;
-            let dedup_packing_keys_b =
-                self.mem_attr_sppf_dedup_packing_children_bytes_max;
+            let dedup_packing_keys_b = self.mem_attr_sppf_dedup_packing_children_bytes_max;
             const SZ_SPLICE_SLOT_BASE: u64 = 24;
             const SZ_LEX_FORK_STAMP: u64 = 16;
-            let splice_b =
-                self.mem_attr_sppf_collection_arena_total_entries_max * 4
-                    + self.mem_attr_sppf_collection_arena_unique_arcs_max
-                        * SZ_SPLICE_SLOT_BASE;
-            let lex_fork_b =
-                self.mem_attr_lex_fork_path_total_entries_max * SZ_LEX_FORK_STAMP;
-            writeln!(
-                f,
-                "  Exp 16 round 3 — additional structures (NOT in 'total' above):",
-            )?;
+            let splice_b = self.mem_attr_sppf_collection_arena_total_entries_max * 4
+                + self.mem_attr_sppf_collection_arena_unique_arcs_max * SZ_SPLICE_SLOT_BASE;
+            let lex_fork_b = self.mem_attr_lex_fork_path_total_entries_max * SZ_LEX_FORK_STAMP;
+            writeln!(f, "  Exp 16 round 3 — additional structures (NOT in 'total' above):",)?;
             writeln!(
                 f,
                 "    sppf.text_arena                = {} B = {:.2} MB",
@@ -1607,24 +1560,15 @@ impl fmt::Display for WalkerStats {
             for (i, &count) in self.sppf_reclaimable_nodes_pct_histogram.iter().enumerate() {
                 if count > 0 {
                     let pct = 100.0 * count as f64 / total;
-                    write!(
-                        f,
-                        " [{}-{}%]={}({:.1}%)",
-                        i * 10,
-                        (i + 1) * 10,
-                        count,
-                        pct,
-                    )?;
+                    write!(f, " [{}-{}%]={}({:.1}%)", i * 10, (i + 1) * 10, count, pct,)?;
                 }
             }
             writeln!(f)?;
             // Gate: per Plan agent, PROCEED to S1.b iff bucket 5-9 sum
             // (≥ 50 % candidates) ≥ 50 % of samples AND window-histogram
             // bucket 2+ (≥ 12.5 % window) ≥ 10 % of samples.
-            let cand_50plus: u64 =
-                self.sppf_reclaimable_nodes_pct_histogram[5..].iter().sum();
-            let window_12plus: u64 =
-                self.sppf_reclaim_window_histogram[2..].iter().sum();
+            let cand_50plus: u64 = self.sppf_reclaimable_nodes_pct_histogram[5..].iter().sum();
+            let window_12plus: u64 = self.sppf_reclaim_window_histogram[2..].iter().sum();
             let cand_pct = 100.0 * cand_50plus as f64 / total;
             let window_pct = 100.0 * window_12plus as f64 / total;
             writeln!(
@@ -1661,12 +1605,9 @@ impl fmt::Display for WalkerStats {
             writeln!(
                 f,
                 "  fork_avg_fanout_by_class: lex={:.2} cross_cat={:.2} other={:.2}",
-                self.fork_branches_by_class[0] as f64
-                    / self.fork_total_by_class[0].max(1) as f64,
-                self.fork_branches_by_class[1] as f64
-                    / self.fork_total_by_class[1].max(1) as f64,
-                self.fork_branches_by_class[2] as f64
-                    / self.fork_total_by_class[2].max(1) as f64,
+                self.fork_branches_by_class[0] as f64 / self.fork_total_by_class[0].max(1) as f64,
+                self.fork_branches_by_class[1] as f64 / self.fork_total_by_class[1].max(1) as f64,
+                self.fork_branches_by_class[2] as f64 / self.fork_total_by_class[2].max(1) as f64,
             )?;
         }
         // F.13 H11a diagnostic
@@ -1688,15 +1629,8 @@ impl fmt::Display for WalkerStats {
                 100.0 * self.merge_miss_multi_diff_total as f64 / denom,
             )?;
         }
-        // F.13 H11b diagnostic
-        if self.fork_cross_cat_projection_branches > 0 || self.fork_branches_dropped_pre_emit > 0 {
-            writeln!(
-                f,
-                "  cross_cat: total_branches={} would_drop={} target_in_sppf={}",
-                self.fork_cross_cat_projection_branches,
-                self.fork_branches_dropped_pre_emit,
-                self.fork_target_symbol_already_in_sppf,
-            )?;
+        if self.fork_cross_cat_projection_branches > 0 {
+            writeln!(f, "  cross_cat: total_branches={}", self.fork_cross_cat_projection_branches,)?;
         }
         // F.13 H13 Step 0 diagnostic
         if self.merge_miss_pairs_considered_total > 0
@@ -1731,21 +1665,22 @@ impl fmt::Display for WalkerStats {
             )?;
             if self.merge_miss_multi_diff_total > 0 {
                 let names = [
-                    "state", "node", "edge", "depth", "cohort_origin",
-                    "sppf_top", "lex_alt_idx", "weight_src_idx",
-                    "weight_rule_idx", "lex_fork_stamp",
+                    "state",
+                    "node",
+                    "edge",
+                    "depth",
+                    "cohort_origin",
+                    "sppf_top",
+                    "lex_alt_idx",
+                    "weight_src_idx",
+                    "weight_rule_idx",
+                    "lex_fork_stamp",
                 ];
                 write!(f, "  merge_miss_multi_participation:")?;
                 for (i, n) in names.iter().enumerate() {
                     let c = self.merge_miss_multi_participation[i];
                     let multi_denom = self.merge_miss_multi_diff_total as f64;
-                    write!(
-                        f,
-                        " {}={} ({:.1}%)",
-                        n,
-                        c,
-                        100.0 * c as f64 / multi_denom,
-                    )?;
+                    write!(f, " {}={} ({:.1}%)", n, c, 100.0 * c as f64 / multi_denom,)?;
                 }
                 writeln!(f)?;
             }
@@ -1765,8 +1700,7 @@ impl fmt::Display for WalkerStats {
             write!(
                 f,
                 "  incoming_edge_stack_len_histogram (n={}, max={}):",
-                self.incoming_edge_stack_len_samples,
-                self.incoming_edge_stack_len_max,
+                self.incoming_edge_stack_len_samples, self.incoming_edge_stack_len_max,
             )?;
             for (i, lbl) in labels.iter().enumerate() {
                 let c = self.incoming_edge_stack_len_histogram[i];
@@ -1780,8 +1714,7 @@ impl fmt::Display for WalkerStats {
             write!(
                 f,
                 "  recovery_deltas_len_histogram (n={}, max={}):",
-                self.recovery_deltas_len_samples,
-                self.recovery_deltas_len_max,
+                self.recovery_deltas_len_samples, self.recovery_deltas_len_max,
             )?;
             for (i, lbl) in labels.iter().enumerate() {
                 let c = self.recovery_deltas_len_histogram[i];
@@ -1796,8 +1729,7 @@ impl fmt::Display for WalkerStats {
             write!(
                 f,
                 "  visited_dispatch_len_histogram (n={}, max={}):",
-                self.visited_dispatch_len_samples,
-                self.visited_dispatch_len_max,
+                self.visited_dispatch_len_samples, self.visited_dispatch_len_max,
             )?;
             for (i, lbl) in labels.iter().enumerate() {
                 let c = self.visited_dispatch_len_histogram[i];
@@ -1811,8 +1743,7 @@ impl fmt::Display for WalkerStats {
             write!(
                 f,
                 "  visited_recovery_len_histogram (n={}, max={}):",
-                self.visited_recovery_len_samples,
-                self.visited_recovery_len_max,
+                self.visited_recovery_len_samples, self.visited_recovery_len_max,
             )?;
             for (i, lbl) in labels.iter().enumerate() {
                 let c = self.visited_recovery_len_histogram[i];
@@ -1827,8 +1758,7 @@ impl fmt::Display for WalkerStats {
             write!(
                 f,
                 "  binder_scope_marks_len_histogram (n={}, max={}):",
-                self.binder_scope_marks_len_samples,
-                self.binder_scope_marks_len_max,
+                self.binder_scope_marks_len_samples, self.binder_scope_marks_len_max,
             )?;
             for (i, lbl) in labels.iter().enumerate() {
                 let c = self.binder_scope_marks_len_histogram[i];
@@ -1842,8 +1772,7 @@ impl fmt::Display for WalkerStats {
             write!(
                 f,
                 "  optional_scope_marks_len_histogram (n={}, max={}):",
-                self.optional_scope_marks_len_samples,
-                self.optional_scope_marks_len_max,
+                self.optional_scope_marks_len_samples, self.optional_scope_marks_len_max,
             )?;
             for (i, lbl) in labels.iter().enumerate() {
                 let c = self.optional_scope_marks_len_histogram[i];
@@ -1857,8 +1786,7 @@ impl fmt::Display for WalkerStats {
             write!(
                 f,
                 "  binder_scope_names_len_histogram (n={}, max={}):",
-                self.binder_scope_names_len_samples,
-                self.binder_scope_names_len_max,
+                self.binder_scope_names_len_samples, self.binder_scope_names_len_max,
             )?;
             for (i, lbl) in labels.iter().enumerate() {
                 let c = self.binder_scope_names_len_histogram[i];
@@ -1871,8 +1799,16 @@ impl fmt::Display for WalkerStats {
         // matrix (10x10 → 45 entries) for axis pairs (i, j) with i<j.
         // Axis names match merge_miss_multi_participation (line ~393).
         let axis_names = [
-            "state", "node", "edge", "depth", "cohort_origin", "sppf_top",
-            "lex_alt_idx", "weight_src_idx", "weight_rule_idx", "lex_fork_stamp",
+            "state",
+            "node",
+            "edge",
+            "depth",
+            "cohort_origin",
+            "sppf_top",
+            "lex_alt_idx",
+            "weight_src_idx",
+            "weight_rule_idx",
+            "lex_fork_stamp",
         ];
         let mut has_any = false;
         for &c in self.merge_miss_pair_participation.0.iter() {
@@ -1940,7 +1876,9 @@ impl fmt::Display for WalkerStats {
         // record size distribution + gate status.
         if self.continuation_size_projection.apply_action_observations > 0 {
             writeln!(f, "  continuation_size_projection (Exp 15 counterfactual):")?;
-            let hist = self.continuation_size_projection.apply_action_size_histogram;
+            let hist = self
+                .continuation_size_projection
+                .apply_action_size_histogram;
             writeln!(
                 f,
                 "    apply_action observations={} mean={:.1}B max={}B step_continuations_emitted={}",
@@ -1954,9 +1892,7 @@ impl fmt::Display for WalkerStats {
                 "    apply_action size histogram [0-7,8-15,16-31,32-63,64-127,128-255,256-511,512+]: {:?}",
                 hist,
             )?;
-            let p50_pass = self
-                .continuation_size_projection
-                .passes_size_gate(32, 64);
+            let p50_pass = self.continuation_size_projection.passes_size_gate(32, 64);
             writeln!(
                 f,
                 "    gate (P50<=32 AND P99<=64): {}",
@@ -1966,13 +1902,9 @@ impl fmt::Display for WalkerStats {
         // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
         // apply_action_to_cursor variant histogram — identifies the
         // dominant arm so L2-L3 can target it for graduation.
-        let action_total: u64 =
-            self.apply_action_variant_histogram.iter().sum();
+        let action_total: u64 = self.apply_action_variant_histogram.iter().sum();
         if action_total > 0 {
-            writeln!(
-                f,
-                "  apply_action_variant_histogram (Lazy redesign L2 prep-2):"
-            )?;
+            writeln!(f, "  apply_action_variant_histogram (Lazy redesign L2 prep-2):")?;
             writeln!(f, "    total apply_action calls: {}", action_total)?;
             // Sort buckets descending by count for the top-5 view.
             let mut indexed: Vec<(usize, u64)> = self
@@ -2004,10 +1936,7 @@ impl fmt::Display for WalkerStats {
             } else {
                 0.0
             };
-            writeln!(
-                f,
-                "  chain_earley_absorption (Plan v6 H2):",
-            )?;
+            writeln!(f, "  chain_earley_absorption (Plan v6 H2):",)?;
             writeln!(
                 f,
                 "    trigger_count={} succeeded={} returned_none={} avg_atoms_absorbed={:.1}",
@@ -2020,25 +1949,20 @@ impl fmt::Display for WalkerStats {
         // Phase F.13 chain_10000 COQ-S0 (2026-05-27): cohort_origin
         // distinct count vs EquivKey collision rate.
         if !self.cohort_origin_dispatch_keys_seen.is_empty() {
-            let dispatch_distinct =
-                self.cohort_origin_dispatch_keys_seen.len() as u64;
+            let dispatch_distinct = self.cohort_origin_dispatch_keys_seen.len() as u64;
             let equiv_distinct = self.cohort_origin_equiv_keys_seen.len() as u64;
             let collision_ratio = if equiv_distinct == 0 {
                 0.0
             } else {
                 (dispatch_distinct as f64) / (equiv_distinct as f64)
             };
-            let avg_per_step =
-                if self.cohort_origin_per_step_samples == 0 {
-                    0.0
-                } else {
-                    (self.cohort_origin_distinct_per_step_sum as f64)
-                        / (self.cohort_origin_per_step_samples as f64)
-                };
-            writeln!(
-                f,
-                "  cohort_origin_equivkey (COQ-S0 prep):",
-            )?;
+            let avg_per_step = if self.cohort_origin_per_step_samples == 0 {
+                0.0
+            } else {
+                (self.cohort_origin_distinct_per_step_sum as f64)
+                    / (self.cohort_origin_per_step_samples as f64)
+            };
+            writeln!(f, "  cohort_origin_equivkey (COQ-S0 prep):",)?;
             writeln!(
                 f,
                 "    distinct_dispatch_keys={}  distinct_equiv_keys={}  collision_ratio={:.1}x",
@@ -2066,7 +1990,10 @@ impl fmt::Display for WalkerStats {
         // calls (those NOT covered by Substage 5's broadcast).
         let push_total: u64 = self.push_kind_histogram.iter().sum();
         if push_total > 0 {
-            writeln!(f, "  push_kind_histogram (Lazy redesign L2a prep — RESIDUAL after Substage 5):")?;
+            writeln!(
+                f,
+                "  push_kind_histogram (Lazy redesign L2a prep — RESIDUAL after Substage 5):"
+            )?;
             writeln!(f, "    total residual Push arm entries: {}", push_total)?;
             for (i, count) in self.push_kind_histogram.iter().enumerate() {
                 if *count == 0 {
@@ -2126,15 +2053,17 @@ impl fmt::Display for WalkerStats {
                 convergent,
                 pop_total,
                 convergent_pct,
-                if convergent_pct >= 50.0 { "PASS" } else { "FAIL" },
+                if convergent_pct >= 50.0 {
+                    "PASS"
+                } else {
+                    "FAIL"
+                },
             )?;
         }
         // Phase F.13 chain_10000 Lazy redesign L0 (2026-05-27):
         // force-ratio projection. Decision rule: forced/created < 0.5
         // on left_assoc_chain_500 to ship L1-L5.
-        if self.thunk_force_projection.created > 0
-            || self.thunk_force_projection.forced > 0
-        {
+        if self.thunk_force_projection.created > 0 || self.thunk_force_projection.forced > 0 {
             writeln!(f, "  thunk_force_projection (Lazy redesign L0):")?;
             writeln!(
                 f,
@@ -2148,13 +2077,8 @@ impl fmt::Display for WalkerStats {
                 f,
                 "    by_action_kind [Push,OptGroupAbsent,ConsumeAndReplace,ConsumeAndPop,ConsumeAndCaptureAndPush,ConsumeIdentAndReplace,ConsumeIdentAndPop,ConsumeAndReplaceWithEffect,Consume,LexAlt,LexAltPrefixOp,LexAltPostfixOp,LexAltInfixOp,LexAltMixfixOp,Other]:",
             )?;
-            writeln!(
-                f,
-                "      {:?}",
-                self.thunk_force_projection.by_action_kind,
-            )?;
-            let gate_pass =
-                self.thunk_force_projection.force_ratio() < 0.5;
+            writeln!(f, "      {:?}", self.thunk_force_projection.by_action_kind,)?;
+            let gate_pass = self.thunk_force_projection.force_ratio() < 0.5;
             writeln!(
                 f,
                 "    gate (force_ratio < 0.5): {}  projected_memory_savings_multiplier={:.2}x",
@@ -2232,14 +2156,12 @@ macro_rules! stats_histogram_sample {
         {
             let v: usize = $value;
             let idx = $crate::walker_stats::histogram_bucket_index(v);
-            $walker.stats.$hist_field[idx] =
-                $walker.stats.$hist_field[idx].saturating_add(1);
+            $walker.stats.$hist_field[idx] = $walker.stats.$hist_field[idx].saturating_add(1);
             let vu64 = v as u64;
             if vu64 > $walker.stats.$max_field {
                 $walker.stats.$max_field = vu64;
             }
-            $walker.stats.$samples_field =
-                $walker.stats.$samples_field.saturating_add(1);
+            $walker.stats.$samples_field = $walker.stats.$samples_field.saturating_add(1);
         }
     };
 }
@@ -2396,8 +2318,6 @@ mod tests {
             merge_miss_edge_diff_total: 0,
             merge_miss_depth_diff_total: 0,
             merge_miss_multi_diff_total: 0,
-            fork_branches_dropped_pre_emit: 0,
-            fork_target_symbol_already_in_sppf: 0,
             merge_miss_pairs_edge_kind_equivalent: 0,
             merge_miss_cohort_origin_diff_total: 0,
             merge_miss_sppf_top_diff_total: 0,

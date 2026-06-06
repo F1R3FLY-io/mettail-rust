@@ -11,11 +11,11 @@
     clippy::unnecessary_filter_map
 )]
 
+use crate::gen::term_gen::is_lang_type;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam},
     language::LanguageDef,
 };
-use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -49,6 +49,7 @@ fn generate_context_struct(language: &LanguageDef) -> TokenStream {
         .collect();
 
     quote! {
+        #[allow(dead_code)]
         struct GenerationContext {
             vars: Vec<String>,
             initial_var_count: usize,  // Track how many vars were in initial pool
@@ -102,6 +103,7 @@ fn generate_context_impl(language: &LanguageDef) -> TokenStream {
                 }
             }
 
+            #[allow(dead_code)]
             fn new_with_extended_vars(
                 vars: Vec<String>,
                 initial_var_count: usize,
@@ -216,10 +218,13 @@ fn generate_depth_0_cases(
                             language,
                             crate::gen::SamplePurpose::GroundEnum,
                         );
-                        let sample_lits: Vec<_> = samples.iter().map(|s| {
-                            let lit: i32 = s.parse().unwrap_or(0);
-                            quote! { #lit }
-                        }).collect();
+                        let sample_lits: Vec<_> = samples
+                            .iter()
+                            .map(|s| {
+                                let lit: i32 = s.parse().unwrap_or(0);
+                                quote! { #lit }
+                            })
+                            .collect();
                         cases.push(quote! {
                             for val in [#(#sample_lits),*] {
                                 terms.push(#cat_name::#label(val));
@@ -415,17 +420,13 @@ fn generate_simple_constructor_case(
                 }
             },
         );
-        let depth_loops =
-            loop_vars
-                .iter()
-                .rev()
-                .fold(nested_loops, |inner, dvar| {
-                    quote! {
-                        for #dvar in 0..depth {
-                            #inner
-                        }
-                    }
-                });
+        let depth_loops = loop_vars.iter().rev().fold(nested_loops, |inner, dvar| {
+            quote! {
+                for #dvar in 0..depth {
+                    #inner
+                }
+            }
+        });
         return quote! {
             #depth_loops
         };

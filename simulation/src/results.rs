@@ -164,7 +164,7 @@ impl fmt::Display for RuleCoverage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trace::{TraceOutcome, ExecutionTrace};
+    use crate::trace::{ExecutionTrace, TraceOutcome};
 
     #[test]
     fn test_campaign_results_tracking() {
@@ -176,9 +176,7 @@ mod tests {
             seed: "seed1".to_string(),
             language: "Test".to_string(),
             steps: vec![],
-            outcome: TraceOutcome::Error {
-                message: "test error".to_string(),
-            },
+            outcome: TraceOutcome::Error { message: "test error".to_string() },
             morphology: None,
         };
         results.record_failure(SimulationFailure {

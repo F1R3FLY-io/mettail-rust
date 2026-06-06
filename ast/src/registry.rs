@@ -65,7 +65,8 @@ thread_local! {
 pub fn register_language(name: &str, input: &proc_macro2::TokenStream) {
     let bytes = token_codec::encode(input);
     REGISTRY.with(|r| {
-        r.borrow_mut().insert(name.to_string(), (EntryKind::Language, bytes));
+        r.borrow_mut()
+            .insert(name.to_string(), (EntryKind::Language, bytes));
     });
 }
 
@@ -73,7 +74,8 @@ pub fn register_language(name: &str, input: &proc_macro2::TokenStream) {
 pub fn register_fragment(name: &str, input: &proc_macro2::TokenStream) {
     let bytes = token_codec::encode(input);
     REGISTRY.with(|r| {
-        r.borrow_mut().insert(name.to_string(), (EntryKind::Fragment, bytes));
+        r.borrow_mut()
+            .insert(name.to_string(), (EntryKind::Fragment, bytes));
     });
 }
 
@@ -89,15 +91,15 @@ pub fn lookup_language_def(name: &str) -> Option<LanguageDef> {
         let ts = token_codec::decode(bytes);
         match kind {
             EntryKind::Language => {
-                let def: LanguageDef = syn::parse2(ts)
-                    .expect("registry: stored language tokens failed to re-parse");
+                let def: LanguageDef =
+                    syn::parse2(ts).expect("registry: stored language tokens failed to re-parse");
                 Some(def)
-            }
+            },
             EntryKind::Fragment => {
-                let frag: super::fragment::FragmentDef = syn::parse2(ts)
-                    .expect("registry: stored fragment tokens failed to re-parse");
+                let frag: super::fragment::FragmentDef =
+                    syn::parse2(ts).expect("registry: stored fragment tokens failed to re-parse");
                 Some(frag.to_language_def())
-            }
+            },
         }
     })
 }

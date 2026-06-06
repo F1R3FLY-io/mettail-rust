@@ -73,9 +73,8 @@ impl<'a> ProgramTestSuite<'a> {
 
     /// Assert the program normalizes to the expected string.
     pub fn expect_normalizes_to(mut self, expected: &str) -> Self {
-        self.checks.push(ProgramCheck::NormalizesTo {
-            expected: expected.to_string(),
-        });
+        self.checks
+            .push(ProgramCheck::NormalizesTo { expected: expected.to_string() });
         self
     }
 
@@ -106,9 +105,8 @@ impl<'a> ProgramTestSuite<'a> {
     /// automaton via the negation-intersection-emptiness pipeline, and checks
     /// it against a system model derived from the program's rewrite execution.
     pub fn expect_ltl(mut self, formula: &str) -> Self {
-        self.checks.push(ProgramCheck::Ltl {
-            formula: formula.to_string(),
-        });
+        self.checks
+            .push(ProgramCheck::Ltl { formula: formula.to_string() });
         self
     }
 
@@ -130,11 +128,7 @@ impl<'a> ProgramTestSuite<'a> {
         if failures.is_empty() {
             Ok(())
         } else {
-            Err(format!(
-                "{} check(s) failed:\n{}",
-                failures.len(),
-                failures.join("\n---\n")
-            ))
+            Err(format!("{} check(s) failed:\n{}", failures.len(), failures.join("\n---\n")))
         }
     }
 
@@ -146,7 +140,7 @@ impl<'a> ProgramTestSuite<'a> {
                     .parse_term(source)
                     .map_err(|e| format!("Parse failed: {}", e))?;
                 Ok(())
-            }
+            },
             ProgramCheck::Roundtrip => {
                 mettail_runtime::clear_var_cache();
                 let term = self
@@ -168,7 +162,7 @@ impl<'a> ProgramTestSuite<'a> {
                     ));
                 }
                 Ok(())
-            }
+            },
             ProgramCheck::Terminates { max_steps } => {
                 mettail_runtime::clear_var_cache();
                 let term = self
@@ -191,27 +185,15 @@ impl<'a> ProgramTestSuite<'a> {
                     ));
                 }
                 Ok(())
-            }
+            },
             ProgramCheck::NormalizesTo { expected } => {
-                crate::properties::algebraic::assert_rewrites_to(
-                    self.language,
-                    source,
-                    expected,
-                )
-            }
+                crate::properties::algebraic::assert_rewrites_to(self.language, source, expected)
+            },
             ProgramCheck::RewritesInputTo { input, expected } => {
-                crate::properties::algebraic::assert_rewrites_to(
-                    self.language,
-                    input,
-                    expected,
-                )
-            }
-            ProgramCheck::NoDeadlock => {
-                self.check_no_deadlock(source)
-            }
-            ProgramCheck::Ltl { formula } => {
-                self.check_ltl_property(source, formula)
-            }
+                crate::properties::algebraic::assert_rewrites_to(self.language, input, expected)
+            },
+            ProgramCheck::NoDeadlock => self.check_no_deadlock(source),
+            ProgramCheck::Ltl { formula } => self.check_ltl_property(source, formula),
         }
     }
 
@@ -240,10 +222,7 @@ impl<'a> ProgramTestSuite<'a> {
         }
 
         // Build places: one per channel, with 0 initial tokens.
-        let places: Vec<(String, u64)> = channels
-            .iter()
-            .map(|ch| (ch.clone(), 0u64))
-            .collect();
+        let places: Vec<(String, u64)> = channels.iter().map(|ch| (ch.clone(), 0u64)).collect();
 
         // Build transitions from detected send/receive patterns.
         let mut transitions: Vec<(String, Vec<(usize, u64)>, Vec<(usize, u64)>)> = Vec::new();
@@ -255,20 +234,20 @@ impl<'a> ProgramTestSuite<'a> {
                 // Send transition: produces a token in the channel's place.
                 transitions.push((
                     format!("send_{}", ch),
-                    vec![],        // no inputs consumed
-                    vec![(i, 1)],  // produces 1 token in channel place
+                    vec![],       // no inputs consumed
+                    vec![(i, 1)], // produces 1 token in channel place
                 ));
             }
 
             // Check if this channel has receives.
-            let recv_pattern_rho = format!("<- {}", ch);  // Rholang: `for(x <- ch)`
+            let recv_pattern_rho = format!("<- {}", ch); // Rholang: `for(x <- ch)`
             let recv_pattern_generic = format!("{}?", ch); // Generic: `ch?(x)`
             if source.contains(&recv_pattern_rho) || source.contains(&recv_pattern_generic) {
                 // Receive transition: consumes a token from the channel's place.
                 transitions.push((
                     format!("recv_{}", ch),
-                    vec![(i, 1)],  // consumes 1 token from channel place
-                    vec![],        // no outputs produced
+                    vec![(i, 1)], // consumes 1 token from channel place
+                    vec![],       // no outputs produced
                 ));
             }
         }
@@ -345,9 +324,7 @@ impl<'a> ProgramTestSuite<'a> {
         // Add a state for each term in the execution. Normal forms are accepting.
         let mut term_to_state = std::collections::HashMap::new();
         for (i, t) in all_terms.iter().enumerate() {
-            let is_accepting = normal_forms
-                .iter()
-                .any(|nf| nf.display == t.display);
+            let is_accepting = normal_forms.iter().any(|nf| nf.display == t.display);
             let state_id = system.add_state(is_accepting);
             term_to_state.insert(i, state_id);
         }
@@ -355,8 +332,7 @@ impl<'a> ProgramTestSuite<'a> {
         // Add transitions: connect consecutive terms in the rewrite chain.
         // Also add self-loops on normal forms (infinite acceptance).
         for i in 0..all_terms.len().saturating_sub(1) {
-            if let (Some(&src), Some(&tgt)) = (term_to_state.get(&i), term_to_state.get(&(i + 1)))
-            {
+            if let (Some(&src), Some(&tgt)) = (term_to_state.get(&i), term_to_state.get(&(i + 1))) {
                 let label = all_terms[i].display.clone();
                 system.add_transition(src, Some(label), tgt);
             }
@@ -364,10 +340,7 @@ impl<'a> ProgramTestSuite<'a> {
 
         // Self-loop on normal forms (for Buchi acceptance of infinite words).
         for (i, t) in all_terms.iter().enumerate() {
-            if normal_forms
-                .iter()
-                .any(|nf| nf.display == t.display)
-            {
+            if normal_forms.iter().any(|nf| nf.display == t.display) {
                 if let Some(&state_id) = term_to_state.get(&i) {
                     system.add_transition(state_id, Some(t.display.clone()), state_id);
                 }
@@ -394,13 +367,10 @@ impl<'a> ProgramTestSuite<'a> {
                     msg.push_str(&format!("\n  Lasso: {}", lasso.join(" -> ")));
                 }
                 Err(msg)
-            }
+            },
             ltl::LtlCheckResult::Inconclusive { reason } => {
-                Err(format!(
-                    "LTL property '{}' check was inconclusive: {}",
-                    formula_str, reason
-                ))
-            }
+                Err(format!("LTL property '{}' check was inconclusive: {}", formula_str, reason))
+            },
         }
     }
 }
@@ -432,8 +402,11 @@ fn extract_channel_names(source: &str) -> Vec<String> {
             // Check for send/receive suffix
             if i < len && (chars[i] == '!' || chars[i] == '?') {
                 // Skip keywords that happen to end with ! or ?
-                if ident != "for" && ident != "if" && ident != "match"
-                    && ident != "new" && ident != "contract"
+                if ident != "for"
+                    && ident != "if"
+                    && ident != "match"
+                    && ident != "new"
+                    && ident != "contract"
                 {
                     channels.insert(ident);
                 }

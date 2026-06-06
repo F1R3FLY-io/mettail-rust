@@ -50,14 +50,9 @@ pub struct TraceEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TraceOutcome {
     /// The term reached a normal form.
-    NormalForm {
-        term: String,
-        steps: usize,
-    },
+    NormalForm { term: String, steps: usize },
     /// The simulation hit its step limit without reaching a normal form.
-    StepLimitReached {
-        final_term: String,
-    },
+    StepLimitReached { final_term: String },
     /// An invariant was violated during execution.
     InvariantViolation {
         step: usize,
@@ -65,9 +60,7 @@ pub enum TraceOutcome {
         message: String,
     },
     /// An error occurred (parse failure, Ascent failure, etc.).
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -90,7 +83,7 @@ fn json_escape(s: &str) -> String {
                 for unit in c.encode_utf16(&mut [0u16; 2]) {
                     out.push_str(&format!("\\u{:04x}", unit));
                 }
-            }
+            },
             c => out.push(c),
         }
     }
@@ -117,31 +110,21 @@ fn outcome_to_json_fields(outcome: &TraceOutcome) -> String {
                 json_escape(term),
                 steps,
             )
-        }
+        },
         TraceOutcome::StepLimitReached { final_term } => {
-            format!(
-                "\"kind\":\"StepLimitReached\",\"final_term\":\"{}\"",
-                json_escape(final_term),
-            )
-        }
-        TraceOutcome::InvariantViolation {
-            step,
-            invariant,
-            message,
-        } => {
+            format!("\"kind\":\"StepLimitReached\",\"final_term\":\"{}\"", json_escape(final_term),)
+        },
+        TraceOutcome::InvariantViolation { step, invariant, message } => {
             format!(
                 "\"kind\":\"InvariantViolation\",\"step\":{},\"invariant\":\"{}\",\"message\":\"{}\"",
                 step,
                 json_escape(invariant),
                 json_escape(message),
             )
-        }
+        },
         TraceOutcome::Error { message } => {
-            format!(
-                "\"kind\":\"Error\",\"message\":\"{}\"",
-                json_escape(message),
-            )
-        }
+            format!("\"kind\":\"Error\",\"message\":\"{}\"", json_escape(message),)
+        },
     }
 }
 
@@ -153,13 +136,9 @@ fn morphology_to_json(m: &MorphologySummary) -> String {
         let items: Vec<String> = m
             .alerts
             .iter()
-            .map(|a| {
-                format!(
-                    "{{\"step\":{},\"message\":\"{}\"}}",
-                    a.step,
-                    json_escape(&a.message),
-                )
-            })
+            .map(
+                |a| format!("{{\"step\":{},\"message\":\"{}\"}}", a.step, json_escape(&a.message),),
+            )
             .collect();
         format!("[{}]", items.join(","))
     };
@@ -227,19 +206,11 @@ pub fn write_trace_jsonl(trace: &ExecutionTrace, path: &Path) -> std::io::Result
     }
 
     // Outcome line.
-    writeln!(
-        writer,
-        "{{\"type\":\"outcome\",{}}}",
-        outcome_to_json_fields(&trace.outcome),
-    )?;
+    writeln!(writer, "{{\"type\":\"outcome\",{}}}", outcome_to_json_fields(&trace.outcome),)?;
 
     // Morphology line (optional).
     if let Some(ref morphology) = trace.morphology {
-        writeln!(
-            writer,
-            "{{\"type\":\"morphology\",{}}}",
-            morphology_to_json(morphology),
-        )?;
+        writeln!(writer, "{{\"type\":\"morphology\",{}}}", morphology_to_json(morphology),)?;
     }
 
     writer.flush()?;
@@ -261,10 +232,9 @@ pub fn read_trace_jsonl(path: &Path) -> Result<ExecutionTrace, String> {
     let header_line = lines
         .next()
         .ok_or_else(|| "JSONL file is empty".to_string())?;
-    let seed = extract_json_string(header_line, "seed")
-        .unwrap_or_else(|| "unknown".to_string());
-    let language = extract_json_string(header_line, "language")
-        .unwrap_or_else(|| "unknown".to_string());
+    let seed = extract_json_string(header_line, "seed").unwrap_or_else(|| "unknown".to_string());
+    let language =
+        extract_json_string(header_line, "language").unwrap_or_else(|| "unknown".to_string());
 
     // Parse remaining lines: steps, outcome, morphology.
     let mut steps = Vec::new();
@@ -281,10 +251,8 @@ pub fn read_trace_jsonl(path: &Path) -> Result<ExecutionTrace, String> {
         match line_type.as_deref() {
             Some("step") => {
                 let step_index = extract_json_usize(line, "step_index").unwrap_or(0);
-                let term_display = extract_json_string(line, "term_display")
-                    .unwrap_or_default();
-                let operation = extract_json_string(line, "operation")
-                    .unwrap_or_default();
+                let term_display = extract_json_string(line, "term_display").unwrap_or_default();
+                let operation = extract_json_string(line, "operation").unwrap_or_default();
                 let metrics = parse_metrics_from_line(line);
                 steps.push(TraceEntry {
                     step_index,
@@ -292,16 +260,16 @@ pub fn read_trace_jsonl(path: &Path) -> Result<ExecutionTrace, String> {
                     operation,
                     metrics,
                 });
-            }
+            },
             Some("outcome") => {
                 outcome = Some(parse_outcome_from_line(line)?);
-            }
+            },
             Some("morphology") => {
                 morphology = Some(parse_morphology_from_line(line)?);
-            }
+            },
             _ => {
                 // Unknown line type, skip.
-            }
+            },
         }
     }
 
@@ -349,14 +317,14 @@ fn extract_json_string(line: &str, key: &str) -> Option<String> {
                                 value.push(c);
                             }
                         }
-                    }
+                    },
                     Some(c) => {
                         value.push('\\');
                         value.push(c);
-                    }
+                    },
                     None => break,
                 }
-            }
+            },
             Some('"') => break, // End of string value.
             Some(c) => value.push(c),
         }
@@ -381,7 +349,9 @@ fn extract_json_f64(line: &str, key: &str) -> Option<f64> {
     let rest = &line[start..];
     let num_str: String = rest
         .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == 'e' || *c == 'E' || *c == '+')
+        .take_while(|c| {
+            c.is_ascii_digit() || *c == '.' || *c == '-' || *c == 'e' || *c == 'E' || *c == '+'
+        })
         .collect();
     num_str.parse().ok()
 }
@@ -428,8 +398,8 @@ fn parse_metrics_from_line(line: &str) -> Option<TermMetrics> {
                     end = i + 1;
                     break;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     let metrics_json = &obj_sub[..end];
@@ -457,12 +427,12 @@ fn parse_outcome_from_line(line: &str) -> Result<TraceOutcome, String> {
             let steps = extract_json_usize(line, "steps")
                 .ok_or_else(|| "Missing 'steps' in NormalForm outcome".to_string())?;
             Ok(TraceOutcome::NormalForm { term, steps })
-        }
+        },
         "StepLimitReached" => {
             let final_term = extract_json_string(line, "final_term")
                 .ok_or_else(|| "Missing 'final_term' in StepLimitReached outcome".to_string())?;
             Ok(TraceOutcome::StepLimitReached { final_term })
-        }
+        },
         "InvariantViolation" => {
             let step = extract_json_usize(line, "step")
                 .ok_or_else(|| "Missing 'step' in InvariantViolation outcome".to_string())?;
@@ -470,17 +440,13 @@ fn parse_outcome_from_line(line: &str) -> Result<TraceOutcome, String> {
                 .ok_or_else(|| "Missing 'invariant' in InvariantViolation outcome".to_string())?;
             let message = extract_json_string(line, "message")
                 .ok_or_else(|| "Missing 'message' in InvariantViolation outcome".to_string())?;
-            Ok(TraceOutcome::InvariantViolation {
-                step,
-                invariant,
-                message,
-            })
-        }
+            Ok(TraceOutcome::InvariantViolation { step, invariant, message })
+        },
         "Error" => {
             let message = extract_json_string(line, "message")
                 .ok_or_else(|| "Missing 'message' in Error outcome".to_string())?;
             Ok(TraceOutcome::Error { message })
-        }
+        },
         other => Err(format!("Unknown outcome kind: {}", other)),
     }
 }
@@ -549,8 +515,8 @@ fn parse_alerts_from_line(line: &str) -> Vec<MorphologyAlert> {
                     end = i + 1;
                     break;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     let arr_str = &arr_sub[..end];
@@ -615,10 +581,7 @@ mod tests {
                     }),
                 },
             ],
-            outcome: TraceOutcome::NormalForm {
-                term: "3".to_string(),
-                steps: 2,
-            },
+            outcome: TraceOutcome::NormalForm { term: "3".to_string(), steps: 2 },
             morphology: Some(MorphologySummary {
                 total_steps: 2,
                 min_nodes: 1,
@@ -646,7 +609,7 @@ mod tests {
             TraceOutcome::NormalForm { term, steps } => {
                 assert_eq!(term, "3");
                 assert_eq!(*steps, 2);
-            }
+            },
             other => panic!("Expected NormalForm, got: {:?}", other),
         }
 
@@ -659,15 +622,10 @@ mod tests {
 
     #[test]
     fn test_trace_outcome_variants() {
-        let nf = TraceOutcome::NormalForm {
-            term: "42".to_string(),
-            steps: 5,
-        };
+        let nf = TraceOutcome::NormalForm { term: "42".to_string(), steps: 5 };
         assert!(matches!(nf, TraceOutcome::NormalForm { .. }));
 
-        let sl = TraceOutcome::StepLimitReached {
-            final_term: "stuck".to_string(),
-        };
+        let sl = TraceOutcome::StepLimitReached { final_term: "stuck".to_string() };
         assert!(matches!(sl, TraceOutcome::StepLimitReached { .. }));
 
         let iv = TraceOutcome::InvariantViolation {
@@ -677,9 +635,7 @@ mod tests {
         };
         assert!(matches!(iv, TraceOutcome::InvariantViolation { .. }));
 
-        let err = TraceOutcome::Error {
-            message: "parse error".to_string(),
-        };
+        let err = TraceOutcome::Error { message: "parse error".to_string() };
         assert!(matches!(err, TraceOutcome::Error { .. }));
     }
 
@@ -714,10 +670,7 @@ mod tests {
                     }),
                 },
             ],
-            outcome: TraceOutcome::NormalForm {
-                term: "3".to_string(),
-                steps: 2,
-            },
+            outcome: TraceOutcome::NormalForm { term: "3".to_string(), steps: 2 },
             morphology: Some(MorphologySummary {
                 total_steps: 2,
                 min_nodes: 1,
@@ -749,7 +702,7 @@ mod tests {
             TraceOutcome::NormalForm { term, steps } => {
                 assert_eq!(term, "3");
                 assert_eq!(*steps, 2);
-            }
+            },
             other => panic!("Expected NormalForm, got: {:?}", other),
         }
 
@@ -802,10 +755,7 @@ mod tests {
                     structural_fingerprint: 12345,
                 }),
             }],
-            outcome: TraceOutcome::NormalForm {
-                term: "3".to_string(),
-                steps: 1,
-            },
+            outcome: TraceOutcome::NormalForm { term: "3".to_string(), steps: 1 },
             morphology: None,
         };
 
@@ -821,7 +771,7 @@ mod tests {
             TraceOutcome::NormalForm { term, steps } => {
                 assert_eq!(term, "3");
                 assert_eq!(*steps, 1);
-            }
+            },
             other => panic!("Expected NormalForm, got: {:?}", other),
         }
         assert!(recovered.morphology.is_none());

@@ -95,7 +95,7 @@ pub fn build_lossless_coercion(
         (Int8 | Int16 | Int32 | Int64 | Int128 | Isize, t) if t.is_native_signed_int() => {
             let target_ty = t.signed_int_token().expect("signed-int target");
             quote! { (#inner_expr) as #target_ty }
-        }
+        },
         // IntN → CanonicalBigInt.
         (Int8 | Int16 | Int32 | Int64 | Int128 | Isize, CanonicalBigInt) => quote! {
             ::mettail_runtime::CanonicalBigInt::from(::num_bigint::BigInt::from(#inner_expr))
@@ -110,12 +110,12 @@ pub fn build_lossless_coercion(
         (UInt8 | UInt16 | UInt32 | UInt64 | UInt128 | Usize, t) if t.is_native_unsigned_int() => {
             let target_ty = t.unsigned_int_token().expect("unsigned-int target");
             quote! { (#inner_expr) as #target_ty }
-        }
+        },
         // UIntN → IntM (N < M, sign bit available).
         (UInt8 | UInt16 | UInt32 | UInt64 | UInt128 | Usize, t) if t.is_native_signed_int() => {
             let target_ty = t.signed_int_token().expect("signed-int target");
             quote! { (#inner_expr) as #target_ty }
-        }
+        },
         // UIntN → CanonicalBigInt.
         (UInt8 | UInt16 | UInt32 | UInt64 | UInt128 | Usize, CanonicalBigInt) => quote! {
             ::mettail_runtime::CanonicalBigInt::from(::num_bigint::BigInt::from(#inner_expr))
@@ -235,12 +235,9 @@ mod tests {
 
     #[test]
     fn float64_to_bigrat_uses_cast_bigrat_from_f64_with_ok_question() {
-        let coerced = build_lossless_coercion(
-            NativeKind::Float64,
-            NativeKind::CanonicalBigRat,
-            &v_expr(),
-        )
-        .expect("Float64 → BigRat is lossless");
+        let coerced =
+            build_lossless_coercion(NativeKind::Float64, NativeKind::CanonicalBigRat, &v_expr())
+                .expect("Float64 → BigRat is lossless");
         let s = render(coerced);
         assert!(s.contains("cast_bigrat_from_f64"), "got: {}", s);
         assert!(s.contains(". ok () ?") || s.contains(".ok()?"), "got: {}", s);
@@ -248,12 +245,9 @@ mod tests {
 
     #[test]
     fn float32_to_bigrat_widens_via_f64_first() {
-        let coerced = build_lossless_coercion(
-            NativeKind::Float32,
-            NativeKind::CanonicalBigRat,
-            &v_expr(),
-        )
-        .expect("Float32 → BigRat is lossless");
+        let coerced =
+            build_lossless_coercion(NativeKind::Float32, NativeKind::CanonicalBigRat, &v_expr())
+                .expect("Float32 → BigRat is lossless");
         let s = render(coerced);
         assert!(s.contains("f64 :: from") || s.contains("f64::from"), "got: {}", s);
         assert!(s.contains("cast_bigrat_from_f64"), "got: {}", s);
@@ -261,12 +255,9 @@ mod tests {
 
     #[test]
     fn int_to_bigrat_via_bigint_intermediate() {
-        let coerced = build_lossless_coercion(
-            NativeKind::Int32,
-            NativeKind::CanonicalBigRat,
-            &v_expr(),
-        )
-        .expect("Int32 → BigRat is lossless");
+        let coerced =
+            build_lossless_coercion(NativeKind::Int32, NativeKind::CanonicalBigRat, &v_expr())
+                .expect("Int32 → BigRat is lossless");
         let s = render(coerced);
         assert!(s.contains("cast_bigrat_from_bigint"), "got: {}", s);
         assert!(s.contains("BigInt :: from") || s.contains("BigInt::from"), "got: {}", s);
@@ -299,48 +290,33 @@ mod tests {
 
     #[test]
     fn bool_to_bigrat_uses_cast_bigrat_from_i64() {
-        let coerced = build_lossless_coercion(
-            NativeKind::Bool,
-            NativeKind::CanonicalBigRat,
-            &v_expr(),
-        )
-        .expect("Bool → BigRat is lossless");
+        let coerced =
+            build_lossless_coercion(NativeKind::Bool, NativeKind::CanonicalBigRat, &v_expr())
+                .expect("Bool → BigRat is lossless");
         let s = render(coerced);
         assert!(s.contains("cast_bigrat_from_i64"), "got: {}", s);
     }
 
     #[test]
     fn bool_to_int32_uses_as_cast() {
-        let coerced = build_lossless_coercion(
-            NativeKind::Bool,
-            NativeKind::Int32,
-            &v_expr(),
-        )
-        .expect("Bool → Int32 is lossless");
+        let coerced = build_lossless_coercion(NativeKind::Bool, NativeKind::Int32, &v_expr())
+            .expect("Bool → Int32 is lossless");
         let s = render(coerced);
         assert!(s.contains("as i32"), "got: {}", s);
     }
 
     #[test]
     fn int8_widens_to_int32_via_as_cast() {
-        let coerced = build_lossless_coercion(
-            NativeKind::Int8,
-            NativeKind::Int32,
-            &v_expr(),
-        )
-        .expect("Int8 → Int32 is lossless");
+        let coerced = build_lossless_coercion(NativeKind::Int8, NativeKind::Int32, &v_expr())
+            .expect("Int8 → Int32 is lossless");
         let s = render(coerced);
         assert!(s.contains("as i32"), "got: {}", s);
     }
 
     #[test]
     fn uint8_widens_to_int16_via_as_cast() {
-        let coerced = build_lossless_coercion(
-            NativeKind::UInt8,
-            NativeKind::Int16,
-            &v_expr(),
-        )
-        .expect("UInt8 → Int16 is lossless");
+        let coerced = build_lossless_coercion(NativeKind::UInt8, NativeKind::Int16, &v_expr())
+            .expect("UInt8 → Int16 is lossless");
         let s = render(coerced);
         assert!(s.contains("as i16"), "got: {}", s);
     }
@@ -349,12 +325,7 @@ mod tests {
     fn lossy_edge_returns_none() {
         // Float → IntN is lossy (truncation): not in lossless_targets.
         assert!(
-            build_lossless_coercion(
-                NativeKind::Float64,
-                NativeKind::Int32,
-                &v_expr(),
-            )
-            .is_none(),
+            build_lossless_coercion(NativeKind::Float64, NativeKind::Int32, &v_expr(),).is_none(),
             "Float64 → Int32 is lossy; helper must return None"
         );
     }
@@ -363,8 +334,7 @@ mod tests {
     fn unsupported_edge_returns_none() {
         // Str source has no lossless targets at all.
         assert!(
-            build_lossless_coercion(NativeKind::Str, NativeKind::Bool, &v_expr())
-                .is_none(),
+            build_lossless_coercion(NativeKind::Str, NativeKind::Bool, &v_expr()).is_none(),
             "Str source has no lossless targets; helper must return None"
         );
     }
@@ -374,12 +344,8 @@ mod tests {
         // `Other` represents a non-built-in user wrapper — never a
         // lossless source.
         assert!(
-            build_lossless_coercion(
-                NativeKind::Other,
-                NativeKind::CanonicalBigRat,
-                &v_expr(),
-            )
-            .is_none(),
+            build_lossless_coercion(NativeKind::Other, NativeKind::CanonicalBigRat, &v_expr(),)
+                .is_none(),
             "Other source has no lossless targets; helper must return None"
         );
     }

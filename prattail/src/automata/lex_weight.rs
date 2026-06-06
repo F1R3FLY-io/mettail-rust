@@ -303,12 +303,7 @@ impl LexicographicWeight {
         src_idx: u16,
         rule_idx: u16,
     ) -> Self {
-        LexicographicWeight {
-            primary,
-            lex_alt_idx,
-            src_idx,
-            rule_idx,
-        }
+        LexicographicWeight { primary, lex_alt_idx, src_idx, rule_idx }
     }
 
     /// Construct a weight from a raw tropical cost and indices.
@@ -677,10 +672,7 @@ mod tests {
         // strictly-better primary cost wins.
         let alt_with_better_cost = LexicographicWeight::from_cost_with_lex(2.0, 0, 0, 5);
         let pref_with_worse_cost = LexicographicWeight::from_cost_with_lex(3.0, 0, 0, 0);
-        assert_eq!(
-            alt_with_better_cost.plus(&pref_with_worse_cost),
-            alt_with_better_cost,
-        );
+        assert_eq!(alt_with_better_cost.plus(&pref_with_worse_cost), alt_with_better_cost,);
     }
 
     #[test]

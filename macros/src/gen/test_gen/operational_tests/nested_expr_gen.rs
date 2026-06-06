@@ -7,14 +7,14 @@
 //! All recursive operations use iterative work-stacks (trampolines).
 //! Everything is derived from the `language!` spec.
 
-use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
+use crate::gen::native::native_type_to_string;
+use mettail_ast::grammar::{GrammarRule, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::TypeExpr;
-use crate::gen::native::native_type_to_string;
 use std::collections::{HashMap, HashSet};
 
 use super::expr_string_gen::TestCase;
-use super::ground_term_enum::{self, GroundTerm, ParamInfo};
+use super::ground_term_enum::{self, GroundTerm};
 use super::symbolic_eval::{self, SymValue};
 
 /// Maximum nested tests to generate per language (to avoid explosion).
@@ -184,7 +184,8 @@ pub fn generate_nested_tests(
         for (slot_idx, (_pname, pcat)) in outer.params.iter().enumerate() {
             if slot_idx == wi.inner_slot {
                 // Use the inner ground term
-                construction_parts.push(format!("std::sync::Arc::new({})", inner_gt.construction_code));
+                construction_parts
+                    .push(format!("std::sync::Arc::new({})", inner_gt.construction_code));
             } else {
                 // Use a simple leaf for this category
                 if let Some(leaf) = simple_leaves.get(pcat.as_str()) {
@@ -208,18 +209,19 @@ pub fn generate_nested_tests(
             .term_context
             .as_ref()
             .map(|ctx| {
-                fn count_one(
-                    p: &mettail_ast::grammar::TermParam,
-                    in_optional: bool,
-                ) -> usize {
+                fn count_one(p: &mettail_ast::grammar::TermParam, in_optional: bool) -> usize {
                     use mettail_ast::grammar::TermParam;
                     match p {
                         TermParam::Optional { params: inner } => {
                             inner.iter().map(|q| count_one(q, true)).sum()
-                        }
+                        },
                         TermParam::Simple { .. } => {
-                            if in_optional { 1 } else { 0 }
-                        }
+                            if in_optional {
+                                1
+                            } else {
+                                0
+                            }
+                        },
                         TermParam::GuardBody { .. }
                         | TermParam::Abstraction { .. }
                         | TermParam::MultiAbstraction { .. } => 0,
@@ -231,12 +233,8 @@ pub fn generate_nested_tests(
         for _ in 0..optional_count {
             construction_parts.push("None".to_string());
         }
-        let construction_code = format!(
-            "{}::{}({})",
-            outer.category,
-            outer.label,
-            construction_parts.join(", ")
-        );
+        let construction_code =
+            format!("{}::{}({})", outer.category, outer.label, construction_parts.join(", "));
 
         // Attempt symbolic evaluation of the nested expression
         let expected = try_nested_symbolic_eval(
@@ -268,11 +266,9 @@ pub fn generate_nested_tests(
         ));
 
         let test_name = if expected.is_some() {
-            format!("nested_{}_{}_{}",
-                lang_name_lower, outer_lower, suffix)
+            format!("nested_{}_{}_{}", lang_name_lower, outer_lower, suffix)
         } else {
-            format!("nested_{}_{}_{}__smoke",
-                lang_name_lower, outer_lower, suffix)
+            format!("nested_{}_{}_{}__smoke", lang_name_lower, outer_lower, suffix)
         };
 
         test_cases.push(TestCase {
@@ -312,7 +308,8 @@ fn build_simple_leaf_map(language: &LanguageDef) -> HashMap<String, SimpleLeaf> 
             let lit_label = crate::gen::generate_literal_label(native_type).to_string();
 
             // Pick a "safe" representative value (non-zero for divisors)
-            let (raw_val, construction) = pick_safe_representative(language, &cat, &lit_label, &type_str);
+            let (raw_val, construction) =
+                pick_safe_representative(language, &cat, &lit_label, &type_str);
 
             map.insert(
                 cat,
@@ -335,11 +332,17 @@ fn build_simple_leaf_map(language: &LanguageDef) -> HashMap<String, SimpleLeaf> 
 /// "safe" representative onto the language's effective Integer
 /// pattern. Non-integer types use values from the universally-
 /// admitted domain of their Float/Bool/StringLit patterns.
-fn pick_safe_representative(language: &LanguageDef, cat: &str, lit_label: &str, type_str: &str) -> (String, String) {
+fn pick_safe_representative(
+    language: &LanguageDef,
+    cat: &str,
+    lit_label: &str,
+    type_str: &str,
+) -> (String, String) {
     let int_safe = || -> String {
-        crate::gen::spec_admitted_integer_samples(
-            language, crate::gen::SamplePurpose::Safe,
-        ).into_iter().next().unwrap_or_else(|| "1".to_string())
+        crate::gen::spec_admitted_integer_samples(language, crate::gen::SamplePurpose::Safe)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "1".to_string())
     };
     match type_str {
         "i32" => {
@@ -364,18 +367,14 @@ fn pick_safe_representative(language: &LanguageDef, cat: &str, lit_label: &str, 
         },
         "f32" => {
             let raw = "2.0f32".to_string();
-            let cons = format!(
-                "{}::{}(mettail_runtime::CanonicalFloat32::from({}))",
-                cat, lit_label, raw
-            );
+            let cons =
+                format!("{}::{}(mettail_runtime::CanonicalFloat32::from({}))", cat, lit_label, raw);
             (raw, cons)
         },
         "f64" => {
             let raw = "2.0f64".to_string();
-            let cons = format!(
-                "{}::{}(mettail_runtime::CanonicalFloat64::from({}))",
-                cat, lit_label, raw
-            );
+            let cons =
+                format!("{}::{}(mettail_runtime::CanonicalFloat64::from({}))", cat, lit_label, raw);
             (raw, cons)
         },
         "bool" => {
@@ -441,10 +440,8 @@ fn try_nested_symbolic_eval(
         }
     }
 
-    let inner_result = symbolic_eval::symbolic_eval(
-        &inner_rule.rust_code.as_ref()?.code,
-        &inner_env,
-    )?;
+    let inner_result =
+        symbolic_eval::symbolic_eval(&inner_rule.rust_code.as_ref()?.code, &inner_env)?;
 
     // Now build the outer environment
     let outer_param_info = ground_term_enum::extract_param_info(outer_rule, language);
@@ -474,10 +471,8 @@ fn try_nested_symbolic_eval(
     }
 
     // Symbolically evaluate the outer rule
-    let outer_result = symbolic_eval::symbolic_eval(
-        &outer_rule.rust_code.as_ref()?.code,
-        &outer_env,
-    )?;
+    let outer_result =
+        symbolic_eval::symbolic_eval(&outer_rule.rust_code.as_ref()?.code, &outer_env)?;
 
     // Convert to display string
     let result_native_type = language

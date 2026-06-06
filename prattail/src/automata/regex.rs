@@ -35,8 +35,8 @@
 //! pipeline (partition, DFA, codegen, runtime) operates on `[u8; 256]` tables
 //! unchanged. Zero UTF-8 decoding at lex time.
 
-use super::{CharClass, Nfa, NfaFragment, NfaState, TokenKind};
 use super::utf8;
+use super::{CharClass, Nfa, NfaFragment, NfaState, TokenKind};
 use crate::LiteralPatterns;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -111,7 +111,10 @@ pub fn compile_regex(
     let len = input.len();
 
     if len == 0 {
-        return Err(RegexError { position: 0, message: "empty pattern".to_string() });
+        return Err(RegexError {
+            position: 0,
+            message: "empty pattern".to_string(),
+        });
     }
 
     let mut pos: usize = 0;
@@ -168,7 +171,9 @@ pub fn compile_regex(
             b'(' => {
                 /* Open group: save current concat context */
                 pos += 1;
-                stack.push(Frame::Group { outer_fragments: std::mem::take(&mut current_fragments) });
+                stack.push(Frame::Group {
+                    outer_fragments: std::mem::take(&mut current_fragments),
+                });
                 current_fragments = Vec::with_capacity(4);
                 continue 'drive;
             },
@@ -285,10 +290,7 @@ fn skip_ebnf_comment(bytes: &[u8], pos: &mut usize) -> Result<(), RegexError> {
     }
     Err(RegexError {
         position: comment_start,
-        message: format!(
-            "unclosed EBNF comment (nesting depth {} at end of input)",
-            depth
-        ),
+        message: format!("unclosed EBNF comment (nesting depth {} at end of input)", depth),
     })
 }
 
@@ -491,11 +493,7 @@ pub fn parse_literal_patterns_ebnf(content: &str) -> Result<LiteralPatterns, Reg
 
 /// Parse a single atom (literal, escape, char class, or dot) and return the
 /// NFA fragment and the new position.
-fn parse_atom(
-    nfa: &mut Nfa,
-    input: &[u8],
-    pos: usize,
-) -> Result<(NfaFragment, usize), RegexError> {
+fn parse_atom(nfa: &mut Nfa, input: &[u8], pos: usize) -> Result<(NfaFragment, usize), RegexError> {
     let byte = input[pos];
     match byte {
         b'[' => parse_char_class_atom(nfa, input, pos),
@@ -511,15 +509,14 @@ fn parse_atom(
         },
         b'\\' => parse_escape_atom(nfa, input, pos),
         /* Metacharacters that shouldn't appear as bare atoms */
-        b'*' | b'+' | b'?' | b'{' => {
-            Err(RegexError {
-                position: pos,
-                message: format!("quantifier '{}' without preceding atom", byte as char),
-            })
-        },
-        b')' => {
-            Err(RegexError { position: pos, message: "unexpected ')'".to_string() })
-        },
+        b'*' | b'+' | b'?' | b'{' => Err(RegexError {
+            position: pos,
+            message: format!("quantifier '{}' without preceding atom", byte as char),
+        }),
+        b')' => Err(RegexError {
+            position: pos,
+            message: "unexpected ')'".to_string(),
+        }),
         _ => {
             /* Literal character */
             let start = nfa.add_state(NfaState::new());
@@ -592,7 +589,6 @@ fn parse_escape_atom(
             nfa.add_transition(start, accept, CharClass::Single(b'\t'));
         },
         /* ── Unicode escapes ───────────────────────────────────────── */
-
         // \u{XXXX} — braced, 1-6 hex digits (Rust/ECMAScript style)
         // \uXXXX — exactly 4 hex digits (Java/C# style)
         b'u' => {
@@ -604,7 +600,6 @@ fn parse_escape_atom(
         },
 
         /* ── Unicode properties ───────────────────────────────────── */
-
         // \p{Name} — Unicode property class
         b'p' => {
             return parse_unicode_property(nfa, input, pos, start, accept, false);
@@ -615,8 +610,8 @@ fn parse_escape_atom(
         },
 
         /* Escaped metacharacters */
-        b'.' | b'\\' | b'[' | b']' | b'(' | b')' | b'|' | b'+' | b'*' | b'?' | b'^'
-        | b'"' | b'{' | b'}' | b'/' => {
+        b'.' | b'\\' | b'[' | b']' | b'(' | b')' | b'|' | b'+' | b'*' | b'?' | b'^' | b'"'
+        | b'{' | b'}' | b'/' => {
             nfa.add_transition(start, accept, CharClass::Single(escaped));
         },
         _ => {
@@ -769,10 +764,8 @@ fn parse_unicode_property(
     })?;
     i += 1; // skip '}'
 
-    let mut ranges = utf8::resolve_property(name).map_err(|e| RegexError {
-        position: pos,
-        message: e,
-    })?;
+    let mut ranges =
+        utf8::resolve_property(name).map_err(|e| RegexError { position: pos, message: e })?;
 
     if negated {
         ranges = utf8::complement_codepoint_ranges(&ranges);
@@ -795,17 +788,17 @@ fn validate_codepoint(cp: u32, error_pos: usize) -> Result<char, RegexError> {
     }
     char::from_u32(cp).ok_or_else(|| RegexError {
         position: error_pos,
-        message: format!("U+{:04X} is a surrogate codepoint (not a valid Unicode scalar value)", cp),
+        message: format!(
+            "U+{:04X} is a surrogate codepoint (not a valid Unicode scalar value)",
+            cp
+        ),
     })
 }
 
 /// Parse a Unicode escape inside a character class (returns codepoint).
 /// Handles: `\u{XXXX}`, `\uXXXX`, `\UXXXXXXXX`
 /// Returns `(codepoint, new_position)`.
-fn parse_unicode_escape_in_class(
-    input: &[u8],
-    pos: usize,
-) -> Result<(char, usize), RegexError> {
+fn parse_unicode_escape_in_class(input: &[u8], pos: usize) -> Result<(char, usize), RegexError> {
     let escaped = input[pos + 1];
     let mut i = pos + 2;
 
@@ -823,7 +816,10 @@ fn parse_unicode_escape_in_class(
                 if !input[i].is_ascii_hexdigit() {
                     return Err(RegexError {
                         position: i,
-                        message: format!("invalid hex digit '{}' in \\u{{}} escape", input[i] as char),
+                        message: format!(
+                            "invalid hex digit '{}' in \\u{{}} escape",
+                            input[i] as char
+                        ),
                     });
                 }
                 i += 1;
@@ -941,30 +937,49 @@ fn parse_char_class_atom(
             let esc = input[i + 1];
             match esc {
                 /* Shorthand classes (always byte-level, continue) */
-                b'd' => { byte_ranges.push((b'0', b'9')); i += 2; continue; },
+                b'd' => {
+                    byte_ranges.push((b'0', b'9'));
+                    i += 2;
+                    continue;
+                },
                 b'D' => {
                     byte_ranges.extend_from_slice(&complement_ranges(&[(b'0', b'9')]));
-                    i += 2; continue;
+                    i += 2;
+                    continue;
                 },
                 b'w' => {
-                    byte_ranges.extend_from_slice(&[(b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z')]);
-                    i += 2; continue;
+                    byte_ranges.extend_from_slice(&[
+                        (b'0', b'9'),
+                        (b'A', b'Z'),
+                        (b'_', b'_'),
+                        (b'a', b'z'),
+                    ]);
+                    i += 2;
+                    continue;
                 },
                 b'W' => {
                     byte_ranges.extend_from_slice(&complement_ranges(&[
-                        (b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z'),
+                        (b'0', b'9'),
+                        (b'A', b'Z'),
+                        (b'_', b'_'),
+                        (b'a', b'z'),
                     ]));
-                    i += 2; continue;
+                    i += 2;
+                    continue;
                 },
                 b's' => {
                     byte_ranges.extend_from_slice(&[(b'\t', b'\n'), (b'\r', b'\r'), (b' ', b' ')]);
-                    i += 2; continue;
+                    i += 2;
+                    continue;
                 },
                 b'S' => {
                     byte_ranges.extend_from_slice(&complement_ranges(&[
-                        (b'\t', b'\n'), (b'\r', b'\r'), (b' ', b' '),
+                        (b'\t', b'\n'),
+                        (b'\r', b'\r'),
+                        (b' ', b' '),
                     ]));
-                    i += 2; continue;
+                    i += 2;
+                    continue;
                 },
 
                 /* Unicode property escapes (promote to codepoint mode) */
@@ -984,7 +999,9 @@ fn parse_char_class_atom(
                     }
                     i += 1; // skip '{'
                     let name_start = i;
-                    while i < len && input[i] != b'}' { i += 1; }
+                    while i < len && input[i] != b'}' {
+                        i += 1;
+                    }
                     if i >= len {
                         return Err(RegexError {
                             position: prop_start,
@@ -994,15 +1011,14 @@ fn parse_char_class_atom(
                             ),
                         });
                     }
-                    let name = std::str::from_utf8(&input[name_start..i]).map_err(|_| RegexError {
-                        position: name_start,
-                        message: "invalid UTF-8 in property name".to_string(),
-                    })?;
+                    let name =
+                        std::str::from_utf8(&input[name_start..i]).map_err(|_| RegexError {
+                            position: name_start,
+                            message: "invalid UTF-8 in property name".to_string(),
+                        })?;
                     i += 1; // skip '}'
-                    let mut prop_ranges = utf8::resolve_property(name).map_err(|e| RegexError {
-                        position: prop_start,
-                        message: e,
-                    })?;
+                    let mut prop_ranges = utf8::resolve_property(name)
+                        .map_err(|e| RegexError { position: prop_start, message: e })?;
                     if prop_negated {
                         prop_ranges = utf8::complement_codepoint_ranges(&prop_ranges);
                     }
@@ -1036,10 +1052,18 @@ fn parse_char_class_atom(
                 },
 
                 /* Escape sequences → byte */
-                b'n' => { i += 2; },
-                b'r' => { i += 2; },
-                b't' => { i += 2; },
-                b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => { i += 2; },
+                b'n' => {
+                    i += 2;
+                },
+                b'r' => {
+                    i += 2;
+                },
+                b't' => {
+                    i += 2;
+                },
+                b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => {
+                    i += 2;
+                },
                 _ => {
                     return Err(RegexError {
                         position: i,
@@ -1080,7 +1104,10 @@ fn parse_char_class_atom(
                 position: i,
                 message: "invalid UTF-8 in character class".to_string(),
             })?;
-            let ch = remaining.chars().next().expect("non-empty at non-ASCII byte");
+            let ch = remaining
+                .chars()
+                .next()
+                .expect("non-empty at non-ASCII byte");
             let ch_len = ch.len_utf8();
             i += ch_len;
 
@@ -1093,7 +1120,10 @@ fn parse_char_class_atom(
                         position: pos,
                         message: format!(
                             "character class range [{}(U+{:04X})-{}(U+{:04X})] is out of order",
-                            ch.escape_debug(), ch as u32, hi.escape_debug(), hi as u32,
+                            ch.escape_debug(),
+                            ch as u32,
+                            hi.escape_debug(),
+                            hi as u32,
                         ),
                     });
                 }
@@ -1109,9 +1139,12 @@ fn parse_char_class_atom(
             /* Check for range: a-z */
             if i + 1 < len && input[i] == b'-' && input[i + 1] != b']' {
                 i += 1; // skip '-'
-                // Check if the high endpoint is Unicode
-                if i < len && (input[i] >= 0x80 || (input[i] == b'\\' && i + 1 < len
-                    && matches!(input[i + 1], b'u' | b'U')))
+                        // Check if the high endpoint is Unicode
+                if i < len
+                    && (input[i] >= 0x80
+                        || (input[i] == b'\\'
+                            && i + 1 < len
+                            && matches!(input[i + 1], b'u' | b'U')))
                 {
                     // Promote to codepoint range
                     has_unicode = true;
@@ -1122,7 +1155,10 @@ fn parse_char_class_atom(
                             position: pos,
                             message: format!(
                                 "character class range [{}(U+{:04X})-{}(U+{:04X})] is out of order",
-                                lo_cp.escape_debug(), lo_cp as u32, hi.escape_debug(), hi as u32,
+                                lo_cp.escape_debug(),
+                                lo_cp as u32,
+                                hi.escape_debug(),
+                                hi as u32,
                             ),
                         });
                     }
@@ -1164,9 +1200,8 @@ fn parse_char_class_atom(
             cp_ranges.push((lo as char, hi as char));
         }
         if negated {
-            cp_ranges = utf8::complement_codepoint_ranges(
-                &utf8::sort_and_merge_cp_ranges(&cp_ranges),
-            );
+            cp_ranges =
+                utf8::complement_codepoint_ranges(&utf8::sort_and_merge_cp_ranges(&cp_ranges));
         } else {
             cp_ranges = utf8::sort_and_merge_cp_ranges(&cp_ranges);
         }
@@ -1252,10 +1287,19 @@ fn parse_char_class_endpoint_cp(
                 let (ch, new_i) = parse_unicode_escape_in_class(input, *i)?;
                 *i = new_i;
                 Ok(ch)
-            }
-            b'n' => { *i += 2; Ok('\n') },
-            b'r' => { *i += 2; Ok('\r') },
-            b't' => { *i += 2; Ok('\t') },
+            },
+            b'n' => {
+                *i += 2;
+                Ok('\n')
+            },
+            b'r' => {
+                *i += 2;
+                Ok('\r')
+            },
+            b't' => {
+                *i += 2;
+                Ok('\t')
+            },
             b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => {
                 *i += 2;
                 Ok(esc as char)
@@ -1271,7 +1315,10 @@ fn parse_char_class_endpoint_cp(
             position: *i,
             message: "invalid UTF-8 in character class range endpoint".to_string(),
         })?;
-        let ch = remaining.chars().next().expect("non-empty at non-ASCII byte");
+        let ch = remaining
+            .chars()
+            .next()
+            .expect("non-empty at non-ASCII byte");
         *i += ch.len_utf8();
         Ok(ch)
     } else {
@@ -1341,10 +1388,7 @@ fn add_ranges(nfa: &mut Nfa, from: u32, to: u32, ranges: &[(u8, u8)]) {
 
 /// Try to parse a quantifier at the current position.
 /// Returns `None` if no quantifier is present.
-fn parse_quantifier(
-    input: &[u8],
-    pos: usize,
-) -> Result<Option<(QuantifyKind, usize)>, RegexError> {
+fn parse_quantifier(input: &[u8], pos: usize) -> Result<Option<(QuantifyKind, usize)>, RegexError> {
     if pos >= input.len() {
         return Ok(None);
     }
@@ -1985,8 +2029,7 @@ mod tests {
             "<string>  = /[a-z]+/ ;\n",
             "<ident>   = /[a-z]+/ ;\n",
         );
-        let patterns =
-            parse_literal_patterns_ebnf(content).expect("nested comments should parse");
+        let patterns = parse_literal_patterns_ebnf(content).expect("nested comments should parse");
         assert_eq!(patterns.integer, "[0-9]+");
     }
 
@@ -2037,7 +2080,10 @@ mod tests {
         let content = "(* outer (* inner *)\n<integer> = /[0-9]+/ ;";
         let result = parse_literal_patterns_ebnf(content);
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("unclosed EBNF comment"));
+        assert!(result
+            .unwrap_err()
+            .message
+            .contains("unclosed EBNF comment"));
     }
 
     #[test]
@@ -2058,15 +2104,11 @@ mod tests {
     #[test]
     fn test_compiled_nfa_has_accepting_state() {
         let mut nfa = Nfa::new();
-        let frag = compile_regex("[0-9]+", &mut nfa, TokenKind::Integer)
-            .expect("should compile");
+        let frag = compile_regex("[0-9]+", &mut nfa, TokenKind::Integer).expect("should compile");
         nfa.add_epsilon(nfa.start, frag.start);
 
         /* The accept state should have TokenKind::Integer */
-        assert_eq!(
-            nfa.states[frag.accept as usize].accept,
-            Some(TokenKind::Integer)
-        );
+        assert_eq!(nfa.states[frag.accept as usize].accept, Some(TokenKind::Integer));
 
         /* Verify epsilon closure from start includes the fragment start */
         let closure = epsilon_closure(&nfa, &[nfa.start]);
@@ -2083,8 +2125,8 @@ mod tests {
     /// Helper: compile a regex and test if it accepts given bytes.
     fn regex_accepts_bytes(pattern: &str, input: &[u8]) -> bool {
         let mut nfa = Nfa::new();
-        let frag = compile_regex(pattern, &mut nfa, TokenKind::Ident)
-            .expect("regex compilation failed");
+        let frag =
+            compile_regex(pattern, &mut nfa, TokenKind::Ident).expect("regex compilation failed");
         nfa.add_epsilon(nfa.start, frag.start);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);

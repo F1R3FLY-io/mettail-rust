@@ -96,12 +96,7 @@ pub struct DependencyScc {
 
 impl fmt::Display for DependencyScc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "SCC({} pairs, self_loop: {})",
-            self.pair_indices.len(),
-            self.has_self_loop,
-        )
+        write!(f, "SCC({} pairs, self_loop: {})", self.pair_indices.len(), self.has_self_loop,)
     }
 }
 
@@ -132,10 +127,10 @@ impl fmt::Display for TerminationResult {
             TerminationResult::Terminating => write!(f, "Terminating"),
             TerminationResult::PotentiallyNonTerminating { reason, .. } => {
                 write!(f, "Potentially non-terminating: {}", reason)
-            }
+            },
             TerminationResult::Unknown { reason } => {
                 write!(f, "Unknown: {}", reason)
-            }
+            },
         }
     }
 }
@@ -189,10 +184,7 @@ pub fn extract_dependency_pairs(rules: &[RewriteRule]) -> Vec<DependencyPair> {
         for subterm in rhs_subterms {
             // Mark the subterm's root with #.
             let target_marked = match subterm {
-                Term::App { symbol, args } => Term::App {
-                    symbol: format!("{}#", symbol),
-                    args,
-                },
+                Term::App { symbol, args } => Term::App { symbol: format!("{}#", symbol), args },
                 // collect_defined_subterms only yields App terms.
                 Term::Var(_) => unreachable!(),
             };
@@ -224,8 +216,8 @@ fn collect_defined_subterms<'a>(
             for arg in args {
                 collect_defined_subterms(arg, defined_symbols, acc);
             }
-        }
-        Term::Var(_) => {}
+        },
+        Term::Var(_) => {},
     }
 }
 
@@ -270,10 +262,7 @@ pub fn build_dependency_graph(pairs: &[DependencyPair]) -> Vec<DependencyScc> {
         .into_iter()
         .map(|pair_indices| {
             let has_self_loop = pair_indices.iter().any(|&i| adj[i].contains(&i));
-            DependencyScc {
-                pair_indices,
-                has_self_loop,
-            }
+            DependencyScc { pair_indices, has_self_loop }
         })
         .collect()
 }
@@ -316,24 +305,15 @@ fn unify(t1: &Term, t2: &Term) -> Option<HashMap<String, Term>> {
                     return None;
                 }
                 subst.insert(x, t);
-            }
-            (
-                Term::App {
-                    symbol: s1,
-                    args: a1,
-                },
-                Term::App {
-                    symbol: s2,
-                    args: a2,
-                },
-            ) => {
+            },
+            (Term::App { symbol: s1, args: a1 }, Term::App { symbol: s2, args: a2 }) => {
                 if s1 != s2 || a1.len() != a2.len() {
                     return None;
                 }
                 for (arg1, arg2) in a1.into_iter().zip(a2.into_iter()) {
                     worklist.push((arg1, arg2));
                 }
-            }
+            },
         }
     }
 
@@ -349,7 +329,7 @@ fn apply_subst(term: &Term, subst: &HashMap<String, Term>) -> Term {
             } else {
                 term.clone()
             }
-        }
+        },
         Term::App { symbol, args } => Term::App {
             symbol: symbol.clone(),
             args: args.iter().map(|a| apply_subst(a, subst)).collect(),
@@ -474,10 +454,8 @@ pub fn check_termination(rules: &[RewriteRule]) -> TerminationResult {
             problematic_scc_indices.push(scc_idx);
             let dp_indices_str: Vec<String> =
                 scc.pair_indices.iter().map(|i| i.to_string()).collect();
-            reasons.push(format!(
-                "SCC {{{}}} has no decreasing ordering",
-                dp_indices_str.join(", ")
-            ));
+            reasons
+                .push(format!("SCC {{{}}} has no decreasing ordering", dp_indices_str.join(", ")));
         }
     }
 
@@ -529,23 +507,18 @@ fn has_structural_decrease(scc_pair_indices: &[usize], pairs: &[DependencyPair])
 
         for &idx in scc_pair_indices {
             let (source_arg, target_arg) = match (&pairs[idx].source, &pairs[idx].target) {
-                (
-                    Term::App { args: src_args, .. },
-                    Term::App {
-                        args: tgt_args, ..
-                    },
-                ) => {
+                (Term::App { args: src_args, .. }, Term::App { args: tgt_args, .. }) => {
                     if pos >= src_args.len() || pos >= tgt_args.len() {
                         // This position doesn't exist in both — cannot use it.
                         all_weakly_decrease = false;
                         break;
                     }
                     (&src_args[pos], &tgt_args[pos])
-                }
+                },
                 _ => {
                     all_weakly_decrease = false;
                     break;
-                }
+                },
             };
 
             if source_arg == target_arg {
@@ -582,7 +555,7 @@ fn is_proper_subterm(needle: &Term, haystack: &Term) -> bool {
                 }
             }
             false
-        }
+        },
         Term::Var(_) => false,
     }
 }
@@ -672,11 +645,7 @@ mod tests {
             Term::app("g", vec![Term::var("x")]),
         )];
         let pairs = extract_dependency_pairs(&rules);
-        assert!(
-            pairs.is_empty(),
-            "g is not defined — no DPs expected, got {:?}",
-            pairs,
-        );
+        assert!(pairs.is_empty(), "g is not defined — no DPs expected, got {:?}", pairs,);
     }
 
     #[test]
@@ -739,9 +708,7 @@ mod tests {
         let sccs = build_dependency_graph(&pairs);
 
         // Should have at least one SCC containing both DPs (indices 0 and 1).
-        let multi_scc = sccs
-            .iter()
-            .find(|scc| scc.pair_indices.len() == 2);
+        let multi_scc = sccs.iter().find(|scc| scc.pair_indices.len() == 2);
         assert!(
             multi_scc.is_some(),
             "Expected a 2-element SCC for mutual recursion, got {:?}",
@@ -759,10 +726,8 @@ mod tests {
     #[test]
     fn termination_no_recursion() {
         // f(x) → a (constant) — no defined symbol on RHS → no DPs → terminating.
-        let rules = vec![RewriteRule::new(
-            Term::app("f", vec![Term::var("x")]),
-            Term::constant("a"),
-        )];
+        let rules =
+            vec![RewriteRule::new(Term::app("f", vec![Term::var("x")]), Term::constant("a"))];
         assert_eq!(check_termination(&rules), TerminationResult::Terminating);
     }
 
@@ -809,10 +774,7 @@ mod tests {
         // Only the recursive rule produces a DP. Position 0 decreases. Terminating.
         let rules = vec![
             RewriteRule::new(
-                Term::app("A", vec![
-                    Term::app("s", vec![Term::var("x")]),
-                    Term::var("y"),
-                ]),
+                Term::app("A", vec![Term::app("s", vec![Term::var("x")]), Term::var("y")]),
                 Term::app("A", vec![Term::var("x"), Term::app("s", vec![Term::var("y")])]),
             ),
             RewriteRule::new(
@@ -845,10 +807,8 @@ mod tests {
     #[test]
     fn unify_clash() {
         // f(x) vs g(x): symbol clash.
-        let result = unify(
-            &Term::app("f", vec![Term::var("x")]),
-            &Term::app("g", vec![Term::var("x")]),
-        );
+        let result =
+            unify(&Term::app("f", vec![Term::var("x")]), &Term::app("g", vec![Term::var("x")]));
         assert!(result.is_none());
     }
 
@@ -856,10 +816,7 @@ mod tests {
     fn unify_occurs_check() {
         // x vs f(x): occurs check should fail.
         let result = unify(&Term::var("x"), &Term::app("f", vec![Term::var("x")]));
-        assert!(
-            result.is_none(),
-            "Occurs check should prevent x = f(x)",
-        );
+        assert!(result.is_none(), "Occurs check should prevent x = f(x)",);
     }
 
     #[test]
@@ -880,23 +837,21 @@ mod tests {
 
     #[test]
     fn test_analyze_from_bundle_basic() {
-        let syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![
-            (
-                "Add".to_string(),
-                "Expr".to_string(),
-                vec![
-                    crate::SyntaxItemSpec::NonTerminal {
-                        category: "Expr".to_string(),
-                        param_name: "a".to_string(),
-                    },
-                    crate::SyntaxItemSpec::Terminal("+".to_string()),
-                    crate::SyntaxItemSpec::NonTerminal {
-                        category: "Expr".to_string(),
-                        param_name: "b".to_string(),
-                    },
-                ],
-            ),
-        ];
+        let syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![
+                crate::SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "a".to_string(),
+                },
+                crate::SyntaxItemSpec::Terminal("+".to_string()),
+                crate::SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "b".to_string(),
+                },
+            ],
+        )];
         let result = analyze_from_bundle(&syntax);
         assert!(result.is_some(), "should produce termination analysis");
     }

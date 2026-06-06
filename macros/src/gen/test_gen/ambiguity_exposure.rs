@@ -14,9 +14,6 @@ pub fn generate_ambiguity_exposure_section(language: &LanguageDef) -> TokenStrea
     let lang_name = language.name.to_string();
     let baseline = baseline_tests(&lang_name);
     quote! {
-        #![allow(non_snake_case, unused_imports, dead_code)]
-        //! Auto-generated ambiguity exposure (D11) tests for #lang_name.
-
         use mettail_runtime::diagnostics::{
             self, clear_diagnostics, emit_d11, pending_count, take_diagnostics,
         };

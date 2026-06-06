@@ -13,9 +13,6 @@ pub fn generate_pratt_bp_boundaries_section(language: &LanguageDef) -> TokenStre
     let lang_name = language.name.to_string();
     let baseline = baseline_tests(&lang_name);
     quote! {
-        #![allow(non_snake_case, unused_imports, dead_code)]
-        //! Auto-generated Pratt BP boundary tests for #lang_name.
-
         use mettail_prattail::wpda_runtime::{StackSymbolV2, SymbolKind, WpdaState};
 
         #baseline

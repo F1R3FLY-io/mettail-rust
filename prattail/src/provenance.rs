@@ -209,8 +209,7 @@ impl ProvenanceWeight {
 
     /// Whether this is the constant polynomial `1`.
     pub fn is_one(&self) -> bool {
-        self.terms.len() == 1
-            && self.terms.get(&Monomial::one()) == Some(&1)
+        self.terms.len() == 1 && self.terms.get(&Monomial::one()) == Some(&1)
     }
 
     /// Number of distinct monomials (derivation alternatives).
@@ -406,7 +405,11 @@ mod tests {
         let p2 = ProvenanceWeight::var(x("x2"));
         let product = p1.times(&p2);
         assert_eq!(product.num_alternatives(), 1);
-        let mono = product.terms.keys().next().expect("should have one monomial");
+        let mono = product
+            .terms
+            .keys()
+            .next()
+            .expect("should have one monomial");
         assert_eq!(mono.degree(), 2);
     }
 

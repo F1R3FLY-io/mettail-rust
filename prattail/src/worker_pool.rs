@@ -46,9 +46,7 @@ use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 
 use crate::channel::GreenThreadId;
 use crate::green_thread::{CekThreadState, GreenThreadRegistry, QuantumResult};
-use crate::pool_fsm::{
-    WorkerAction, WorkerEvent, WorkerReport, WorkerState, worker_process_event,
-};
+use crate::pool_fsm::{worker_process_event, WorkerAction, WorkerEvent, WorkerReport, WorkerState};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // WorkerParker — Condvar-based parking for idle workers
@@ -130,11 +128,7 @@ impl Default for WorkerParker {
 
 impl std::fmt::Debug for WorkerParker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let pending = self
-            .pending
-            .lock()
-            .map(|p| *p)
-            .unwrap_or(u32::MAX);
+        let pending = self.pending.lock().map(|p| *p).unwrap_or(u32::MAX);
         f.debug_struct("WorkerParker")
             .field("pending", &pending)
             .finish()
@@ -216,18 +210,20 @@ impl WorkerPool {
         let parker = Arc::new(WorkerParker::new());
 
         // Create per-worker deques and collect stealers.
-        let mut workers_and_stealers: Vec<(Worker<GreenThreadId>, Stealer<GreenThreadId>)> =
-            (0..num_workers)
-                .map(|_| {
-                    let w = Worker::new_lifo();
-                    let s = w.stealer();
-                    (w, s)
-                })
-                .collect();
+        let mut workers_and_stealers: Vec<(Worker<GreenThreadId>, Stealer<GreenThreadId>)> = (0
+            ..num_workers)
+            .map(|_| {
+                let w = Worker::new_lifo();
+                let s = w.stealer();
+                (w, s)
+            })
+            .collect();
 
         // All stealers (shared among all workers for cross-stealing).
-        let all_stealers: Vec<Stealer<GreenThreadId>> =
-            workers_and_stealers.iter().map(|(_, s)| s.clone()).collect();
+        let all_stealers: Vec<Stealer<GreenThreadId>> = workers_and_stealers
+            .iter()
+            .map(|(_, s)| s.clone())
+            .collect();
 
         // Spawn worker threads.
         let mut handles = Vec::with_capacity(num_workers);
@@ -458,7 +454,7 @@ fn worker_loop(
                     quantum_size,
                     idx,
                 );
-            }
+            },
 
             WorkerState::Executing { thread_id } => {
                 let tid = *thread_id;
@@ -484,7 +480,7 @@ fn worker_loop(
                     quantum_size,
                     idx,
                 );
-            }
+            },
 
             WorkerState::Parking => {
                 parker.park(&shutdown);
@@ -495,7 +491,7 @@ fn worker_loop(
                 };
                 let transition = worker_process_event(&fsm_state, event);
                 fsm_state = transition.new_state;
-            }
+            },
 
             WorkerState::Exiting => break,
         }
@@ -570,17 +566,17 @@ fn execute_quantum(
                 },
                 channel_sends: Vec::new(),
             };
-        }
+        },
     };
 
     // Transition to Running if Ready.
     match &thread_ref.state {
         CekThreadState::Ready => {
             thread_ref.state = CekThreadState::Running;
-        }
+        },
         CekThreadState::Running => {
             // Already running (e.g., re-enqueued after yield).
-        }
+        },
         other => {
             return QuantumExecution {
                 result: QuantumResult::Failed {
@@ -591,7 +587,7 @@ fn execute_quantum(
                 },
                 channel_sends: Vec::new(),
             };
-        }
+        },
     }
 
     let result = thread_ref.run_quantum(quantum_size);
@@ -599,10 +595,7 @@ fn execute_quantum(
     drop(thread_ref);
     // RefMut is dropped here, releasing the DashMap shard lock.
 
-    QuantumExecution {
-        result,
-        channel_sends,
-    }
+    QuantumExecution { result, channel_sends }
 }
 
 /// Execute the side-effect actions produced by a worker FSM transition.
@@ -620,32 +613,26 @@ fn execute_worker_actions(
         match action {
             WorkerAction::ExecuteQuantum(_) => {
                 // Handled by the FSM loop — Executing state drives this.
-            }
+            },
             WorkerAction::ReenqueueLocal(tid) => {
                 local.push(*tid);
-            }
+            },
             WorkerAction::ReportToCoordinator(report) => {
                 // Best-effort send — if coordinator is gone, we're shutting down.
                 let _ = report_tx.send(report.clone());
-            }
-            WorkerAction::ForkAndEnqueue {
-                parent_id,
-                categories,
-            } => {
+            },
+            WorkerAction::ForkAndEnqueue { parent_id, categories } => {
                 // Fork children from parent and push to local deque.
                 // `categories` here are actually the sub-term strings from
                 // QuantumResult::Forked { children }, NOT grammar categories.
                 // Each string is a sub-term that a child thread must evaluate.
                 for sub_term in categories {
-                    if let Some(child_id) =
-                        registry.spawn_child(*parent_id, sub_term.clone())
-                    {
+                    if let Some(child_id) = registry.spawn_child(*parent_id, sub_term.clone()) {
                         // Set the child's control term to the sub-term string
-                        // so it runs through the real CEK path (not the stub).
+                        // so it runs through the CEK control path.
                         if let Some(mut child_ref) = registry.get_mut(child_id) {
                             child_ref.control = sub_term.clone();
-                            child_ref.eval_state =
-                                crate::cek_eval::EvalState::Ready;
+                            child_ref.eval_state = crate::cek_eval::EvalState::Ready;
                         }
                         local.push(child_id);
                     }
@@ -655,13 +642,13 @@ fn execute_worker_actions(
                     parent_id: *parent_id,
                     categories: categories.clone(),
                 });
-            }
+            },
             WorkerAction::Park => {
                 parker.park(shutdown);
-            }
+            },
             WorkerAction::Exit => {
                 // No-op — the loop will break on Exiting state.
-            }
+            },
         }
     }
 }
@@ -822,7 +809,10 @@ mod tests {
         {
             let mut t = registry.get_mut(tid).expect("thread exists");
             for i in 0..20 {
-                t.eval_stack.push_back(crate::cek_eval::EvalFrame::RewriteCont { rule_name: format!("frame_{}", i) });
+                t.eval_stack
+                    .push_back(crate::cek_eval::EvalFrame::RewriteCont {
+                        rule_name: format!("frame_{}", i),
+                    });
             }
         }
 
@@ -849,14 +839,8 @@ mod tests {
         let registry = Arc::new(GreenThreadRegistry::new());
         let (tx, _rx) = crossbeam_channel::unbounded();
 
-        let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 2,
-                quantum_size: 10,
-            },
-            registry,
-            tx,
-        );
+        let pool =
+            WorkerPool::new(WorkerPoolConfig { num_workers: 2, quantum_size: 10 }, registry, tx);
 
         assert_eq!(pool.num_workers(), 2);
         assert!(!pool.is_shutdown());
@@ -874,10 +858,7 @@ mod tests {
         let tid = registry.spawn("Expr".to_string());
 
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::clone(&registry),
             tx,
         );
@@ -911,7 +892,10 @@ mod tests {
         {
             let mut t = registry.get_mut(tid).expect("thread exists");
             for i in 0..50 {
-                t.eval_stack.push_back(crate::cek_eval::EvalFrame::RewriteCont { rule_name: format!("frame_{}", i) });
+                t.eval_stack
+                    .push_back(crate::cek_eval::EvalFrame::RewriteCont {
+                        rule_name: format!("frame_{}", i),
+                    });
             }
         }
 
@@ -953,10 +937,7 @@ mod tests {
             .collect();
 
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 4,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 4, quantum_size: 100 },
             Arc::clone(&registry),
             tx,
         );
@@ -977,11 +958,7 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            completed.len(),
-            10,
-            "all 10 threads should complete"
-        );
+        assert_eq!(completed.len(), 10, "all 10 threads should complete");
 
         pool.shutdown();
     }
@@ -998,10 +975,7 @@ mod tests {
             .collect();
 
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 4,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 4, quantum_size: 100 },
             Arc::clone(&registry),
             tx,
         );
@@ -1017,16 +991,12 @@ mod tests {
         for _ in 0..num_threads {
             match rx.recv_timeout(std::time::Duration::from_secs(10)) {
                 Ok(WorkerReport::ThreadCompleted { .. }) => completed += 1,
-                Ok(_) => {} // other reports are fine
+                Ok(_) => {}, // other reports are fine
                 Err(_) => break,
             }
         }
 
-        assert_eq!(
-            completed, num_threads,
-            "all {} threads should complete",
-            num_threads
-        );
+        assert_eq!(completed, num_threads, "all {} threads should complete", num_threads);
 
         pool.shutdown();
     }
@@ -1039,10 +1009,7 @@ mod tests {
         let (tx, _rx) = crossbeam_channel::unbounded();
 
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 2,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 2, quantum_size: 100 },
             Arc::clone(&registry),
             tx.clone(),
         );
@@ -1063,10 +1030,7 @@ mod tests {
 
         // Start with 1 worker.
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 1,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 1, quantum_size: 100 },
             Arc::clone(&registry),
             tx.clone(),
         );
@@ -1089,7 +1053,7 @@ mod tests {
         for _ in 0..num_threads {
             match rx.recv_timeout(std::time::Duration::from_secs(5)) {
                 Ok(WorkerReport::ThreadCompleted { .. }) => completed += 1,
-                Ok(_) => {}
+                Ok(_) => {},
                 Err(_) => break,
             }
         }
@@ -1109,10 +1073,7 @@ mod tests {
         let (tx, _rx) = crossbeam_channel::unbounded();
 
         let pool = WorkerPool::new(
-            WorkerPoolConfig {
-                num_workers: 2,
-                quantum_size: 100,
-            },
+            WorkerPoolConfig { num_workers: 2, quantum_size: 100 },
             Arc::clone(&registry),
             tx.clone(),
         );

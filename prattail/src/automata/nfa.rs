@@ -113,8 +113,9 @@ pub fn build_nfa_with_custom(
             continue; // Already handled via LiteralPatterns
         }
         let kind = TokenKind::Custom(spec.name.clone());
-        let frag = regex::compile_regex(&spec.pattern, &mut nfa, kind)
-            .unwrap_or_else(|e| panic!("custom token '{}': invalid regex '{}': {}", spec.name, spec.pattern, e));
+        let frag = regex::compile_regex(&spec.pattern, &mut nfa, kind).unwrap_or_else(|e| {
+            panic!("custom token '{}': invalid regex '{}': {}", spec.name, spec.pattern, e)
+        });
         // Override the accept state's priority if the spec has a custom one
         let accept_state = &mut nfa.states[frag.accept as usize];
         accept_state.weight = TropicalWeight::from_priority(spec.priority);
@@ -142,11 +143,9 @@ pub fn build_nfa_for_mode(custom_tokens: &[crate::CustomTokenSpec]) -> Nfa {
 
     for spec in custom_tokens {
         let kind = TokenKind::Custom(spec.name.clone());
-        let frag = regex::compile_regex(&spec.pattern, &mut nfa, kind)
-            .unwrap_or_else(|e| panic!(
-                "mode token '{}': invalid regex '{}': {}",
-                spec.name, spec.pattern, e
-            ));
+        let frag = regex::compile_regex(&spec.pattern, &mut nfa, kind).unwrap_or_else(|e| {
+            panic!("mode token '{}': invalid regex '{}': {}", spec.name, spec.pattern, e)
+        });
         let accept_state = &mut nfa.states[frag.accept as usize];
         accept_state.weight = TropicalWeight::from_priority(spec.priority);
         fragments.push(frag);
@@ -511,7 +510,6 @@ pub(crate) fn build_nfa_prefix_only(terminals: &[TerminalPattern], needs: &Built
 
     nfa
 }
-
 
 /// Compute the epsilon closure of a set of NFA states.
 ///

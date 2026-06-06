@@ -110,7 +110,10 @@ impl StochasticPetriNet {
             net.transitions.len()
         );
 
-        let transitions = net.transitions.iter().zip(rates.iter())
+        let transitions = net
+            .transitions
+            .iter()
+            .zip(rates.iter())
             .map(|(t, &r)| StochasticTransition::new(t.clone(), r))
             .collect();
 
@@ -207,11 +210,7 @@ impl StochasticPetriNet {
     }
 
     /// Add a stochastic transition and return its ID.
-    pub fn add_transition(
-        &mut self,
-        name: impl Into<String>,
-        rate: f64,
-    ) -> usize {
+    pub fn add_transition(&mut self, name: impl Into<String>, rate: f64) -> usize {
         let id = self.transitions.len();
         let pt = PetriTransition::new(id, name);
         self.transitions.push(StochasticTransition::new(pt, rate));
@@ -238,13 +237,17 @@ impl StochasticPetriNet {
 
     /// Add an input arc to a transition.
     pub fn add_input(&mut self, transition_id: usize, place_id: usize, weight: u64) -> &mut Self {
-        self.transitions[transition_id].transition.add_input(place_id, weight);
+        self.transitions[transition_id]
+            .transition
+            .add_input(place_id, weight);
         self
     }
 
     /// Add an output arc to a transition.
     pub fn add_output(&mut self, transition_id: usize, place_id: usize, weight: u64) -> &mut Self {
-        self.transitions[transition_id].transition.add_output(place_id, weight);
+        self.transitions[transition_id]
+            .transition
+            .add_output(place_id, weight);
         self
     }
 
@@ -259,7 +262,11 @@ impl StochasticPetriNet {
     /// AND the optional guard predicate (if present) returns `true`.
     pub fn is_enabled(&self, transition_id: usize, marking: &Marking) -> bool {
         if let Some(st) = self.transitions.get(transition_id) {
-            let tokens_ok = st.transition.inputs.iter().all(|(p, w)| marking.get(*p) >= *w);
+            let tokens_ok = st
+                .transition
+                .inputs
+                .iter()
+                .all(|(p, w)| marking.get(*p) >= *w);
             let guard_ok = st.guard.as_ref().map_or(true, |g| g(marking));
             tokens_ok && guard_ok
         } else {
@@ -298,9 +305,16 @@ impl StochasticPetriNet {
             if self.is_enabled(i, marking) {
                 // First-order mass action: propensity = rate
                 // For multi-token inputs, scale by minimum token multiplicity
-                let min_multiplicity = st.transition.inputs.iter()
+                let min_multiplicity = st
+                    .transition
+                    .inputs
+                    .iter()
                     .map(|(p, w)| {
-                        if *w == 0 { u64::MAX } else { marking.get(*p) / w }
+                        if *w == 0 {
+                            u64::MAX
+                        } else {
+                            marking.get(*p) / w
+                        }
                     })
                     .min()
                     .unwrap_or(1);
@@ -475,11 +489,17 @@ pub fn steady_state_analysis<R: Rng>(
 
     let n = num_runs as f64;
     let mean_tokens: Vec<f64> = token_sums.iter().map(|s| s / n).collect();
-    let stddev_tokens: Vec<f64> = token_sums.iter().zip(token_sq_sums.iter())
+    let stddev_tokens: Vec<f64> = token_sums
+        .iter()
+        .zip(token_sq_sums.iter())
         .map(|(s, sq)| {
             let mean = s / n;
             let var = sq / n - mean * mean;
-            if var > 0.0 { var.sqrt() } else { 0.0 }
+            if var > 0.0 {
+                var.sqrt()
+            } else {
+                0.0
+            }
         })
         .collect();
 
@@ -495,9 +515,9 @@ pub fn steady_state_analysis<R: Rng>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use rand::SeedableRng;
     use rand::rngs::StdRng;
+    use rand::SeedableRng;
+    use std::sync::Arc;
 
     /// Build a simple producer-consumer net:
     /// - Place 0: buffer (starts with 3 tokens)
@@ -575,8 +595,10 @@ mod tests {
 
         assert_eq!(stats.num_runs, 50);
         assert!(stats.mean_events > 0.0, "should have events on average");
-        assert!((stats.deadlock_fraction - 0.0).abs() < 1e-10,
-            "producer-consumer should not deadlock");
+        assert!(
+            (stats.deadlock_fraction - 0.0).abs() < 1e-10,
+            "producer-consumer should not deadlock"
+        );
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -584,8 +606,8 @@ mod tests {
     // ═════════════════════════════════════════════════════════════════════
 
     use crate::model::{
-        LanguageStateMachine, ModelBuiltinPredicate, ModelChannel, ModelConnective,
-        ModelEquation, ModelJoinPattern, ModelRewriteRule, ModelTheory,
+        LanguageStateMachine, ModelBuiltinPredicate, ModelChannel, ModelConnective, ModelEquation,
+        ModelJoinPattern, ModelRewriteRule, ModelTheory,
     };
 
     fn state_machine_with_channels(
@@ -600,9 +622,7 @@ mod tests {
             theories: Vec::<ModelTheory>::new(),
             channels: channels
                 .into_iter()
-                .map(|c| ModelChannel {
-                    category: c.to_string(),
-                })
+                .map(|c| ModelChannel { category: c.to_string() })
                 .collect(),
             join_patterns: joins
                 .into_iter()
@@ -619,10 +639,7 @@ mod tests {
     fn sim_d_from_channel_metadata_builds_places() {
         let state = state_machine_with_channels(
             vec!["Name", "Place"],
-            vec![
-                ("PGuardedInput", vec!["Name"]),
-                ("PJoin", vec!["Name", "Place"]),
-            ],
+            vec![("PGuardedInput", vec!["Name"]), ("PJoin", vec!["Name", "Place"])],
         );
         let net = StochasticPetriNet::from_channel_metadata(&state, 1.0);
         assert_eq!(net.places.len(), 2);
@@ -656,10 +673,8 @@ mod tests {
         // A join with two parameters both bound to the same channel
         // category should produce two separate input arcs (weight 1 each),
         // so the transition requires two tokens from that place to fire.
-        let state = state_machine_with_channels(
-            vec!["Name"],
-            vec![("PJoin", vec!["Name", "Name"])],
-        );
+        let state =
+            state_machine_with_channels(vec!["Name"], vec![("PJoin", vec!["Name", "Name"])]);
         let net = StochasticPetriNet::from_channel_metadata(&state, 1.0);
         assert_eq!(net.places.len(), 1);
         assert_eq!(net.transitions.len(), 1);
@@ -694,11 +709,8 @@ mod tests {
     fn test_guard_blocks_transition() {
         let mut net = StochasticPetriNet::new();
         let buffer = net.add_place("buffer");
-        let guarded = net.add_guarded_transition(
-            "blocked",
-            1.0,
-            Arc::new(|_marking: &Marking| false),
-        );
+        let guarded =
+            net.add_guarded_transition("blocked", 1.0, Arc::new(|_marking: &Marking| false));
         net.add_input(guarded, buffer, 1);
         net.set_initial_tokens(buffer, 5);
 
@@ -716,11 +728,8 @@ mod tests {
     fn test_guard_allows_transition() {
         let mut net = StochasticPetriNet::new();
         let buffer = net.add_place("buffer");
-        let guarded = net.add_guarded_transition(
-            "allowed",
-            2.0,
-            Arc::new(|_marking: &Marking| true),
-        );
+        let guarded =
+            net.add_guarded_transition("allowed", 2.0, Arc::new(|_marking: &Marking| true));
         net.add_input(guarded, buffer, 1);
         net.set_initial_tokens(buffer, 3);
 
@@ -740,11 +749,8 @@ mod tests {
         // All transitions guarded to false → immediate deadlock.
         let mut net = StochasticPetriNet::new();
         let buffer = net.add_place("buffer");
-        let guarded = net.add_guarded_transition(
-            "blocked",
-            1.0,
-            Arc::new(|_marking: &Marking| false),
-        );
+        let guarded =
+            net.add_guarded_transition("blocked", 1.0, Arc::new(|_marking: &Marking| false));
         net.add_input(guarded, buffer, 1);
         net.set_initial_tokens(buffer, 10);
 

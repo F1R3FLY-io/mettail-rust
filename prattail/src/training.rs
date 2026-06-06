@@ -377,11 +377,9 @@ impl TrainedModel {
 ///
 /// # Requires
 /// Feature `wfst-log` (uses `LogWeight` for forward-backward).
-pub fn compute_expected_counts_fb(
-    wfst: &crate::wfst::PredictionWfst,
-) -> HashMap<String, f64> {
+pub fn compute_expected_counts_fb(wfst: &crate::wfst::PredictionWfst) -> HashMap<String, f64> {
     use crate::automata::semiring::LogWeight;
-    use crate::forward_backward::{forward_scores, backward_scores, total_weight};
+    use crate::forward_backward::{backward_scores, forward_scores, total_weight};
 
     let n = wfst.states.len();
     if n == 0 {
@@ -506,12 +504,16 @@ pub fn train_from_corrections(
             rule_weights.update(&expected_correct, &expected_all);
         }
 
-        epoch_losses.push(if corrections.is_empty() { 0.0 } else { epoch_loss / corrections.len() as f64 });
+        epoch_losses.push(if corrections.is_empty() {
+            0.0
+        } else {
+            epoch_loss / corrections.len() as f64
+        });
     }
 
     let final_loss = epoch_losses.last().copied().unwrap_or(f64::INFINITY);
-    let converged = epoch_losses.len() >= 2
-        && (epoch_losses[epoch_losses.len() - 2] - final_loss).abs() < 1e-6;
+    let converged =
+        epoch_losses.len() >= 2 && (epoch_losses[epoch_losses.len() - 2] - final_loss).abs() < 1e-6;
 
     TrainingStats {
         epoch_losses,
@@ -932,19 +934,17 @@ mod tests {
         let default = crate::recovery::RecoveryConfig::default();
 
         // Trained weights should differ from defaults
-        let any_different = weights
-            .iter()
-            .any(|(k, v)| {
-                let default_val = match k.as_str() {
-                    "skip_per_token" => default.skip_per_token,
-                    "delete_cost" => default.delete_cost,
-                    "substitute_cost" => default.substitute_cost,
-                    "insert_cost" => default.insert_cost,
-                    "swap_cost" => default.swap_cost,
-                    _ => 0.0,
-                };
-                (*v - default_val).abs() > 1e-9
-            });
+        let any_different = weights.iter().any(|(k, v)| {
+            let default_val = match k.as_str() {
+                "skip_per_token" => default.skip_per_token,
+                "delete_cost" => default.delete_cost,
+                "substitute_cost" => default.substitute_cost,
+                "insert_cost" => default.insert_cost,
+                "swap_cost" => default.swap_cost,
+                _ => 0.0,
+            };
+            (*v - default_val).abs() > 1e-9
+        });
 
         assert!(
             any_different,
@@ -1007,23 +1007,31 @@ mod tests {
         use crate::wfst::PredictionWfstBuilder;
 
         fn build_simple_wfst() -> crate::wfst::PredictionWfst {
-            let token_map = TokenIdMap::from_names(
-                vec!["Plus", "Minus", "Star"].into_iter().map(String::from),
-            );
+            let token_map =
+                TokenIdMap::from_names(vec!["Plus", "Minus", "Star"].into_iter().map(String::from));
             let mut builder = PredictionWfstBuilder::new("Expr", token_map);
             builder.add_action(
                 "Plus",
-                DispatchAction::Direct { rule_label: "Add".to_string(), parse_fn: "parse_add".to_string() },
+                DispatchAction::Direct {
+                    rule_label: "Add".to_string(),
+                    parse_fn: "parse_add".to_string(),
+                },
                 TropicalWeight::new(0.0),
             );
             builder.add_action(
                 "Minus",
-                DispatchAction::Direct { rule_label: "Sub".to_string(), parse_fn: "parse_sub".to_string() },
+                DispatchAction::Direct {
+                    rule_label: "Sub".to_string(),
+                    parse_fn: "parse_sub".to_string(),
+                },
                 TropicalWeight::new(0.5),
             );
             builder.add_action(
                 "Star",
-                DispatchAction::Direct { rule_label: "Mul".to_string(), parse_fn: "parse_mul".to_string() },
+                DispatchAction::Direct {
+                    rule_label: "Mul".to_string(),
+                    parse_fn: "parse_mul".to_string(),
+                },
                 TropicalWeight::new(1.0),
             );
             builder.build()
@@ -1045,7 +1053,8 @@ mod tests {
             assert!(
                 counts["Add"] > counts["Mul"],
                 "Add (w=0.0) should have higher count than Mul (w=1.0): {} vs {}",
-                counts["Add"], counts["Mul"]
+                counts["Add"],
+                counts["Mul"]
             );
         }
 
@@ -1091,18 +1100,14 @@ mod tests {
             rw.set_learning_rate(0.01);
 
             // Corrections: primary at 0.0 was wrong, selected at 0.5 was right
-            let corrections = vec![
-                crate::wfst::WeightCorrection {
-                    category: "Expr",
-                    primary_weight: 0.0,
-                    selected_weight: 0.5,
-                    alternatives_considered: 3,
-                },
-            ];
+            let corrections = vec![crate::wfst::WeightCorrection {
+                category: "Expr",
+                primary_weight: 0.0,
+                selected_weight: 0.5,
+                alternatives_considered: 3,
+            }];
 
-            let stats = super::super::train_from_corrections(
-                &mut rw, &wfsts, &corrections, 10,
-            );
+            let stats = super::super::train_from_corrections(&mut rw, &wfsts, &corrections, 10);
 
             assert_eq!(stats.epoch_losses.len(), 10, "should have 10 epoch losses");
             assert!(!stats.final_loss.is_nan(), "loss should not be NaN");
@@ -1112,35 +1117,46 @@ mod tests {
         #[test]
         fn test_wfst_apply_corrections() {
             let mut wfst = build_simple_wfst();
-            let add_weight_before = wfst.actions.iter()
+            let add_weight_before = wfst
+                .actions
+                .iter()
                 .find(|a| a.action.rule_label() == "Add")
-                .expect("Add action").weight.value();
+                .expect("Add action")
+                .weight
+                .value();
 
-            let corrections = vec![
-                crate::wfst::WeightCorrection {
-                    category: "Expr",
-                    primary_weight: 0.0,  // matches Add
-                    selected_weight: 0.5, // matches Sub
-                    alternatives_considered: 2,
-                },
-            ];
+            let corrections = vec![crate::wfst::WeightCorrection {
+                category: "Expr",
+                primary_weight: 0.0,  // matches Add
+                selected_weight: 0.5, // matches Sub
+                alternatives_considered: 2,
+            }];
 
             wfst.apply_corrections(&corrections, 0.1, 0.5);
 
-            let add_weight_after = wfst.actions.iter()
+            let add_weight_after = wfst
+                .actions
+                .iter()
                 .find(|a| a.action.rule_label() == "Add")
-                .expect("Add action").weight.value();
+                .expect("Add action")
+                .weight
+                .value();
 
             // Add (matching primary=0.0) should be penalized (weight increased)
             assert!(
                 add_weight_after > add_weight_before,
                 "Add weight should increase after correction: {} → {}",
-                add_weight_before, add_weight_after,
+                add_weight_before,
+                add_weight_after,
             );
 
-            let sub_weight_after = wfst.actions.iter()
+            let sub_weight_after = wfst
+                .actions
+                .iter()
                 .find(|a| a.action.rule_label() == "Sub")
-                .expect("Sub action").weight.value();
+                .expect("Sub action")
+                .weight
+                .value();
 
             // Sub (matching selected=0.5) should be reinforced (weight decreased)
             assert!(

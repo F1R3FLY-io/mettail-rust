@@ -13,9 +13,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use mettail_prattail::abstract_cesk::{
-    DyckStateGraph, EvalControlState, EvalStackSymbol,
-};
+use mettail_prattail::abstract_cesk::{DyckStateGraph, EvalControlState, EvalStackSymbol};
 use mettail_runtime::LanguageMetadata;
 
 /// Result of abstract CESK coverage analysis on a language.
@@ -111,9 +109,7 @@ pub fn check_cesk_coverage(metadata: &dyn LanguageMetadata) -> CeskCoverageResul
             let eval_idx = dsg.add_node(eval_state);
             let sub_idx = dsg.add_node(sub_eval_state);
 
-            let symbol = EvalStackSymbol::BinOp {
-                operator: term_def.name.to_string(),
-            };
+            let symbol = EvalStackSymbol::BinOp { operator: term_def.name.to_string() };
             stack_symbol_kinds.insert("BinOp");
             dsg.add_edge(eval_idx, sub_idx, symbol, true);
         }
@@ -140,20 +136,15 @@ pub fn check_cesk_coverage(metadata: &dyn LanguageMetadata) -> CeskCoverageResul
                 .find(|f| f.is_binder)
                 .map(|f| f.name)
                 .unwrap_or("x");
-            let symbol = EvalStackSymbol::LetBody {
-                var_name: binder_name.to_string(),
-            };
+            let symbol = EvalStackSymbol::LetBody { var_name: binder_name.to_string() };
             stack_symbol_kinds.insert("LetBody");
             dsg.add_edge(let_idx, body_idx, symbol, true);
         }
     }
 
     // Collect distinct expressions from all nodes.
-    let distinct_expressions: std::collections::HashSet<&str> = dsg
-        .nodes
-        .iter()
-        .map(|n| n.state.expr.as_str())
-        .collect();
+    let distinct_expressions: std::collections::HashSet<&str> =
+        dsg.nodes.iter().map(|n| n.state.expr.as_str()).collect();
 
     CeskCoverageResult {
         reachable_state_count: dsg.node_count(),

@@ -249,10 +249,7 @@ fn test_repair_action_describe() {
     let action = RepairAction::Composite {
         steps: vec![
             RepairAction::DeleteToken,
-            RepairAction::SkipToSync {
-                skip_count: 1,
-                sync_token: 4,
-            },
+            RepairAction::SkipToSync { skip_count: 1, sync_token: 4 },
         ],
     };
     assert_eq!(

@@ -19,13 +19,12 @@ use mettail_languages::class2smoke::Proc;
 #[test]
 fn pred1_empty_collection() {
     // PRED-1: `Proc::parse("choose 0 ( )")` → `Choose(Zero, [])`.
-    let result = Proc::parse_via_wpda("choose 0 ( )")
-        .expect("empty Choose parses");
+    let result = Proc::parse_via_wpda("choose 0 ( )").expect("empty Choose parses");
     match &result {
         Proc::Choose(tag, qs) => {
             assert!(matches!(tag.as_ref(), Proc::PZero), "tag should be PZero");
             assert_eq!(qs.len(), 0, "qs should be empty");
-        }
+        },
         other => panic!("expected Proc::Choose(_, []), got {:?}", other),
     }
 }
@@ -33,14 +32,13 @@ fn pred1_empty_collection() {
 #[test]
 fn pred2_singleton_collection() {
     // PRED-2: `Proc::parse("choose 0 ( 0 )")` → `Choose(Zero, [Zero])`.
-    let result = Proc::parse_via_wpda("choose 0 ( 0 )")
-        .expect("singleton Choose parses");
+    let result = Proc::parse_via_wpda("choose 0 ( 0 )").expect("singleton Choose parses");
     match &result {
         Proc::Choose(tag, qs) => {
             assert!(matches!(tag.as_ref(), Proc::PZero));
             assert_eq!(qs.len(), 1);
             assert!(matches!(&qs[0], Proc::PZero));
-        }
+        },
         other => panic!("expected Proc::Choose(_, [_]), got {:?}", other),
     }
 }
@@ -49,8 +47,7 @@ fn pred2_singleton_collection() {
 fn pred3_three_element_collection() {
     // PRED-3: 3-element collection. With all elements equal (PZero), order
     // preservation is trivially satisfied; the assertion confirms cardinality.
-    let result = Proc::parse_via_wpda("choose 0 ( 0 | 0 | 0 )")
-        .expect("3-element Choose parses");
+    let result = Proc::parse_via_wpda("choose 0 ( 0 | 0 | 0 )").expect("3-element Choose parses");
     match &result {
         Proc::Choose(tag, qs) => {
             assert!(matches!(tag.as_ref(), Proc::PZero));
@@ -58,7 +55,7 @@ fn pred3_three_element_collection() {
             for q in qs.iter() {
                 assert!(matches!(q, Proc::PZero));
             }
-        }
+        },
         other => panic!("expected Proc::Choose(_, [_, _, _]), got {:?}", other),
     }
 }
@@ -86,9 +83,5 @@ fn pred6_missing_tag_errors() {
     // PRED-6: missing tag → Err. Without a Proc to fill the `a` slot, parse
     // should reject (the open `(` arrives where a Proc was expected).
     let result = Proc::parse_via_wpda("choose ( 0 )");
-    assert!(
-        result.is_err(),
-        "missing tag should error, got {:?}",
-        result
-    );
+    assert!(result.is_err(), "missing tag should error, got {:?}", result);
 }

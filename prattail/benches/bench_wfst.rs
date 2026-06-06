@@ -634,15 +634,11 @@ fn bench_nfa_queries(c: &mut Criterion) {
             };
             let wfst_owned = wfst.clone();
 
-            group.bench_with_input(
-                BenchmarkId::from_parameter(name),
-                &wfst_owned,
-                |b, wfst| {
-                    b.iter(|| {
-                        let _ = wfst.valid_continuations();
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::from_parameter(name), &wfst_owned, |b, wfst| {
+                b.iter(|| {
+                    let _ = wfst.valid_continuations();
+                });
+            });
         }
         group.finish();
     }
@@ -698,17 +694,13 @@ fn bench_transducer_cascade(c: &mut Criterion) {
             let wfsts: HashMap<String, PredictionWfst> =
                 prepared.prediction_wfsts.into_iter().collect();
 
-            group.bench_with_input(
-                BenchmarkId::from_parameter(name),
-                &wfsts,
-                |b, wfsts_orig| {
-                    b.iter(|| {
-                        let mut wfsts = wfsts_orig.clone();
-                        let cascade = TransducerCascade::default_pipeline();
-                        let _ = cascade.run_all(&mut wfsts);
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::from_parameter(name), &wfsts, |b, wfsts_orig| {
+                b.iter(|| {
+                    let mut wfsts = wfsts_orig.clone();
+                    let cascade = TransducerCascade::default_pipeline();
+                    let _ = cascade.run_all(&mut wfsts);
+                });
+            });
         }
         group.finish();
     }
@@ -723,17 +715,13 @@ fn bench_transducer_cascade(c: &mut Criterion) {
             let wfsts: HashMap<String, PredictionWfst> =
                 prepared.prediction_wfsts.into_iter().collect();
 
-            group.bench_with_input(
-                BenchmarkId::from_parameter(name),
-                &wfsts,
-                |b, wfsts_orig| {
-                    b.iter(|| {
-                        let mut wfsts = wfsts_orig.clone();
-                        let cascade = TransducerCascade::with_beam(2.0);
-                        let _ = cascade.run_all(&mut wfsts);
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::from_parameter(name), &wfsts, |b, wfsts_orig| {
+                b.iter(|| {
+                    let mut wfsts = wfsts_orig.clone();
+                    let cascade = TransducerCascade::with_beam(2.0);
+                    let _ = cascade.run_all(&mut wfsts);
+                });
+            });
         }
         group.finish();
     }

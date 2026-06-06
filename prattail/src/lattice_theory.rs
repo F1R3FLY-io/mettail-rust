@@ -279,10 +279,7 @@ impl LatticeTheory {
         store.cycles.clear();
         for &a in &all_types {
             for &b in &all_types {
-                if a < b
-                    && store.closure.contains(&(a, b))
-                    && store.closure.contains(&(b, a))
-                {
+                if a < b && store.closure.contains(&(a, b)) && store.closure.contains(&(b, a)) {
                     store.cycles.push((a, b));
                 }
             }
@@ -311,12 +308,7 @@ impl LatticeTheory {
     ///
     /// When multiple candidates have the same minimality, the one with
     /// the fewest supertypes is chosen (most specific common supertype).
-    pub fn join(
-        &self,
-        store: &mut LatticeStore,
-        a: TypeId,
-        b: TypeId,
-    ) -> Option<TypeId> {
+    pub fn join(&self, store: &mut LatticeStore, a: TypeId, b: TypeId) -> Option<TypeId> {
         // Normalize the key for cache symmetry: join(a, b) == join(b, a).
         let key = if a <= b { (a, b) } else { (b, a) };
 
@@ -345,21 +337,16 @@ impl LatticeTheory {
             .universe
             .iter()
             .copied()
-            .filter(|&c| {
-                store.closure.contains(&(a, c)) && store.closure.contains(&(b, c))
-            })
+            .filter(|&c| store.closure.contains(&(a, c)) && store.closure.contains(&(b, c)))
             .collect();
 
         // Find the least (most specific) among the upper bounds:
         // c is least if no other upper bound d satisfies d <= c (d != c).
-        let result = upper_bounds
-            .iter()
-            .copied()
-            .find(|&c| {
-                upper_bounds.iter().all(|&d| {
-                    d == c || !store.closure.contains(&(d, c)) || store.closure.contains(&(c, d))
-                })
-            });
+        let result = upper_bounds.iter().copied().find(|&c| {
+            upper_bounds.iter().all(|&d| {
+                d == c || !store.closure.contains(&(d, c)) || store.closure.contains(&(c, d))
+            })
+        });
 
         store.lub_cache.insert(key, result);
         result
@@ -370,12 +357,7 @@ impl LatticeTheory {
     /// Returns the largest type `c` in the universe such that
     /// `c <= a` and `c <= b`. Returns `None` if no such type exists
     /// (the lattice may not have a bottom element).
-    pub fn meet(
-        &self,
-        store: &mut LatticeStore,
-        a: TypeId,
-        b: TypeId,
-    ) -> Option<TypeId> {
+    pub fn meet(&self, store: &mut LatticeStore, a: TypeId, b: TypeId) -> Option<TypeId> {
         // Normalize the key for cache symmetry: meet(a, b) == meet(b, a).
         let key = if a <= b { (a, b) } else { (b, a) };
 
@@ -404,21 +386,16 @@ impl LatticeTheory {
             .universe
             .iter()
             .copied()
-            .filter(|&c| {
-                store.closure.contains(&(c, a)) && store.closure.contains(&(c, b))
-            })
+            .filter(|&c| store.closure.contains(&(c, a)) && store.closure.contains(&(c, b)))
             .collect();
 
         // Find the greatest (most general) among the lower bounds:
         // c is greatest if no other lower bound d satisfies c <= d (d != c).
-        let result = lower_bounds
-            .iter()
-            .copied()
-            .find(|&c| {
-                lower_bounds.iter().all(|&d| {
-                    d == c || !store.closure.contains(&(c, d)) || store.closure.contains(&(d, c))
-                })
-            });
+        let result = lower_bounds.iter().copied().find(|&c| {
+            lower_bounds.iter().all(|&d| {
+                d == c || !store.closure.contains(&(c, d)) || store.closure.contains(&(d, c))
+            })
+        });
 
         store.glb_cache.insert(key, result);
         result
@@ -696,12 +673,7 @@ pub fn analyze_from_bundle(
     let unsatisfiable_constraints: Vec<(String, String)> = store
         .cycles
         .iter()
-        .map(|&(a, b)| {
-            (
-                theory.type_name(a),
-                theory.type_name(b),
-            )
-        })
+        .map(|&(a, b)| (theory.type_name(a), theory.type_name(b)))
         .collect();
 
     // Step 6: Check for redundant edges.
@@ -711,7 +683,7 @@ pub fn analyze_from_bundle(
     // recomputing the closure, and checking whether (A, C) is still present.
     let mut redundant_constraints: Vec<(String, String)> = Vec::new();
     for &(sub, sup) in &inferred_edges {
-        // Build a temporary store without this edge.
+        // Build a transient store without this edge.
         let mut tmp_store = LatticeStore::new();
         for &(s, t) in &inferred_edges {
             if (s, t) != (sub, sup) {
@@ -761,33 +733,28 @@ fn collect_item_nonterminals(
             if let Some(&tid) = cat_to_id.get(category.as_str()) {
                 out.insert(tid);
             }
-        }
+        },
         crate::SyntaxItemSpec::Binder { category, .. } => {
             if let Some(&tid) = cat_to_id.get(category.as_str()) {
                 out.insert(tid);
             }
-        }
+        },
         crate::SyntaxItemSpec::Collection { element_category, .. } => {
             if let Some(&tid) = cat_to_id.get(element_category.as_str()) {
                 out.insert(tid);
             }
-        }
+        },
         crate::SyntaxItemSpec::Sep { body, .. } => {
             collect_item_nonterminals(body, src_id, cat_to_id, out);
-        }
+        },
         crate::SyntaxItemSpec::Optional { inner } => {
             // Optional wraps a Vec<SyntaxItemSpec>.
             collect_rule_nonterminals(inner, src_id, cat_to_id, out);
-        }
+        },
         crate::SyntaxItemSpec::Map { body_items } => {
             collect_rule_nonterminals(body_items, src_id, cat_to_id, out);
-        }
-        crate::SyntaxItemSpec::Zip {
-            left_category,
-            right_category,
-            body,
-            ..
-        } => {
+        },
+        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             if let Some(&tid) = cat_to_id.get(left_category.as_str()) {
                 out.insert(tid);
             }
@@ -795,9 +762,9 @@ fn collect_item_nonterminals(
                 out.insert(tid);
             }
             collect_item_nonterminals(body, src_id, cat_to_id, out);
-        }
+        },
         // Terminal, IdentCapture, BinderCollection — no non-terminal references.
-        _ => {}
+        _ => {},
     }
 }
 
@@ -831,8 +798,8 @@ mod tests {
         );
 
         let mut store = theory.empty_store();
-        store.add_edge(int, number);    // Int <= Number
-        store.add_edge(float, number);  // Float <= Number
+        store.add_edge(int, number); // Int <= Number
+        store.add_edge(float, number); // Float <= Number
         theory.compute_closure(&mut store);
 
         (theory, store)
@@ -895,8 +862,8 @@ mod tests {
         );
 
         let mut store = theory.empty_store();
-        store.add_edge(readwrite, readable);  // ReadWrite <= Readable
-        store.add_edge(readwrite, writable);  // ReadWrite <= Writable
+        store.add_edge(readwrite, readable); // ReadWrite <= Readable
+        store.add_edge(readwrite, writable); // ReadWrite <= Writable
         theory.compute_closure(&mut store);
 
         (theory, store)
@@ -913,21 +880,14 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b, c],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-                (c, "C".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string()), (c, "C".to_string())]),
         );
 
         let mut store = theory.empty_store();
         store.add_edge(a, b); // A <= B
         store.add_edge(b, c); // B <= C
 
-        assert!(
-            theory.is_subtype(&mut store, a, c),
-            "transitivity: A <= B, B <= C => A <= C"
-        );
+        assert!(theory.is_subtype(&mut store, a, c), "transitivity: A <= B, B <= C => A <= C");
     }
 
     #[test]
@@ -967,28 +927,15 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b, c],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-                (c, "C".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string()), (c, "C".to_string())]),
         );
 
         let mut store = theory.empty_store();
         store.add_edge(a, b);
 
-        assert!(
-            !theory.is_subtype(&mut store, a, c),
-            "A is not a subtype of unrelated C"
-        );
-        assert!(
-            !theory.is_subtype(&mut store, c, a),
-            "C is not a subtype of unrelated A"
-        );
-        assert!(
-            !theory.is_subtype(&mut store, b, a),
-            "B is not a subtype of A (only A <= B)"
-        );
+        assert!(!theory.is_subtype(&mut store, a, c), "A is not a subtype of unrelated C");
+        assert!(!theory.is_subtype(&mut store, c, a), "C is not a subtype of unrelated A");
+        assert!(!theory.is_subtype(&mut store, b, a), "B is not a subtype of A (only A <= B)");
     }
 
     // ── Reflexivity Tests ─────────────────────────────────────────────────
@@ -1000,10 +947,7 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string())]),
         );
 
         let mut store = theory.empty_store();
@@ -1030,10 +974,7 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string())]),
         );
 
         let mut store = theory.empty_store();
@@ -1041,24 +982,15 @@ mod tests {
         store.add_edge(b, a);
 
         let cycles = theory.detect_cycles(&mut store);
-        assert!(
-            !cycles.is_empty(),
-            "should detect cycle: A <= B <= A"
-        );
-        assert!(
-            cycles.contains(&(a, b)),
-            "cycle should include (A, B)"
-        );
+        assert!(!cycles.is_empty(), "should detect cycle: A <= B <= A");
+        assert!(cycles.contains(&(a, b)), "cycle should include (A, B)");
     }
 
     #[test]
     fn no_cycles_in_dag() {
         let (theory, mut store) = number_hierarchy();
         let cycles = theory.detect_cycles(&mut store);
-        assert!(
-            cycles.is_empty(),
-            "DAG hierarchy should have no cycles"
-        );
+        assert!(cycles.is_empty(), "DAG hierarchy should have no cycles");
     }
 
     #[test]
@@ -1069,10 +1001,7 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string())]),
         );
 
         let store = theory.empty_store();
@@ -1089,10 +1018,7 @@ mod tests {
         assert!(theory.is_subtype(&mut store, b, a));
 
         // Cycle is recorded.
-        assert!(
-            !store.detected_cycles().is_empty(),
-            "cycle should be recorded"
-        );
+        assert!(!store.detected_cycles().is_empty(), "cycle should be recorded");
     }
 
     // ── Join (LUB) Tests ──────────────────────────────────────────────────
@@ -1102,32 +1028,20 @@ mod tests {
         // Int <= Number, Float <= Number => join(Int, Float) = Number
         let (theory, mut store) = number_hierarchy();
         let result = theory.join(&mut store, 0, 1);
-        assert_eq!(
-            result,
-            Some(2),
-            "join(Int, Float) should be Number"
-        );
+        assert_eq!(result, Some(2), "join(Int, Float) should be Number");
     }
 
     #[test]
     fn join_reflexive() {
         let (theory, mut store) = number_hierarchy();
-        assert_eq!(
-            theory.join(&mut store, 0, 0),
-            Some(0),
-            "join(Int, Int) = Int"
-        );
+        assert_eq!(theory.join(&mut store, 0, 0), Some(0), "join(Int, Int) = Int");
     }
 
     #[test]
     fn join_with_subtype() {
         // join(Int, Number) = Number (since Int <= Number)
         let (theory, mut store) = number_hierarchy();
-        assert_eq!(
-            theory.join(&mut store, 0, 2),
-            Some(2),
-            "join(Int, Number) = Number"
-        );
+        assert_eq!(theory.join(&mut store, 0, 2), Some(2), "join(Int, Number) = Number");
     }
 
     #[test]
@@ -1135,11 +1049,7 @@ mod tests {
         // In diamond: A <= B, A <= C, B <= D, C <= D
         // join(B, C) = D
         let (theory, mut store) = diamond_hierarchy();
-        assert_eq!(
-            theory.join(&mut store, 1, 2),
-            Some(3),
-            "join(B, C) = D in diamond"
-        );
+        assert_eq!(theory.join(&mut store, 1, 2), Some(3), "join(B, C) = D in diamond");
     }
 
     #[test]
@@ -1150,10 +1060,7 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string())]),
         );
 
         let mut store = theory.empty_store();
@@ -1191,32 +1098,20 @@ mod tests {
         // meet(Readable, Writable) = ReadWrite
         let (theory, mut store) = capability_hierarchy();
         let result = theory.meet(&mut store, 0, 1);
-        assert_eq!(
-            result,
-            Some(2),
-            "meet(Readable, Writable) should be ReadWrite"
-        );
+        assert_eq!(result, Some(2), "meet(Readable, Writable) should be ReadWrite");
     }
 
     #[test]
     fn meet_reflexive() {
         let (theory, mut store) = capability_hierarchy();
-        assert_eq!(
-            theory.meet(&mut store, 0, 0),
-            Some(0),
-            "meet(Readable, Readable) = Readable"
-        );
+        assert_eq!(theory.meet(&mut store, 0, 0), Some(0), "meet(Readable, Readable) = Readable");
     }
 
     #[test]
     fn meet_with_subtype() {
         // meet(ReadWrite, Readable) = ReadWrite (since ReadWrite <= Readable)
         let (theory, mut store) = capability_hierarchy();
-        assert_eq!(
-            theory.meet(&mut store, 2, 0),
-            Some(2),
-            "meet(ReadWrite, Readable) = ReadWrite"
-        );
+        assert_eq!(theory.meet(&mut store, 2, 0), Some(2), "meet(ReadWrite, Readable) = ReadWrite");
     }
 
     #[test]
@@ -1224,11 +1119,7 @@ mod tests {
         // In diamond: A <= B, A <= C, B <= D, C <= D
         // meet(B, C) = A
         let (theory, mut store) = diamond_hierarchy();
-        assert_eq!(
-            theory.meet(&mut store, 1, 2),
-            Some(0),
-            "meet(B, C) = A in diamond"
-        );
+        assert_eq!(theory.meet(&mut store, 1, 2), Some(0), "meet(B, C) = A in diamond");
     }
 
     #[test]
@@ -1239,10 +1130,7 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string())]),
         );
 
         let mut store = theory.empty_store();
@@ -1323,11 +1211,7 @@ mod tests {
     fn propagate_adds_edges() {
         let theory = LatticeTheory::new(
             vec![0, 1, 2],
-            HashMap::from([
-                (0, "A".to_string()),
-                (1, "B".to_string()),
-                (2, "C".to_string()),
-            ]),
+            HashMap::from([(0, "A".to_string()), (1, "B".to_string()), (2, "C".to_string())]),
         );
 
         let store = theory.empty_store();
@@ -1349,21 +1233,14 @@ mod tests {
         let theory = LatticeTheory::new(vec![0, 1], HashMap::new());
         let store = theory.empty_store();
         let labels = theory.label(&store);
-        assert!(
-            labels.is_empty(),
-            "decidable theory should produce no labeling choices"
-        );
+        assert!(labels.is_empty(), "decidable theory should produce no labeling choices");
     }
 
     #[test]
     fn witness_returns_identity_assignment() {
         let theory = LatticeTheory::new(
             vec![0, 1, 2],
-            HashMap::from([
-                (0, "A".to_string()),
-                (1, "B".to_string()),
-                (2, "C".to_string()),
-            ]),
+            HashMap::from([(0, "A".to_string()), (1, "B".to_string()), (2, "C".to_string())]),
         );
 
         let store = theory.empty_store();
@@ -1376,9 +1253,7 @@ mod tests {
     #[test]
     fn evaluate_reflexive_constraint() {
         let theory = LatticeTheory::new(vec![0, 1], HashMap::new());
-        let assignment = TypeAssignment {
-            bindings: HashMap::new(),
-        };
+        let assignment = TypeAssignment { bindings: HashMap::new() };
         assert!(
             theory.evaluate(&SubtypeConstraint { sub: 0, sup: 0 }, &assignment),
             "reflexive constraint should evaluate to true"
@@ -1388,9 +1263,7 @@ mod tests {
     #[test]
     fn evaluate_non_reflexive_without_store() {
         let theory = LatticeTheory::new(vec![0, 1], HashMap::new());
-        let assignment = TypeAssignment {
-            bindings: HashMap::new(),
-        };
+        let assignment = TypeAssignment { bindings: HashMap::new() };
         // Without a store, non-reflexive constraints return false conservatively.
         assert!(
             !theory.evaluate(&SubtypeConstraint { sub: 0, sup: 1 }, &assignment),
@@ -1415,7 +1288,7 @@ mod tests {
         let mut store = theory.empty_store();
         store.add_edge(0, 1); // A <= B
         store.add_edge(1, 2); // B <= C
-        // Type 3 is not connected.
+                              // Type 3 is not connected.
 
         let isolated = theory.isolated_types(&store);
         assert_eq!(isolated, vec![3], "type 3 should be isolated");
@@ -1425,10 +1298,7 @@ mod tests {
     fn no_isolated_types_when_all_connected() {
         let (theory, store) = diamond_hierarchy();
         let isolated = theory.isolated_types(&store);
-        assert!(
-            isolated.is_empty(),
-            "diamond hierarchy has no isolated types"
-        );
+        assert!(isolated.is_empty(), "diamond hierarchy has no isolated types");
     }
 
     // ── Edge Cases ────────────────────────────────────────────────────────
@@ -1445,10 +1315,7 @@ mod tests {
 
     #[test]
     fn single_type_universe() {
-        let theory = LatticeTheory::new(
-            vec![42],
-            HashMap::from([(42, "Only".to_string())]),
-        );
+        let theory = LatticeTheory::new(vec![42], HashMap::from([(42, "Only".to_string())]));
 
         let mut store = theory.empty_store();
         assert!(theory.is_subtype(&mut store, 42, 42), "reflexive");
@@ -1480,11 +1347,7 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b, c],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-                (c, "C".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string()), (c, "C".to_string())]),
         );
 
         let mut store = theory.empty_store();
@@ -1511,10 +1374,7 @@ mod tests {
 
     #[test]
     fn type_name_with_names() {
-        let theory = LatticeTheory::new(
-            vec![0],
-            HashMap::from([(0, "MyType".to_string())]),
-        );
+        let theory = LatticeTheory::new(vec![0], HashMap::from([(0, "MyType".to_string())]));
         assert_eq!(theory.type_name(0), "MyType");
     }
 
@@ -1531,10 +1391,8 @@ mod tests {
     fn five_level_hierarchy() {
         // Linear chain: 0 <= 1 <= 2 <= 3 <= 4
         let types: Vec<TypeId> = (0..5).collect();
-        let names: HashMap<TypeId, String> = types
-            .iter()
-            .map(|&t| (t, format!("L{}", t)))
-            .collect();
+        let names: HashMap<TypeId, String> =
+            types.iter().map(|&t| (t, format!("L{}", t))).collect();
 
         let theory = LatticeTheory::new(types, names);
         let mut store = theory.empty_store();
@@ -1545,24 +1403,14 @@ mod tests {
         // All forward relationships should hold.
         for i in 0..5 {
             for j in i..5 {
-                assert!(
-                    theory.is_subtype(&mut store, i, j),
-                    "L{} <= L{} should hold",
-                    i,
-                    j
-                );
+                assert!(theory.is_subtype(&mut store, i, j), "L{} <= L{} should hold", i, j);
             }
         }
 
         // No backward relationships (except reflexive).
         for i in 0..5 {
             for j in 0..i {
-                assert!(
-                    !theory.is_subtype(&mut store, i, j),
-                    "L{} should not be <= L{}",
-                    i,
-                    j
-                );
+                assert!(!theory.is_subtype(&mut store, i, j), "L{} should not be <= L{}", i, j);
             }
         }
     }
@@ -1578,10 +1426,8 @@ mod tests {
         //
         // B and C share supertype D; C and F share supertype E.
         let types: Vec<TypeId> = (0..7).collect();
-        let names: HashMap<TypeId, String> = types
-            .iter()
-            .map(|&t| (t, format!("T{}", t)))
-            .collect();
+        let names: HashMap<TypeId, String> =
+            types.iter().map(|&t| (t, format!("T{}", t))).collect();
 
         let theory = LatticeTheory::new(types, names);
         let mut store = theory.empty_store();
@@ -1593,21 +1439,9 @@ mod tests {
         store.add_edge(5, 4); // F <= E
         store.add_edge(6, 5); // G <= F
 
-        assert_eq!(
-            theory.join(&mut store, 1, 2),
-            Some(3),
-            "join(B, C) = D"
-        );
-        assert_eq!(
-            theory.meet(&mut store, 1, 2),
-            Some(0),
-            "meet(B, C) = A"
-        );
-        assert_eq!(
-            theory.join(&mut store, 2, 5),
-            Some(4),
-            "join(C, F) = E"
-        );
+        assert_eq!(theory.join(&mut store, 1, 2), Some(3), "join(B, C) = D");
+        assert_eq!(theory.meet(&mut store, 1, 2), Some(0), "meet(B, C) = A");
+        assert_eq!(theory.join(&mut store, 2, 5), Some(4), "join(C, F) = E");
     }
 
     // ── Cache Invalidation Tests ──────────────────────────────────────────
@@ -1620,11 +1454,7 @@ mod tests {
 
         let theory = LatticeTheory::new(
             vec![a, b, c],
-            HashMap::from([
-                (a, "A".to_string()),
-                (b, "B".to_string()),
-                (c, "C".to_string()),
-            ]),
+            HashMap::from([(a, "A".to_string()), (b, "B".to_string()), (c, "C".to_string())]),
         );
 
         let mut store = theory.empty_store();
@@ -1637,11 +1467,7 @@ mod tests {
         // Now add A <= B, which should change join(A, B) = B.
         store.add_edge(a, b);
         assert!(store.lub_cache.is_empty(), "cache should be cleared");
-        assert_eq!(
-            theory.join(&mut store, a, b),
-            Some(b),
-            "join(A, B) = B after adding A <= B"
-        );
+        assert_eq!(theory.join(&mut store, a, b), Some(b), "join(A, B) = B after adding A <= B");
     }
 
     // ── ConstraintTheory via Propagation Integration Tests ────────────────
@@ -1685,11 +1511,7 @@ mod tests {
     fn propagation_with_cycle_records_equivalence() {
         let theory = LatticeTheory::new(
             vec![0, 1, 2],
-            HashMap::from([
-                (0, "A".to_string()),
-                (1, "B".to_string()),
-                (2, "C".to_string()),
-            ]),
+            HashMap::from([(0, "A".to_string()), (1, "B".to_string()), (2, "C".to_string())]),
         );
 
         let store = theory.empty_store();
@@ -2111,11 +1933,8 @@ mod tests {
         // Part B: verify the redundancy check logic at the store level.
         // Build a store with edges: A≤B, B≤C, and A≤C (the last is redundant).
         let universe = vec![0usize, 1, 2];
-        let names: HashMap<TypeId, String> = HashMap::from([
-            (0, "A".to_string()),
-            (1, "B".to_string()),
-            (2, "C".to_string()),
-        ]);
+        let names: HashMap<TypeId, String> =
+            HashMap::from([(0, "A".to_string()), (1, "B".to_string()), (2, "C".to_string())]);
         let theory = LatticeTheory::new(universe, names);
 
         // Check: without A≤C, is A still a subtype of C?

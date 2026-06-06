@@ -52,12 +52,11 @@
 
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use mettail_ast::grammar::{GrammarItem, NonTerminalKind, TermParam};
+use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_ast::grammar::{GrammarItem, TermParam};
 use mettail_ast::language::{LangType, LanguageDef};
 use mettail_ast::pattern::CancellationPair;
 use mettail_ast::types::CollectionType;
-use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
-use crate::gen::{is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
@@ -98,9 +97,7 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
             // an Optional param. Optional-Collection rules have arity > 1
             // (one slot per Optional, one per Collection), breaking the
             // `Cat::Label(inner)` single-field assumption.
-            let has_optional = ctx
-                .iter()
-                .any(|p| matches!(p, TermParam::Optional { .. }));
+            let has_optional = ctx.iter().any(|p| matches!(p, TermParam::Optional { .. }));
             if has_optional {
                 continue;
             }
@@ -195,7 +192,6 @@ pub fn generate_normalize_functions(
     generate_non_native_normalize_pda(&all_cats, language, cancellation_pairs)
 }
 
-
 // =============================================================================
 // Non-native shared PDA — new code
 // =============================================================================
@@ -218,15 +214,7 @@ fn compute_cancel_set<'a>(
 ) -> HashMap<(String, String), &'a CancellationPair> {
     cancellation_pairs
         .iter()
-        .map(|p| {
-            (
-                (
-                    p.outer_category.to_string(),
-                    p.outer_constructor.to_string(),
-                ),
-                p,
-            )
-        })
+        .map(|p| ((p.outer_category.to_string(), p.outer_constructor.to_string()), p))
         .collect()
 }
 
@@ -300,7 +288,9 @@ fn generate_norm_task_enum(
         let cat_str = category.to_string();
         let variants = collect_category_variants(category, language);
         for v in &variants {
-            if let Some(decl) = generate_assemble_variant_decl(category, v, &hol_pairs, &cancel_set, &cat_str) {
+            if let Some(decl) =
+                generate_assemble_variant_decl(category, v, &hol_pairs, &cancel_set, &cat_str)
+            {
                 assemble_variants.push(decl);
             }
         }
@@ -330,9 +320,7 @@ fn generate_assemble_variant_decl(
     cat_str: &str,
 ) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
-            None
-        }
+        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
 
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
@@ -363,7 +351,8 @@ fn generate_assemble_variant_decl(
             // Cancellation pair outer: AssembleCancel frame
             if let Some(pair) = cancel_set.get(&(cat_str.to_string(), label_str.clone())) {
                 let inner_cat = &pair.inner_category;
-                let variant_name = format_ident!("AssembleCancel_{}_{}_{}", category, inner_cat, label);
+                let variant_name =
+                    format_ident!("AssembleCancel_{}_{}_{}", category, inner_cat, label);
                 return Some(quote! {
                     #variant_name { slot: usize, inner_slot: usize }
                 });
@@ -380,21 +369,19 @@ fn generate_assemble_variant_decl(
             Some(quote! {
                 #variant_name { slot: usize, #(#field_slots),* }
             })
-        }
+        },
 
         VariantKind::Collection { label, coll_type, .. } => {
             let variant_name = format_ident!("AssembleColl_{}_{}", category, label);
             match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap => {
-                    Some(quote! {
-                        #variant_name {
-                            slot: usize,
-                            elements_start: usize,
-                            elements_count: usize,
-                            counts_vec: Vec<usize>,
-                        }
-                    })
-                }
+                CollectionType::HashBag | CollectionType::HashMap => Some(quote! {
+                    #variant_name {
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                        counts_vec: Vec<usize>,
+                    }
+                }),
                 _ => Some(quote! {
                     #variant_name {
                         slot: usize,
@@ -403,7 +390,7 @@ fn generate_assemble_variant_decl(
                     }
                 }),
             }
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("AssembleBind_{}_{}", category, label);
@@ -416,7 +403,7 @@ fn generate_assemble_variant_decl(
                     body_slot: usize,
                 }
             })
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("AssembleMBind_{}_{}", category, label);
@@ -429,7 +416,7 @@ fn generate_assemble_variant_decl(
                     body_slot: usize,
                 }
             })
-        }
+        },
     }
 }
 
@@ -449,7 +436,7 @@ fn optional_collection_field_type(field: &FieldInfo) -> TokenStream {
             // element category as the value category. Map-typed slots aren't
             // exercised yet in the test grammar; emit a best-effort type.
             quote! { Option<mettail_runtime::HashMapLit<#cat, #cat>> }
-        }
+        },
     }
 }
 
@@ -482,14 +469,14 @@ fn emit_reg_field_decl(i: usize, field: &FieldInfo) -> TokenStream {
             CollectionType::HashBag => {
                 let counts_name = format_ident!("f{}_counts", i);
                 quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
-            }
+            },
             // Phase 4 #5b (2026-05-12): HashMap stores 2*N slots (K, V, K,
             // V, ...) per the matching alloc/push in
             // `emit_collection_field_alloc`. Same decl shape as Vec —
             // start + count (count = entry count, not slot count).
             CollectionType::HashMap => {
                 quote! { #start_name: usize, #count_name: usize }
-            }
+            },
             _ => quote! { #start_name: usize, #count_name: usize },
         }
     } else {
@@ -524,11 +511,11 @@ fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> 
                     CollectionType::HashBag => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
-                    }
+                    },
                     // Phase 4 #5b (2026-05-12): HashMap stores 2*N slots.
                     CollectionType::HashMap => {
                         quote! { #start_name: usize, #count_name: usize }
-                    }
+                    },
                     _ => quote! { #start_name: usize, #count_name: usize },
                 }
             } else {
@@ -608,7 +595,9 @@ fn generate_norm_driver(
         let variants = collect_category_variants(category, language);
         for v in &variants {
             let is_native = lang_type.native_type.is_some();
-            if let Some(arm) = generate_assemble_arm(category, v, &hol_pairs, &cancel_set, &cat_str, is_native) {
+            if let Some(arm) =
+                generate_assemble_arm(category, v, &hol_pairs, &cancel_set, &cat_str, is_native)
+            {
                 assemble_arms.push(arm);
             }
         }
@@ -629,7 +618,13 @@ fn generate_norm_driver(
         /// heap data inside each `Box<AnyNormalizedTerm>` has a stable
         /// address; growing `sources` moves Box handles, not the Cat data
         /// they point to.
-        #[allow(dead_code, unused_variables, clippy::needless_range_loop, non_snake_case)]
+        #[allow(
+            dead_code,
+            unused_variables,
+            unreachable_patterns,
+            clippy::needless_range_loop,
+            non_snake_case
+        )]
         fn normalize_iterative(
             stack: &mut Vec<NormTask>,
             results: &mut Vec<Option<AnyNormalizedTerm>>,
@@ -663,7 +658,13 @@ fn generate_visit_helper_fn(
     let wrap_self = format_ident!("Wrap{}", cat);
     quote! {
         #[inline(never)]
-        #[allow(dead_code, unused_variables, clippy::needless_range_loop, non_snake_case)]
+        #[allow(
+            dead_code,
+            unused_variables,
+            unreachable_patterns,
+            clippy::needless_range_loop,
+            non_snake_case
+        )]
         fn #helper_fn(
             stack: &mut Vec<NormTask>,
             results: &mut Vec<Option<AnyNormalizedTerm>>,
@@ -700,7 +701,7 @@ fn generate_visit_variant_arm(
                     results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label(v.clone())));
                 }
             }
-        }
+        },
         VariantKind::Literal { label } => {
             // Conservative: clone (works for both Copy and non-Copy).
             quote! {
@@ -708,14 +709,14 @@ fn generate_visit_variant_arm(
                     results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label(v.clone())));
                 }
             }
-        }
+        },
         VariantKind::Nullary { label } => {
             quote! {
                 #cat::#label => {
                     results[slot] = Some(AnyNormalizedTerm::#wrap(#cat::#label));
                 }
             }
-        }
+        },
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
 
@@ -739,16 +740,16 @@ fn generate_visit_variant_arm(
 
             // Generic Regular
             generate_regular_visit_arm(cat, label, fields, language)
-        }
+        },
         VariantKind::Collection { label, element_cat, coll_type } => {
             generate_collection_visit_arm(cat, label, element_cat, coll_type, language)
-        }
+        },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_binder_visit_arm(cat, label, pre_scope_fields, body_cat, language)
-        }
+        },
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             generate_multi_binder_visit_arm(cat, label, pre_scope_fields, body_cat, language)
-        }
+        },
     }
 }
 
@@ -780,10 +781,10 @@ fn generate_regular_visit_arm(
 
 /// Emit alloc/push/assemble-fields for a Regular variant's fields.
 fn emit_reg_field_visit_alloc(
-    cat: &Ident,
+    _cat: &Ident,
     fields: &[FieldInfo],
     field_names: &[Ident],
-    language: &LanguageDef,
+    _language: &LanguageDef,
 ) -> (Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>) {
     let mut alloc_stmts: Vec<TokenStream> = Vec::new();
     let mut push_stmts: Vec<TokenStream> = Vec::new();
@@ -842,7 +843,14 @@ fn emit_reg_field_visit_alloc(
         }
 
         if field.is_collection {
-            emit_collection_field_alloc(i, field, name, &mut alloc_stmts, &mut push_stmts, &mut assemble_fields);
+            emit_collection_field_alloc(
+                i,
+                field,
+                name,
+                &mut alloc_stmts,
+                &mut push_stmts,
+                &mut assemble_fields,
+            );
             continue;
         }
 
@@ -905,7 +913,7 @@ fn emit_collection_field_alloc(
                 }
             });
             assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
-        }
+        },
         CollectionType::HashMap => {
             // Phase 4 #5b (2026-05-12): HashMap field — HashMapLit's
             // `iter` yields `(&K, &V)`, not `(&T, usize)` (which HashBag
@@ -941,7 +949,7 @@ fn emit_collection_field_alloc(
                 }
             });
             assemble_fields.push(quote! { #start_name, #count_name });
-        }
+        },
         CollectionType::Vec => {
             alloc_stmts.push(quote! {
                 let #start_name = results.len();
@@ -959,7 +967,7 @@ fn emit_collection_field_alloc(
                 }
             });
             assemble_fields.push(quote! { #start_name, #count_name });
-        }
+        },
         CollectionType::HashSet => {
             alloc_stmts.push(quote! {
                 let #start_name = results.len();
@@ -977,7 +985,7 @@ fn emit_collection_field_alloc(
                 }
             });
             assemble_fields.push(quote! { #start_name, #count_name });
-        }
+        },
     }
 }
 
@@ -1018,7 +1026,7 @@ fn generate_collection_visit_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::Vec => {
             quote! {
                 #cat::#label(ref coll) => {
@@ -1040,7 +1048,7 @@ fn generate_collection_visit_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::HashSet => {
             quote! {
                 #cat::#label(ref coll) => {
@@ -1062,7 +1070,7 @@ fn generate_collection_visit_arm(
                     }
                 }
             }
-        }
+        },
     }
 }
 
@@ -1158,10 +1166,10 @@ fn generate_multi_binder_visit_arm(
 
 /// Emit alloc/push/assemble for Binder pre-scope fields (pf{i}_* prefix).
 fn emit_pre_field_visit_alloc(
-    cat: &Ident,
+    _cat: &Ident,
     pre_scope_fields: &[FieldInfo],
     field_names: &[Ident],
-    language: &LanguageDef,
+    _language: &LanguageDef,
 ) -> (Vec<TokenStream>, Vec<TokenStream>, Vec<TokenStream>) {
     let mut alloc_stmts: Vec<TokenStream> = Vec::new();
     let mut push_stmts: Vec<TokenStream> = Vec::new();
@@ -1216,7 +1224,7 @@ fn emit_pre_field_visit_alloc(
                         }
                     });
                     assemble_refs.push(quote! { #start_name, #count_name, #counts_name });
-                }
+                },
                 CollectionType::Vec => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1234,7 +1242,7 @@ fn emit_pre_field_visit_alloc(
                         }
                     });
                     assemble_refs.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::HashSet => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1252,7 +1260,7 @@ fn emit_pre_field_visit_alloc(
                         }
                     });
                     assemble_refs.push(quote! { #start_name, #count_name });
-                }
+                },
             }
             continue;
         }
@@ -1395,9 +1403,7 @@ fn generate_assemble_arm(
     is_native: bool,
 ) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
-            None
-        }
+        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
 
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
@@ -1420,19 +1426,19 @@ fn generate_assemble_arm(
             }
 
             Some(generate_regular_assemble_arm(cat, label, fields, is_native))
-        }
+        },
 
         VariantKind::Collection { label, element_cat, coll_type } => {
             Some(generate_collection_assemble_arm(cat, label, element_cat, coll_type))
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             Some(generate_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             Some(generate_multi_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
-        }
+        },
     }
 }
 
@@ -1552,39 +1558,6 @@ fn generate_regular_assemble_arm(
     }
 }
 
-fn emit_reg_slot_pattern(i: usize, field: &FieldInfo) -> TokenStream {
-    if field.is_predicate {
-        let pred_name = format_ident!("f{}_pred", i);
-        return quote! { #pred_name };
-    }
-    if field.is_optional {
-        if field.is_collection {
-            // Phase 4 #3 (2026-05-12): Optional-Collection — cloned carrier.
-            let cloned = format_ident!("f{}_cloned", i);
-            return quote! { #cloned };
-        }
-        let slot_name = format_ident!("f{}_slot", i);
-        let some_flag = format_ident!("f{}_some", i);
-        return quote! { #slot_name, #some_flag };
-    }
-    if field.is_collection {
-        let start_name = format_ident!("f{}_start", i);
-        let count_name = format_ident!("f{}_count", i);
-        match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
-            CollectionType::HashBag => {
-                let counts_name = format_ident!("f{}_counts", i);
-                quote! { #start_name, #count_name, #counts_name }
-            }
-            // Phase 4 #5b (2026-05-12): HashMap matches the Vec shape
-            // (start + count) since entries are flattened 2*N slots.
-            _ => quote! { #start_name, #count_name },
-        }
-    } else {
-        let slot_name = format_ident!("f{}_slot", i);
-        quote! { #slot_name }
-    }
-}
-
 fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
     if field.is_predicate {
         // Already in scope as f{i}_pred
@@ -1626,8 +1599,6 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
         return match field.coll_type.as_ref().unwrap_or(&CollectionType::Vec) {
             CollectionType::HashBag => {
                 let counts_name = format_ident!("f{}_counts", i);
-                let helper_name = format_ident!("insert_into_{}", "placeholder");
-                let _ = helper_name;
                 // For HashBag collections inside Regular variants (e.g.
                 // a Proc with a HashBag<Int> field), the elements are
                 // single-category. Reassemble into a bag. We DON'T use
@@ -1644,7 +1615,7 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         }
                     }
                 }
-            }
+            },
             // Phase 4 #5b (2026-05-12): HashMap — 2*N flat slots laid
             // out as (k0, v0, k1, v1, ...) per `emit_collection_field_alloc`.
             // Reconstruct entries by zipping consecutive pairs.
@@ -1670,7 +1641,7 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         #result_ident.insert(k, v);
                     }
                 }
-            }
+            },
             CollectionType::Vec => {
                 quote! {
                     let mut #result_ident = Vec::with_capacity(#count_name);
@@ -1683,7 +1654,7 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         }
                     }
                 }
-            }
+            },
             CollectionType::HashSet => {
                 quote! {
                     let mut #result_ident = std::collections::HashSet::with_capacity(#count_name);
@@ -1696,7 +1667,7 @@ fn emit_reg_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         }
                     }
                 }
-            }
+            },
         };
     }
 
@@ -1778,7 +1749,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count, counts_vec);
                 }
             }
-        }
+        },
         CollectionType::Vec => {
             quote! {
                 NormTask::#assemble_variant { slot, elements_start, elements_count } => {
@@ -1804,7 +1775,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count);
                 }
             }
-        }
+        },
         CollectionType::HashSet => {
             quote! {
                 NormTask::#assemble_variant { slot, elements_start, elements_count } => {
@@ -1830,7 +1801,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count);
                 }
             }
-        }
+        },
     }
 }
 
@@ -1918,7 +1889,7 @@ fn emit_pre_field_slot_pattern(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStrea
                     CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name, #count_name, #counts_name }
-                    }
+                    },
                     _ => quote! { #start_name, #count_name },
                 }
             } else {
@@ -2207,6 +2178,7 @@ fn generate_norm_wrapper(cat: &Ident) -> TokenStream {
             /// across all non-native categories to handle cross-category
             /// traversal, β-reduction, cancellation pairs, and collection
             /// flattening without any recursion or mutual recursion.
+            #[allow(unreachable_patterns)]
             pub fn normalize(&self) -> Self {
                 let result: Self = NORM_TASK_POOL.with(|t| {
                     NORM_RESULT_POOL.with(|r| {

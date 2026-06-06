@@ -33,7 +33,13 @@ impl SymValue {
                 // Format float to match Rust's default Display behavior
                 let s = format!("{}", v);
                 // Ensure there's a decimal point for float display
-                if s.contains('.') || s.contains('E') || s.contains('e') || s == "NaN" || s == "inf" || s == "-inf" {
+                if s.contains('.')
+                    || s.contains('E')
+                    || s.contains('e')
+                    || s == "NaN"
+                    || s == "inf"
+                    || s == "-inf"
+                {
                     Some(s)
                 } else {
                     Some(format!("{}.0", s))
@@ -51,10 +57,7 @@ impl SymValue {
 ///
 /// Uses an iterative work-stack (trampoline) to avoid call-stack recursion.
 /// Returns `None` when the expression cannot be evaluated at macro time.
-pub fn symbolic_eval(
-    expr: &syn::Expr,
-    env: &HashMap<String, SymValue>,
-) -> Option<SymValue> {
+pub fn symbolic_eval(expr: &syn::Expr, env: &HashMap<String, SymValue>) -> Option<SymValue> {
     // We use a continuation-passing trampoline.
     // Each work item is either:
     //   Eval(expr_index) — evaluate the expression at this index
@@ -73,11 +76,11 @@ pub fn symbolic_eval(
         ApplyMethodCall(String, usize), // method name, arg count (excluding receiver)
         ApplyCast(String),              // target type string
         #[allow(dead_code)]
-        ApplyIf,                        // condition evaluated, then need to eval branch
+        ApplyIf, // condition evaluated, then need to eval branch
         #[allow(dead_code)]
         EvalIfBranch(&'a syn::Expr, Option<&'a syn::Expr>), // then_branch, else_branch
         #[allow(dead_code)]
-        ApplyBlock,                     // block result
+        ApplyBlock, // block result
     }
 
     let mut work_stack: Vec<WorkItem> = Vec::with_capacity(16);
@@ -167,15 +170,15 @@ pub fn symbolic_eval(
                     },
                     syn::Expr::If(if_expr) => {
                         // First evaluate the condition
-                        let then_branch_expr = if_expr.then_branch.stmts.last().and_then(|s| {
-                            match s {
+                        let then_branch_expr =
+                            if_expr.then_branch.stmts.last().and_then(|s| match s {
                                 syn::Stmt::Expr(e, _) => Some(e),
                                 _ => None,
-                            }
-                        });
-                        let else_branch_expr = if_expr.else_branch.as_ref().and_then(|(_, e)| {
-                            Some(e.as_ref())
-                        });
+                            });
+                        let else_branch_expr = if_expr
+                            .else_branch
+                            .as_ref()
+                            .and_then(|(_, e)| Some(e.as_ref()));
 
                         work_stack.push(WorkItem::EvalIfBranch(
                             // We need to pass the original if_expr branches
@@ -324,18 +327,10 @@ pub fn symbolic_eval(
 /// Evaluate a literal value.
 fn eval_lit(lit: &syn::Lit) -> Option<SymValue> {
     match lit {
-        syn::Lit::Int(i) => {
-            i.base10_parse::<i64>().ok().map(SymValue::Int)
-        },
-        syn::Lit::Float(f) => {
-            f.base10_parse::<f64>().ok().map(SymValue::Float)
-        },
-        syn::Lit::Bool(b) => {
-            Some(SymValue::Bool(b.value))
-        },
-        syn::Lit::Str(s) => {
-            Some(SymValue::Str(s.value()))
-        },
+        syn::Lit::Int(i) => i.base10_parse::<i64>().ok().map(SymValue::Int),
+        syn::Lit::Float(f) => f.base10_parse::<f64>().ok().map(SymValue::Float),
+        syn::Lit::Bool(b) => Some(SymValue::Bool(b.value)),
+        syn::Lit::Str(s) => Some(SymValue::Str(s.value())),
         _ => None,
     }
 }
@@ -372,14 +367,22 @@ fn apply_binary_op(
         },
         syn::BinOp::Div(_) | syn::BinOp::DivAssign(_) => match (&l, &r) {
             (SymValue::Int(a), SymValue::Int(b)) => {
-                if *b == 0 { None } else { Some(SymValue::Int(a / b)) }
+                if *b == 0 {
+                    None
+                } else {
+                    Some(SymValue::Int(a / b))
+                }
             },
             (SymValue::Float(a), SymValue::Float(b)) => Some(SymValue::Float(a / b)),
             _ => None,
         },
         syn::BinOp::Rem(_) | syn::BinOp::RemAssign(_) => match (&l, &r) {
             (SymValue::Int(a), SymValue::Int(b)) => {
-                if *b == 0 { None } else { Some(SymValue::Int(a % b)) }
+                if *b == 0 {
+                    None
+                } else {
+                    Some(SymValue::Int(a % b))
+                }
             },
             (SymValue::Float(a), SymValue::Float(b)) => Some(SymValue::Float(a % b)),
             _ => None,
@@ -474,10 +477,7 @@ fn apply_binary_op(
 }
 
 /// Apply a unary operator to a symbolic value.
-fn apply_unary_op(
-    op: &syn::UnOp,
-    operand: Option<SymValue>,
-) -> Option<SymValue> {
+fn apply_unary_op(op: &syn::UnOp, operand: Option<SymValue>) -> Option<SymValue> {
     let v = operand?;
     match op {
         syn::UnOp::Neg(_) => match &v {

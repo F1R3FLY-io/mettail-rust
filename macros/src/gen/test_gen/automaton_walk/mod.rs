@@ -36,7 +36,10 @@
 //! `strategies.rs` to fix the rhocalc `NumLit(negative)` bug. The
 //! remaining sub-modules land as the rest of the plan is executed.
 
-pub mod classify;
-pub mod nfa_walk;
+#[cfg(test)]
 pub mod ambiguity;
+pub mod classify;
+#[cfg(test)]
 pub mod grammar_walk;
+#[cfg(test)]
+pub mod nfa_walk;

@@ -15,11 +15,8 @@ pub fn generate_recovery_corruption_section(language: &LanguageDef) -> TokenStre
     let lang_name = language.name.to_string();
     let baseline = baseline_tests(&lang_name);
     quote! {
-        #![allow(non_snake_case, unused_imports, dead_code)]
-        //! Auto-generated recovery / corruption tests for #lang_name.
-
         use mettail_prattail::wpda_runtime::{
-            StackSymbolV2, WpdaConfiguration, WpdaControl, WpdaEvent, WpdaState,
+            SliceTokenSource, StackSymbolV2, WpdaConfiguration, WpdaControl, WpdaEvent, WpdaState,
         };
         use mettail_prattail::wpda_walker::{
             IdleEngine, NullConsumer, WalkerConsumer, WpdaEngine, WpdaWalker,
@@ -41,15 +38,16 @@ fn baseline_tests(lang_name: &str) -> TokenStream {
             fn #name() {
                 // Walker must absorb terminal-state events without panicking.
                 let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+                let empty_tokens = SliceTokenSource::new(&[]);
                 // Inject a TokenConsumed advance from an unsuspecting position;
                 // walker should record the new position without crashing.
                 let _ = w.process_event(WpdaEvent::TokenConsumed {
                     pos: #pos,
                     token: mettail_prattail::automata::TokenKind::Ident,
-                });
+                }, &empty_tokens);
                 assert_eq!(w.position(), #pos);
                 // Inspect after the corruption-style event must yield NoChange.
-                let _ = w.process_event(WpdaEvent::Inspect);
+                let _ = w.process_event(WpdaEvent::Inspect, &empty_tokens);
                 assert!(!w.state().is_terminal());
             }
         }

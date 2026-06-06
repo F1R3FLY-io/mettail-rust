@@ -123,14 +123,10 @@ impl<T: Copy + Eq + Hash> PathTreeArena<T> {
         }
         let parent_len = self.node_len(parent);
         let id = StackId(
-            u32::try_from(self.nodes.len())
-                .expect("PathTreeArena: node count exceeds u32::MAX"),
+            u32::try_from(self.nodes.len()).expect("PathTreeArena: node count exceeds u32::MAX"),
         );
-        self.nodes.push(ChainNode {
-            parent,
-            sid,
-            len: parent_len + 1,
-        });
+        self.nodes
+            .push(ChainNode { parent, sid, len: parent_len + 1 });
         self.dedup.insert((parent, sid), id);
         id
     }
@@ -171,11 +167,7 @@ impl<T: Copy + Eq + Hash> PathTreeArena<T> {
     /// O(chain_length). For hot read sites, prefer `top` / `len` /
     /// `intern_pop` over `slice_at` for single-element queries; a
     /// future LRU cache would amortize repeated `slice_at` calls.
-    pub fn slice_at<'a>(
-        &self,
-        stack: StackId,
-        scratch: &'a mut Vec<T>,
-    ) -> &'a [T] {
+    pub fn slice_at<'a>(&self, stack: StackId, scratch: &'a mut Vec<T>) -> &'a [T] {
         scratch.clear();
         let n = self.len(stack);
         scratch.reserve(n);

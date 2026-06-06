@@ -24,8 +24,8 @@ use std::fmt;
 use syn::Ident;
 
 use super::language::{
-    BuiltinPredicate, ConnectiveDecl, Equation, GuardConfig, LangType, LanguageDef, LogicBlock,
-    ModeDef, PredicateAnnotations, RewriteRule, TheoryRegistration, TokenDef,
+    BuiltinPredicate, Equation, GuardConfig, LangType, LanguageDef, LogicBlock, ModeDef,
+    PredicateAnnotations, RewriteRule, TheoryRegistration, TokenDef,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -50,14 +50,10 @@ pub enum MergeError {
     },
 
     /// Two equations share a name and the strategy is `Error`.
-    DuplicateEquationName {
-        name: String,
-    },
+    DuplicateEquationName { name: String },
 
     /// Two rewrites share a name and the strategy is `Error`.
-    DuplicateRewriteName {
-        name: String,
-    },
+    DuplicateRewriteName { name: String },
 
     /// A logic block has conflicting relation declarations (same name, different param types).
     ConflictingLogicRelation {
@@ -196,14 +192,12 @@ pub fn merge_language_defs(
     let merged_terms = merge_terms(&base.terms, &extension.terms, strategy, &mut errors);
 
     // 7. Merge equations
-    let merged_equations = merge_equations(
-        &base.equations, &extension.equations, strategy, &mut errors,
-    );
+    let merged_equations =
+        merge_equations(&base.equations, &extension.equations, strategy, &mut errors);
 
     // 8. Merge rewrites
-    let merged_rewrites = merge_rewrites(
-        &base.rewrites, &extension.rewrites, strategy, &mut errors,
-    );
+    let merged_rewrites =
+        merge_rewrites(&base.rewrites, &extension.rewrites, strategy, &mut errors);
 
     // 9. Merge logic blocks
     let merged_logic = merge_logic(&base.logic, &extension.logic, &mut errors);
@@ -307,17 +301,15 @@ fn merge_builtin_predicates(
         (Some(b), None) => Some(b.clone()),
         (None, Some(e)) => Some(e.clone()),
         (Some(base_preds), Some(ext_preds)) => {
-            let mut merged: Vec<BuiltinPredicate> = Vec::with_capacity(
-                base_preds.len() + ext_preds.len(),
-            );
+            let mut merged: Vec<BuiltinPredicate> =
+                Vec::with_capacity(base_preds.len() + ext_preds.len());
             // Index extension predicates by name for lookup
             let mut ext_by_name: HashMap<String, &BuiltinPredicate> =
                 HashMap::with_capacity(ext_preds.len());
             for p in ext_preds {
                 ext_by_name.insert(p.name.to_string(), p);
             }
-            let mut consumed: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
+            let mut consumed: std::collections::HashSet<String> = std::collections::HashSet::new();
 
             // Walk base predicates; if extension has a same-named one,
             // merge annotations field-by-field.
@@ -361,7 +353,7 @@ fn merge_builtin_predicates(
             }
 
             Some(merged)
-        }
+        },
     }
 }
 
@@ -373,8 +365,7 @@ fn merge_theory_registrations(
     extension: &[TheoryRegistration],
     errors: &mut Vec<MergeError>,
 ) -> Vec<TheoryRegistration> {
-    let mut merged: Vec<TheoryRegistration> =
-        Vec::with_capacity(base.len() + extension.len());
+    let mut merged: Vec<TheoryRegistration> = Vec::with_capacity(base.len() + extension.len());
     let mut by_name: HashMap<String, &TheoryRegistration> = HashMap::with_capacity(base.len());
 
     for t in base {
@@ -439,8 +430,14 @@ fn merge_types(
         let name = t.name.to_string();
         if let Some(existing) = by_name.get(&name) {
             // Category exists — verify native type matches
-            let existing_native = existing.native_type.as_ref().map(|ty| quote::quote!(#ty).to_string());
-            let new_native = t.native_type.as_ref().map(|ty| quote::quote!(#ty).to_string());
+            let existing_native = existing
+                .native_type
+                .as_ref()
+                .map(|ty| quote::quote!(#ty).to_string());
+            let new_native = t
+                .native_type
+                .as_ref()
+                .map(|ty| quote::quote!(#ty).to_string());
             if existing_native != new_native {
                 errors.push(MergeError::CategoryNativeTypeMismatch {
                     category: name,
@@ -473,7 +470,8 @@ fn merge_terms(
     errors: &mut Vec<MergeError>,
 ) -> Vec<super::grammar::GrammarRule> {
     let mut labels: HashMap<String, String> = HashMap::with_capacity(base.len());
-    let mut result: Vec<super::grammar::GrammarRule> = Vec::with_capacity(base.len() + extension.len());
+    let mut result: Vec<super::grammar::GrammarRule> =
+        Vec::with_capacity(base.len() + extension.len());
 
     // Add all rules from base
     for rule in base {
@@ -614,7 +612,8 @@ fn merge_logic(
         (Some(b), Some(e)) => {
             // Union relations by name
             let mut relations = b.relations.clone();
-            let base_rel_names: HashMap<String, &Vec<String>> = b.relations
+            let base_rel_names: HashMap<String, &Vec<String>> = b
+                .relations
                 .iter()
                 .map(|r| (r.name.to_string(), &r.param_types))
                 .collect();
@@ -644,10 +643,7 @@ fn merge_logic(
                 #ext_content
             };
 
-            Some(LogicBlock {
-                relations,
-                content: merged_content,
-            })
+            Some(LogicBlock { relations, content: merged_content })
         },
     }
 }
@@ -739,8 +735,7 @@ fn merge_mode_defs(
         let name = md.name.to_string();
         if let Some(&idx) = by_name.get(&name) {
             // Same-named mode: merge token definitions within
-            let merged_tokens =
-                merge_token_defs(&result[idx].token_defs, &md.token_defs, strategy);
+            let merged_tokens = merge_token_defs(&result[idx].token_defs, &md.token_defs, strategy);
             result[idx] = ModeDef {
                 name: md.name.clone(),
                 token_defs: merged_tokens,
@@ -765,15 +760,17 @@ fn merge_mode_defs(
 pub fn apply_extends(def: &mut LanguageDef) -> Result<(), String> {
     let extends_names: Vec<Ident> = def.extends_names.clone();
     for base_name in &extends_names {
-        let base_def = super::registry::lookup_language_def(&base_name.to_string())
-            .ok_or_else(|| format!(
-                "Language '{}' not found in registry. Was `language! {{ name: {} }}` \
+        let base_def =
+            super::registry::lookup_language_def(&base_name.to_string()).ok_or_else(|| {
+                format!(
+                    "Language '{}' not found in registry. Was `language! {{ name: {} }}` \
                  defined in a module compiled before this one?",
-                base_name, base_name
-            ))?;
+                    base_name, base_name
+                )
+            })?;
         // Base is the inherited grammar; current def is the extension
-        let merged = merge_language_defs(&base_def, def, DuplicateStrategy::Error)
-            .map_err(|errs| {
+        let merged =
+            merge_language_defs(&base_def, def, DuplicateStrategy::Error).map_err(|errs| {
                 errs.iter()
                     .map(|e| format!("  - {}", e))
                     .collect::<Vec<_>>()
@@ -791,19 +788,21 @@ pub fn apply_extends(def: &mut LanguageDef) -> Result<(), String> {
 pub fn apply_includes(def: &mut LanguageDef) -> Result<(), String> {
     let include_names: Vec<Ident> = def.include_names.clone();
     for name in &include_names {
-        let mut imported = super::registry::lookup_language_def(&name.to_string())
-            .ok_or_else(|| format!(
-                "Language '{}' not found in registry. Was `language! {{ name: {} }}` \
+        let mut imported =
+            super::registry::lookup_language_def(&name.to_string()).ok_or_else(|| {
+                format!(
+                    "Language '{}' not found in registry. Was `language! {{ name: {} }}` \
                  defined in a module compiled before this one?",
-                name, name
-            ))?;
+                    name, name
+                )
+            })?;
         // Strip non-grammar components — import grammar only
         imported.equations.clear();
         imported.rewrites.clear();
         imported.logic = None;
         // Imported is base, current def is extension (local rules win)
-        let merged = merge_language_defs(&imported, def, DuplicateStrategy::Override)
-            .map_err(|errs| {
+        let merged =
+            merge_language_defs(&imported, def, DuplicateStrategy::Override).map_err(|errs| {
                 errs.iter()
                     .map(|e| format!("  - {}", e))
                     .collect::<Vec<_>>()
@@ -820,15 +819,44 @@ pub fn apply_includes(def: &mut LanguageDef) -> Result<(), String> {
 /// Fragments only contain types + terms (no equations/rewrites/logic).
 pub fn apply_mixins(def: &mut LanguageDef) -> Result<(), String> {
     let mixin_names: Vec<Ident> = def.mixin_names.clone();
+    if mixin_names.is_empty() {
+        return Ok(());
+    }
+
+    let local_def = def.clone();
+    let mut merged_mixins: Option<LanguageDef> = None;
+
     for mixin_name in &mixin_names {
-        let mixin_def = super::registry::lookup_language_def(&mixin_name.to_string())
-            .ok_or_else(|| format!(
-                "Fragment '{}' not found in registry. Was `language_fragment! {{ name: {} }}` \
+        let mixin_def =
+            super::registry::lookup_language_def(&mixin_name.to_string()).ok_or_else(|| {
+                format!(
+                    "Fragment '{}' not found in registry. Was `language_fragment! {{ name: {} }}` \
                  defined in a module compiled before this one?",
-                mixin_name, mixin_name
-            ))?;
-        // Fragment is base, current def is extension (local rules override fragment rules)
-        let merged = merge_language_defs(&mixin_def, def, DuplicateStrategy::Override)
+                    mixin_name, mixin_name
+                )
+            })?;
+
+        merged_mixins = Some(match merged_mixins {
+            Some(accumulated) => {
+                // Preserve declared mixin order: earlier mixins stay first,
+                // later mixins override duplicate fragment definitions.
+                merge_language_defs(&accumulated, &mixin_def, DuplicateStrategy::Override).map_err(
+                    |errs| {
+                        errs.iter()
+                            .map(|e| format!("  - {}", e))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    },
+                )?
+            },
+            None => mixin_def,
+        });
+    }
+
+    if let Some(mixins_def) = merged_mixins {
+        // Fragments are the base, local definition is the final extension so
+        // user-written rules/options override fragment rules/options.
+        let merged = merge_language_defs(&mixins_def, &local_def, DuplicateStrategy::Override)
             .map_err(|errs| {
                 errs.iter()
                     .map(|e| format!("  - {}", e))
@@ -837,6 +865,7 @@ pub fn apply_mixins(def: &mut LanguageDef) -> Result<(), String> {
             })?;
         *def = merged;
     }
+
     Ok(())
 }
 
@@ -846,9 +875,9 @@ pub fn apply_mixins(def: &mut LanguageDef) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::grammar::GrammarRule;
-    use super::super::language::{AttributeValue, RelationDecl};
+    use super::super::language::{AttributeValue, ConnectiveDecl, RelationDecl};
+    use super::*;
     use proc_macro2::{Span, TokenStream};
 
     fn make_lang(name: &str) -> LanguageDef {
@@ -944,7 +973,9 @@ mod tests {
         });
 
         let err = merge_language_defs(&a, &b, DuplicateStrategy::Error).unwrap_err();
-        assert!(err.iter().any(|e| matches!(e, MergeError::CategoryNativeTypeMismatch { .. })));
+        assert!(err
+            .iter()
+            .any(|e| matches!(e, MergeError::CategoryNativeTypeMismatch { .. })));
     }
 
     #[test]
@@ -958,7 +989,9 @@ mod tests {
         b.terms.push(make_rule("PZero", "Proc"));
 
         let err = merge_language_defs(&a, &b, DuplicateStrategy::Error).unwrap_err();
-        assert!(err.iter().any(|e| matches!(e, MergeError::DuplicateRuleLabel { label, .. } if label == "PZero")));
+        assert!(err.iter().any(
+            |e| matches!(e, MergeError::DuplicateRuleLabel { label, .. } if label == "PZero")
+        ));
     }
 
     #[test]
@@ -974,7 +1007,11 @@ mod tests {
         let result = merge_language_defs(&a, &b, DuplicateStrategy::Override)
             .expect("override should succeed");
         // Only one PZero rule (from B)
-        let pzero_count = result.terms.iter().filter(|r| r.label.to_string() == "PZero").count();
+        let pzero_count = result
+            .terms
+            .iter()
+            .filter(|r| r.label.to_string() == "PZero")
+            .count();
         assert_eq!(pzero_count, 1);
     }
 
@@ -996,10 +1033,12 @@ mod tests {
     #[test]
     fn merge_options_extension_overrides() {
         let mut a = make_lang("A");
-        a.options.insert("beam_width".to_string(), AttributeValue::Float(1.5));
+        a.options
+            .insert("beam_width".to_string(), AttributeValue::Float(1.5));
 
         let mut b = make_lang("B");
-        b.options.insert("beam_width".to_string(), AttributeValue::Float(2.0));
+        b.options
+            .insert("beam_width".to_string(), AttributeValue::Float(2.0));
 
         let result = merge_language_defs(&a, &b, DuplicateStrategy::Error)
             .expect("options merge should succeed");
@@ -1060,7 +1099,9 @@ mod tests {
         });
 
         let err = merge_language_defs(&a, &b, DuplicateStrategy::Error).unwrap_err();
-        assert!(err.iter().any(|e| matches!(e, MergeError::ConflictingLogicRelation { .. })));
+        assert!(err
+            .iter()
+            .any(|e| matches!(e, MergeError::ConflictingLogicRelation { .. })));
     }
 
     #[test]
@@ -1076,15 +1117,67 @@ mod tests {
     #[test]
     fn merge_clears_composition_fields() {
         let mut a = make_lang("A");
-        a.extends_names.push(Ident::new("SomeBase", Span::call_site()));
+        a.extends_names
+            .push(Ident::new("SomeBase", Span::call_site()));
 
         let b = make_lang("B");
 
-        let result = merge_language_defs(&a, &b, DuplicateStrategy::Error)
-            .expect("merge should succeed");
+        let result =
+            merge_language_defs(&a, &b, DuplicateStrategy::Error).expect("merge should succeed");
         assert!(result.extends_names.is_empty());
         assert!(result.include_names.is_empty());
         assert!(result.mixin_names.is_empty());
+    }
+
+    #[test]
+    fn apply_mixins_preserves_declared_type_order_and_local_override() {
+        super::super::registry::register_fragment(
+            "OrderFragInt",
+            &quote::quote! {
+                name: OrderFragInt,
+                types {
+                    ![i32] as Int
+                },
+                terms {
+                    AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+                    Shared . a:Int |- a : Int;
+                }
+            },
+        );
+        super::super::registry::register_fragment(
+            "OrderFragBool",
+            &quote::quote! {
+                name: OrderFragBool,
+                types {
+                    ![bool] as Bool
+                },
+                terms {
+                    Not . a:Bool |- "not" a : Bool ![!a] step;
+                    Shared . b:Bool |- b : Bool;
+                }
+            },
+        );
+
+        let mut def = make_lang("MixedOrder");
+        def.mixin_names
+            .push(Ident::new("OrderFragInt", Span::call_site()));
+        def.mixin_names
+            .push(Ident::new("OrderFragBool", Span::call_site()));
+        def.terms.push(make_rule("Shared", "Int"));
+
+        apply_mixins(&mut def).expect("mixins should apply");
+
+        let type_names: Vec<String> = def.types.iter().map(|ty| ty.name.to_string()).collect();
+        assert_eq!(type_names, vec!["Int".to_string(), "Bool".to_string()]);
+        assert!(def.mixin_names.is_empty());
+
+        let shared: Vec<&GrammarRule> = def
+            .terms
+            .iter()
+            .filter(|rule| rule.label.to_string() == "Shared")
+            .collect();
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].category.to_string(), "Int");
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1096,7 +1189,12 @@ mod tests {
         ParamType, PredicateParam,
     };
 
-    fn make_pred(name: &str, arity: usize, sel: Option<f64>, cost: Option<u32>) -> BuiltinPredicate {
+    fn make_pred(
+        name: &str,
+        arity: usize,
+        sel: Option<f64>,
+        cost: Option<u32>,
+    ) -> BuiltinPredicate {
         let params = (0..arity)
             .map(|i| PredicateParam {
                 name: Ident::new(&format!("p{}", i), Span::call_site()),
@@ -1108,10 +1206,7 @@ mod tests {
             name: Ident::new(name, Span::call_site()),
             params,
             syntax_forms: Vec::new(),
-            annotations: PredicateAnnotations {
-                selectivity: sel,
-                cost,
-            },
+            annotations: PredicateAnnotations { selectivity: sel, cost },
         }
     }
 
@@ -1141,10 +1236,7 @@ mod tests {
         });
         let mut errors = Vec::new();
         let result = merge_guard_config(&base, &None, &mut errors).expect("Some");
-        assert_eq!(
-            result.builtin_predicates.as_ref().expect("present").len(),
-            1
-        );
+        assert_eq!(result.builtin_predicates.as_ref().expect("present").len(), 1);
     }
 
     #[test]
@@ -1224,7 +1316,7 @@ mod tests {
                 assert_eq!(name, "eq");
                 assert_eq!(*arity_a, 2);
                 assert_eq!(*arity_b, 3);
-            }
+            },
             other => panic!("expected DuplicatePredicateName, got {:?}", other),
         }
     }
@@ -1274,7 +1366,10 @@ mod tests {
         // Verify the base's `or` is GONE.
         assert!(!conns.iter().any(|c| matches!(c.role, ConnectiveRole::Or)));
         // Verify the extension's `and` keyword is `&&`, not `and`.
-        let and = conns.iter().find(|c| c.role == ConnectiveRole::And).expect("present");
+        let and = conns
+            .iter()
+            .find(|c| c.role == ConnectiveRole::And)
+            .expect("present");
         assert_eq!(and.keywords, vec!["&&".to_string()]);
     }
 
@@ -1318,7 +1413,7 @@ mod tests {
         match &errors[0] {
             MergeError::ConflictingTheoryRegistration { name, .. } => {
                 assert_eq!(name, "arithmetic");
-            }
+            },
             other => panic!("expected ConflictingTheoryRegistration, got {:?}", other),
         }
     }
@@ -1330,11 +1425,9 @@ mod tests {
             connectives: None,
             theories: vec![],
             channels: Some(ChannelConfig {
-                channel_categories: vec![
-                    ChannelDecl {
-                        category: Ident::new("Name", Span::call_site()),
-                    },
-                ],
+                channel_categories: vec![ChannelDecl {
+                    category: Ident::new("Name", Span::call_site()),
+                }],
                 join_patterns: vec![JoinPatternDecl {
                     label: Ident::new("PGuardedInput", Span::call_site()),
                     channel_params: vec![ChannelParam {
@@ -1349,11 +1442,9 @@ mod tests {
             connectives: None,
             theories: vec![],
             channels: Some(ChannelConfig {
-                channel_categories: vec![
-                    ChannelDecl {
-                        category: Ident::new("Place", Span::call_site()),
-                    },
-                ],
+                channel_categories: vec![ChannelDecl {
+                    category: Ident::new("Place", Span::call_site()),
+                }],
                 join_patterns: vec![],
             }),
         });

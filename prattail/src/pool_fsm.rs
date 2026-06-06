@@ -135,10 +135,7 @@ pub enum WorkerAction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkerReport {
     /// A green thread completed successfully.
-    ThreadCompleted {
-        thread_id: GreenThreadId,
-        result: String,
-    },
+    ThreadCompleted { thread_id: GreenThreadId, result: String },
     /// A green thread suspended waiting on channel(s).
     ThreadSuspended {
         thread_id: GreenThreadId,
@@ -150,21 +147,13 @@ pub enum WorkerReport {
         categories: Vec<String>,
     },
     /// A green thread failed with an error.
-    ThreadFailed {
-        thread_id: GreenThreadId,
-        error: String,
-    },
+    ThreadFailed { thread_id: GreenThreadId, error: String },
     /// A green thread is ready to be scheduled (e.g., after channel wake-up).
-    ThreadReady {
-        thread_id: GreenThreadId,
-        priority: u32,
-    },
+    ThreadReady { thread_id: GreenThreadId, priority: u32 },
     /// Channel activity detected during quantum execution.
     /// Sent when a green thread performs channel sends, enabling
     /// event-driven wake-ups instead of polling.
-    ChannelActivity {
-        channel_ids: Vec<ChannelId>,
-    },
+    ChannelActivity { channel_ids: Vec<ChannelId> },
 }
 
 impl fmt::Display for WorkerReport {
@@ -172,35 +161,22 @@ impl fmt::Display for WorkerReport {
         match self {
             Self::ThreadCompleted { thread_id, .. } => {
                 write!(f, "ThreadCompleted({})", thread_id)
-            }
-            Self::ThreadSuspended {
-                thread_id,
-                waiting_on,
-            } => write!(
-                f,
-                "ThreadSuspended({}, channels={})",
-                thread_id,
-                waiting_on.len()
-            ),
-            Self::ForkRequested {
-                parent_id,
-                categories,
-            } => write!(
-                f,
-                "ForkRequested(parent={}, children={})",
-                parent_id,
-                categories.len()
-            ),
+            },
+            Self::ThreadSuspended { thread_id, waiting_on } => {
+                write!(f, "ThreadSuspended({}, channels={})", thread_id, waiting_on.len())
+            },
+            Self::ForkRequested { parent_id, categories } => {
+                write!(f, "ForkRequested(parent={}, children={})", parent_id, categories.len())
+            },
             Self::ThreadFailed { thread_id, error } => {
                 write!(f, "ThreadFailed({}, {})", thread_id, error)
-            }
-            Self::ThreadReady {
-                thread_id,
-                priority,
-            } => write!(f, "ThreadReady({}, prio={})", thread_id, priority),
+            },
+            Self::ThreadReady { thread_id, priority } => {
+                write!(f, "ThreadReady({}, prio={})", thread_id, priority)
+            },
             Self::ChannelActivity { channel_ids } => {
                 write!(f, "ChannelActivity(channels={})", channel_ids.len())
-            }
+            },
         }
     }
 }
@@ -212,9 +188,7 @@ pub fn worker_process_event(state: &WorkerState, event: WorkerEvent) -> WorkerTr
     match (state, event) {
         // ── Idle transitions ────────────────────────────────────────────
         (WorkerState::Idle, WorkerEvent::WorkFound(tid)) => WorkerTransition {
-            new_state: WorkerState::Executing {
-                thread_id: tid,
-            },
+            new_state: WorkerState::Executing { thread_id: tid },
             actions: vec![WorkerAction::ExecuteQuantum(tid)],
         },
         (WorkerState::Idle, WorkerEvent::NoWorkAvailable) => WorkerTransition {
@@ -231,56 +205,41 @@ pub fn worker_process_event(state: &WorkerState, event: WorkerEvent) -> WorkerTr
                 new_state: WorkerState::Idle,
                 actions: vec![],
             }
-        }
+        },
 
         // ── Executing transitions ───────────────────────────────────────
-        (
-            WorkerState::Executing { thread_id },
-            WorkerEvent::QuantumComplete(result),
-        ) => {
+        (WorkerState::Executing { thread_id }, WorkerEvent::QuantumComplete(result)) => {
             let tid = *thread_id;
             let actions = match result {
                 QuantumResult::Completed { result } => {
-                    vec![WorkerAction::ReportToCoordinator(
-                        WorkerReport::ThreadCompleted {
-                            thread_id: tid,
-                            result,
-                        },
-                    )]
-                }
+                    vec![WorkerAction::ReportToCoordinator(WorkerReport::ThreadCompleted {
+                        thread_id: tid,
+                        result,
+                    })]
+                },
                 QuantumResult::Suspended { waiting_on } => {
-                    vec![WorkerAction::ReportToCoordinator(
-                        WorkerReport::ThreadSuspended {
-                            thread_id: tid,
-                            waiting_on,
-                        },
-                    )]
-                }
+                    vec![WorkerAction::ReportToCoordinator(WorkerReport::ThreadSuspended {
+                        thread_id: tid,
+                        waiting_on,
+                    })]
+                },
                 QuantumResult::Yielded => {
                     vec![WorkerAction::ReenqueueLocal(tid)]
-                }
+                },
                 QuantumResult::Forked { children } => {
                     // The children are category names for fork requests.
                     // The worker will create the actual child threads.
-                    vec![WorkerAction::ForkAndEnqueue {
-                        parent_id: tid,
-                        categories: children,
-                    }]
-                }
+                    vec![WorkerAction::ForkAndEnqueue { parent_id: tid, categories: children }]
+                },
                 QuantumResult::Failed { error } => {
-                    vec![WorkerAction::ReportToCoordinator(
-                        WorkerReport::ThreadFailed {
-                            thread_id: tid,
-                            error,
-                        },
-                    )]
-                }
+                    vec![WorkerAction::ReportToCoordinator(WorkerReport::ThreadFailed {
+                        thread_id: tid,
+                        error,
+                    })]
+                },
             };
-            WorkerTransition {
-                new_state: WorkerState::Idle,
-                actions,
-            }
-        }
+            WorkerTransition { new_state: WorkerState::Idle, actions }
+        },
 
         // ── Parking transitions ─────────────────────────────────────────
         (WorkerState::Parking, WorkerEvent::Unpark) => WorkerTransition {
@@ -372,13 +331,12 @@ impl fmt::Display for CoordinatorEvent {
             Self::TimerTick => write!(f, "TimerTick"),
             Self::ScaleCheck { suggested_workers } => {
                 write!(f, "ScaleCheck(suggested={})", suggested_workers)
-            }
+            },
             Self::ShutdownRequest => write!(f, "ShutdownRequest"),
             Self::AllWorkersExited => write!(f, "AllWorkersExited"),
-            Self::ChannelWakeUp {
-                thread_id,
-                channel_id,
-            } => write!(f, "ChannelWakeUp({}, {})", thread_id, channel_id),
+            Self::ChannelWakeUp { thread_id, channel_id } => {
+                write!(f, "ChannelWakeUp({}, {})", thread_id, channel_id)
+            },
         }
     }
 }
@@ -420,10 +378,7 @@ pub fn coordinator_process_event(
         // ── Shutdown overrides everything ────────────────────────────────
         (_, CoordinatorEvent::ShutdownRequest) => CoordinatorTransition {
             new_state: CoordinatorState::Draining,
-            actions: vec![
-                CoordinatorAction::DrainWorkers,
-                CoordinatorAction::EmitMetrics,
-            ],
+            actions: vec![CoordinatorAction::DrainWorkers, CoordinatorAction::EmitMetrics],
         },
 
         // ── Bootstrapping ───────────────────────────────────────────────
@@ -433,7 +388,7 @@ pub fn coordinator_process_event(
                 new_state: CoordinatorState::Running,
                 actions: vec![],
             }
-        }
+        },
 
         // ── Running: process worker reports ─────────────────────────────
         (CoordinatorState::Running, CoordinatorEvent::WorkerReport(report)) => {
@@ -444,64 +399,53 @@ pub fn coordinator_process_event(
                         SchedulerEvent::ThreadCompleted { thread_id },
                     ));
                     actions.push(CoordinatorAction::ReplenishBudget(1));
-                }
+                },
                 WorkerReport::ThreadSuspended { .. } => {
                     // Thread already in Suspended state; coordinator tracks
                     // the waiter in the WakeRegistry (handled by caller).
-                }
-                WorkerReport::ForkRequested {
-                    parent_id,
-                    categories,
-                } => {
+                },
+                WorkerReport::ForkRequested { parent_id, categories } => {
                     for category in categories {
                         actions.push(CoordinatorAction::ForwardToScheduler(
-                            SchedulerEvent::ForkRequest {
-                                parent_id,
-                                category,
-                            },
+                            SchedulerEvent::ForkRequest { parent_id, category },
                         ));
                     }
-                }
+                },
                 WorkerReport::ThreadFailed { thread_id, .. } => {
                     actions.push(CoordinatorAction::ForwardToScheduler(
                         SchedulerEvent::ThreadCompleted { thread_id },
                     ));
                     actions.push(CoordinatorAction::ReplenishBudget(1));
-                }
-                WorkerReport::ThreadReady {
-                    thread_id,
-                    ..
-                } => {
+                },
+                WorkerReport::ThreadReady { thread_id, .. } => {
                     // Enqueue in scheduler, then inject for workers.
                     actions.push(CoordinatorAction::InjectWork(thread_id));
                     actions.push(CoordinatorAction::UnparkWorkers);
-                }
+                },
                 WorkerReport::ChannelActivity { .. } => {
                     // Channel activity is handled by the coordinator loop
                     // (event-driven wake path), not by the pure FSM.
                     // The coordinator checks affected channels for waiters.
-                }
+                },
             }
             CoordinatorTransition {
                 new_state: CoordinatorState::Running,
                 actions,
             }
-        }
+        },
         (CoordinatorState::Running, CoordinatorEvent::TimerTick) => {
             // Periodic tick: forward to scheduler for polling.
             CoordinatorTransition {
                 new_state: CoordinatorState::Running,
-                actions: vec![CoordinatorAction::ForwardToScheduler(
-                    SchedulerEvent::TimerExpired,
-                )],
+                actions: vec![CoordinatorAction::ForwardToScheduler(SchedulerEvent::TimerExpired)],
             }
-        }
+        },
         (CoordinatorState::Running, CoordinatorEvent::ScaleCheck { suggested_workers }) => {
             CoordinatorTransition {
                 new_state: CoordinatorState::Scaling,
                 actions: vec![CoordinatorAction::ResizePool(suggested_workers)],
             }
-        }
+        },
         (CoordinatorState::Running, CoordinatorEvent::ChannelWakeUp { thread_id, channel_id }) => {
             CoordinatorTransition {
                 new_state: CoordinatorState::Running,
@@ -513,7 +457,7 @@ pub fn coordinator_process_event(
                     CoordinatorAction::UnparkWorkers,
                 ],
             }
-        }
+        },
 
         // ── Scaling: return to Running after resize ─────────────────────
         (CoordinatorState::Scaling, _) => CoordinatorTransition {
@@ -522,19 +466,17 @@ pub fn coordinator_process_event(
         },
 
         // ── Draining: waiting for all workers to exit ───────────────────
-        (CoordinatorState::Draining, CoordinatorEvent::AllWorkersExited) => {
-            CoordinatorTransition {
-                new_state: CoordinatorState::Terminated,
-                actions: vec![CoordinatorAction::EmitMetrics],
-            }
-        }
+        (CoordinatorState::Draining, CoordinatorEvent::AllWorkersExited) => CoordinatorTransition {
+            new_state: CoordinatorState::Terminated,
+            actions: vec![CoordinatorAction::EmitMetrics],
+        },
         (CoordinatorState::Draining, _) => {
             // Absorb events while draining.
             CoordinatorTransition {
                 new_state: CoordinatorState::Draining,
                 actions: vec![],
             }
-        }
+        },
 
         // ── Terminated: absorb everything ───────────────────────────────
         (CoordinatorState::Terminated, _) => CoordinatorTransition {
@@ -637,10 +579,7 @@ pub fn pool_process_event(state: &PoolState, event: PoolEvent) -> PoolTransition
         // ── Uninitialized → Starting ────────────────────────────────────
         (PoolState::Uninitialized, PoolEvent::Start { num_workers }) => PoolTransition {
             new_state: PoolState::Starting,
-            actions: vec![
-                PoolAction::SpawnCoordinator,
-                PoolAction::SpawnWorkers(num_workers),
-            ],
+            actions: vec![PoolAction::SpawnCoordinator, PoolAction::SpawnWorkers(num_workers)],
         },
 
         // ── Starting → Running ──────────────────────────────────────────
@@ -674,10 +613,7 @@ pub fn pool_process_event(state: &PoolState, event: PoolEvent) -> PoolTransition
         },
 
         // ── Catch-all ───────────────────────────────────────────────────
-        (_, _) => PoolTransition {
-            new_state: *state,
-            actions: vec![],
-        },
+        (_, _) => PoolTransition { new_state: *state, actions: vec![] },
     }
 }
 
@@ -724,19 +660,15 @@ mod tests {
     fn test_worker_executing_completed() {
         let tid = GreenThreadId(7);
         let state = WorkerState::Executing { thread_id: tid };
-        let result = QuantumResult::Completed {
-            result: "42".to_string(),
-        };
+        let result = QuantumResult::Completed { result: "42".to_string() };
         let t = worker_process_event(&state, WorkerEvent::QuantumComplete(result));
         assert_eq!(t.new_state, WorkerState::Idle);
         assert_eq!(
             t.actions,
-            vec![WorkerAction::ReportToCoordinator(
-                WorkerReport::ThreadCompleted {
-                    thread_id: tid,
-                    result: "42".to_string()
-                }
-            )]
+            vec![WorkerAction::ReportToCoordinator(WorkerReport::ThreadCompleted {
+                thread_id: tid,
+                result: "42".to_string()
+            })]
         );
     }
 
@@ -744,8 +676,7 @@ mod tests {
     fn test_worker_executing_yielded() {
         let tid = GreenThreadId(3);
         let state = WorkerState::Executing { thread_id: tid };
-        let t =
-            worker_process_event(&state, WorkerEvent::QuantumComplete(QuantumResult::Yielded));
+        let t = worker_process_event(&state, WorkerEvent::QuantumComplete(QuantumResult::Yielded));
         assert_eq!(t.new_state, WorkerState::Idle);
         assert_eq!(t.actions, vec![WorkerAction::ReenqueueLocal(tid)]);
     }
@@ -755,19 +686,15 @@ mod tests {
         let tid = GreenThreadId(5);
         let state = WorkerState::Executing { thread_id: tid };
         let channels = vec![ChannelId(1), ChannelId(2)];
-        let result = QuantumResult::Suspended {
-            waiting_on: channels.clone(),
-        };
+        let result = QuantumResult::Suspended { waiting_on: channels.clone() };
         let t = worker_process_event(&state, WorkerEvent::QuantumComplete(result));
         assert_eq!(t.new_state, WorkerState::Idle);
         assert_eq!(
             t.actions,
-            vec![WorkerAction::ReportToCoordinator(
-                WorkerReport::ThreadSuspended {
-                    thread_id: tid,
-                    waiting_on: channels,
-                }
-            )]
+            vec![WorkerAction::ReportToCoordinator(WorkerReport::ThreadSuspended {
+                thread_id: tid,
+                waiting_on: channels,
+            })]
         );
     }
 
@@ -775,19 +702,15 @@ mod tests {
     fn test_worker_executing_failed() {
         let tid = GreenThreadId(9);
         let state = WorkerState::Executing { thread_id: tid };
-        let result = QuantumResult::Failed {
-            error: "division by zero".to_string(),
-        };
+        let result = QuantumResult::Failed { error: "division by zero".to_string() };
         let t = worker_process_event(&state, WorkerEvent::QuantumComplete(result));
         assert_eq!(t.new_state, WorkerState::Idle);
         assert_eq!(
             t.actions,
-            vec![WorkerAction::ReportToCoordinator(
-                WorkerReport::ThreadFailed {
-                    thread_id: tid,
-                    error: "division by zero".to_string(),
-                }
-            )]
+            vec![WorkerAction::ReportToCoordinator(WorkerReport::ThreadFailed {
+                thread_id: tid,
+                error: "division by zero".to_string(),
+            })]
         );
     }
 
@@ -796,17 +719,12 @@ mod tests {
         let tid = GreenThreadId(10);
         let state = WorkerState::Executing { thread_id: tid };
         let cats = vec!["Proc".to_string(), "Proc".to_string()];
-        let result = QuantumResult::Forked {
-            children: cats.clone(),
-        };
+        let result = QuantumResult::Forked { children: cats.clone() };
         let t = worker_process_event(&state, WorkerEvent::QuantumComplete(result));
         assert_eq!(t.new_state, WorkerState::Idle);
         assert_eq!(
             t.actions,
-            vec![WorkerAction::ForkAndEnqueue {
-                parent_id: tid,
-                categories: cats,
-            }]
+            vec![WorkerAction::ForkAndEnqueue { parent_id: tid, categories: cats }]
         );
     }
 
@@ -926,9 +844,7 @@ mod tests {
     fn test_coordinator_running_scale_check() {
         let t = coordinator_process_event(
             &CoordinatorState::Running,
-            CoordinatorEvent::ScaleCheck {
-                suggested_workers: 8,
-            },
+            CoordinatorEvent::ScaleCheck { suggested_workers: 8 },
         );
         assert_eq!(t.new_state, CoordinatorState::Scaling);
         assert_eq!(t.actions, vec![CoordinatorAction::ResizePool(8)]);
@@ -981,8 +897,7 @@ mod tests {
 
     #[test]
     fn test_coordinator_draining_absorbs() {
-        let t =
-            coordinator_process_event(&CoordinatorState::Draining, CoordinatorEvent::TimerTick);
+        let t = coordinator_process_event(&CoordinatorState::Draining, CoordinatorEvent::TimerTick);
         assert_eq!(t.new_state, CoordinatorState::Draining);
         assert!(t.actions.is_empty());
     }
@@ -1007,17 +922,10 @@ mod tests {
 
     #[test]
     fn test_pool_start() {
-        let t = pool_process_event(
-            &PoolState::Uninitialized,
-            PoolEvent::Start { num_workers: 4 },
-        );
+        let t = pool_process_event(&PoolState::Uninitialized, PoolEvent::Start { num_workers: 4 });
         assert_eq!(t.new_state, PoolState::Starting);
-        assert!(t
-            .actions
-            .contains(&PoolAction::SpawnCoordinator));
-        assert!(t
-            .actions
-            .contains(&PoolAction::SpawnWorkers(4)));
+        assert!(t.actions.contains(&PoolAction::SpawnCoordinator));
+        assert!(t.actions.contains(&PoolAction::SpawnWorkers(4)));
     }
 
     #[test]
@@ -1030,12 +938,8 @@ mod tests {
     fn test_pool_running_to_shutting_down() {
         let t = pool_process_event(&PoolState::Running, PoolEvent::ShutdownRequest);
         assert_eq!(t.new_state, PoolState::ShuttingDown);
-        assert!(t
-            .actions
-            .contains(&PoolAction::SignalShutdown));
-        assert!(t
-            .actions
-            .contains(&PoolAction::JoinAllThreads));
+        assert!(t.actions.contains(&PoolAction::SignalShutdown));
+        assert!(t.actions.contains(&PoolAction::JoinAllThreads));
     }
 
     #[test]
@@ -1046,10 +950,7 @@ mod tests {
 
     #[test]
     fn test_pool_terminated_absorbs() {
-        let t = pool_process_event(
-            &PoolState::Terminated,
-            PoolEvent::Start { num_workers: 2 },
-        );
+        let t = pool_process_event(&PoolState::Terminated, PoolEvent::Start { num_workers: 2 });
         assert_eq!(t.new_state, PoolState::Terminated);
     }
 
@@ -1059,10 +960,7 @@ mod tests {
     fn test_worker_state_display() {
         assert_eq!(WorkerState::Idle.to_string(), "Idle");
         assert_eq!(
-            WorkerState::Executing {
-                thread_id: GreenThreadId(5)
-            }
-            .to_string(),
+            WorkerState::Executing { thread_id: GreenThreadId(5) }.to_string(),
             "Executing(gt#5)"
         );
         assert_eq!(WorkerState::Parking.to_string(), "Parking");
@@ -1115,9 +1013,6 @@ mod tests {
         assert_eq!(t.new_state, CoordinatorState::Running);
         // ChannelActivity is handled by the coordinator loop, not the pure FSM,
         // so the FSM emits no actions for it.
-        assert!(
-            t.actions.is_empty(),
-            "ChannelActivity should produce no FSM actions"
-        );
+        assert!(t.actions.is_empty(), "ChannelActivity should produce no FSM actions");
     }
 }

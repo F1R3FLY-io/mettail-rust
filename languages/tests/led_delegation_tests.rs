@@ -25,7 +25,9 @@ use mettail_runtime::Language;
 fn led_normal_form(input: &str, expected_display: &str) {
     mettail_runtime::clear_var_cache();
     let lang = lt::LedTestLanguage;
-    let term = lang.parse_term(input).unwrap_or_else(|e| panic!("parse {:?}: {}", input, e));
+    let term = lang
+        .parse_term(input)
+        .unwrap_or_else(|e| panic!("parse {:?}: {}", input, e));
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
     let displays: Vec<String> = results
         .normal_forms()
@@ -393,11 +395,7 @@ fn test_p2_2_variable_cross_cat_auto_project() {
 fn test_p2_4_auto_projection_plus_own_op() {
     mettail_runtime::clear_var_cache();
     let result = Expr::parse("x + 1 | y + 2").expect("should parse with auto-projection + own op");
-    assert!(
-        matches!(result, Expr::EPar(_, _)),
-        "expected EPar at top, got: {:?}",
-        result
-    );
+    assert!(matches!(result, Expr::EPar(_, _)), "expected EPar at top, got: {:?}", result);
 }
 
 /// P2.5: Variable + postfix — "x!" → CastNum(FactNum(NVar(x)))
@@ -450,11 +448,7 @@ fn test_e2_variable_only() {
 fn test_e3_own_operator_only() {
     mettail_runtime::clear_var_cache();
     let result = Expr::parse("1 | 2").expect("should parse own operator |");
-    assert!(
-        matches!(result, Expr::EPar(_, _)),
-        "expected EPar at top, got: {:?}",
-        result
-    );
+    assert!(matches!(result, Expr::EPar(_, _)), "expected EPar at top, got: {:?}", result);
 }
 
 /// E4: Parenthesized variable — "(x)"
@@ -470,11 +464,7 @@ fn test_e4_parenthesized_variable() {
 fn test_e5_own_op_with_unknown_variants() {
     mettail_runtime::clear_var_cache();
     let result = Expr::parse("x | y").expect("should parse x | y using Expr's own operator");
-    assert!(
-        matches!(result, Expr::EPar(_, _)),
-        "expected EPar for x | y, got: {:?}",
-        result
-    );
+    assert!(matches!(result, Expr::EPar(_, _)), "expected EPar for x | y, got: {:?}", result);
 }
 
 // ============================================================================
@@ -514,11 +504,7 @@ fn test_n4_chained_normalizes() {
 fn test_num_level_infix() {
     mettail_runtime::clear_var_cache();
     let result = Num::parse("1 + 2").expect("should parse 1 + 2 as Num");
-    assert!(
-        matches!(result, Num::AddNum(_, _)),
-        "expected AddNum, got: {:?}",
-        result
-    );
+    assert!(matches!(result, Num::AddNum(_, _)), "expected AddNum, got: {:?}", result);
 }
 
 /// Num-level: "3!" parses directly as Num
@@ -526,11 +512,7 @@ fn test_num_level_infix() {
 fn test_num_level_postfix() {
     mettail_runtime::clear_var_cache();
     let result = Num::parse("3!").expect("should parse 3! as Num");
-    assert!(
-        matches!(result, Num::FactNum(_)),
-        "expected FactNum, got: {:?}",
-        result
-    );
+    assert!(matches!(result, Num::FactNum(_)), "expected FactNum, got: {:?}", result);
 }
 
 /// Num-level: "-3" parses directly as Num
@@ -538,11 +520,7 @@ fn test_num_level_postfix() {
 fn test_num_level_unary_prefix() {
     mettail_runtime::clear_var_cache();
     let result = Num::parse("-3").expect("should parse -3 as Num");
-    assert!(
-        matches!(result, Num::NegNum(_)),
-        "expected NegNum, got: {:?}",
-        result
-    );
+    assert!(matches!(result, Num::NegNum(_)), "expected NegNum, got: {:?}", result);
 }
 
 /// Num-level: eval works

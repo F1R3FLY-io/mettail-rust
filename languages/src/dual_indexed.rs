@@ -40,8 +40,7 @@ use std::rc::Rc;
 
 use ascent::internal::{
     CRelFullIndexWrite, CRelIndexWrite, Freezable, RelFullIndexRead, RelFullIndexWrite,
-    RelIndexMerge, RelIndexRead, RelIndexReadAll, RelIndexWrite,
-    ToRelIndex, ToRelIndex0,
+    RelIndexMerge, RelIndexRead, RelIndexReadAll, RelIndexWrite, ToRelIndex, ToRelIndex0,
 };
 use ascent::internal::{CRelIndexRead, CRelIndexReadAll};
 use ascent::rayon;
@@ -81,10 +80,7 @@ impl<'a, T> IteratorFromDyn<'a, T> {
 
     pub fn from_box_clo<F: Fn() -> Box<dyn Iterator<Item = T> + 'a> + 'a>(producer: F) -> Self {
         let iter = producer();
-        Self {
-            iter,
-            producer: Rc::new(producer) as _,
-        }
+        Self { iter, producer: Rc::new(producer) as _ }
     }
 }
 
@@ -301,7 +297,7 @@ impl<T: Clone + Hash + Eq> CDualIndexedRel<T> {
             CDualIndexedRel::Frozen(rel) => rel,
             CDualIndexedRel::Unfrozen(_) => {
                 panic!("CDualIndexedRel: unexpected state (unwrap_frozen called on Unfrozen)")
-            }
+            },
         }
     }
 
@@ -310,7 +306,7 @@ impl<T: Clone + Hash + Eq> CDualIndexedRel<T> {
             CDualIndexedRel::Frozen(rel) => rel,
             CDualIndexedRel::Unfrozen(_) => {
                 panic!("CDualIndexedRel: unexpected state (unwrap_mut_frozen called on Unfrozen)")
-            }
+            },
         }
     }
 
@@ -319,20 +315,18 @@ impl<T: Clone + Hash + Eq> CDualIndexedRel<T> {
             CDualIndexedRel::Unfrozen(m) => m,
             CDualIndexedRel::Frozen(_) => {
                 panic!("CDualIndexedRel: unexpected state (unwrap_unfrozen called on Frozen)")
-            }
+            },
         }
     }
 
     fn unwrap_mut_unfrozen(&mut self) -> &mut DualIndexedRel<T> {
         match self {
-            CDualIndexedRel::Unfrozen(m) => m.get_mut().expect(
-                "CDualIndexedRel: unexpected state (unwrap_mut_unfrozen: mutex poisoned)",
-            ),
+            CDualIndexedRel::Unfrozen(m) => m
+                .get_mut()
+                .expect("CDualIndexedRel: unexpected state (unwrap_mut_unfrozen: mutex poisoned)"),
             CDualIndexedRel::Frozen(_) => {
-                panic!(
-                    "CDualIndexedRel: unexpected state (unwrap_mut_unfrozen called on Frozen)"
-                )
-            }
+                panic!("CDualIndexedRel: unexpected state (unwrap_mut_unfrozen called on Frozen)")
+            },
         }
     }
 }
@@ -361,8 +355,30 @@ impl<T: Clone + Hash + Eq> Freezable for CDualIndexedRel<T> {
 }
 
 impl<T: Clone + Hash + Eq> RelIndexMerge for CDualIndexedRel<T> {
-    fn move_index_contents(_from: &mut Self, _to: &mut Self) {
-        unimplemented!("merge_delta_to_total_new_to_delta must be used instead")
+    fn move_index_contents(from: &mut Self, to: &mut Self) {
+        let moved =
+            match from {
+                CDualIndexedRel::Frozen(rel) => std::mem::take(rel),
+                CDualIndexedRel::Unfrozen(m) => std::mem::take(m.get_mut().expect(
+                    "CDualIndexedRel: unexpected state (move_index_contents: mutex poisoned)",
+                )),
+            };
+
+        match to {
+            CDualIndexedRel::Frozen(rel) => {
+                for (x, y) in moved.iter_all() {
+                    rel.insert(x.clone(), y.clone());
+                }
+            },
+            CDualIndexedRel::Unfrozen(m) => {
+                let rel = m
+                    .get_mut()
+                    .expect("CDualIndexedRel: unexpected state (move_index_contents target: mutex poisoned)");
+                for (x, y) in moved.iter_all() {
+                    rel.insert(x.clone(), y.clone());
+                }
+            },
+        }
     }
 
     fn init(new: &mut Self, _delta: &mut Self, _total: &mut Self) {
@@ -538,10 +554,7 @@ impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualInd0CRelRe
     where
         C: rayon::iter::plumbing::UnindexedConsumer<Self::Item>,
     {
-        self.set
-            .par_iter()
-            .map(|x| (x,))
-            .drive_unindexed(consumer)
+        self.set.par_iter().map(|x| (x,)).drive_unindexed(consumer)
     }
 }
 
@@ -566,18 +579,12 @@ impl<'a, T: Clone + Hash + Eq> RelIndexReadAll<'a> for DualInd0<'a, T> {
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
 
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(
-            self.0
-                .unwrap_frozen()
-                .forward
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        ref_to_singleton_tuple_ref(k),
-                        v.iter().map((|x| (x,)) as for<'aa> fn(&'aa T) -> (&'aa T,)),
-                    )
-                }),
-        )
+        Box::new(self.0.unwrap_frozen().forward.iter().map(|(k, v)| {
+            (
+                ref_to_singleton_tuple_ref(k),
+                v.iter().map((|x| (x,)) as for<'aa> fn(&'aa T) -> (&'aa T,)),
+            )
+        }))
     }
 }
 
@@ -625,17 +632,20 @@ impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexReadAll<'a> for DualInd0<'
 impl<T: Clone + Hash + Eq> RelIndexWrite for DualInd0<'_, T> {
     type Key = (T,);
     type Value = (T,);
-    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */
+    }
 }
 
 impl<T: Clone + Hash + Eq> CRelIndexWrite for DualInd0<'_, T> {
     type Key = (T,);
     type Value = (T,);
-    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */
+    }
 }
 
 impl<T: Clone + Hash + Eq> RelIndexMerge for DualInd0<'_, T> {
-    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -665,8 +675,7 @@ impl<'a, T: Clone + Hash + Eq> RelIndexRead<'a> for DualInd1<'a, T> {
 impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexRead<'a> for DualInd1<'a, T> {
     type Key = (T,);
     type Value = (&'a T,);
-    type IteratorType =
-        rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>;
+    type IteratorType = rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>;
 
     fn c_index_get(&'a self, key: &Self::Key) -> Option<Self::IteratorType> {
         self.0
@@ -685,18 +694,12 @@ impl<'a, T: Clone + Hash + Eq> RelIndexReadAll<'a> for DualInd1<'a, T> {
     type AllIteratorType = Box<dyn Iterator<Item = (Self::Key, Self::ValueIteratorType)> + 'a>;
 
     fn iter_all(&'a self) -> Self::AllIteratorType {
-        Box::new(
-            self.0
-                .unwrap_frozen()
-                .reverse
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        ref_to_singleton_tuple_ref(k),
-                        v.iter().map((|x| (x,)) as for<'aa> fn(&'aa T) -> (&'aa T,)),
-                    )
-                }),
-        )
+        Box::new(self.0.unwrap_frozen().reverse.iter().map(|(k, v)| {
+            (
+                ref_to_singleton_tuple_ref(k),
+                v.iter().map((|x| (x,)) as for<'aa> fn(&'aa T) -> (&'aa T,)),
+            )
+        }))
     }
 }
 
@@ -705,10 +708,7 @@ impl<'a, T: Clone + Hash + Eq> RelIndexReadAll<'a> for DualInd1<'a, T> {
 pub struct DualInd1ParIter<'a, T: Clone + Hash + Eq + Sync>(&'a DualIndexedRel<T>);
 
 impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualInd1ParIter<'a, T> {
-    type Item = (
-        &'a (T,),
-        rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>,
-    );
+    type Item = (&'a (T,), rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>);
 
     fn drive_unindexed<C>(self, consumer: C) -> C::Result
     where
@@ -729,8 +729,7 @@ impl<'a, T: Clone + Hash + Eq + Sync + Send> ParallelIterator for DualInd1ParIte
 impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexReadAll<'a> for DualInd1<'a, T> {
     type Key = &'a (T,);
     type Value = (&'a T,);
-    type ValueIteratorType =
-        rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>;
+    type ValueIteratorType = rayon::iter::Map<rayon::slice::Iter<'a, T>, fn(&T) -> (&T,)>;
     type AllIteratorType = DualInd1ParIter<'a, T>;
 
     fn c_iter_all(&'a self) -> Self::AllIteratorType {
@@ -741,17 +740,20 @@ impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexReadAll<'a> for DualInd1<'
 impl<T: Clone + Hash + Eq> RelIndexWrite for DualInd1<'_, T> {
     type Key = (T,);
     type Value = (T,);
-    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */
+    }
 }
 
 impl<T: Clone + Hash + Eq> CRelIndexWrite for DualInd1<'_, T> {
     type Key = (T,);
     type Value = (T,);
-    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */
+    }
 }
 
 impl<T: Clone + Hash + Eq> RelIndexMerge for DualInd1<'_, T> {
-    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -839,7 +841,8 @@ impl<T: Clone + Hash + Eq> RelFullIndexWrite for DualInd0_1Write<'_, T> {
 }
 
 impl<T: Clone + Hash + Eq> RelIndexMerge for DualInd0_1Write<'_, T> {
-    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -925,17 +928,20 @@ impl<'a, T: Clone + Hash + Eq + Sync + Send> CRelIndexReadAll<'a> for DualIndNon
 impl<T: Clone + Hash + Eq> RelIndexWrite for DualIndNone<'_, T> {
     type Key = ();
     type Value = (T, T);
-    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+    fn index_insert(&mut self, _key: Self::Key, _value: Self::Value) { /* noop */
+    }
 }
 
 impl<T: Clone + Hash + Eq> CRelIndexWrite for DualIndNone<'_, T> {
     type Key = ();
     type Value = (T, T);
-    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */ }
+    fn index_insert(&self, _key: Self::Key, _value: Self::Value) { /* noop */
+    }
 }
 
 impl<T: Clone + Hash + Eq> RelIndexMerge for DualIndNone<'_, T> {
-    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */ }
+    fn move_index_contents(_from: &mut Self, _to: &mut Self) { /* noop */
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1189,8 +1195,7 @@ mod tests {
         for &(x, y) in &pairs {
             rel.insert(x, y);
         }
-        let collected: HashSet<(i32, i32)> =
-            rel.iter_all().map(|(&x, &y)| (x, y)).collect();
+        let collected: HashSet<(i32, i32)> = rel.iter_all().map(|(&x, &y)| (x, y)).collect();
         let expected: HashSet<(i32, i32)> = pairs.into_iter().collect();
         assert_eq!(collected, expected);
     }
@@ -1286,6 +1291,55 @@ mod tests {
         assert!(to.contains(&5, &6));
         assert!(to.contains(&10, &20));
         assert_eq!(to.iter_all().count(), 4);
+    }
+
+    #[test]
+    fn test_concurrent_move_index_contents_frozen_target() {
+        let mut from_inner = DualIndexedRel::default();
+        from_inner.insert(1, 2);
+        from_inner.insert(3, 4);
+        let mut to_inner = DualIndexedRel::default();
+        to_inner.insert(10, 20);
+
+        let mut from = CDualIndexedRel::Frozen(from_inner);
+        let mut to = CDualIndexedRel::Frozen(to_inner);
+
+        CDualIndexedRel::move_index_contents(&mut from, &mut to);
+
+        let CDualIndexedRel::Frozen(from_rel) = &from else {
+            panic!("source state should remain frozen");
+        };
+        let CDualIndexedRel::Frozen(to_rel) = &to else {
+            panic!("target state should remain frozen");
+        };
+        assert!(from_rel.is_empty());
+        assert!(to_rel.contains(&1, &2));
+        assert!(to_rel.contains(&3, &4));
+        assert!(to_rel.contains(&10, &20));
+    }
+
+    #[test]
+    fn test_concurrent_move_index_contents_unfrozen_target() {
+        let mut from_inner = DualIndexedRel::default();
+        from_inner.insert(1, 2);
+        let mut to_inner = DualIndexedRel::default();
+        to_inner.insert(10, 20);
+
+        let mut from = CDualIndexedRel::Unfrozen(Mutex::new(from_inner));
+        let mut to = CDualIndexedRel::Unfrozen(Mutex::new(to_inner));
+
+        CDualIndexedRel::move_index_contents(&mut from, &mut to);
+
+        let CDualIndexedRel::Unfrozen(from_rel) = &from else {
+            panic!("source state should remain unfrozen");
+        };
+        let CDualIndexedRel::Unfrozen(to_rel) = &to else {
+            panic!("target state should remain unfrozen");
+        };
+        assert!(from_rel.lock().expect("source mutex").is_empty());
+        let to_guard = to_rel.lock().expect("target mutex");
+        assert!(to_guard.contains(&1, &2));
+        assert!(to_guard.contains(&10, &20));
     }
 
     // -- Property-based tests ------------------------------------------------

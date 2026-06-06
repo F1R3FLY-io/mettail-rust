@@ -69,7 +69,11 @@ impl CanonicalFloat64 {
     /// "finite-only or ±Inf" discipline that `SafeArith` applies internally.
     #[inline]
     pub fn try_finite(x: f64) -> Option<Self> {
-        if x.is_nan() { None } else { Some(Self::from(x)) }
+        if x.is_nan() {
+            None
+        } else {
+            Some(Self::from(x))
+        }
     }
 }
 
@@ -272,7 +276,11 @@ impl CanonicalFloat32 {
     /// Fallible constructor that rejects `NaN` (`±Inf` accepted).
     #[inline]
     pub fn try_finite(x: f32) -> Option<Self> {
-        if x.is_nan() { None } else { Some(Self::from(x)) }
+        if x.is_nan() {
+            None
+        } else {
+            Some(Self::from(x))
+        }
     }
 }
 

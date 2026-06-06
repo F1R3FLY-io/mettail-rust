@@ -70,9 +70,10 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
             r.eval_mode == Some(EvalMode::Fold)
                 && r.term_context.as_ref().is_some_and(|ctx| {
                     ctx.iter().any(|p| match p {
-                        TermParam::Simple { ty: mettail_ast::types::TypeExpr::Base(ref id), .. } => {
-                            id == &lang_type.name
-                        },
+                        TermParam::Simple {
+                            ty: mettail_ast::types::TypeExpr::Base(ref id),
+                            ..
+                        } => id == &lang_type.name,
                         _ => false,
                     })
                 })
@@ -81,15 +82,18 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         if has_fold {
             let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
             let first_ty = cat.to_string();
-            let second_ty = match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
-                (Some(_), Some(payload_ty)) => {
-                    use quote::ToTokens;
-                    let mut s = payload_ty.to_token_stream().to_string();
-                    while s.contains(" :: ") { s = s.replace(" :: ", "::"); }
-                    s
-                }
-                _ => cat.to_string(),
-            };
+            let second_ty =
+                match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
+                    (Some(_), Some(payload_ty)) => {
+                        use quote::ToTokens;
+                        let mut s = payload_ty.to_token_stream().to_string();
+                        while s.contains(" :: ") {
+                            s = s.replace(" :: ", "::");
+                        }
+                        s
+                    },
+                    _ => cat.to_string(),
+                };
             out.push(RelationForExtraction {
                 name: fold_rel,
                 param_types: vec![first_ty, second_ty],
@@ -207,9 +211,10 @@ pub fn generate_relations(language: &LanguageDef, _demanded: &BTreeSet<String>) 
             r.eval_mode == Some(EvalMode::Fold)
                 && r.term_context.as_ref().is_some_and(|ctx| {
                     ctx.iter().any(|p| match p {
-                        TermParam::Simple { ty: mettail_ast::types::TypeExpr::Base(ref id), .. } => {
-                            id == &lang_type.name
-                        },
+                        TermParam::Simple {
+                            ty: mettail_ast::types::TypeExpr::Base(ref id),
+                            ..
+                        } => id == &lang_type.name,
                         _ => false,
                     })
                 })

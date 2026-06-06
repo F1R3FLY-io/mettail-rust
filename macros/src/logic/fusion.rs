@@ -218,9 +218,7 @@ struct RewriteLhsInfo {
 /// Returns a list of (constructor_index, constructor_label, parent_category,
 /// set_of_target_categories) tuples. Each entry says: "deconstruction of
 /// constructor C in category P extracts subterms of categories {T1, T2, ...}".
-fn build_subterm_map(
-    language: &LanguageDef,
-) -> Vec<(usize, String, String, HashSet<String>)> {
+fn build_subterm_map(language: &LanguageDef) -> Vec<(usize, String, String, HashSet<String>)> {
     let all_categories: HashSet<String> =
         language.types.iter().map(|t| t.name.to_string()).collect();
 
@@ -253,7 +251,7 @@ fn build_subterm_map(
                                     target_cats.insert(cat);
                                 }
                             }
-                        }
+                        },
                         mettail_ast::grammar::TermParam::Abstraction { ty, .. }
                         | mettail_ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
                             if let mettail_ast::types::TypeExpr::Base(ident) = ty {
@@ -262,11 +260,11 @@ fn build_subterm_map(
                                     target_cats.insert(cat);
                                 }
                             }
-                        }
-                        mettail_ast::grammar::TermParam::GuardBody { .. } => {}
+                        },
+                        mettail_ast::grammar::TermParam::GuardBody { .. } => {},
                         mettail_ast::grammar::TermParam::Optional { params: inner } => {
                             walk(inner, all_categories, target_cats);
-                        }
+                        },
                     }
                 }
             }
@@ -280,20 +278,20 @@ fn build_subterm_map(
                         if all_categories.contains(&cat_str) {
                             target_cats.insert(cat_str);
                         }
-                    }
+                    },
                     GrammarItem::Collection { element_type, .. } => {
                         let cat_str = element_type.to_string();
                         if all_categories.contains(&cat_str) {
                             target_cats.insert(cat_str);
                         }
-                    }
+                    },
                     GrammarItem::Binder { category, .. } => {
                         let cat_str = category.to_string();
                         if all_categories.contains(&cat_str) {
                             target_cats.insert(cat_str);
                         }
-                    }
-                    GrammarItem::Terminal(_) => {}
+                    },
+                    GrammarItem::Terminal(_) => {},
                 }
             }
         }
@@ -353,7 +351,7 @@ fn extract_simple_constructor_lhs(
             // outer constructor is what gets matched during deconstruction.
             let category = language.category_of_constructor(constructor)?;
             Some((constructor.to_string(), category.to_string()))
-        }
+        },
         _ => None,
     }
 }
@@ -485,11 +483,7 @@ pub fn emit_fusion_diagnostics(language: &LanguageDef, grammar_name: &str) {
     // Per-candidate diagnostics (verbose mode only, via PRATTAIL_LINT_VERBOSE)
     if std::env::var("PRATTAIL_LINT_VERBOSE").is_ok() {
         for candidate in &report.candidates {
-            let status = if candidate.is_safe {
-                "SAFE"
-            } else {
-                "BLOCKED"
-            };
+            let status = if candidate.is_safe { "SAFE" } else { "BLOCKED" };
             let detail = if candidate.is_safe {
                 format!(
                     "deconstruction of {} ({}) → rewrite {} ({}) matching {} — fusable",
@@ -595,7 +589,7 @@ fn generate_fused_rule(
                         } else {
                             None
                         }
-                    }
+                    },
                     mettail_ast::grammar::TermParam::Abstraction { ty, .. }
                     | mettail_ast::grammar::TermParam::MultiAbstraction { ty, .. } => {
                         if let mettail_ast::types::TypeExpr::Base(ident) = ty {
@@ -603,7 +597,7 @@ fn generate_fused_rule(
                         } else {
                             None
                         }
-                    }
+                    },
                     mettail_ast::grammar::TermParam::GuardBody { .. } => None,
                     mettail_ast::grammar::TermParam::Optional { .. } => {
                         // Opt-Group: this fields collection is consumed
@@ -617,14 +611,12 @@ fn generate_fused_rule(
                         // from fusion candidates: the parent constructor
                         // is still destructurable but its Optional field
                         // is not a valid fusion target. This is the
-                        // semantically correct decision per Plan agent's
-                        // audit (site E) — not a stub. When fusion
-                        // emission gains `Option<T>`-aware patterns, the
-                        // arm should switch to surfacing the inner
-                        // category; until then None correctly disables
-                        // fusion at this field.
+                        // semantically correct decision for this field:
+                        // `None` disables fusion here because the current
+                        // emission path cannot bind `Option<T>` fields
+                        // without changing the surrounding pattern shape.
                         None
-                    }
+                    },
                 };
                 ty_str.map(|t| (i, t))
             })
@@ -663,10 +655,8 @@ fn generate_fused_rule(
         .collect();
 
     // Build the parent pattern: ParentCat::ParentCtor(ref __fused_f0, ref __fused_f1, ...)
-    let parent_pat_fields: Vec<TokenStream> = field_names
-        .iter()
-        .map(|f| quote! { ref #f })
-        .collect();
+    let parent_pat_fields: Vec<TokenStream> =
+        field_names.iter().map(|f| quote! { ref #f }).collect();
 
     // Now generate the rewrite part. For each matching field, we need to:
     // 1. Pattern-match the field as the rewrite LHS constructor
@@ -677,9 +667,9 @@ fn generate_fused_rule(
     let s_orig = format_ident!("s_orig");
     let parent_var = format_ident!("__fused_parent");
 
-    // F1: Eqrel dereference fix — temporary variables for eqrel join
+    // F1: Eqrel dereference fix — local variables for eqrel join
     let s_orig_eq = format_ident!("__eqrel_{}", s_orig);
-    let parent_var_eq = format_ident!("__eqrel_{}", parent_var);
+    let parent_var_eq = format_ident!("__eqrel_fused_parent");
 
     // Generate one fused rule per matching field index
     let mut rules = Vec::new();
@@ -850,10 +840,7 @@ mod tests {
         // in category Proc. PDrop's deconstruction extracts Name subterms.
         // The Exec rewrite's LHS outer constructor is PDrop (category Proc).
         // So we should find a chain: PDrop deconstruction → Exec rewrite.
-        assert!(
-            !candidates.is_empty(),
-            "expected fusion candidates for TestChain, got none"
-        );
+        assert!(!candidates.is_empty(), "expected fusion candidates for TestChain, got none");
 
         // Find the candidate for PDrop → Exec chain
         let exec_candidate = candidates
@@ -978,10 +965,7 @@ mod tests {
         });
 
         let report = analyze_fusion_potential(&lang);
-        assert!(
-            !report.candidates.is_empty(),
-            "expected non-empty fusion report"
-        );
+        assert!(!report.candidates.is_empty(), "expected non-empty fusion report");
         assert_eq!(
             report.safe_count + report.blocked_count,
             report.candidates.len(),
@@ -1072,10 +1056,7 @@ mod tests {
         // If there are candidates for PDrop+Exec, they should be blocked
         // because the equation also references PDrop.
         for c in &exec_candidates {
-            assert!(
-                !c.is_safe,
-                "Exec fusion should be blocked by ExecEq equation consumer"
-            );
+            assert!(!c.is_safe, "Exec fusion should be blocked by ExecEq equation consumer");
             assert!(
                 !c.blocking_consumers.is_empty(),
                 "should have blocking consumers from the equation"
@@ -1177,17 +1158,11 @@ mod tests {
 
         let candidates = detect_fusion_candidates(&lang);
         let safe_candidates: Vec<_> = candidates.iter().filter(|c| c.is_safe).collect();
-        assert!(
-            !safe_candidates.is_empty(),
-            "should have at least one safe candidate"
-        );
+        assert!(!safe_candidates.is_empty(), "should have at least one safe candidate");
 
         // Generate a fused rule for the first safe candidate
         let fused = generate_fused_rule(safe_candidates[0], &lang);
-        assert!(
-            fused.is_some(),
-            "generate_fused_rule should produce output for safe candidate"
-        );
+        assert!(fused.is_some(), "generate_fused_rule should produce output for safe candidate");
     }
 
     #[test]
@@ -1209,10 +1184,7 @@ mod tests {
 
         let (fused_rules, count) = generate_all_fused_rules(&lang);
         assert!(count > 0, "should have at least one fused rule generated");
-        assert!(
-            !fused_rules.is_empty(),
-            "fused_rules Vec should be non-empty"
-        );
+        assert!(!fused_rules.is_empty(), "fused_rules Vec should be non-empty");
     }
 
     #[test]
@@ -1233,7 +1205,10 @@ mod tests {
         });
 
         let candidates = detect_fusion_candidates(&lang);
-        let safe = candidates.iter().find(|c| c.is_safe).expect("need safe candidate");
+        let safe = candidates
+            .iter()
+            .find(|c| c.is_safe)
+            .expect("need safe candidate");
         let fused_ts = generate_fused_rule(safe, &lang).expect("should generate fused rule");
         let fused_str = fused_ts.to_string();
 
@@ -1269,7 +1244,10 @@ mod tests {
         });
 
         let candidates = detect_fusion_candidates(&lang);
-        let safe = candidates.iter().find(|c| c.is_safe).expect("need safe candidate");
+        let safe = candidates
+            .iter()
+            .find(|c| c.is_safe)
+            .expect("need safe candidate");
         let fused_ts = generate_fused_rule(safe, &lang).expect("should generate fused rule");
         let fused_str = fused_ts.to_string();
 
@@ -1306,14 +1284,8 @@ mod tests {
         });
 
         let (fused_rules, count) = generate_all_fused_rules(&lang);
-        assert_eq!(
-            count, 0,
-            "blocked candidates should produce no fused rules"
-        );
-        assert!(
-            fused_rules.is_empty(),
-            "fused_rules should be empty for blocked candidates"
-        );
+        assert_eq!(count, 0, "blocked candidates should produce no fused rules");
+        assert!(fused_rules.is_empty(), "fused_rules should be empty for blocked candidates");
     }
 
     #[test]

@@ -11,8 +11,8 @@
 mod bench_specs;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use mettail_prattail::grammar_gen::generate_bench_inputs;
 use mettail_prattail::generate_parser;
+use mettail_prattail::grammar_gen::generate_bench_inputs;
 
 use bench_specs::{complex_spec, medium_spec, minimal_spec, small_spec, synthetic_spec};
 

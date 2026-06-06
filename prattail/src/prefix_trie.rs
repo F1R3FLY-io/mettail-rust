@@ -30,10 +30,7 @@ pub struct PrefixTrie<K, V> {
 impl<K: Eq + std::hash::Hash + Clone, V> PrefixTrie<K, V> {
     /// Create a new empty trie node.
     pub fn new() -> Self {
-        PrefixTrie {
-            value: None,
-            children: HashMap::new(),
-        }
+        PrefixTrie { value: None, children: HashMap::new() }
     }
 
     /// Insert a key (sequence of elements) with the given value.
@@ -169,7 +166,11 @@ mod tests {
         let mut trie = PrefixTrie::new();
         trie.insert(vec!["x", "y", "z"], 42);
 
-        let node_y = trie.descend(&"x").expect("x child").descend(&"y").expect("y child");
+        let node_y = trie
+            .descend(&"x")
+            .expect("x child")
+            .descend(&"y")
+            .expect("y child");
         assert_eq!(node_y.child_count(), 1);
 
         let node_z = node_y.descend(&"z").expect("z child");

@@ -35,7 +35,7 @@ fn main() -> ExitCode {
         Err(e) => {
             eprintln!("error: failed to read {}: {}", path, e);
             return ExitCode::from(1);
-        }
+        },
     };
     println!("file:        {}", path);
     println!("byte length: {}", bytes.len());

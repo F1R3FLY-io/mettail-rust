@@ -60,10 +60,7 @@ pub enum TypeExpr {
     },
 
     /// Map type: `HashMap(K, V)`
-    Map {
-        key: Box<TypeExpr>,
-        value: Box<TypeExpr>,
-    },
+    Map { key: Box<TypeExpr>, value: Box<TypeExpr> },
 }
 
 impl std::fmt::Display for TypeExpr {

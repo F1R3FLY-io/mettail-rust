@@ -22,8 +22,8 @@
 
 #![allow(clippy::cmp_owned)]
 
-use mettail_ast::language::LanguageDef;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -178,7 +178,7 @@ fn generate_debug_variant_arm(
                     f.write_str(#label_str)?;
                 }
             }
-        }
+        },
 
         VariantKind::Literal { label } => {
             let label_str = label.to_string();
@@ -191,7 +191,7 @@ fn generate_debug_variant_arm(
                     f.write_str(")")?;
                 }
             }
-        }
+        },
 
         VariantKind::Var { label } => {
             let label_str = label.to_string();
@@ -204,23 +204,21 @@ fn generate_debug_variant_arm(
                     f.write_str(")")?;
                 }
             }
-        }
+        },
 
         VariantKind::Regular { label, fields } => {
             generate_debug_regular_arm(category, label, fields, language)
-        }
+        },
 
-        VariantKind::Collection { label, .. } => {
-            generate_debug_collection_arm(category, label)
-        }
+        VariantKind::Collection { label, .. } => generate_debug_collection_arm(category, label),
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_debug_binder_arm(category, label, pre_scope_fields, body_cat, false)
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             generate_debug_binder_arm(category, label, pre_scope_fields, body_cat, true)
-        }
+        },
     }
 }
 
@@ -335,10 +333,7 @@ fn generate_debug_regular_arm(
 /// Generate Debug arm for Collection variant (top-level collection constructor).
 ///
 /// The single collection field is formatted inline using its own Debug impl.
-fn generate_debug_collection_arm(
-    category: &Ident,
-    label: &Ident,
-) -> TokenStream {
+fn generate_debug_collection_arm(category: &Ident, label: &Ident) -> TokenStream {
     let label_str = label.to_string();
 
     quote! {

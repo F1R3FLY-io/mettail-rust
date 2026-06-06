@@ -11,12 +11,12 @@
 
 use std::collections::HashSet;
 
+use crate::gen::native::native_type_to_full_string;
 use mettail_ast::{
     grammar::{GrammarItem, GrammarRule, NonTerminalKind, PatternOp, SyntaxExpr, TermParam},
     language::{AttributeValue, LanguageDef},
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::native::{native_type_to_full_string, native_type_to_string};
 use mettail_prattail::{
     binding_power::Associativity, grammar::ir::CollectionKind, BeamWidthConfig, CategorySpec,
     CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RefinementPredKind,
@@ -42,10 +42,9 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             // outside the caller's `use` scope.
             native_type: t.native_type.as_ref().map(native_type_to_full_string),
             is_primary: idx == 0,
-            has_var: true
-            // For now, all categories are assumed to have a Var variant.
-            // Future: derive from grammar analysis (categories with no Var rule
-            // should get `has_var: false`, e.g. List/Bag synthetic collection types).
+            has_var: true, // For now, all categories are assumed to have a Var variant.
+                           // Future: derive from grammar analysis (categories with no Var rule
+                           // should get `has_var: false`, e.g. List/Bag synthetic collection types).
         })
         .collect();
 
@@ -73,19 +72,25 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         };
         let (open, close, sep, kv, kind, label) = match ck {
             mettail_ast::language::CollectionCategory::List(d) => (
-                d.open.clone(), d.close.clone(), d.sep.clone(),
+                d.open.clone(),
+                d.close.clone(),
+                d.sep.clone(),
                 d.key_val_sep.clone(),
                 CollectionKind::Vec,
                 "ListLit",
             ),
             mettail_ast::language::CollectionCategory::Bag(d) => (
-                d.open.clone(), d.close.clone(), d.sep.clone(),
+                d.open.clone(),
+                d.close.clone(),
+                d.sep.clone(),
                 d.key_val_sep.clone(),
                 CollectionKind::HashBag,
                 "BagLit",
             ),
             mettail_ast::language::CollectionCategory::Map(d) => (
-                d.open.clone(), d.close.clone(), d.sep.clone(),
+                d.open.clone(),
+                d.close.clone(),
+                d.sep.clone(),
                 d.key_val_sep.clone(),
                 CollectionKind::HashMap,
                 "MapLit",
@@ -170,7 +175,9 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             // dispatch below is typed — no string comparisons on variant
             // family names.
             let native_kind = td.category.as_ref().and_then(|cat| {
-                language.types.iter()
+                language
+                    .types
+                    .iter()
                     .find(|t| t.name == *cat)
                     .and_then(|t| t.native_type.as_ref())
                     .map(mettail_ast::language::NativeKind::from_syn_type)
@@ -197,14 +204,14 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                             mettail_ast::language::NativeKind::Float32
                             | mettail_ast::language::NativeKind::Float64 => {
                                 literal_patterns.float = td.pattern.clone();
-                            }
+                            },
                             mettail_ast::language::NativeKind::Bool => {
                                 literal_patterns.boolean = Some(td.pattern.clone());
-                            }
+                            },
                             mettail_ast::language::NativeKind::Str => {
                                 literal_patterns.string = td.pattern.clone();
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 } else if td.from_literals {
@@ -213,12 +220,16 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                     // Key = mapped variant name (not original category).
                     match kind {
                         mettail_ast::language::NativeKind::CanonicalBigRat => {
-                            literal_patterns.rational_by_category.insert(name.clone(), td.pattern.clone());
-                        }
+                            literal_patterns
+                                .rational_by_category
+                                .insert(name.clone(), td.pattern.clone());
+                        },
                         mettail_ast::language::NativeKind::CanonicalFixedPoint => {
-                            literal_patterns.fixed_by_category.insert(name.clone(), td.pattern.clone());
-                        }
-                        _ => {}
+                            literal_patterns
+                                .fixed_by_category
+                                .insert(name.clone(), td.pattern.clone());
+                        },
+                        _ => {},
                     }
                 }
             }
@@ -236,7 +247,8 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             let payload_type = if td.from_literals {
                 if is_builtin {
                     td.category.as_ref().and_then(|cat| {
-                        categories.iter()
+                        categories
+                            .iter()
                             .find(|c| c.name == cat.to_string())
                             .and_then(|c| c.native_type.clone())
                     })
@@ -245,7 +257,8 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 }
             } else {
                 td.category.as_ref().and_then(|cat| {
-                    categories.iter()
+                    categories
+                        .iter()
                         .find(|c| c.name == cat.to_string())
                         .and_then(|c| c.native_type.clone())
                 })
@@ -292,7 +305,8 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                         Some("str".to_string())
                     } else {
                         td.category.as_ref().and_then(|cat| {
-                            categories.iter()
+                            categories
+                                .iter()
                                 .find(|c| c.name == cat.to_string())
                                 .and_then(|c| c.native_type.clone())
                         })
@@ -391,10 +405,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
 
     // Lower the guard configuration (design doc §2A) from the macro AST
     // to the pipeline-side `GuardConfigSpec`. `None` is preserved as `None`.
-    spec.guard_config = language
-        .guard_config
-        .as_ref()
-        .map(lower_guard_config);
+    spec.guard_config = language.guard_config.as_ref().map(lower_guard_config);
 
     spec
 }
@@ -405,7 +416,9 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
 ///
 /// This is the central data flow point that detaches the pipeline from
 /// the `syn` crate while preserving the user's guard configuration.
-fn lower_guard_config(gc: &mettail_ast::language::GuardConfig) -> mettail_prattail::GuardConfigSpec {
+fn lower_guard_config(
+    gc: &mettail_ast::language::GuardConfig,
+) -> mettail_prattail::GuardConfigSpec {
     use mettail_prattail::{GuardConfigSpec, JoinPatternSpec, TheoryRegistrationSpec};
     use std::collections::HashMap;
 
@@ -452,7 +465,7 @@ fn lower_guard_config(gc: &mettail_ast::language::GuardConfig) -> mettail_pratta
                     })
                     .collect();
                 (Some(cats), joins)
-            }
+            },
             None => (None, Vec::new()),
         };
 
@@ -529,10 +542,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
 /// so inner-param references inside `#opt(...)` resolve. Returns the
 /// INNERMOST matching TermParam (e.g., the `Simple { name: e, ty: Int }`
 /// inside an `Optional { params: [Simple{e,Int}] }`).
-fn find_param_by_name<'a>(
-    context: &'a [TermParam],
-    name_str: &str,
-) -> Option<&'a TermParam> {
+fn find_param_by_name<'a>(context: &'a [TermParam], name_str: &str) -> Option<&'a TermParam> {
     for p in context {
         match p {
             TermParam::Simple { name: n, .. } => {
@@ -1045,7 +1055,9 @@ fn find_collection_info(
                 if let TypeExpr::Collection { coll_type, element, .. } = ty {
                     let elem_cat = extract_base_category(element);
                     let kind = match coll_type {
-                        CollectionType::HashBag | CollectionType::HashMap => CollectionKind::HashBag,
+                        CollectionType::HashBag | CollectionType::HashMap => {
+                            CollectionKind::HashBag
+                        },
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
                     };
@@ -1120,11 +1132,7 @@ pub fn collect_semantic_dependency_groups(language: &LanguageDef) -> Vec<HashSet
     // Conservative: treats the entire block as one dependency group.
     if let Some(logic) = &language.logic {
         let mut labels = HashSet::new();
-        collect_constructor_idents_from_token_stream(
-            &logic.content,
-            &known_labels,
-            &mut labels,
-        );
+        collect_constructor_idents_from_token_stream(&logic.content, &known_labels, &mut labels);
         if !labels.is_empty() {
             groups.push(labels);
         }
@@ -1150,15 +1158,11 @@ fn collect_constructor_idents_from_token_stream(
                 if known_labels.contains(&s) {
                     labels.insert(s);
                 }
-            }
+            },
             proc_macro2::TokenTree::Group(group) => {
-                collect_constructor_idents_from_token_stream(
-                    &group.stream(),
-                    known_labels,
-                    labels,
-                );
-            }
-            _ => {} // Punct, Literal — skip
+                collect_constructor_idents_from_token_stream(&group.stream(), known_labels, labels);
+            },
+            _ => {}, // Punct, Literal — skip
         }
     }
 }

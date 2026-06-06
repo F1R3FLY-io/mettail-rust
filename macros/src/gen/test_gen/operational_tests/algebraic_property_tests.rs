@@ -10,7 +10,7 @@
 
 use mettail_ast::language::{Equation, LanguageDef};
 use mettail_ast::pattern::{Pattern, PatternTerm};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::expr_string_gen::TestCase;
 
@@ -24,22 +24,16 @@ pub enum AlgebraicProperty {
     Commutativity {
         equation_name: String,
         constructor: String,
-        param_a: String,
-        param_b: String,
     },
     /// f(f(a, b), c) = f(a, f(b, c))
     Associativity {
         equation_name: String,
         constructor: String,
-        param_a: String,
-        param_b: String,
-        param_c: String,
     },
     /// f(a, e) = a where e is a literal/nullary
     Identity {
         equation_name: String,
         constructor: String,
-        param_a: String,
         identity_element: String,
     },
 }
@@ -76,12 +70,7 @@ pub fn generate_algebraic_tests(
         }
 
         match prop {
-            AlgebraicProperty::Commutativity {
-                equation_name,
-                constructor,
-                param_a,
-                param_b,
-            } => {
+            AlgebraicProperty::Commutativity { equation_name, constructor } => {
                 if ambiguous_prefix_rules.contains(constructor) {
                     continue;
                 }
@@ -130,11 +119,8 @@ pub fn generate_algebraic_tests(
                     category, constructor, leaf_b.construction, leaf_a.construction
                 );
 
-                let test_name = format!(
-                    "alg_{}_comm_{}_concrete",
-                    lang_name_lower,
-                    constructor.to_lowercase()
-                );
+                let test_name =
+                    format!("alg_{}_comm_{}_concrete", lang_name_lower, constructor.to_lowercase());
 
                 test_cases.push(generate_algebraic_eq_test(
                     &test_name,
@@ -144,13 +130,7 @@ pub fn generate_algebraic_tests(
                     equation_name,
                 ));
             },
-            AlgebraicProperty::Associativity {
-                equation_name,
-                constructor,
-                param_a,
-                param_b,
-                param_c,
-            } => {
+            AlgebraicProperty::Associativity { equation_name, constructor } => {
                 if ambiguous_prefix_rules.contains(constructor) {
                     continue;
                 }
@@ -210,7 +190,6 @@ pub fn generate_algebraic_tests(
             AlgebraicProperty::Identity {
                 equation_name,
                 constructor,
-                param_a,
                 identity_element,
             } => {
                 if ambiguous_prefix_rules.contains(constructor) {
@@ -262,7 +241,8 @@ pub fn generate_algebraic_tests(
     }
 
     // Step 4: Generate proptest blocks for detected properties (Phase 6 integration)
-    proptest_blocks = generate_algebraic_proptest_blocks(&properties, language, &lang_name_lower, &lang_struct);
+    proptest_blocks =
+        generate_algebraic_proptest_blocks(&properties, language, &lang_name_lower, &lang_struct);
 
     (test_cases, proptest_blocks)
 }
@@ -320,8 +300,6 @@ fn detect_commutativity(eq: &Equation) -> Option<AlgebraicProperty> {
         return Some(AlgebraicProperty::Commutativity {
             equation_name: eq.name.to_string(),
             constructor: lhs_ctor,
-            param_a: la,
-            param_b: lb,
         });
     }
 
@@ -361,9 +339,6 @@ fn detect_associativity(eq: &Equation) -> Option<AlgebraicProperty> {
         return Some(AlgebraicProperty::Associativity {
             equation_name: eq.name.to_string(),
             constructor: lhs_ctor,
-            param_a: a,
-            param_b: b,
-            param_c: c,
         });
     }
 
@@ -390,7 +365,6 @@ fn detect_identity(eq: &Equation) -> Option<AlgebraicProperty> {
                 return Some(AlgebraicProperty::Identity {
                     equation_name: eq.name.to_string(),
                     constructor: lhs_ctor,
-                    param_a: la,
                     identity_element: identity,
                 });
             }
@@ -404,7 +378,6 @@ fn detect_identity(eq: &Equation) -> Option<AlgebraicProperty> {
                 return Some(AlgebraicProperty::Identity {
                     equation_name: eq.name.to_string(),
                     constructor: lhs_ctor,
-                    param_a: la,
                     identity_element: identity,
                 });
             }
@@ -514,8 +487,8 @@ fn generate_identity_test(
     category: &str,
     identity_element: &str,
     lang_struct: &str,
-    equation_name: &str,
-    language: &LanguageDef,
+    _equation_name: &str,
+    _language: &LanguageDef,
 ) -> TestCase {
     // Build identity element construction.
     // Identity element could be a nullary constructor or literal.
@@ -609,12 +582,7 @@ fn generate_algebraic_proptest_blocks(
 
     for prop in properties {
         match prop {
-            AlgebraicProperty::Commutativity {
-                equation_name,
-                constructor,
-                param_a: _,
-                param_b: _,
-            } => {
+            AlgebraicProperty::Commutativity { equation_name, constructor } => {
                 // Find the category of the constructor
                 let rule = match language
                     .terms
@@ -629,7 +597,8 @@ fn generate_algebraic_proptest_blocks(
 
                 out.push_str(&format!(
                     "    /// Commutativity: {eq} — eval({ctor}(a,b)) == eval({ctor}(b,a))\n",
-                    eq = equation_name, ctor = constructor
+                    eq = equation_name,
+                    ctor = constructor
                 ));
                 out.push_str(&format!(
                     "    #[test]\n    fn {lang}_comm_{ctor}_proptest(a in arb_{cat}(3), b in arb_{cat}(3)) {{\n",
@@ -662,11 +631,7 @@ fn generate_algebraic_proptest_blocks(
                 out.push_str("        }\n");
                 out.push_str("    }\n\n");
             },
-            AlgebraicProperty::Associativity {
-                equation_name,
-                constructor,
-                ..
-            } => {
+            AlgebraicProperty::Associativity { equation_name, constructor, .. } => {
                 let rule = match language
                     .terms
                     .iter()

@@ -36,7 +36,7 @@ pub use mettail_prattail::behavioral_pred::{
 // is freestanding, not a method on the type.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 thread_local! {
     static PRED_FACT_SNAPSHOT: RefCell<HashMap<String, HashSet<Vec<String>>>> =
@@ -65,25 +65,19 @@ pub fn clear_pred_fact_snapshot() {
 ///
 /// This function is freestanding (not a method on BehavioralPred) so
 /// the type remains passive per the design decision.
-pub fn evaluate_pred_with_bindings(
-    pred: &BehavioralPred,
-    bindings: &[(String, String)],
-) -> bool {
+pub fn evaluate_pred_with_bindings(pred: &BehavioralPred, bindings: &[(String, String)]) -> bool {
+    let mut env: HashMap<String, String> = bindings.iter().cloned().collect();
+    eval_pred(pred, &mut env)
+}
+
+fn eval_pred(pred: &BehavioralPred, env: &mut HashMap<String, String>) -> bool {
     match pred {
         BehavioralPred::Top => true,
-        BehavioralPred::RelationQuery {
-            relation_name,
-            args,
-            negated,
-        } => {
+        BehavioralPred::RelationQuery { relation_name, args, negated } => {
             let resolved: Vec<String> = args
                 .iter()
                 .map(|a| match a {
-                    PredArg::Var(v) => bindings
-                        .iter()
-                        .find(|(k, _)| k == v)
-                        .map(|(_, val)| val.clone())
-                        .unwrap_or_else(|| v.clone()),
+                    PredArg::Var(v) => env.get(v).cloned().unwrap_or_else(|| v.clone()),
                     PredArg::IntLit(n) => n.to_string(),
                     PredArg::StringLit(s) => s.clone(),
                 })
@@ -99,19 +93,176 @@ pub fn evaluate_pred_with_bindings(
             } else {
                 hit
             }
+        },
+        BehavioralPred::And(a, b) => eval_pred(a, env) && eval_pred(b, env),
+        BehavioralPred::Or(a, b) => eval_pred(a, env) || eval_pred(b, env),
+        BehavioralPred::Not(inner) => !eval_pred(inner, env),
+        BehavioralPred::Implies(p, c) => !eval_pred(p, env) || eval_pred(c, env),
+        BehavioralPred::Quantified { quantifier, var, domain, body } => {
+            let values = enumerate_quantified_domain(var, domain.as_ref(), body, env);
+            match quantifier {
+                Quantifier::ForAll => values.into_iter().all(|value| {
+                    let previous = env.insert(var.clone(), value);
+                    let result = eval_pred(body, env);
+                    restore_binding(env, var, previous);
+                    result
+                }),
+                Quantifier::Exists => values.into_iter().any(|value| {
+                    let previous = env.insert(var.clone(), value);
+                    let result = eval_pred(body, env);
+                    restore_binding(env, var, previous);
+                    result
+                }),
+            }
+        },
+        // Runtime AC matching needs structural multiset values, while this
+        // evaluator only has string-valued fact snapshots. Fail closed instead
+        // of admitting a guard whose decomposition cannot be checked here.
+        BehavioralPred::AcMatch { .. } => false,
+    }
+}
+
+fn restore_binding(env: &mut HashMap<String, String>, var: &str, previous: Option<String>) {
+    if let Some(value) = previous {
+        env.insert(var.to_string(), value);
+    } else {
+        env.remove(var);
+    }
+}
+
+fn enumerate_quantified_domain(
+    var: &str,
+    domain: Option<&QuantifiedDomain>,
+    body: &BehavioralPred,
+    env: &HashMap<String, String>,
+) -> Vec<String> {
+    match domain {
+        Some(QuantifiedDomain::Named(name)) => relation_first_column(name),
+        Some(QuantifiedDomain::Bounded(limit)) => {
+            let mut values = infer_domain_values(var, body, env);
+            values.truncate(*limit);
+            values
+        },
+        Some(QuantifiedDomain::Enumerated(elements)) => {
+            elements.iter().map(|arg| resolve_arg(arg, env)).collect()
+        },
+        None => infer_domain_values(var, body, env),
+    }
+}
+
+fn relation_first_column(relation_name: &str) -> Vec<String> {
+    PRED_FACT_SNAPSHOT.with(|snap| {
+        snap.borrow()
+            .get(relation_name)
+            .map(|tuples| {
+                tuples
+                    .iter()
+                    .filter_map(|tuple| tuple.first().cloned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn infer_domain_values(
+    var: &str,
+    pred: &BehavioralPred,
+    env: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut values = BTreeSet::new();
+    collect_domain_values(var, pred, env, &mut values);
+    values.into_iter().collect()
+}
+
+fn collect_domain_values(
+    var: &str,
+    pred: &BehavioralPred,
+    env: &HashMap<String, String>,
+    values: &mut BTreeSet<String>,
+) {
+    match pred {
+        BehavioralPred::RelationQuery { relation_name, args, .. } => {
+            let positions: Vec<usize> = args
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, arg)| match arg {
+                    PredArg::Var(v) if v == var => Some(idx),
+                    _ => None,
+                })
+                .collect();
+            if positions.is_empty() {
+                return;
+            }
+            PRED_FACT_SNAPSHOT.with(|snap| {
+                if let Some(tuples) = snap.borrow().get(relation_name) {
+                    for tuple in tuples {
+                        if tuple_matches_bound_args(tuple, args, var, env) {
+                            for idx in &positions {
+                                if let Some(value) = tuple.get(*idx) {
+                                    values.insert(value.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        },
+        BehavioralPred::Quantified { var: inner_var, domain, body, .. } => {
+            if let Some(QuantifiedDomain::Enumerated(elements)) = domain {
+                for arg in elements {
+                    if let PredArg::Var(v) = arg {
+                        if v == var {
+                            values.insert(resolve_arg(arg, env));
+                        }
+                    }
+                }
+            }
+            if inner_var != var {
+                collect_domain_values(var, body, env, values);
+            }
+        },
+        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
+            collect_domain_values(var, a, env, values);
+            collect_domain_values(var, b, env, values);
+        },
+        BehavioralPred::Not(inner) => collect_domain_values(var, inner, env, values),
+        BehavioralPred::AcMatch { bag, elements, .. } => {
+            for arg in std::iter::once(bag).chain(elements.iter()) {
+                if let PredArg::Var(v) = arg {
+                    if v == var {
+                        values.insert(resolve_arg(arg, env));
+                    }
+                }
+            }
+        },
+        BehavioralPred::Top => {},
+    }
+}
+
+fn tuple_matches_bound_args(
+    tuple: &[String],
+    args: &[PredArg],
+    quantified_var: &str,
+    env: &HashMap<String, String>,
+) -> bool {
+    args.iter().enumerate().all(|(idx, arg)| {
+        let Some(tuple_value) = tuple.get(idx) else {
+            return false;
+        };
+        match arg {
+            PredArg::Var(v) if v == quantified_var => true,
+            PredArg::Var(v) => env.get(v).map_or(true, |bound| bound == tuple_value),
+            PredArg::IntLit(n) => tuple_value == &n.to_string(),
+            PredArg::StringLit(s) => tuple_value == s,
         }
-        BehavioralPred::And(a, b) => {
-            evaluate_pred_with_bindings(a, bindings) && evaluate_pred_with_bindings(b, bindings)
-        }
-        BehavioralPred::Or(a, b) => {
-            evaluate_pred_with_bindings(a, bindings) || evaluate_pred_with_bindings(b, bindings)
-        }
-        BehavioralPred::Not(inner) => !evaluate_pred_with_bindings(inner, bindings),
-        BehavioralPred::Implies(p, c) => {
-            !evaluate_pred_with_bindings(p, bindings) || evaluate_pred_with_bindings(c, bindings)
-        }
-        // Quantified/AcMatch: conservatively true (Phase 6 follow-up)
-        _ => true,
+    })
+}
+
+fn resolve_arg(arg: &PredArg, env: &HashMap<String, String>) -> String {
+    match arg {
+        PredArg::Var(v) => env.get(v).cloned().unwrap_or_else(|| v.clone()),
+        PredArg::IntLit(n) => n.to_string(),
+        PredArg::StringLit(s) => s.clone(),
     }
 }
 
@@ -151,10 +302,7 @@ mod tests {
         set_pred_fact_snapshot(facts);
 
         let pred = rel("halts", vec![var("x")]);
-        assert!(evaluate_pred_with_bindings(
-            &pred,
-            &[("x".to_string(), "0".to_string())],
-        ));
+        assert!(evaluate_pred_with_bindings(&pred, &[("x".to_string(), "0".to_string())],));
         clear_pred_fact_snapshot();
     }
 
@@ -162,10 +310,7 @@ mod tests {
     fn eval_relation_query_misses_snapshot() {
         clear_pred_fact_snapshot();
         let pred = rel("halts", vec![var("x")]);
-        assert!(!evaluate_pred_with_bindings(
-            &pred,
-            &[("x".to_string(), "0".to_string())],
-        ));
+        assert!(!evaluate_pred_with_bindings(&pred, &[("x".to_string(), "0".to_string())],));
     }
 
     #[test]
@@ -177,10 +322,7 @@ mod tests {
             negated: true,
         };
         // Empty snapshot → query returns false → negation returns true
-        assert!(evaluate_pred_with_bindings(
-            &pred,
-            &[("x".to_string(), "0".to_string())],
-        ));
+        assert!(evaluate_pred_with_bindings(&pred, &[("x".to_string(), "0".to_string())],));
     }
 
     #[test]
@@ -196,10 +338,7 @@ mod tests {
             Box::new(rel("halts", vec![var("x")])),
             Box::new(rel("safe", vec![var("x")])),
         );
-        assert!(!evaluate_pred_with_bindings(
-            &pred,
-            &[("x".to_string(), "0".to_string())],
-        ));
+        assert!(!evaluate_pred_with_bindings(&pred, &[("x".to_string(), "0".to_string())],));
         clear_pred_fact_snapshot();
     }
 
@@ -215,10 +354,73 @@ mod tests {
             Box::new(rel("halts", vec![var("x")])),
             Box::new(rel("safe", vec![var("x")])),
         );
-        assert!(evaluate_pred_with_bindings(
-            &pred,
-            &[("x".to_string(), "0".to_string())],
-        ));
+        assert!(evaluate_pred_with_bindings(&pred, &[("x".to_string(), "0".to_string())],));
+        clear_pred_fact_snapshot();
+    }
+
+    #[test]
+    fn eval_forall_named_domain_checks_each_fact() {
+        let mut facts = std::collections::HashMap::new();
+        facts.insert(
+            "nodes".to_string(),
+            [vec!["a".to_string()], vec!["b".to_string()]]
+                .into_iter()
+                .collect(),
+        );
+        facts.insert("safe".to_string(), [vec!["a".to_string()]].into_iter().collect());
+        set_pred_fact_snapshot(facts);
+
+        let pred = BehavioralPred::Quantified {
+            quantifier: Quantifier::ForAll,
+            var: "y".to_string(),
+            domain: Some(QuantifiedDomain::Named("nodes".to_string())),
+            body: Box::new(rel("safe", vec![var("y")])),
+        };
+        assert!(!evaluate_pred_with_bindings(&pred, &[]));
+        clear_pred_fact_snapshot();
+    }
+
+    #[test]
+    fn eval_exists_infers_domain_from_body_relation() {
+        let mut facts = std::collections::HashMap::new();
+        facts.insert(
+            "safe".to_string(),
+            [vec!["a".to_string()], vec!["b".to_string()]]
+                .into_iter()
+                .collect(),
+        );
+        set_pred_fact_snapshot(facts);
+
+        let pred = BehavioralPred::Quantified {
+            quantifier: Quantifier::Exists,
+            var: "y".to_string(),
+            domain: None,
+            body: Box::new(rel("safe", vec![var("y")])),
+        };
+        assert!(evaluate_pred_with_bindings(&pred, &[]));
+        clear_pred_fact_snapshot();
+    }
+
+    #[test]
+    fn eval_quantified_restores_shadowed_binding() {
+        let mut facts = std::collections::HashMap::new();
+        facts.insert("safe".to_string(), [vec!["inner".to_string()]].into_iter().collect());
+        set_pred_fact_snapshot(facts);
+
+        let pred = BehavioralPred::And(
+            Box::new(BehavioralPred::Quantified {
+                quantifier: Quantifier::Exists,
+                var: "x".to_string(),
+                domain: None,
+                body: Box::new(rel("safe", vec![var("x")])),
+            }),
+            Box::new(BehavioralPred::RelationQuery {
+                relation_name: "safe".to_string(),
+                args: vec![PredArg::Var("x".to_string())],
+                negated: true,
+            }),
+        );
+        assert!(evaluate_pred_with_bindings(&pred, &[("x".to_string(), "outer".to_string())],));
         clear_pred_fact_snapshot();
     }
 }

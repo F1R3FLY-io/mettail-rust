@@ -28,7 +28,7 @@ fn pred1_all_empty() {
         Proc::TaggedInputs(tags, ns, _scope) => {
             assert_eq!(tags.len(), 0, "tags should be empty");
             assert_eq!(ns.len(), 0, "ns should be empty");
-        }
+        },
         other => panic!("expected Proc::TaggedInputs([], [], _), got {:?}", other),
     }
 }
@@ -44,7 +44,7 @@ fn pred2_nonempty_tags_empty_binders() {
                 assert!(matches!(t, Proc::PZero));
             }
             assert_eq!(ns.len(), 0, "ns should be empty");
-        }
+        },
         other => panic!("expected Proc::TaggedInputs([_, _], [], _), got {:?}", other),
     }
 }
@@ -57,7 +57,7 @@ fn pred3_empty_tags_single_binder() {
         Proc::TaggedInputs(tags, ns, _scope) => {
             assert_eq!(tags.len(), 0, "tags should be empty");
             assert_eq!(ns.len(), 1, "ns should have 1 element");
-        }
+        },
         other => panic!("expected Proc::TaggedInputs([], [_], _), got {:?}", other),
     }
 }
@@ -71,7 +71,7 @@ fn pred4_both_nonempty() {
             assert_eq!(tags.len(), 1, "tags should have 1 element");
             assert!(matches!(&tags[0], Proc::PZero));
             assert_eq!(ns.len(), 1, "ns should have 1 element");
-        }
+        },
         other => panic!("expected Proc::TaggedInputs([_], [_], _), got {:?}", other),
     }
 }

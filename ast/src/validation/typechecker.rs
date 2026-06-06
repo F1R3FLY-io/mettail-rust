@@ -138,7 +138,7 @@ impl TypeChecker {
             Pattern::Collection { elements, .. } => {
                 // Collections no longer have constructors - they get their type
                 // from the enclosing PatternTerm::Apply.
-                // Here we just validate elements and return a placeholder.
+                // Here we validate elements and return the collection category sentinel.
                 for elem in elements {
                     let _ = self.infer_type_from_pattern(elem, context)?;
                 }

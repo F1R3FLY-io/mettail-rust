@@ -132,12 +132,7 @@ pub fn check_cegar_properties(metadata: &dyn LanguageMetadata) -> CegarTestResul
     let mut bad_auto = PAutomaton::new(initial_state);
     let final_state = bad_auto.add_state();
     bad_auto.mark_final(final_state);
-    bad_auto.add_transition(
-        initial_state,
-        error_sym.clone(),
-        final_state,
-        TropicalWeight::one(),
-    );
+    bad_auto.add_transition(initial_state, error_sym.clone(), final_state, TropicalWeight::one());
     bad_auto.symbol_to_state.insert(error_sym, final_state);
 
     // Configure CEGAR with reasonable limits.

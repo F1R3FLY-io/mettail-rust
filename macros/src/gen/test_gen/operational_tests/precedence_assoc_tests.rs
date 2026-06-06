@@ -10,14 +10,10 @@
 //! All recursive operations use iterative work-stacks (trampolines).
 //! Everything is derived from the `language!` spec.
 
-use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
-use mettail_ast::language::LanguageDef;
-use mettail_ast::types::TypeExpr;
 use crate::gen::native::native_type_to_string;
 use crate::gen::syntax::parser::prattail_bridge::language_def_to_spec;
-use mettail_prattail::binding_power::{
-    analyze_binding_powers, Associativity, BindingPowerTable, InfixOperator, InfixRuleInfo,
-};
+use mettail_ast::language::LanguageDef;
+use mettail_prattail::binding_power::{analyze_binding_powers, BindingPowerTable, InfixRuleInfo};
 use mettail_prattail::SyntaxItemSpec;
 use std::collections::{HashMap, HashSet};
 
@@ -32,7 +28,6 @@ const MAX_PREC_TESTS: usize = 40;
 struct InfixOpInfo {
     label: String,
     terminal: String,
-    category: String,
     left_bp: u8,
     right_bp: u8,
     is_right_assoc: bool,
@@ -75,7 +70,7 @@ pub fn generate_precedence_assoc_tests(
         }
 
         // Get a leaf value for this category
-        let leaf = match leaf_map.get(category.as_str()) {
+        let _leaf = match leaf_map.get(category.as_str()) {
             Some(l) => l,
             None => continue,
         };
@@ -124,8 +119,11 @@ pub fn generate_precedence_assoc_tests(
             // Generate: "a low_op b high_op c"
             // With concrete values, verify high_op binds tighter
             let prec_test = generate_precedence_test(
-                &val_a, &val_b, &val_c,
-                low_op, high_op,
+                &val_a,
+                &val_b,
+                &val_c,
+                low_op,
+                high_op,
                 category,
                 &lang_name_lower,
                 &lang_struct,
@@ -137,8 +135,11 @@ pub fn generate_precedence_assoc_tests(
 
             // Generate parenthesization override: "(a low_op b) high_op c"
             let paren_test = generate_paren_override_test(
-                &val_a, &val_b, &val_c,
-                low_op, high_op,
+                &val_a,
+                &val_b,
+                &val_c,
+                low_op,
+                high_op,
                 category,
                 &lang_name_lower,
                 &lang_struct,
@@ -165,7 +166,9 @@ pub fn generate_precedence_assoc_tests(
             }
 
             let assoc_test = generate_associativity_test(
-                &val_a, &val_b, &val_c,
+                &val_a,
+                &val_b,
+                &val_c,
                 op,
                 category,
                 &lang_name_lower,
@@ -260,7 +263,6 @@ fn collect_infix_ops(
         let info = InfixOpInfo {
             label: op.label.clone(),
             terminal: op.terminal.clone(),
-            category: op.category.clone(),
             left_bp: op.left_bp,
             right_bp: op.right_bp,
             is_right_assoc: op.left_bp > op.right_bp,
@@ -303,11 +305,11 @@ fn involves_power(label: &str) -> bool {
 /// for embedding in test source expressions like `"1 + 2 * 3"`.
 ///
 /// Uses small values (1, 2, 3) to avoid overflow issues with power operations.
-fn get_three_values(
-    category: &str,
-    language: &LanguageDef,
-) -> Option<(String, String, String)> {
-    let lt = language.types.iter().find(|t| t.name.to_string() == category)?;
+fn get_three_values(category: &str, language: &LanguageDef) -> Option<(String, String, String)> {
+    let lt = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == category)?;
     let native_type = lt.native_type.as_ref()?;
     let type_str = native_type_to_string(native_type);
 
@@ -323,12 +325,17 @@ fn get_three_sym_values(
     category: &str,
     language: &LanguageDef,
 ) -> Option<(SymValue, SymValue, SymValue)> {
-    let lt = language.types.iter().find(|t| t.name.to_string() == category)?;
+    let lt = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == category)?;
     let native_type = lt.native_type.as_ref()?;
     let type_str = native_type_to_string(native_type);
 
     match type_str.as_str() {
-        "i32" | "i64" | "u32" | "u64" => Some((SymValue::Int(1), SymValue::Int(2), SymValue::Int(3))),
+        "i32" | "i64" | "u32" | "u64" => {
+            Some((SymValue::Int(1), SymValue::Int(2), SymValue::Int(3)))
+        },
         "f32" | "f64" => Some((SymValue::Float(1.0), SymValue::Float(2.0), SymValue::Float(3.0))),
         _ => None,
     }
@@ -350,10 +357,8 @@ fn generate_precedence_test(
     language: &LanguageDef,
 ) -> Option<TestCase> {
     // Build the string expression: "a low_terminal b high_terminal c"
-    let expr_str = format!(
-        "{} {} {} {} {}",
-        val_a, low_op.terminal, val_b, high_op.terminal, val_c
-    );
+    let expr_str =
+        format!("{} {} {} {} {}", val_a, low_op.terminal, val_b, high_op.terminal, val_c);
 
     // Symbolically evaluate: first high_op(b, c), then low_op(a, result)
     let sym_vals = get_three_sym_values(category, language)?;
@@ -379,10 +384,7 @@ fn generate_precedence_test(
     high_env.insert(high_param_info[0].name.clone(), sym_b);
     high_env.insert(high_param_info[1].name.clone(), sym_c);
 
-    let high_result = symbolic_eval::symbolic_eval(
-        &high_rule.rust_code.as_ref()?.code,
-        &high_env,
-    )?;
+    let high_result = symbolic_eval::symbolic_eval(&high_rule.rust_code.as_ref()?.code, &high_env)?;
 
     // Evaluate low_op(a, high_result)
     let low_param_info = super::ground_term_enum::extract_param_info(low_rule, language);
@@ -394,10 +396,7 @@ fn generate_precedence_test(
     low_env.insert(low_param_info[0].name.clone(), sym_a);
     low_env.insert(low_param_info[1].name.clone(), high_result);
 
-    let final_result = symbolic_eval::symbolic_eval(
-        &low_rule.rust_code.as_ref()?.code,
-        &low_env,
-    )?;
+    let final_result = symbolic_eval::symbolic_eval(&low_rule.rust_code.as_ref()?.code, &low_env)?;
 
     // Guard against overflow: skip if result is too large
     if let SymValue::Int(v) = &final_result {
@@ -474,10 +473,8 @@ fn generate_paren_override_test(
     language: &LanguageDef,
 ) -> Option<TestCase> {
     // Build: "(a low_terminal b) high_terminal c"
-    let expr_str = format!(
-        "({} {} {}) {} {}",
-        val_a, low_op.terminal, val_b, high_op.terminal, val_c
-    );
+    let expr_str =
+        format!("({} {} {}) {} {}", val_a, low_op.terminal, val_b, high_op.terminal, val_c);
 
     // Evaluate: first low_op(a, b), then high_op(result, c)
     let sym_vals = get_three_sym_values(category, language)?;
@@ -502,10 +499,7 @@ fn generate_paren_override_test(
     low_env.insert(low_param_info[0].name.clone(), sym_a);
     low_env.insert(low_param_info[1].name.clone(), sym_b);
 
-    let low_result = symbolic_eval::symbolic_eval(
-        &low_rule.rust_code.as_ref()?.code,
-        &low_env,
-    )?;
+    let low_result = symbolic_eval::symbolic_eval(&low_rule.rust_code.as_ref()?.code, &low_env)?;
 
     // Evaluate high_op(low_result, c)
     let high_param_info = super::ground_term_enum::extract_param_info(high_rule, language);
@@ -517,10 +511,8 @@ fn generate_paren_override_test(
     high_env.insert(high_param_info[0].name.clone(), low_result);
     high_env.insert(high_param_info[1].name.clone(), sym_c);
 
-    let final_result = symbolic_eval::symbolic_eval(
-        &high_rule.rust_code.as_ref()?.code,
-        &high_env,
-    )?;
+    let final_result =
+        symbolic_eval::symbolic_eval(&high_rule.rust_code.as_ref()?.code, &high_env)?;
 
     // Guard against overflow
     if let SymValue::Int(v) = &final_result {
@@ -596,10 +588,7 @@ fn generate_associativity_test(
     language: &LanguageDef,
 ) -> Option<TestCase> {
     // Build: "a terminal b terminal c"
-    let expr_str = format!(
-        "{} {} {} {} {}",
-        val_a, op.terminal, val_b, op.terminal, val_c
-    );
+    let expr_str = format!("{} {} {} {} {}", val_a, op.terminal, val_b, op.terminal, val_c);
 
     let sym_vals = get_three_sym_values(category, language)?;
     let (sym_a, sym_b, sym_c) = sym_vals;
@@ -619,10 +608,8 @@ fn generate_associativity_test(
         let mut inner_env: HashMap<String, SymValue> = HashMap::new();
         inner_env.insert(param_info[0].name.clone(), sym_b);
         inner_env.insert(param_info[1].name.clone(), sym_c);
-        let inner_result = symbolic_eval::symbolic_eval(
-            &rule.rust_code.as_ref()?.code,
-            &inner_env,
-        )?;
+        let inner_result =
+            symbolic_eval::symbolic_eval(&rule.rust_code.as_ref()?.code, &inner_env)?;
 
         let mut outer_env: HashMap<String, SymValue> = HashMap::new();
         outer_env.insert(param_info[0].name.clone(), sym_a);
@@ -633,10 +620,8 @@ fn generate_associativity_test(
         let mut inner_env: HashMap<String, SymValue> = HashMap::new();
         inner_env.insert(param_info[0].name.clone(), sym_a);
         inner_env.insert(param_info[1].name.clone(), sym_b);
-        let inner_result = symbolic_eval::symbolic_eval(
-            &rule.rust_code.as_ref()?.code,
-            &inner_env,
-        )?;
+        let inner_result =
+            symbolic_eval::symbolic_eval(&rule.rust_code.as_ref()?.code, &inner_env)?;
 
         let mut outer_env: HashMap<String, SymValue> = HashMap::new();
         outer_env.insert(param_info[0].name.clone(), inner_result);
@@ -665,12 +650,7 @@ fn generate_associativity_test(
     };
 
     let assoc_str = if op.is_right_assoc { "right" } else { "left" };
-    let test_name = format!(
-        "assoc_{}_{}_{}",
-        lang_name_lower,
-        op.label.to_lowercase(),
-        assoc_str
-    );
+    let test_name = format!("assoc_{}_{}_{}", lang_name_lower, op.label.to_lowercase(), assoc_str);
 
     let construction_code = format!(
         "{{ // Associativity test: {label} is {assoc}-associative\n    \

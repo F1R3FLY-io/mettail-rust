@@ -184,15 +184,17 @@ impl OptimizationPass for WeightReconciliation {
                     let label = action.action.rule_label();
                     match self.classify(&label) {
                         ActionOrigin::GrammarA => {
-                            a_weights.push((ti, wfst.states[start_idx].transitions[ti].weight.value()));
-                        }
+                            a_weights
+                                .push((ti, wfst.states[start_idx].transitions[ti].weight.value()));
+                        },
                         ActionOrigin::GrammarB => {
                             b_indices.push(ti);
-                        }
+                        },
                         ActionOrigin::Unknown => {
                             // Unknown-origin actions are treated as grammar A
-                            a_weights.push((ti, wfst.states[start_idx].transitions[ti].weight.value()));
-                        }
+                            a_weights
+                                .push((ti, wfst.states[start_idx].transitions[ti].weight.value()));
+                        },
                     }
                 }
             }
@@ -227,10 +229,7 @@ impl OptimizationPass for WeightReconciliation {
         if changes > 0 {
             PassResult::changed(
                 changes,
-                format!(
-                    "reconciled {} weight(s) using {:?} policy",
-                    changes, self.policy
-                ),
+                format!("reconciled {} weight(s) using {:?} policy", changes, self.policy),
             )
         } else {
             PassResult::unchanged()
@@ -322,14 +321,14 @@ impl OptimizationPass for CrossGrammarDeadStateElimination {
                 match origin {
                     ActionOrigin::GrammarA => {
                         entry.0 = entry.0.min(trans.weight.value());
-                    }
+                    },
                     ActionOrigin::GrammarB => {
                         entry.1 = entry.1.min(trans.weight.value());
-                    }
+                    },
                     ActionOrigin::Unknown => {
                         // Unknown-origin: treat as grammar A
                         entry.0 = entry.0.min(trans.weight.value());
-                    }
+                    },
                 }
             }
         }
@@ -349,14 +348,10 @@ impl OptimizationPass for CrossGrammarDeadStateElimination {
                     let is_shadowed = match origin {
                         // Grammar A action is shadowed if grammar B has a
                         // strictly better weight for this token
-                        ActionOrigin::GrammarA => {
-                            best_b < best_a && best_b.is_finite()
-                        }
+                        ActionOrigin::GrammarA => best_b < best_a && best_b.is_finite(),
                         // Grammar B action is shadowed if grammar A has a
                         // strictly better weight for this token
-                        ActionOrigin::GrammarB => {
-                            best_a < best_b && best_a.is_finite()
-                        }
+                        ActionOrigin::GrammarB => best_a < best_b && best_a.is_finite(),
                         ActionOrigin::Unknown => false,
                     };
 
@@ -460,7 +455,9 @@ impl OptimizationPass for ComposedDispatchMinimization {
                 .unwrap_or_default();
 
             let key = (trans.input, rule_label);
-            let entry = best_for_key.entry(key).or_insert((trans_idx, f64::INFINITY));
+            let entry = best_for_key
+                .entry(key)
+                .or_insert((trans_idx, f64::INFINITY));
 
             if trans.weight.value() < entry.1 {
                 *entry = (trans_idx, trans.weight.value());
@@ -703,7 +700,8 @@ mod tests {
         let cross_action = actions.iter().find(|a| a.action.rule_label() == "CrossCat");
         assert!(cross_action.is_some());
         assert!(
-            (cross_action.expect("CrossCat action exists").weight.value() - 3.0).abs() < f64::EPSILON,
+            (cross_action.expect("CrossCat action exists").weight.value() - 3.0).abs()
+                < f64::EPSILON,
             "Min policy should set B's weight to min(A, B)"
         );
     }
@@ -795,10 +793,8 @@ mod tests {
     #[test]
     fn test_weight_reconciliation_no_overlap() {
         // When grammars have disjoint tokens, no reconciliation needed
-        let mut wfst = build_wfst(&[
-            ("Plus", "Add", "parse_add", 1.0),
-            ("Minus", "Sub", "parse_sub", 2.0),
-        ]);
+        let mut wfst =
+            build_wfst(&[("Plus", "Add", "parse_add", 1.0), ("Minus", "Sub", "parse_sub", 2.0)]);
         let config = make_config(WeightResolutionPolicy::Min, &["Add"], &["Sub"]);
         let pass = WeightReconciliation::new(&config);
         let result = pass.apply(&mut wfst);
@@ -818,11 +814,7 @@ mod tests {
             ("Ident", "ExtRule", "parse_ext", 5.0),
             ("Plus", "Add", "parse_add", 0.0),
         ]);
-        let config = make_config(
-            WeightResolutionPolicy::Min,
-            &["VarRef", "Add"],
-            &["ExtRule"],
-        );
+        let config = make_config(WeightResolutionPolicy::Min, &["VarRef", "Add"], &["ExtRule"]);
         let pass = CrossGrammarDeadStateElimination::new(&config);
 
         assert!(pass.is_applicable(&wfst));
@@ -847,11 +839,7 @@ mod tests {
             ("Ident", "ExtRule", "parse_ext", 1.0),
             ("Plus", "Add", "parse_add", 0.0),
         ]);
-        let config = make_config(
-            WeightResolutionPolicy::Min,
-            &["VarRef", "Add"],
-            &["ExtRule"],
-        );
+        let config = make_config(WeightResolutionPolicy::Min, &["VarRef", "Add"], &["ExtRule"]);
         let pass = CrossGrammarDeadStateElimination::new(&config);
         let result = pass.apply(&mut wfst);
 
@@ -883,10 +871,7 @@ mod tests {
 
         // After minimization, should have only one transition for (Ident, VarRef)
         let after_count = wfst_a.states[wfst_a.start as usize].transitions.len();
-        assert!(
-            after_count < before_count,
-            "should remove duplicate transitions"
-        );
+        assert!(after_count < before_count, "should remove duplicate transitions");
 
         // The remaining transition should have the best (lowest) weight
         let actions = wfst_a.predict("Ident");
@@ -903,10 +888,8 @@ mod tests {
 
     #[test]
     fn test_composed_dispatch_minimization_no_duplicates() {
-        let mut wfst = build_wfst(&[
-            ("Plus", "Add", "parse_add", 1.0),
-            ("Minus", "Sub", "parse_sub", 2.0),
-        ]);
+        let mut wfst =
+            build_wfst(&[("Plus", "Add", "parse_add", 1.0), ("Minus", "Sub", "parse_sub", 2.0)]);
         let pass = ComposedDispatchMinimization;
         let result = pass.apply(&mut wfst);
 
@@ -918,10 +901,8 @@ mod tests {
 
     #[test]
     fn test_incremental_validation_passes_for_correct_wfst() {
-        let mut wfst = build_wfst(&[
-            ("Plus", "Add", "parse_add", 0.0),
-            ("Minus", "Sub", "parse_sub", 1.0),
-        ]);
+        let mut wfst =
+            build_wfst(&[("Plus", "Add", "parse_add", 0.0), ("Minus", "Sub", "parse_sub", 1.0)]);
         let pass = IncrementalFirstFollowValidation;
         let result = pass.apply(&mut wfst);
 
@@ -961,10 +942,8 @@ mod tests {
         assert_eq!(cascade.pass_count(), 4);
 
         // Run on a simple WFST to verify the cascade executes without panicking
-        let mut wfst = build_wfst(&[
-            ("Ident", "A", "parse_a", 2.0),
-            ("Ident", "B", "parse_b", 4.0),
-        ]);
+        let mut wfst =
+            build_wfst(&[("Ident", "A", "parse_a", 2.0), ("Ident", "B", "parse_b", 4.0)]);
         let result = cascade.run(&mut wfst);
         assert!(result.iterations >= 1);
     }
@@ -972,21 +951,15 @@ mod tests {
     #[test]
     fn test_composition_cascade_end_to_end() {
         // Build a composed WFST with duplicate entries and weight conflicts
-        let mut wfst_a = build_wfst(&[
-            ("Ident", "VarRef", "parse_var", 2.0),
-            ("Plus", "Add", "parse_add", 0.0),
-        ]);
+        let mut wfst_a =
+            build_wfst(&[("Ident", "VarRef", "parse_var", 2.0), ("Plus", "Add", "parse_add", 0.0)]);
         let wfst_b = build_wfst(&[
             ("Ident", "VarRef", "parse_var", 5.0), // Duplicate with worse weight
             ("Ident", "ExtRule", "parse_ext", 3.0),
         ]);
         wfst_a.union(&wfst_b);
 
-        let config = make_config(
-            WeightResolutionPolicy::Min,
-            &["VarRef", "Add"],
-            &["ExtRule"],
-        );
+        let config = make_config(WeightResolutionPolicy::Min, &["VarRef", "Add"], &["ExtRule"]);
         let cascade = composition_cascade(&config);
         let result = cascade.run(&mut wfst_a);
 

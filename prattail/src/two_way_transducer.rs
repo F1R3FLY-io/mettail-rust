@@ -174,11 +174,7 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
     /// Returns the new state's identifier (its index in `self.states`).
     pub fn add_state(&mut self, direction: HeadDirection, label: Option<String>) -> usize {
         let id = self.states.len();
-        self.states.push(TwoWayState {
-            id,
-            direction,
-            label,
-        });
+        self.states.push(TwoWayState { id, direction, label });
         id
     }
 
@@ -203,13 +199,8 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
             self.output_alphabet.insert(sym.clone());
         }
 
-        self.transitions.push(TwoWayTransition {
-            from,
-            to,
-            input,
-            output,
-            weight,
-        });
+        self.transitions
+            .push(TwoWayTransition { from, to, input, output, weight });
     }
 
     /// Total number of states.
@@ -257,7 +248,7 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
                 || self.states[state_id].direction != HeadDirection::Forward)
         {
             return Err(
-                "initial states must be forward-direction (Feng & Maletti Def. 2.1)".to_string(),
+                "initial states must be forward-direction (Feng & Maletti Def. 2.1)".to_string()
             );
         }
         self.initial_weights.insert(state_id, weight);
@@ -421,7 +412,7 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
                                 continue;
                             }
                             config.position - 1
-                        }
+                        },
                     };
 
                     // Check bounds
@@ -490,10 +481,7 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
 
         // Copy m2's states with offset
         for s in &m2.states {
-            result.add_state(
-                s.direction,
-                s.label.as_ref().map(|l| format!("{}_{}", l, offset)),
-            );
+            result.add_state(s.direction, s.label.as_ref().map(|l| format!("{}_{}", l, offset)));
         }
 
         // Copy m1's transitions
@@ -579,9 +567,8 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
 
         // Product states: (w2t_state_id, fst_state_id)
         // State numbering: w2t_id * fst_num_states + fst_id
-        let product_id = |w2t_id: usize, fst_id: usize| -> usize {
-            w2t_id * fst_num_states + fst_id
-        };
+        let product_id =
+            |w2t_id: usize, fst_id: usize| -> usize { w2t_id * fst_num_states + fst_id };
 
         // Create product states
         let total_states = self.states.len() * fst_num_states;
@@ -621,13 +608,7 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
                 for fst_s in 0..fst_num_states {
                     let from_pid = product_id(t.from, fst_s);
                     let to_pid = product_id(t.to, fst_s);
-                    result.add_transition(
-                        from_pid,
-                        to_pid,
-                        t.input.clone(),
-                        Vec::new(),
-                        t.weight,
-                    );
+                    result.add_transition(from_pid, to_pid, t.input.clone(), Vec::new(), t.weight);
                 }
             } else {
                 // Non-empty output: thread through FST
@@ -635,13 +616,7 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
                 // Multi-symbol output is threaded sequentially through the FST.
                 for fst_s in 0..fst_num_states {
                     // Walk the output symbols through the FST
-                    self.compose_output_chain(
-                        &fst_index,
-                        fst_num_states,
-                        t,
-                        fst_s,
-                        &mut result,
-                    );
+                    self.compose_output_chain(&fst_index, fst_num_states, t, fst_s, &mut result);
                 }
             }
         }
@@ -791,11 +766,22 @@ impl<W: Semiring> WeightedTwoWayTransducer<W> {
 
     /// Analyze structural properties of this transducer.
     pub fn analyze(&self) -> TwoWayAnalysis {
+        self.analyze_with_dependencies(&HashMap::new())
+    }
+
+    /// Analyze structural properties plus an external dependency graph.
+    ///
+    /// A bare W2T carries head-movement structure but not the grammar/channel
+    /// dependency graph that motivated its construction. Callers with that
+    /// graph can supply it here to populate `deadlock_cycles` using the same
+    /// Tarjan SCC detector as join-pattern analysis.
+    pub fn analyze_with_dependencies(
+        &self,
+        channel_dependencies: &HashMap<String, Vec<String>>,
+    ) -> TwoWayAnalysis {
         let forward = self.forward_states();
         let backward = self.backward_states();
-
-        // Detect deadlock cycles in channel dependencies (placeholder for general analysis)
-        let deadlock_cycles = Vec::new();
+        let deadlock_cycles = detect_deadlock::<W>(channel_dependencies);
 
         TwoWayAnalysis {
             num_states: self.states.len(),
@@ -821,26 +807,10 @@ impl<W: Semiring> fmt::Display for WeightedTwoWayTransducer<W> {
             self.states.len(),
             self.transitions.len()
         )?;
-        writeln!(
-            f,
-            "  Forward states (Q→): {:?}",
-            self.forward_states()
-        )?;
-        writeln!(
-            f,
-            "  Backward states (Q←): {:?}",
-            self.backward_states()
-        )?;
-        writeln!(
-            f,
-            "  Initial: {:?}",
-            self.initial_weights.keys().collect::<Vec<_>>()
-        )?;
-        writeln!(
-            f,
-            "  Final: {:?}",
-            self.final_weights.keys().collect::<Vec<_>>()
-        )?;
+        writeln!(f, "  Forward states (Q→): {:?}", self.forward_states())?;
+        writeln!(f, "  Backward states (Q←): {:?}", self.backward_states())?;
+        writeln!(f, "  Initial: {:?}", self.initial_weights.keys().collect::<Vec<_>>())?;
+        writeln!(f, "  Final: {:?}", self.final_weights.keys().collect::<Vec<_>>())?;
         for t in &self.transitions {
             let dir = self.states[t.from].direction;
             let out_str = if t.output.is_empty() {
@@ -897,16 +867,73 @@ impl fmt::Display for TwoWayAnalysis {
 /// Builds a constraint graph from cross-category references and
 /// detects potential deadlock cycles.
 pub fn analyze_from_bundle(
-    _all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::pipeline::CategoryInfo],
 ) -> TwoWayAnalysis {
     let num_states = categories.len().max(1);
+    let dependencies = syntax_dependency_graph(all_syntax);
     TwoWayAnalysis {
         num_states,
         num_forward: num_states,
         num_backward: 0,
         is_one_way_equivalent: true,
-        deadlock_cycles: Vec::new(),
+        deadlock_cycles: detect_deadlock::<crate::automata::semiring::TropicalWeight>(
+            &dependencies,
+        ),
+    }
+}
+
+fn syntax_dependency_graph(
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+) -> HashMap<String, Vec<String>> {
+    let mut deps: HashMap<String, HashSet<String>> = HashMap::new();
+    for (category, _label, syntax) in all_syntax {
+        let entry = deps.entry(category.clone()).or_default();
+        for item in syntax {
+            collect_syntax_dependencies(item, entry);
+        }
+    }
+
+    deps.into_iter()
+        .map(|(category, refs)| {
+            let mut refs: Vec<String> = refs.into_iter().collect();
+            refs.sort();
+            (category, refs)
+        })
+        .collect()
+}
+
+fn collect_syntax_dependencies(item: &crate::SyntaxItemSpec, out: &mut HashSet<String>) {
+    match item {
+        crate::SyntaxItemSpec::NonTerminal { category, .. }
+        | crate::SyntaxItemSpec::Binder { category, .. } => {
+            out.insert(category.clone());
+        },
+        crate::SyntaxItemSpec::Collection { element_category, .. } => {
+            out.insert(element_category.clone());
+        },
+        crate::SyntaxItemSpec::Sep { body, .. } => {
+            collect_syntax_dependencies(body, out);
+        },
+        crate::SyntaxItemSpec::Map { body_items } => {
+            for nested in body_items {
+                collect_syntax_dependencies(nested, out);
+            }
+        },
+        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
+            out.insert(left_category.clone());
+            out.insert(right_category.clone());
+            collect_syntax_dependencies(body, out);
+        },
+        crate::SyntaxItemSpec::Optional { inner } => {
+            for nested in inner {
+                collect_syntax_dependencies(nested, out);
+            }
+        },
+        crate::SyntaxItemSpec::Terminal(_)
+        | crate::SyntaxItemSpec::IdentCapture { .. }
+        | crate::SyntaxItemSpec::BinderCollection { .. }
+        | crate::SyntaxItemSpec::GuardExpression { .. } => {},
     }
 }
 
@@ -1342,19 +1369,14 @@ pub fn prune_join_patterns(
     }
 
     // Build a set of producer channels for O(1) lookup.
-    let producer_set: HashSet<&str> = producer_channels
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
+    let producer_set: HashSet<&str> = producer_channels.iter().map(|s| s.as_str()).collect();
 
     let mut pruned_patterns: Vec<String> = Vec::new();
     let mut live_patterns: Vec<String> = Vec::new();
 
     for pattern in join_patterns {
         // A join pattern is dead if any of its required channels has no producer.
-        let is_dead = pattern
-            .iter()
-            .any(|ch| !producer_set.contains(ch.as_str()));
+        let is_dead = pattern.iter().any(|ch| !producer_set.contains(ch.as_str()));
 
         // Build a canonical string representation: sorted, comma-joined.
         let mut sorted_channels = pattern.clone();
@@ -1399,13 +1421,7 @@ mod tests {
         let q2 = t.add_state(HeadDirection::Forward, Some("q2".into()));
 
         // q0 --[⊢ / ε]--> q1  (read left endmarker, no output)
-        t.add_transition(
-            q0,
-            q1,
-            TwoWayInput::LeftEndmarker,
-            vec![],
-            TropicalWeight::one(),
-        );
+        t.add_transition(q0, q1, TwoWayInput::LeftEndmarker, vec![], TropicalWeight::one());
         // q1 --[a / x]--> q2  (read "a", output "x")
         t.add_transition(
             q1,
@@ -1415,15 +1431,10 @@ mod tests {
             TropicalWeight::new(1.0),
         );
         // q2 --[⊣ / ε]--> q2  (read right endmarker, stay)
-        t.add_transition(
-            q2,
-            q2,
-            TwoWayInput::RightEndmarker,
-            vec![],
-            TropicalWeight::one(),
-        );
+        t.add_transition(q2, q2, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
 
-        t.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         t.set_final(q2, TropicalWeight::one());
 
         t
@@ -1474,13 +1485,7 @@ mod tests {
         // q0 --[⊢ / ε]--> q1
         t.add_transition(q0, q1, TwoWayInput::LeftEndmarker, vec![], TropicalWeight::one());
         // q1 --[a / ε]--> q2  (read "a" without output, move right)
-        t.add_transition(
-            q1,
-            q2,
-            TwoWayInput::Symbol("a".into()),
-            vec![],
-            TropicalWeight::one(),
-        );
+        t.add_transition(q1, q2, TwoWayInput::Symbol("a".into()), vec![], TropicalWeight::one());
         // q2 --[b / "b"]--> q3  (read "b", output "b", move right then switch to backward)
         t.add_transition(
             q2,
@@ -1492,13 +1497,7 @@ mod tests {
         // q3 --[b / ε]--> q4  (backward state reads "b" at current pos, moves left to "a")
         // After q2 reads "b" at pos 2 and moves right to pos 3, q3 is at pos 3 (⊣).
         // q3 is backward, reads ⊣ at pos 3, moves left to pos 2.
-        t.add_transition(
-            q3,
-            q4,
-            TwoWayInput::RightEndmarker,
-            vec![],
-            TropicalWeight::one(),
-        );
+        t.add_transition(q3, q4, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
         // q4 --[b / ε]--> q4b  (forward state reads "b" at pos 2, moves right to pos 3)
         // Actually, let's simplify: after going back, re-read and output "a".
         // q4 is forward at pos 2, reads "b" at pos 2, moves right to pos 3
@@ -1518,11 +1517,11 @@ mod tests {
         // Reset and build a cleaner example.
         drop(t);
         let mut t = WeightedTwoWayTransducer::<TropicalWeight>::new();
-        let q0 = t.add_state(HeadDirection::Forward, Some("start".into()));  // 0
-        let q1 = t.add_state(HeadDirection::Forward, None);                   // 1
-        let q2 = t.add_state(HeadDirection::Backward, None);                  // 2 (backward)
-        let q3 = t.add_state(HeadDirection::Forward, None);                   // 3
-        let q4 = t.add_state(HeadDirection::Forward, None);                   // 4
+        let q0 = t.add_state(HeadDirection::Forward, Some("start".into())); // 0
+        let q1 = t.add_state(HeadDirection::Forward, None); // 1
+        let q2 = t.add_state(HeadDirection::Backward, None); // 2 (backward)
+        let q3 = t.add_state(HeadDirection::Forward, None); // 3
+        let q4 = t.add_state(HeadDirection::Forward, None); // 4
 
         // Read single symbol "a", go backward, re-read endmarker, go forward to accept.
         // q0(→) at pos 0: read ⊢, go to q1, move to pos 1
@@ -1548,7 +1547,8 @@ mod tests {
         // q4(→) at pos 2: this is ⊣, and q4 is final
         t.add_transition(q4, q4, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
 
-        t.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         t.set_final(q4, TropicalWeight::one());
 
         let results = t.transduce(&["a".into()]);
@@ -1569,7 +1569,8 @@ mod tests {
             vec!["x".into()],
             TropicalWeight::one(),
         );
-        m1.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        m1.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         m1.set_final(q1, TropicalWeight::one());
 
         let mut m2 = WeightedTwoWayTransducer::<TropicalWeight>::new();
@@ -1582,7 +1583,8 @@ mod tests {
             vec!["y".into()],
             TropicalWeight::one(),
         );
-        m2.set_initial(r0, TropicalWeight::one()).expect("valid initial state");
+        m2.set_initial(r0, TropicalWeight::one())
+            .expect("valid initial state");
 
         let merged = WeightedTwoWayTransducer::sum(&m1, &m2);
 
@@ -1593,11 +1595,11 @@ mod tests {
         // Check state directions: m1 states are both forward, m2 has one forward + one backward
         assert_eq!(merged.forward_states().len(), 3); // q0, q1, r0 (offset)
         assert_eq!(merged.backward_states().len(), 1); // r1 (offset)
-        // Check initial weights preserved
-        assert!(merged.is_initial(0));      // m1's q0
-        assert!(merged.is_initial(2));      // m2's r0 (offset=2)
-        // Check final weights preserved
-        assert!(merged.is_final(1));        // m1's q1
+                                                       // Check initial weights preserved
+        assert!(merged.is_initial(0)); // m1's q0
+        assert!(merged.is_initial(2)); // m2's r0 (offset=2)
+                                       // Check final weights preserved
+        assert!(merged.is_final(1)); // m1's q1
     }
 
     #[test]
@@ -1658,7 +1660,8 @@ mod tests {
         );
         t.add_transition(q2, q2, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
 
-        t.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         t.set_final(q2, TropicalWeight::one());
 
         let results = t.transduce(&["hello".into()]);
@@ -1695,7 +1698,8 @@ mod tests {
             TropicalWeight::one(),
         );
 
-        t.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         t.set_final(q2, TropicalWeight::one());
 
         // Empty input: tape is ⊢ ⊣  (tape_len = 2, positions 0 and 1)
@@ -1708,10 +1712,7 @@ mod tests {
         //     => accepts with output ["start", "end"]
         let results = t.transduce(&[]);
         assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].0,
-            vec!["start".to_string(), "end".to_string()]
-        );
+        assert_eq!(results[0].0, vec!["start".to_string(), "end".to_string()]);
     }
 
     #[test]
@@ -1806,15 +1807,68 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_with_dependencies_reports_cycles() {
+        let mut t = WeightedTwoWayTransducer::<TropicalWeight>::new();
+        t.add_state(HeadDirection::Forward, None);
+        let deps = HashMap::from([
+            ("ch_a".to_string(), vec!["ch_b".to_string()]),
+            ("ch_b".to_string(), vec!["ch_a".to_string()]),
+        ]);
+
+        let analysis = t.analyze_with_dependencies(&deps);
+        assert_eq!(analysis.deadlock_cycles, vec![vec!["ch_a".to_string(), "ch_b".to_string(),]]);
+    }
+
+    #[test]
+    fn test_analyze_from_bundle_uses_syntax_dependency_cycles() {
+        let all_syntax = vec![
+            (
+                "A".to_string(),
+                "AtoB".to_string(),
+                vec![crate::SyntaxItemSpec::NonTerminal {
+                    category: "B".to_string(),
+                    param_name: "b".to_string(),
+                }],
+            ),
+            (
+                "B".to_string(),
+                "BtoA".to_string(),
+                vec![crate::SyntaxItemSpec::Optional {
+                    inner: vec![crate::SyntaxItemSpec::NonTerminal {
+                        category: "A".to_string(),
+                        param_name: "a".to_string(),
+                    }],
+                }],
+            ),
+        ];
+        let categories = vec![
+            crate::pipeline::CategoryInfo {
+                name: "A".to_string(),
+                native_type: None,
+                is_primary: true,
+                has_var: false,
+            },
+            crate::pipeline::CategoryInfo {
+                name: "B".to_string(),
+                native_type: None,
+                is_primary: false,
+                has_var: false,
+            },
+        ];
+
+        let analysis = analyze_from_bundle(&all_syntax, &categories);
+        assert_eq!(analysis.deadlock_cycles, vec![vec!["A".to_string(), "B".to_string(),]]);
+    }
+
+    #[test]
     fn test_compose_one_way_identity() {
         // Compose the simple forward transducer with an identity FST on {x}.
         // The result should preserve the mapping a -> x.
         let w2t = simple_forward_transducer();
 
         // Identity FST: single state, x -> x
-        let fst_transitions = vec![
-            (0usize, 0usize, "x".to_string(), "x".to_string(), TropicalWeight::one()),
-        ];
+        let fst_transitions =
+            vec![(0usize, 0usize, "x".to_string(), "x".to_string(), TropicalWeight::one())];
         let mut fst_finals = HashSet::new();
         fst_finals.insert(0);
 
@@ -1837,7 +1891,8 @@ mod tests {
         let q1 = t.add_state(HeadDirection::Forward, None);
         let q2 = t.add_state(HeadDirection::Forward, None);
 
-        t.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         t.set_final(q2, TropicalWeight::one());
 
         assert!(t.is_initial(q0));
@@ -1848,7 +1903,8 @@ mod tests {
         assert!(t.is_final(q2));
 
         // Setting zero weight should make it non-initial/non-final
-        t.set_initial(q0, TropicalWeight::zero()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::zero())
+            .expect("valid initial state");
         assert!(!t.is_initial(q0));
     }
 
@@ -1885,28 +1941,26 @@ mod tests {
 
         t.add_transition(q0, q1, TwoWayInput::LeftEndmarker, vec![], TropicalWeight::one());
         t.add_transition(
-            q1, q2,
+            q1,
+            q2,
             TwoWayInput::Symbol("a".into()),
             vec!["fwd".into()],
             TropicalWeight::one(),
         );
         t.add_transition(q2, q3, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
         t.add_transition(
-            q3, q4,
+            q3,
+            q4,
             TwoWayInput::Symbol("a".into()),
             vec!["bwd".into()],
             TropicalWeight::one(),
         );
         t.add_transition(q4, q5, TwoWayInput::LeftEndmarker, vec![], TropicalWeight::one());
-        t.add_transition(
-            q5, q6,
-            TwoWayInput::Symbol("a".into()),
-            vec![],
-            TropicalWeight::one(),
-        );
+        t.add_transition(q5, q6, TwoWayInput::Symbol("a".into()), vec![], TropicalWeight::one());
         t.add_transition(q6, q6, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
 
-        t.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         t.set_final(q6, TropicalWeight::one());
 
         let results = t.transduce(&["a".into()]);
@@ -1952,7 +2006,8 @@ mod tests {
         t.add_transition(q0, q1, TwoWayInput::LeftEndmarker, vec![], TropicalWeight::one());
         // q1(→) reads "a", goes to q2(←)
         t.add_transition(
-            q1, q2,
+            q1,
+            q2,
             TwoWayInput::Symbol("a".into()),
             vec!["pass1".into()],
             TropicalWeight::one(),
@@ -1961,7 +2016,8 @@ mod tests {
         t.add_transition(q2, q3, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
         // q3(→) reads "a" again at pos 1, goes to q4(→) at pos 2
         t.add_transition(
-            q3, q4,
+            q3,
+            q4,
             TwoWayInput::Symbol("a".into()),
             vec!["pass2".into()],
             TropicalWeight::one(),
@@ -1969,7 +2025,8 @@ mod tests {
         // q4(→) reads ⊣ — acceptance
         t.add_transition(q4, q4, TwoWayInput::RightEndmarker, vec![], TropicalWeight::one());
 
-        t.set_initial(q0, TropicalWeight::one()).expect("valid initial state");
+        t.set_initial(q0, TropicalWeight::one())
+            .expect("valid initial state");
         t.set_final(q4, TropicalWeight::one());
 
         let results = t.transduce(&["a".into()]);
@@ -2006,10 +2063,8 @@ mod green_thread_join_pruning_tests {
     #[test]
     fn prune_all_live_patterns() {
         // All channels in the patterns have producers: nothing pruned.
-        let patterns = vec![
-            vec!["a".to_string(), "b".to_string()],
-            vec!["b".to_string(), "c".to_string()],
-        ];
+        let patterns =
+            vec![vec!["a".to_string(), "b".to_string()], vec!["b".to_string(), "c".to_string()]];
         let producers = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         let result = prune_join_patterns(&patterns, &producers);
 
@@ -2022,10 +2077,7 @@ mod green_thread_join_pruning_tests {
     #[test]
     fn prune_all_dead_patterns() {
         // No producers at all: every pattern is dead.
-        let patterns = vec![
-            vec!["x".to_string()],
-            vec!["y".to_string(), "z".to_string()],
-        ];
+        let patterns = vec![vec!["x".to_string()], vec!["y".to_string(), "z".to_string()]];
         let producers: Vec<String> = Vec::new();
         let result = prune_join_patterns(&patterns, &producers);
 
@@ -2080,16 +2132,8 @@ mod green_thread_join_pruning_tests {
     #[test]
     fn prune_pattern_string_is_sorted() {
         // Verify that the pattern string representation is sorted.
-        let patterns = vec![vec![
-            "zebra".to_string(),
-            "alpha".to_string(),
-            "mango".to_string(),
-        ]];
-        let producers = vec![
-            "alpha".to_string(),
-            "mango".to_string(),
-            "zebra".to_string(),
-        ];
+        let patterns = vec![vec!["zebra".to_string(), "alpha".to_string(), "mango".to_string()]];
+        let producers = vec!["alpha".to_string(), "mango".to_string(), "zebra".to_string()];
         let result = prune_join_patterns(&patterns, &producers);
 
         assert_eq!(result.live_patterns.len(), 1);
@@ -2100,18 +2144,16 @@ mod green_thread_join_pruning_tests {
     fn prune_partial_producer_coverage() {
         // A join pattern with 3 channels, only 2 have producers.
         // The pattern should be pruned because one channel lacks a producer.
-        let patterns = vec![vec![
-            "ch1".to_string(),
-            "ch2".to_string(),
-            "ch3".to_string(),
-        ]];
+        let patterns = vec![vec!["ch1".to_string(), "ch2".to_string(), "ch3".to_string()]];
         let producers = vec!["ch1".to_string(), "ch3".to_string()];
         let result = prune_join_patterns(&patterns, &producers);
 
         assert_eq!(result.pruned_patterns.len(), 1);
         assert!(result.live_patterns.is_empty());
-        assert!(result.pruned_patterns[0].contains("ch2"),
-            "pruned pattern should contain the missing channel");
+        assert!(
+            result.pruned_patterns[0].contains("ch2"),
+            "pruned pattern should contain the missing channel"
+        );
     }
 
     #[test]

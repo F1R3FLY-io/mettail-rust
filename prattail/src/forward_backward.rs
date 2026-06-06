@@ -145,12 +145,7 @@ pub fn hot_path_analysis<W: Semiring + PartialOrd>(
     for (from, adj) in edges.iter().enumerate() {
         for &(to, ref w) in adj {
             let expected_weight = alpha[from].times(w).times(&beta[to]);
-            ranked.push(RankedEdge {
-                from,
-                to,
-                weight: *w,
-                expected_weight,
-            });
+            ranked.push(RankedEdge { from, to, weight: *w, expected_weight });
         }
     }
 
@@ -199,7 +194,7 @@ pub fn critical_path<W: Semiring>(
                     None => best_edge = Some((to, *w, edge_total)),
                     Some(_) => {
                         // Already found one — keep first
-                    }
+                    },
                 }
             }
         }
@@ -207,7 +202,7 @@ pub fn critical_path<W: Semiring>(
             Some((to, w, _)) => {
                 path.push((current, to, w));
                 current = to;
-            }
+            },
             None => break, // No path found (disconnected)
         }
     }

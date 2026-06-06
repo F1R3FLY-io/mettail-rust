@@ -40,9 +40,9 @@
 //! `allocate_fork_push_child` to build `CohortFrame` instead of
 //! pushing onto the H12 `pending_cohort: Vec<CohortMember>`.
 //!
-//! Stage L3 implements `step_cohort_frame` with the action-divergence
-//! classifier (per `cohort-lazy-materialization.md` Explore Agent 2's
-//! concrete rule).
+//! The current walker forms cohorts at dispatch-result broadcast points,
+//! drains them through the Tomita frontier, and force-materializes them at
+//! resolver/merge safety-net boundaries.
 
 use crate::automata::semiring::SemiringRef;
 use crate::dispatch_cohort::{DispatchKey, WorkerSnapshot};
@@ -73,13 +73,9 @@ pub enum Frame<W: SemiringRef> {
 /// walker either creates a new `CohortFrame` (if none exists for this
 /// dispatch key) or extends the existing one.
 ///
-/// Step semantics (L3+): `step_cohort_frame` synthesizes one
-/// representative inner_state from `shell`, dispatches `engine.step`,
-/// then classifies the resulting `WpdaStepAction` as ObsInvariant
-/// (apply to shell once, all members stay lazy), ObsDivergent
-/// (materialize the cohort into N Concrete frames, then per-cursor
-/// step), or DispatchResolved (broadcast the sub-parse result to all
-/// members via `fan_out_cohort`).
+/// Step semantics: cohorts are queued as shared shells plus member states,
+/// ingested by the Tomita frontier, and materialized before concrete-only
+/// resolver/merge code observes them.
 pub struct CohortFrame<W: SemiringRef> {
     /// All `~_obs`-axis fields, shared by every member. Read-only after
     /// the cohort is constructed — any member whose step would mutate
@@ -255,8 +251,8 @@ pub struct CohortDispatchResult<W: SemiringRef> {
 }
 
 /// Action divergence classification — the output of the L3
-/// classifier that determines how `step_cohort_frame` handles each
-/// cohort's next action.
+/// classifier used by the Tomita frontier to decide whether a shell-level
+/// observation is invariant or must materialize.
 ///
 /// See `docs/design/plans/cohort-lazy-materialization.md` §3.2 + the
 /// concrete rule delivered by Explore Agent 2.
@@ -267,11 +263,10 @@ pub enum DivergenceClass {
     /// Materialize the cohort into N `Frame::Concrete`s; per-cursor
     /// step thereafter.
     ObsDivergent,
-    /// The cohort's queued sub-parse just completed. Cache the result
-    /// in `CohortFrame::dispatch_result` and fan out to all members in
-    /// one shot via `fan_out_cohort`. Detected by the caller
-    /// (`step_cohort_frame`) BEFORE classify runs — `classify` itself
-    /// only returns `ObsInvariant` or `ObsDivergent`.
+    /// The cohort's queued sub-parse just completed. The walker caches the
+    /// result in `CohortFrame::dispatch_result` and fans out to members in
+    /// one shot; `classify` itself only returns `ObsInvariant` or
+    /// `ObsDivergent`.
     DispatchResolved,
 }
 
@@ -287,8 +282,8 @@ impl DivergenceClass {
     /// only treat actions that provably touch no per-member field as
     /// ObsInvariant; everything that touches `weight`, `recovery_deltas`,
     /// `last_action_output_cat`, or that forks into per-member-divergent
-    /// children falls back to ObsDivergent (the L3.2 stub path —
-    /// materialize → per-cursor step, identical to baseline).
+    /// children falls back to ObsDivergent: materialize first, then step
+    /// each concrete cursor with the same semantics as the baseline path.
     ///
     /// As confidence grows (L3.4b refinement, follow-on benchmarking),
     /// individual variants graduate from ObsDivergent to ObsInvariant.
@@ -392,9 +387,7 @@ impl DivergenceClass {
             | WpdaStepAction::ParsePredicate { .. }
             | WpdaStepAction::OptGroupAbsent { .. }
             | WpdaStepAction::OptGroupFinalize { .. }
-            | WpdaStepAction::IterativeChainAbsorb { .. } => {
-                TomitaDivergence::ObsDivergentOverArcs
-            }
+            | WpdaStepAction::IterativeChainAbsorb { .. } => TomitaDivergence::ObsDivergentOverArcs,
         }
     }
 }
@@ -434,7 +427,7 @@ impl<W: SemiringRef> Frame<W> {
             Frame::Concrete(c) => c,
             Frame::Cohort(_) => {
                 panic!("Frame::into_concrete called on Cohort variant — L1 invariant violated")
-            }
+            },
         }
     }
 
@@ -450,18 +443,16 @@ impl<W: SemiringRef> Frame<W> {
     /// Panics with a stage-tagged message if called on `Cohort`.
     #[inline(always)]
     pub fn as_concrete_expect(&self) -> &BranchCursor<W> {
-        self.as_concrete().expect(
-            "L3.1: branch_cursors entry must be Concrete (no cohort frames before L3.4)",
-        )
+        self.as_concrete()
+            .expect("L3.1: branch_cursors entry must be Concrete (no cohort frames before L3.4)")
     }
 
     /// Phase F.13 Stage L3.1 (2026-05-25): mutable companion of
     /// `as_concrete_expect`. Same L3.1 invariant: panics on `Cohort`.
     #[inline(always)]
     pub fn as_concrete_expect_mut(&mut self) -> &mut BranchCursor<W> {
-        self.as_concrete_mut().expect(
-            "L3.1: branch_cursors entry must be Concrete (no cohort frames before L3.4)",
-        )
+        self.as_concrete_mut()
+            .expect("L3.1: branch_cursors entry must be Concrete (no cohort frames before L3.4)")
     }
 }
 
@@ -470,9 +461,7 @@ impl<W: SemiringRef> Frame<W> {
 /// unwrapped concrete refs; panics on `Cohort` with the L3.1 message.
 /// Used by stats/snapshot read loops in the walker.
 #[inline]
-pub fn concrete_iter<W: SemiringRef>(
-    slice: &[Frame<W>],
-) -> impl Iterator<Item = &BranchCursor<W>> {
+pub fn concrete_iter<W: SemiringRef>(slice: &[Frame<W>]) -> impl Iterator<Item = &BranchCursor<W>> {
     slice.iter().map(|f| f.as_concrete_expect())
 }
 
@@ -496,10 +485,7 @@ impl<W: SemiringRef> CohortShell<W> {
     /// at the moment before the cohort's CategoryEntry push — used
     /// at fan_out time to derive each revived member's CoW post-
     /// dispatch SPPF stack.
-    pub fn from_branch_cursor(
-        parent: &BranchCursor<W>,
-        dispatch_key: DispatchKey,
-    ) -> Self {
+    pub fn from_branch_cursor(parent: &BranchCursor<W>, dispatch_key: DispatchKey) -> Self {
         // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone (O(1)) — was
         // `Arc::new(parent.visited_*.clone())` pre-L4.1 which deep-
         // cloned the HashSet. visited_* are now Arc-wrapped in
@@ -528,7 +514,7 @@ impl<W: SemiringRef> CohortShell<W> {
             incoming_edge_stack_id: parent.incoming_edge_stack_id,
             collection_depth: parent.collection_stack_depth,
             cohort_origin: parent.cohort_origin.clone(),
-            lex_alt_idx: 0,    // populated from parent.weight via LexProvenance trait (Stage L3 wiring)
+            lex_alt_idx: 0, // populated from parent.weight via LexProvenance trait (Stage L3 wiring)
             weight_src_idx: 0, // ditto
             weight_rule_idx: 0, // ditto
             lex_fork_stamp: parent.lex_fork_path.last().copied(),
@@ -564,10 +550,7 @@ impl<W: SemiringRef + Clone> CohortMemberState<W> {
     /// existing `CohortMember.weight_at_dispatch` convention).
     /// `snapshot_idx` is `0` at formation; the L3 fan_out path
     /// updates it per worker_snapshot during multi-packing fanout.
-    pub fn from_branch_cursor(
-        parent: &BranchCursor<W>,
-        weight_at_dispatch: W,
-    ) -> Self {
+    pub fn from_branch_cursor(parent: &BranchCursor<W>, weight_at_dispatch: W) -> Self {
         Self {
             weight_at_dispatch,
             snapshot_idx: 0,
@@ -679,7 +662,7 @@ pub fn apply_obs_invariant_to_shell<W: SemiringRef + Clone>(
             // referenced and Arc::make_mut is O(1).
             std::sync::Arc::make_mut(&mut cf.shell).inner_state = new_state;
             Ok(())
-        }
+        },
         other => Err(other),
     }
 }
@@ -712,7 +695,7 @@ pub fn apply_obs_invariant_to_frontier<W: SemiringRef + Clone>(
             // Single shell mutation. Per-arc state is unchanged.
             std::sync::Arc::make_mut(&mut node.shell).inner_state = new_state;
             Ok(())
-        }
+        },
         // Phase F.13 chain_10000 Exp 15 Substage 6 (2026-05-27):
         // graduate terminal-state variants Accept/Error/Idle. These
         // mutate only `inner_state` (terminal states tracked via
@@ -724,28 +707,25 @@ pub fn apply_obs_invariant_to_frontier<W: SemiringRef + Clone>(
             std::sync::Arc::make_mut(&mut node.shell).inner_state =
                 crate::wpda_runtime::WpdaState::Accepted;
             Ok(())
-        }
+        },
         WpdaStepAction::Error(message) => {
             std::sync::Arc::make_mut(&mut node.shell).inner_state =
                 crate::wpda_runtime::WpdaState::Error { message };
             Ok(())
-        }
+        },
         WpdaStepAction::Idle => {
             // Idle is a no-op transition; shell state preserved.
             Ok(())
-        }
+        },
         other => Err(other),
     }
 }
 
-/// Phase F.13 Stage L3.2 (2026-05-25): consume a cohort frame and yield
+/// Consume a cohort frame and yield
 /// one `Frame::Concrete(BranchCursor)` per member via
-/// `materialize_branch_cursor`. This is the L3.2 step_cohort_frame
-/// stub's primary primitive — and also the L3.6 forced-materialization
-/// hook used at `merge_equivalent_cursors`, EOI, etc.
-pub fn materialize_cohort_to_frames<W: SemiringRef + Clone>(
-    cf: CohortFrame<W>,
-) -> Vec<Frame<W>> {
+/// `materialize_branch_cursor`. Used by forced-materialization hooks at
+/// merge, EOI, commit, and pruning boundaries.
+pub fn materialize_cohort_to_frames<W: SemiringRef + Clone>(cf: CohortFrame<W>) -> Vec<Frame<W>> {
     let shell = cf.shell;
     cf.members
         .into_iter()
@@ -839,10 +819,8 @@ mod tests {
 
     #[test]
     fn classify_pop_is_divergent() {
-        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Pop {
-            weight: one(),
-            new_state: ready(),
-        };
+        let a: WpdaStepAction<LexicographicWeight> =
+            WpdaStepAction::Pop { weight: one(), new_state: ready() };
         assert_eq!(DivergenceClass::classify(&a), DivergenceClass::ObsDivergent);
     }
 
@@ -858,20 +836,16 @@ mod tests {
 
     #[test]
     fn classify_consume_family_is_divergent() {
-        let c: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Consume {
-            weight: one(),
-            new_state: ready(),
-        };
+        let c: WpdaStepAction<LexicographicWeight> =
+            WpdaStepAction::Consume { weight: one(), new_state: ready() };
         let cp: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeAndPush {
             symbol: ret_sym(),
             weight: one(),
             new_state: ready(),
             trigger_mode: TriggerMode::Discard,
         };
-        let cpop: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeAndPop {
-            weight: one(),
-            new_state: ready(),
-        };
+        let cpop: WpdaStepAction<LexicographicWeight> =
+            WpdaStepAction::ConsumeAndPop { weight: one(), new_state: ready() };
         let cr: WpdaStepAction<LexicographicWeight> = WpdaStepAction::ConsumeAndReplace {
             symbol: ret_sym(),
             weight: one(),
@@ -920,8 +894,7 @@ mod tests {
     #[test]
     fn classify_for_tomita_advance_is_invariant_over_arcs() {
         use crate::tomita_frontier::TomitaDivergence;
-        let action: WpdaStepAction<LexicographicWeight> =
-            WpdaStepAction::Advance(ready());
+        let action: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Advance(ready());
         assert_eq!(
             DivergenceClass::classify_for_tomita(&action),
             TomitaDivergence::ObsInvariantOverArcs,
@@ -932,8 +905,7 @@ mod tests {
     fn classify_for_tomita_accept_error_idle_are_invariant() {
         use crate::tomita_frontier::TomitaDivergence;
         let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Accept;
-        let e: WpdaStepAction<LexicographicWeight> =
-            WpdaStepAction::Error("x".into());
+        let e: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Error("x".into());
         let i: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Idle;
         assert_eq!(
             DivergenceClass::classify_for_tomita(&a),
@@ -966,10 +938,8 @@ mod tests {
     #[test]
     fn classify_for_tomita_pop_is_divergent_over_arcs_at_substage_2() {
         use crate::tomita_frontier::TomitaDivergence;
-        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::Pop {
-            weight: one(),
-            new_state: ready(),
-        };
+        let a: WpdaStepAction<LexicographicWeight> =
+            WpdaStepAction::Pop { weight: one(), new_state: ready() };
         assert_eq!(
             DivergenceClass::classify_for_tomita(&a),
             TomitaDivergence::ObsDivergentOverArcs,
@@ -1007,24 +977,23 @@ mod tests {
     #[test]
     fn classify_for_tomita_iterative_chain_absorb_is_divergent_over_arcs() {
         use crate::tomita_frontier::TomitaDivergence;
-        let a: WpdaStepAction<LexicographicWeight> =
-            WpdaStepAction::IterativeChainAbsorb {
-                symbol: ret_sym(),
-                weight: one(),
-                new_state: ready(),
-                spec: crate::binding_power::IterAbsorbSpec {
-                    left_bp: 0,
-                    right_bp: 0,
-                    assoc_right: false,
-                    is_mixfix: false,
-                    op_cat_src_idx: 0,
-                    op_rule_idx: 0,
-                    atom_cat_src_idx: 0,
-                    atom_lit_rule_idx: 0,
-                    trigger: "",
-                    sep: "",
-                },
-            };
+        let a: WpdaStepAction<LexicographicWeight> = WpdaStepAction::IterativeChainAbsorb {
+            symbol: ret_sym(),
+            weight: one(),
+            new_state: ready(),
+            spec: crate::binding_power::IterAbsorbSpec {
+                left_bp: 0,
+                right_bp: 0,
+                assoc_right: false,
+                is_mixfix: false,
+                op_cat_src_idx: 0,
+                op_rule_idx: 0,
+                atom_cat_src_idx: 0,
+                atom_lit_rule_idx: 0,
+                trigger: "",
+                sep: "",
+            },
+        };
         assert_eq!(
             DivergenceClass::classify_for_tomita(&a),
             TomitaDivergence::ObsDivergentOverArcs,

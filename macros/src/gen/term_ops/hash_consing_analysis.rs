@@ -44,11 +44,8 @@ pub struct HashConsingReport {
 /// - Subterms are frequently shared (e.g., `PPar(a, a)`)
 /// - Equality checks are O(1) with pointer comparison vs O(depth) structural
 pub fn analyze_hash_consing(language: &LanguageDef) -> HashConsingReport {
-    let all_categories: HashSet<String> = language
-        .types
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect();
+    let all_categories: HashSet<String> =
+        language.types.iter().map(|t| t.name.to_string()).collect();
 
     // Group rules by category
     let mut rules_by_cat: HashMap<String, Vec<&GrammarRule>> = HashMap::new();
@@ -62,7 +59,10 @@ pub fn analyze_hash_consing(language: &LanguageDef) -> HashConsingReport {
 
     for lang_type in &language.types {
         let cat_name = lang_type.name.to_string();
-        let rules = rules_by_cat.get(&cat_name).map(|v| v.as_slice()).unwrap_or(&[]);
+        let rules = rules_by_cat
+            .get(&cat_name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
 
         let mut recursive_refs = HashSet::new();
         let mut recursive_variant_count = 0;
@@ -116,16 +116,16 @@ fn collect_category_refs(rule: &GrammarRule, categories: &HashSet<String>) -> Ha
             match param {
                 TermParam::Simple { ty, .. } => {
                     collect_type_category_refs(ty, categories, refs);
-                }
+                },
                 TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                     collect_type_category_refs(ty, categories, refs);
-                }
+                },
                 TermParam::GuardBody { .. } => {
                     // Guard bodies carry no category references.
-                }
+                },
                 TermParam::Optional { params: inner } => {
                     walk_term_params(inner, categories, refs);
-                }
+                },
             }
         }
     }
@@ -141,20 +141,20 @@ fn collect_category_refs(rule: &GrammarRule, categories: &HashSet<String>) -> Ha
                 if categories.contains(&name) {
                     refs.insert(name);
                 }
-            }
+            },
             GrammarItem::Collection { element_type, .. } => {
                 let name = element_type.to_string();
                 if categories.contains(&name) {
                     refs.insert(name);
                 }
-            }
+            },
             GrammarItem::Binder { category } => {
                 let name = category.to_string();
                 if categories.contains(&name) {
                     refs.insert(name);
                 }
-            }
-            GrammarItem::Terminal(_) => {}
+            },
+            GrammarItem::Terminal(_) => {},
         }
     }
 
@@ -173,24 +173,24 @@ fn collect_type_category_refs(
             if categories.contains(&name) {
                 refs.insert(name);
             }
-        }
+        },
         TypeExpr::Arrow { domain, codomain } => {
             collect_type_category_refs(domain, categories, refs);
             collect_type_category_refs(codomain, categories, refs);
-        }
+        },
         TypeExpr::MultiBinder(inner) => {
             collect_type_category_refs(inner, categories, refs);
-        }
+        },
         TypeExpr::Collection { element, .. } => {
             collect_type_category_refs(element, categories, refs);
-        }
+        },
         TypeExpr::Refined { base, .. } => {
             collect_type_category_refs(base, categories, refs);
-        }
+        },
         TypeExpr::Map { key, value } => {
             collect_type_category_refs(key, categories, refs);
             collect_type_category_refs(value, categories, refs);
-        }
+        },
     }
 }
 
@@ -212,7 +212,10 @@ fn find_mutual_recursion(graph: &HashMap<String, HashSet<String>>) -> Vec<Vec<St
     let mut rev_graph: HashMap<String, HashSet<String>> = HashMap::new();
     for (from, tos) in graph {
         for to in tos {
-            rev_graph.entry(to.clone()).or_default().insert(from.clone());
+            rev_graph
+                .entry(to.clone())
+                .or_default()
+                .insert(from.clone());
         }
         rev_graph.entry(from.clone()).or_default();
     }

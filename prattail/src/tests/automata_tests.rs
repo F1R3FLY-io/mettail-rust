@@ -4,7 +4,9 @@
 use crate::automata::{
     codegen::generate_lexer_string,
     minimize::minimize_dfa,
-    nfa::{build_nfa, build_nfa_for_mode, build_nfa_prefix_only, build_nfa_with_custom, BuiltinNeeds},
+    nfa::{
+        build_nfa, build_nfa_for_mode, build_nfa_prefix_only, build_nfa_with_custom, BuiltinNeeds,
+    },
     partition::compute_equivalence_classes,
     subset::subset_construction,
     TerminalPattern, TokenKind, DEAD_STATE,

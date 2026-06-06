@@ -12,16 +12,6 @@ use mettail_runtime::BehavioralPred;
 // WFST-derived test coverage plan
 // ═══════════════════════════════════════════════════════════
 // Dead rules (skipped):
-//   - BoolToInt
-//   - CastBag
-//   - CastBigInt
-//   - CastBigRat
-//   - CastBool
-//   - CastInt
-//   - CastList
-//   - CastMap
-//   - CastStr
-//   - CastUInt32
 //   - Int::CountBag
 //   - Proc::BigintCastProc
 //   - Proc::BigratCastProc
@@ -50,14 +40,11 @@ use mettail_runtime::BehavioralPred;
 //   - Proc::UIntBinProc
 //   - Proc::UnionBag
 //   - Proc::ValuesMap
-//   - UInt32ToInt
 // Constructor weights (lower = more frequent):
-//   BagLit               weight: 0.0000
 //   BigIntLit            weight: 0.0000
 //   BigRatLit            weight: 0.0000
 //   BigintCastProc       weight: 0.0000
 //   BigratCastProc       weight: 0.0000
-//   BitNot               weight: 0.0000
 //   BoolLit              weight: 0.0000
 //   ConcatList           weight: 0.0000
 //   CountBag             weight: 0.0000
@@ -72,39 +59,41 @@ use mettail_runtime::BehavioralPred;
 //   FloatLit             weight: 0.0000
 //   FractionProc         weight: 0.0000
 //   GetMap               weight: 0.0000
-//   ... and 124 more
+//   Grouping             weight: 0.0000
+//   HasMap               weight: 0.0000
+//   ... and 116 more
 // Category weights:
-//   Proc                 weight: 0.1375
-//   Int                  weight: 0.4000
-//   Bag                  weight: 0.6667
+//   Proc                 weight: 0.1528
+//   Int                  weight: 0.5000
 //   BigInt               weight: 0.6667
 //   BigRat               weight: 0.6667
 //   Bool                 weight: 0.6667
 //   Fixed                weight: 0.6667
 //   Float                weight: 0.6667
-//   List                 weight: 0.6667
-//   Map                  weight: 0.6667
 //   Name                 weight: 0.6667
 //   Str                  weight: 0.6667
 //   UInt32               weight: 0.6667
+//   Bag                  weight: 1.0000
+//   List                 weight: 1.0000
+//   Map                  weight: 1.0000
 //
 
 // ─────────────────────────────────────────────────────────
 // WPDS path coverage plan
 // ─────────────────────────────────────────────────────────
-//   Proc                 budget:  11  (category weight: 0.1375)
-//   Name                 budget:   2  (category weight: 0.6667)
-//   Int                  budget:   4  (category weight: 0.4000)
-//   UInt32               budget:   2  (category weight: 0.6667)
-//   BigInt               budget:   2  (category weight: 0.6667)
-//   BigRat               budget:   2  (category weight: 0.6667)
-//   Fixed                budget:   2  (category weight: 0.6667)
-//   Float                budget:   2  (category weight: 0.6667)
-//   Bool                 budget:   2  (category weight: 0.6667)
+//   Proc                 budget:  11  (category weight: 0.1528)
+//   Name                 budget:   3  (category weight: 0.6667)
+//   Int                  budget:   3  (category weight: 0.5000)
+//   UInt32               budget:   3  (category weight: 0.6667)
+//   BigInt               budget:   3  (category weight: 0.6667)
+//   BigRat               budget:   3  (category weight: 0.6667)
+//   Fixed                budget:   3  (category weight: 0.6667)
+//   Float                budget:   3  (category weight: 0.6667)
+//   Bool                 budget:   3  (category weight: 0.6667)
 //   Str                  budget:   2  (category weight: 0.6667)
-//   List                 budget:   2  (category weight: 0.6667)
-//   Bag                  budget:   2  (category weight: 0.6667)
-//   Map                  budget:   2  (category weight: 0.6667)
+//   List                 budget:   1  (category weight: 1.0000)
+//   Bag                  budget:   1  (category weight: 1.0000)
+//   Map                  budget:   1  (category weight: 1.0000)
 //
 
 // ═══════════════════════════════════════════════════════════
@@ -5373,45 +5362,9 @@ fn wfst_rhocalc_dispatch_bigratcastproc_eval() {
 }
 
 #[test]
-fn wfst_rhocalc_dispatch_negint_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
 fn wfst_rhocalc_dispatch_fractionproc_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::FractionProc(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_rhocalc_dispatch_bitnot_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wfst_rhocalc_dispatch_negproc_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5589,18 +5542,6 @@ fn wfst_rhocalc_dispatch_valuesmap_eval() {
 }
 
 #[test]
-fn wfst_rhocalc_dispatch_not_eval() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Proc::Not(std::sync::Arc::new(Proc::PZero));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
 fn wfst_rhocalc_dispatch_len_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::Len(std::sync::Arc::new(Proc::PZero));
@@ -5628,6 +5569,18 @@ fn wfst_rhocalc_dispatch_tobool_eval() {
 fn wfst_rhocalc_dispatch_tostr_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::ToStr(std::sync::Arc::new(Proc::PZero));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_rhocalc_dispatch_negint_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5676,6 +5629,18 @@ fn wfst_rhocalc_dispatch_bitor_eval() {
 fn wfst_rhocalc_dispatch_bitand_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::BitAnd(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_rhocalc_dispatch_bitnot_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::BitNot(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5808,6 +5773,30 @@ fn wfst_rhocalc_dispatch_div_eval() {
 fn wfst_rhocalc_dispatch_mod_eval() {
     mettail_runtime::clear_var_cache();
     let input_term = Proc::Mod(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_rhocalc_dispatch_negproc_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::NegProc(std::sync::Arc::new(Proc::PZero));
+    let input_str = format!("{}", input_term);
+    let lang = RhoCalcLanguage;
+    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
+    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
+    assert!(!results.normal_forms().is_empty(),
+        "{} should evaluate to at least one normal form", input_str);
+}
+
+#[test]
+fn wfst_rhocalc_dispatch_not_eval() {
+    mettail_runtime::clear_var_cache();
+    let input_term = Proc::Not(std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5953,9 +5942,9 @@ fn wpda_rhocalc_uintbinproc_pzero_0() {
 }
 
 #[test]
-fn wpda_rhocalc_negint_0() {
+fn wpda_rhocalc_countbag_pzero_pzero() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(0i64)));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5965,9 +5954,9 @@ fn wpda_rhocalc_negint_0() {
 }
 
 #[test]
-fn wpda_rhocalc_negint_1() {
+fn wpda_rhocalc_countbag_pzero_err() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(1i64)));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::PZero), std::sync::Arc::new(Proc::Err));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -5977,21 +5966,9 @@ fn wpda_rhocalc_negint_1() {
 }
 
 #[test]
-fn wpda_rhocalc_negint_2() {
+fn wpda_rhocalc_countbag_err_pzero() {
     mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(2i64)));
-    let input_str = format!("{}", input_term);
-    let lang = RhoCalcLanguage;
-    let parsed = lang.parse_term(&input_str).expect("parse should succeed");
-    let results = lang.run_ascent(parsed.as_ref()).expect("eval should succeed");
-    assert!(!results.normal_forms().is_empty(),
-        "{} should evaluate to at least one normal form", input_str);
-}
-
-#[test]
-fn wpda_rhocalc_negint_3() {
-    mettail_runtime::clear_var_cache();
-    let input_term = Int::NegInt(std::sync::Arc::new(Int::NumLit(3i64)));
+    let input_term = Int::CountBag(std::sync::Arc::new(Proc::Err), std::sync::Arc::new(Proc::PZero));
     let input_str = format!("{}", input_term);
     let lang = RhoCalcLanguage;
     let parsed = lang.parse_term(&input_str).expect("parse should succeed");
@@ -6950,5 +6927,5 @@ fn type_pres_rhocalc_tostr_pzero() {
 }
 }
 
-// Total operational semantics tests: 532 (P1=181, P2a=50, P2b=0, P3a=200, P3b=0, P4a=43, P4b=0, P5a=15, P5b=43)
+// Total operational semantics tests: 531 (P1=181, P2a=50, P2b=0, P3a=200, P3b=0, P4a=43, P4b=0, P5a=14, P5b=43)
 

@@ -10,8 +10,8 @@
 //! where parallel compositions `P | Q` create independent green threads
 //! sharing the parent environment via structural sharing.
 
-use mettail_prattail::green_thread::{GreenThreadRegistry, QuantumResult};
 use mettail_prattail::channel::GreenThreadId;
+use mettail_prattail::green_thread::{GreenThreadRegistry, QuantumResult};
 use mettail_runtime::LanguageMetadata;
 
 /// Result of green thread scheduling analysis on a language.
@@ -131,27 +131,20 @@ fn run_scheduling_exercise(
     // For each type with multiple constructors, test fork/join by spawning
     // child threads from the parent.
     for ty in types {
-        let constructors: Vec<&mettail_runtime::TermDef> = terms
-            .iter()
-            .filter(|t| t.type_name == ty.name)
-            .collect();
+        let constructors: Vec<&mettail_runtime::TermDef> =
+            terms.iter().filter(|t| t.type_name == ty.name).collect();
 
         if constructors.len() >= 2 {
             // Find the parent thread for this type.
-            if let Some(&parent_id) = thread_ids
-                .iter()
-                .find(|id| {
-                    registry
-                        .get(**id)
-                        .map(|t| t.category == ty.name)
-                        .unwrap_or(false)
-                })
-            {
+            if let Some(&parent_id) = thread_ids.iter().find(|id| {
+                registry
+                    .get(**id)
+                    .map(|t| t.category == ty.name)
+                    .unwrap_or(false)
+            }) {
                 // Fork child threads for each constructor.
                 for ctor in &constructors[1..] {
-                    if let Some(child_id) =
-                        registry.spawn_child(parent_id, ctor.name.to_string())
-                    {
+                    if let Some(child_id) = registry.spawn_child(parent_id, ctor.name.to_string()) {
                         thread_ids.push(child_id);
                         threads_spawned += 1;
                         fork_count += 1;
@@ -162,7 +155,7 @@ fn run_scheduling_exercise(
     }
 
     // Run each thread for a small quantum (10 steps).
-    // Since these are "stub" threads with no CEK control term, they will
+    // Since these threads have no CEK control term, they will
     // either complete immediately or yield.
     for &id in &thread_ids {
         let mut thread_ref = match registry.get_mut(id) {
@@ -179,23 +172,23 @@ fn run_scheduling_exercise(
                 QuantumResult::Completed { result } => {
                     threads_completed += 1;
                     completion_order.push(format!("{}:{}", id, result));
-                }
+                },
                 QuantumResult::Yielded => {
                     threads_yielded += 1;
-                }
+                },
                 QuantumResult::Suspended { .. } => {
                     // Thread is blocked, count as yielded for analysis.
                     threads_yielded += 1;
-                }
+                },
                 QuantumResult::Forked { children } => {
                     fork_count += children.len();
                     threads_completed += 1;
                     completion_order.push(format!("{}:forked({})", id, children.len()));
-                }
+                },
                 QuantumResult::Failed { error } => {
                     threads_completed += 1;
                     completion_order.push(format!("{}:failed({})", id, error));
-                }
+                },
             }
         }
     }

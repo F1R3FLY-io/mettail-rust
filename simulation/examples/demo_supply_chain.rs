@@ -87,7 +87,7 @@
 #![allow(
     non_local_definitions,
     clippy::crate_in_macro_def,
-    clippy::empty_line_after_outer_attr,
+    clippy::empty_line_after_outer_attr
 )]
 
 pub use ascent_byods_rels::eqrel;
@@ -98,8 +98,8 @@ pub mod dual_indexed {
 use mettail_macros::language;
 use mettail_prattail::petri::Marking;
 use mettail_runtime::{
-    BehavioralPred, Language, Quantifier, SeedFacts,
-    evaluate_pred_with_bindings, set_pred_fact_snapshot, clear_pred_fact_snapshot,
+    clear_pred_fact_snapshot, evaluate_pred_with_bindings, set_pred_fact_snapshot, BehavioralPred,
+    Language, Quantifier, SeedFacts,
 };
 use mettail_simulation::stochastic_petri::StochasticPetriNet;
 use rand::{rngs::StdRng, Rng, SeedableRng};
@@ -170,15 +170,15 @@ const SOURCE: &str = "\
 
 // ── Simulation parameters ────────────────────────────────────────────
 
-const FACTORY_INVENTORY: u64   = 50;
-const STORE_CAPACITY:    u64   = 10;
-const LAMBDA_PN:         f64   = 1.0;
-const LAMBDA_CUSTOMER:   f64   = 0.3;
-const BATCH_MU:          f64   = 3.0;
-const BATCH_SIGMA:       f64   = 1.0;
-const MAX_TIME:          f64   = 200.0;
-const MAX_LEAPS:         usize = 10_000;
-const SEED:              u64   = 42;
+const FACTORY_INVENTORY: u64 = 50;
+const STORE_CAPACITY: u64 = 10;
+const LAMBDA_PN: f64 = 1.0;
+const LAMBDA_CUSTOMER: f64 = 0.3;
+const BATCH_MU: f64 = 3.0;
+const BATCH_SIGMA: f64 = 1.0;
+const MAX_TIME: f64 = 200.0;
+const MAX_LEAPS: usize = 10_000;
+const SEED: u64 = 42;
 
 // τ-leaping parameters (Cao–Petzold 2006 adaptive step control)
 //
@@ -188,9 +188,9 @@ const SEED:              u64   = 42;
 // Cao–Petzold canonical 0.03) to make concurrent firings visible in the
 // event log without meaningful accuracy loss at O(1) rates. Drop to 0.03
 // if you need the canonical conservative regime.
-const EPSILON:     f64   = 0.10;
-const TAU_MIN:     f64   = 1e-4;
-const TAU_MAX:     f64   = 1.0;
+const EPSILON: f64 = 0.10;
+const TAU_MIN: f64 = 1e-4;
+const TAU_MAX: f64 = 1.0;
 const MAX_RETRIES: usize = 5;
 
 // ── Petri net construction from a parsed term ───────────────────────
@@ -202,11 +202,7 @@ struct PetriNetResult {
     send_channels: Vec<Name>,
 }
 
-fn petri_net_from_proc(
-    proc: &Proc,
-    facts: &SeedFacts,
-    rate: f64,
-) -> PetriNetResult {
+fn petri_net_from_proc(proc: &Proc, facts: &SeedFacts, rate: f64) -> PetriNetResult {
     let mut net = StochasticPetriNet::new();
     let mut place_ids: HashMap<Name, usize> = HashMap::new();
 
@@ -215,7 +211,8 @@ fn petri_net_from_proc(
 
     let get_place = |net: &mut StochasticPetriNet,
                      place_ids: &mut HashMap<Name, usize>,
-                     name: &Name| -> usize {
+                     name: &Name|
+     -> usize {
         if let Some(&id) = place_ids.get(name) {
             id
         } else {
@@ -293,24 +290,27 @@ fn collect_top_level(
             for (elem, _) in bag.iter() {
                 collect_top_level(elem, sends, receives);
             }
-        }
+        },
         Proc::POutput(dst, _) => {
             if matches!(**dst, Name::NQuote(_)) {
                 sends.push((**dst).clone());
             }
-        }
+        },
         Proc::PReceive(loc, pred, scope) => {
             if matches!(**loc, Name::NQuote(_)) {
                 let body = scope.unsafe_body();
                 let output_chs = collect_output_channels(body);
-                let binder_name = scope.unsafe_pattern().0.pretty_name
+                let binder_name = scope
+                    .unsafe_pattern()
+                    .0
+                    .pretty_name
                     .as_ref()
                     .map(|s| s.to_string())
                     .unwrap_or_default();
                 receives.push(((**loc).clone(), pred.clone(), output_chs, binder_name));
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -326,13 +326,13 @@ fn collect_outputs_recursive(proc: &Proc, channels: &mut Vec<Name>) {
             if matches!(**dst, Name::NQuote(_)) {
                 channels.push((**dst).clone());
             }
-        }
+        },
         Proc::PPar(bag) => {
             for (elem, _) in bag.iter() {
                 collect_outputs_recursive(elem, channels);
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -344,21 +344,17 @@ fn predicate_name(pred: &BehavioralPred) -> String {
     match pred {
         BehavioralPred::Top => "true".to_string(),
         BehavioralPred::RelationQuery { relation_name, .. } => relation_name.clone(),
-        BehavioralPred::And(a, b) =>
-            format!("{} & {}", predicate_name(a), predicate_name(b)),
-        BehavioralPred::Or(a, b) =>
-            format!("{} | {}", predicate_name(a), predicate_name(b)),
-        BehavioralPred::Not(inner) =>
-            format!("!{}", predicate_name(inner)),
-        BehavioralPred::Implies(p, c) =>
-            format!("{} => {}", predicate_name(p), predicate_name(c)),
+        BehavioralPred::And(a, b) => format!("{} & {}", predicate_name(a), predicate_name(b)),
+        BehavioralPred::Or(a, b) => format!("{} | {}", predicate_name(a), predicate_name(b)),
+        BehavioralPred::Not(inner) => format!("!{}", predicate_name(inner)),
+        BehavioralPred::Implies(p, c) => format!("{} => {}", predicate_name(p), predicate_name(c)),
         BehavioralPred::Quantified { quantifier, var, body, .. } => {
             let q = match quantifier {
                 Quantifier::ForAll => "forall",
                 Quantifier::Exists => "exists",
             };
             format!("{}({}, {})", q, var, predicate_name(body))
-        }
+        },
         BehavioralPred::AcMatch { .. } => "ac_match(...)".to_string(),
     }
 }
@@ -369,10 +365,7 @@ fn find_place_by_label(net: &StochasticPetriNet, label: &str) -> Option<usize> {
     net.places.iter().position(|p| p.name == label)
 }
 
-fn find_transition_by_label_substring(
-    net: &StochasticPetriNet,
-    substr: &str,
-) -> Option<usize> {
+fn find_transition_by_label_substring(net: &StochasticPetriNet, substr: &str) -> Option<usize> {
     net.transitions
         .iter()
         .position(|t| t.transition.name.contains(substr))
@@ -396,48 +389,48 @@ fn install_capacity_guard(
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct CustomerLeap {
-    arrivals:   u64,
-    batches:    Vec<u64>,
+    arrivals: u64,
+    batches: Vec<u64>,
     units_sold: u64,
-    blocked:    u64,
+    blocked: u64,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct LeapRecord {
-    t_start:       f64,
-    tau:           f64,
-    pn_firings:    Vec<u64>,
-    customer:      CustomerLeap,
+    t_start: f64,
+    tau: f64,
+    pn_firings: Vec<u64>,
+    customer: CustomerLeap,
     overflow_clip: u64,
-    retries:       u32,
+    retries: u32,
     marking_after: Marking,
 }
 
 #[derive(Debug, Clone)]
 struct Stats {
     place_time_integrals: Vec<f64>,
-    units_sold:          u64,
-    customer_arrivals:   u64,
-    blocked_arrivals:    u64,
-    batch_size_sum:      u64,
-    gate_blocked_time:   f64,
-    overflow_clips:      u64,
-    tau_sum:             f64,
-    tau_min_seen:        f64,
-    tau_max_seen:        f64,
-    leaps:               u64,
-    multi_firing_leaps:  u64,
+    units_sold: u64,
+    customer_arrivals: u64,
+    blocked_arrivals: u64,
+    batch_size_sum: u64,
+    gate_blocked_time: f64,
+    overflow_clips: u64,
+    tau_sum: f64,
+    tau_min_seen: f64,
+    tau_max_seen: f64,
+    leaps: u64,
+    multi_firing_leaps: u64,
     max_firings_in_leap: u64,
-    total_retries:       u32,
-    final_time:          f64,
+    total_retries: u32,
+    final_time: f64,
 }
 
 struct SupplyChainTrace {
-    leaps:         Vec<LeapRecord>,
+    leaps: Vec<LeapRecord>,
     final_marking: Marking,
-    stats:         Stats,
-    deadlocked:    bool,
+    stats: Stats,
+    deadlocked: bool,
 }
 
 /// Sample one batch per customer arrival from Normal(μ, σ²); clamp to
@@ -624,20 +617,20 @@ fn simulate_with_customer_tau_leap(
     let mut leaps: Vec<LeapRecord> = Vec::new();
     let mut stats = Stats {
         place_time_integrals: vec![0.0; num_places],
-        units_sold:          0,
-        customer_arrivals:   0,
-        blocked_arrivals:    0,
-        batch_size_sum:      0,
-        gate_blocked_time:   0.0,
-        overflow_clips:      0,
-        tau_sum:             0.0,
-        tau_min_seen:        f64::INFINITY,
-        tau_max_seen:        0.0,
-        leaps:               0,
-        multi_firing_leaps:  0,
+        units_sold: 0,
+        customer_arrivals: 0,
+        blocked_arrivals: 0,
+        batch_size_sum: 0,
+        gate_blocked_time: 0.0,
+        overflow_clips: 0,
+        tau_sum: 0.0,
+        tau_min_seen: f64::INFINITY,
+        tau_max_seen: 0.0,
+        leaps: 0,
+        multi_firing_leaps: 0,
         max_firings_in_leap: 0,
-        total_retries:       0,
-        final_time:          0.0,
+        total_retries: 0,
+        final_time: 0.0,
     };
     let mut deadlocked = false;
 
@@ -696,7 +689,7 @@ fn simulate_with_customer_tau_leap(
                     };
 
                     break (pn_firings, customer, overflow_clip, trial, tau);
-                }
+                },
                 None => {
                     retries += 1;
                     if retries as usize >= MAX_RETRIES {
@@ -754,7 +747,7 @@ fn simulate_with_customer_tau_leap(
                         );
                     }
                     tau = (tau * 0.5).max(TAU_MIN);
-                }
+                },
             }
         };
 
@@ -778,15 +771,15 @@ fn simulate_with_customer_tau_leap(
         }
 
         stats.customer_arrivals += customer.arrivals;
-        stats.blocked_arrivals  += customer.blocked;
-        stats.units_sold        += customer.units_sold;
-        stats.batch_size_sum    += customer.units_sold;
-        stats.overflow_clips    += overflow_clip;
-        stats.tau_sum           += actual_tau;
-        stats.tau_min_seen       = stats.tau_min_seen.min(actual_tau);
-        stats.tau_max_seen       = stats.tau_max_seen.max(actual_tau);
-        stats.leaps             += 1;
-        stats.total_retries     += retries;
+        stats.blocked_arrivals += customer.blocked;
+        stats.units_sold += customer.units_sold;
+        stats.batch_size_sum += customer.units_sold;
+        stats.overflow_clips += overflow_clip;
+        stats.tau_sum += actual_tau;
+        stats.tau_min_seen = stats.tau_min_seen.min(actual_tau);
+        stats.tau_max_seen = stats.tau_max_seen.max(actual_tau);
+        stats.leaps += 1;
+        stats.total_retries += retries;
 
         // Commit.
         marking = new_marking;
@@ -828,11 +821,19 @@ fn render_customer_cell(cl: &CustomerLeap) -> String {
 }
 
 fn render_clip_cell(clip: u64) -> String {
-    if clip == 0 { "·".to_string() } else { clip.to_string() }
+    if clip == 0 {
+        "·".to_string()
+    } else {
+        clip.to_string()
+    }
 }
 
 fn render_firing_cell(k: u64) -> String {
-    if k == 0 { "·".to_string() } else { k.to_string() }
+    if k == 0 {
+        "·".to_string()
+    } else {
+        k.to_string()
+    }
 }
 
 /// Build a human-readable comment describing the actions in a single
@@ -842,7 +843,7 @@ fn render_firing_cell(k: u64) -> String {
 fn render_comment_cell(
     leap: &LeapRecord,
     factory_tx_id: Option<usize>,
-    store_tx_id:   Option<usize>,
+    store_tx_id: Option<usize>,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -866,8 +867,13 @@ fn render_comment_cell(
 
     if leap.customer.arrivals > 0 {
         let purchased = leap.customer.units_sold;
-        let batches: Vec<String> =
-            leap.customer.batches.iter().filter(|&&b| b > 0).map(|b| b.to_string()).collect();
+        let batches: Vec<String> = leap
+            .customer
+            .batches
+            .iter()
+            .filter(|&&b| b > 0)
+            .map(|b| b.to_string())
+            .collect();
         if leap.customer.arrivals == 1 {
             parts.push(format!("customer bought {}", purchased));
         } else if !batches.is_empty() {
@@ -896,17 +902,17 @@ fn render_comment_cell(
 /// trace table. Each is the max of its header label width and the
 /// widest rendered data value across all leaps.
 struct ColumnWidths {
-    leap:         usize,
-    t_start:      usize,
-    tau:          usize,
-    tx:           Vec<usize>,
-    customer:     usize,
-    clip:         usize,
-    places:       Vec<usize>,
-    factory_loc:  usize,
-    store_loc:    usize,
+    leap: usize,
+    t_start: usize,
+    tau: usize,
+    tx: Vec<usize>,
+    customer: usize,
+    clip: usize,
+    places: Vec<usize>,
+    factory_loc: usize,
+    store_loc: usize,
     customer_loc: usize,
-    comment:      usize,
+    comment: usize,
 }
 
 fn compute_column_widths(
@@ -974,20 +980,28 @@ fn compute_column_widths(
         cum_sold += leap.customer.units_sold;
         if let Some(fid) = factory_place_id {
             let v = leap.marking_after.get(fid).to_string();
-            if char_len(&v) > factory_w { factory_w = char_len(&v); }
+            if char_len(&v) > factory_w {
+                factory_w = char_len(&v);
+            }
         }
         if let Some(sid) = store_place_id {
             let v = leap.marking_after.get(sid).to_string();
-            if char_len(&v) > store_w { store_w = char_len(&v); }
+            if char_len(&v) > store_w {
+                store_w = char_len(&v);
+            }
         }
         let v = cum_sold.to_string();
-        if char_len(&v) > customer_loc_w { customer_loc_w = char_len(&v); }
+        if char_len(&v) > customer_loc_w {
+            customer_loc_w = char_len(&v);
+        }
     }
 
     let mut comment_w = char_len("comment");
     for leap in &trace.leaps {
         let v = render_comment_cell(leap, factory_tx_id, store_tx_id);
-        if char_len(&v) > comment_w { comment_w = char_len(&v); }
+        if char_len(&v) > comment_w {
+            comment_w = char_len(&v);
+        }
     }
 
     ColumnWidths {
@@ -1016,39 +1030,54 @@ fn print_leap_trace(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
         .enumerate()
         .map(|(j, st)| format!("t{}[{}]", j, short_tx_label(&st.transition.name)))
         .collect();
-    let place_labels: Vec<String> =
-        net.places.iter().map(|p| p.name.clone()).collect();
+    let place_labels: Vec<String> = net.places.iter().map(|p| p.name.clone()).collect();
 
     let factory_place_id = find_place_by_label(net, "@1");
-    let store_place_id   = find_place_by_label(net, "@3");
-    let factory_tx_id    = find_transition_by_label_substring(net, "certified");
-    let store_tx_id      = find_transition_by_label_substring(net, "capacity_ok");
+    let store_place_id = find_place_by_label(net, "@3");
+    let factory_tx_id = find_transition_by_label_substring(net, "certified");
+    let store_tx_id = find_transition_by_label_substring(net, "capacity_ok");
     let w = compute_column_widths(
-        trace, net, &tx_labels, &place_labels,
-        factory_place_id, store_place_id, factory_tx_id, store_tx_id,
+        trace,
+        net,
+        &tx_labels,
+        &place_labels,
+        factory_place_id,
+        store_place_id,
+        factory_tx_id,
+        store_tx_id,
     );
 
     // Header.
     print!(
         "  {:>lw$}  {:>tw$}  {:>uw$}  ",
-        "leap", "t_start", "τ",
-        lw = w.leap, tw = w.t_start, uw = w.tau,
+        "leap",
+        "t_start",
+        "τ",
+        lw = w.leap,
+        tw = w.t_start,
+        uw = w.tau,
     );
     for (lbl, &cw) in tx_labels.iter().zip(&w.tx) {
         print!(" {:>cw$}", lbl, cw = cw);
     }
     print!(
         "  │ {:>cc$}  {:>cl$}  │",
-        "customer (batches)", "clip",
-        cc = w.customer, cl = w.clip,
+        "customer (batches)",
+        "clip",
+        cc = w.customer,
+        cl = w.clip,
     );
     for (lbl, &pw) in place_labels.iter().zip(&w.places) {
         print!(" {:>pw$}", lbl, pw = pw);
     }
     print!(
         "  │ {:>fw$}  {:>sw$}  {:>kw$}",
-        "factory", "store", "customer",
-        fw = w.factory_loc, sw = w.store_loc, kw = w.customer_loc,
+        "factory",
+        "store",
+        "customer",
+        fw = w.factory_loc,
+        sw = w.store_loc,
+        kw = w.customer_loc,
     );
     print!("  │ {:<mw$}", "comment", mw = w.comment);
     println!();
@@ -1056,24 +1085,28 @@ fn print_leap_trace(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
     // Divider.
     print!(
         "  {:->lw$}  {:->tw$}  {:->uw$}  ",
-        "", "", "",
-        lw = w.leap, tw = w.t_start, uw = w.tau,
+        "",
+        "",
+        "",
+        lw = w.leap,
+        tw = w.t_start,
+        uw = w.tau,
     );
     for &cw in &w.tx {
         print!(" {:->cw$}", "", cw = cw);
     }
-    print!(
-        "  │ {:->cc$}  {:->cl$}  │",
-        "", "",
-        cc = w.customer, cl = w.clip,
-    );
+    print!("  │ {:->cc$}  {:->cl$}  │", "", "", cc = w.customer, cl = w.clip,);
     for &pw in &w.places {
         print!(" {:->pw$}", "", pw = pw);
     }
     print!(
         "  │ {:->fw$}  {:->sw$}  {:->kw$}",
-        "", "", "",
-        fw = w.factory_loc, sw = w.store_loc, kw = w.customer_loc,
+        "",
+        "",
+        "",
+        fw = w.factory_loc,
+        sw = w.store_loc,
+        kw = w.customer_loc,
     );
     print!("  │ {:-<mw$}", "", mw = w.comment);
     println!();
@@ -1084,8 +1117,12 @@ fn print_leap_trace(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
         cum_sold += leap.customer.units_sold;
         print!(
             "  {:>lw$}  {:>tw$.3}  {:>uw$.4}  ",
-            i, leap.t_start, leap.tau,
-            lw = w.leap, tw = w.t_start, uw = w.tau,
+            i,
+            leap.t_start,
+            leap.tau,
+            lw = w.leap,
+            tw = w.t_start,
+            uw = w.tau,
         );
         for (j, &k) in leap.pn_firings.iter().enumerate() {
             let cell = render_firing_cell(k);
@@ -1093,21 +1130,25 @@ fn print_leap_trace(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
         }
         let cust_col = render_customer_cell(&leap.customer);
         let clip_col = render_clip_cell(leap.overflow_clip);
-        print!(
-            "  │ {:>cc$}  {:>cl$}  │",
-            cust_col, clip_col,
-            cc = w.customer, cl = w.clip,
-        );
+        print!("  │ {:>cc$}  {:>cl$}  │", cust_col, clip_col, cc = w.customer, cl = w.clip,);
         for p in 0..net.places.len() {
             let tok = leap.marking_after.get(p).to_string();
             print!(" {:>pw$}", tok, pw = w.places[p]);
         }
-        let factory_inv = factory_place_id.map(|id| leap.marking_after.get(id)).unwrap_or(0);
-        let store_inv   = store_place_id.map(|id| leap.marking_after.get(id)).unwrap_or(0);
+        let factory_inv = factory_place_id
+            .map(|id| leap.marking_after.get(id))
+            .unwrap_or(0);
+        let store_inv = store_place_id
+            .map(|id| leap.marking_after.get(id))
+            .unwrap_or(0);
         print!(
             "  │ {:>fw$}  {:>sw$}  {:>kw$}",
-            factory_inv, store_inv, cum_sold,
-            fw = w.factory_loc, sw = w.store_loc, kw = w.customer_loc,
+            factory_inv,
+            store_inv,
+            cum_sold,
+            fw = w.factory_loc,
+            sw = w.store_loc,
+            kw = w.customer_loc,
         );
         let comment = render_comment_cell(leap, factory_tx_id, store_tx_id);
         print!("  │ {:<mw$}", comment, mw = w.comment);
@@ -1119,11 +1160,17 @@ fn print_leap_trace(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
     println!("  Legend:");
     println!("    tN[…]    = transition N fired K_N ∼ Poisson(λ·τ) times this leap (· = 0)");
     println!("    customer (batches) = {{K_c}}({{batch₁,batch₂,…}}) — arrivals and clamped Normal batch sizes");
-    println!("    clip     = warehouse→store firings bounced back (post-Poisson capacity enforcement)");
+    println!(
+        "    clip     = warehouse→store firings bounced back (post-Poisson capacity enforcement)"
+    );
     println!("    @N       = tokens queued in channel @N *after* this leap");
-    println!("    factory  = inventory at the factory (= tokens at @1, waiting for warehouse intake)");
+    println!(
+        "    factory  = inventory at the factory (= tokens at @1, waiting for warehouse intake)"
+    );
     println!("    store    = inventory on the store shelf (= tokens at @3, ≤ STORE_CAPACITY)");
-    println!("    customer = cumulative units purchased by customers up to and including this leap");
+    println!(
+        "    customer = cumulative units purchased by customers up to and including this leap"
+    );
     println!("    comment  = human-readable summary of actions in the leap (semicolon-joined)");
 }
 
@@ -1162,11 +1209,19 @@ fn print_stats(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
         }
     }
 
-    println!("  Simulation time: {:.2} ATU   Leaps: {}   Deadlocked: {}",
-        s.final_time, s.leaps, trace.deadlocked);
-    let mean_tau = if s.leaps > 0 { s.tau_sum / s.leaps as f64 } else { 0.0 };
-    println!("  Mean τ: {:.4} ATU   [τ_min={:.4}, τ_max={:.4}]   retries={}",
-        mean_tau, s.tau_min_seen, s.tau_max_seen, s.total_retries);
+    println!(
+        "  Simulation time: {:.2} ATU   Leaps: {}   Deadlocked: {}",
+        s.final_time, s.leaps, trace.deadlocked
+    );
+    let mean_tau = if s.leaps > 0 {
+        s.tau_sum / s.leaps as f64
+    } else {
+        0.0
+    };
+    println!(
+        "  Mean τ: {:.4} ATU   [τ_min={:.4}, τ_max={:.4}]   retries={}",
+        mean_tau, s.tau_min_seen, s.tau_max_seen, s.total_retries
+    );
 
     // Per-place time-averaged inventory.
     let avg = |p: usize| -> f64 { s.place_time_integrals[p] / t };
@@ -1174,25 +1229,39 @@ fn print_stats(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
     // Emit per-actor metrics. Labels match the Petri net place/transition names.
     println!();
     for (j, st) in net.transitions.iter().enumerate() {
-        println!("  Transition t{}: {:<25}  fired {}  (avg {:.2}/ATU)",
-            j, st.transition.name, total_firings[j], total_firings[j] as f64 / t);
+        println!(
+            "  Transition t{}: {:<25}  fired {}  (avg {:.2}/ATU)",
+            j,
+            st.transition.name,
+            total_firings[j],
+            total_firings[j] as f64 / t
+        );
     }
 
     println!();
     for (i, place) in net.places.iter().enumerate() {
         let final_tokens = trace.final_marking.get(i);
-        println!("  Place p{}: {:<25}  avg inventory = {:.2}   final = {}",
-            i, place.name, avg(i), final_tokens);
+        println!(
+            "  Place p{}: {:<25}  avg inventory = {:.2}   final = {}",
+            i,
+            place.name,
+            avg(i),
+            final_tokens
+        );
     }
 
     // Store-specific stats.
     if let Some(store_idx) = net.places.iter().position(|p| p.name == "@3") {
         let pct_full = 100.0 * s.gate_blocked_time / t;
         println!();
-        println!("  Store ({}) capacity = {}   time at capacity = {:.2} ATU ({:.1}%)",
-            net.places[store_idx].name, STORE_CAPACITY, s.gate_blocked_time, pct_full);
-        println!("  Overflow-clipped deliveries (bounced back to warehouse) = {}",
-            s.overflow_clips);
+        println!(
+            "  Store ({}) capacity = {}   time at capacity = {:.2} ATU ({:.1}%)",
+            net.places[store_idx].name, STORE_CAPACITY, s.gate_blocked_time, pct_full
+        );
+        println!(
+            "  Overflow-clipped deliveries (bounced back to warehouse) = {}",
+            s.overflow_clips
+        );
     }
 
     // Customer stats.
@@ -1203,10 +1272,14 @@ fn print_stats(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
     };
     println!();
     println!("  Customer:");
-    println!("    arrivals = {}   blocked (empty store) = {}",
-        s.customer_arrivals, s.blocked_arrivals);
-    println!("    units purchased = {}   mean batch = {:.2}   (Normal μ={:.1}, σ={:.1})",
-        s.units_sold, mean_batch, BATCH_MU, BATCH_SIGMA);
+    println!(
+        "    arrivals = {}   blocked (empty store) = {}",
+        s.customer_arrivals, s.blocked_arrivals
+    );
+    println!(
+        "    units purchased = {}   mean batch = {:.2}   (Normal μ={:.1}, σ={:.1})",
+        s.units_sold, mean_batch, BATCH_MU, BATCH_SIGMA
+    );
 
     // Simultaneity.
     let pct_multi = if s.leaps > 0 {
@@ -1225,8 +1298,12 @@ fn print_stats(trace: &SupplyChainTrace, net: &StochasticPetriNet) {
     let conservation_rhs = remaining_in_pipeline + s.units_sold;
     let ok = conservation_lhs == conservation_rhs;
     println!();
-    println!("  Conservation: initial({}) = remaining({}) + sold({}) = {}   {}",
-        conservation_lhs, remaining_in_pipeline, s.units_sold, conservation_rhs,
+    println!(
+        "  Conservation: initial({}) = remaining({}) + sold({}) = {}   {}",
+        conservation_lhs,
+        remaining_in_pipeline,
+        s.units_sold,
+        conservation_rhs,
         if ok { "✓" } else { "✗ MISMATCH" }
     );
     let _ = factory_final;
@@ -1245,12 +1322,15 @@ fn main() {
     println!("  Store capacity:            {}", STORE_CAPACITY);
     println!("  λ(pipeline transitions):   {}", LAMBDA_PN);
     println!("  λ(customer arrivals):      {}", LAMBDA_CUSTOMER);
-    println!("  Batch ~ Normal(μ={:.1}, σ={:.1}), clamped to [1, store inventory]",
-        BATCH_MU, BATCH_SIGMA);
-    println!("  max_time: {:.1} ATU   max_leaps: {}   seed: {}",
-        MAX_TIME, MAX_LEAPS, SEED);
-    println!("  τ-leap ε: {:.2}   τ ∈ [{:.0e}, {:.1}]   max_retries: {}\n",
-        EPSILON, TAU_MIN, TAU_MAX, MAX_RETRIES);
+    println!(
+        "  Batch ~ Normal(μ={:.1}, σ={:.1}), clamped to [1, store inventory]",
+        BATCH_MU, BATCH_SIGMA
+    );
+    println!("  max_time: {:.1} ATU   max_leaps: {}   seed: {}", MAX_TIME, MAX_LEAPS, SEED);
+    println!(
+        "  τ-leap ε: {:.2}   τ ∈ [{:.0e}, {:.1}]   max_retries: {}\n",
+        EPSILON, TAU_MIN, TAU_MAX, MAX_RETRIES
+    );
 
     let lang = SupplyChainLanguage;
     let term = match lang.parse_term(SOURCE) {
@@ -1258,7 +1338,7 @@ fn main() {
         Err(e) => {
             println!("[parse error] {}", e);
             return;
-        }
+        },
     };
     println!("Parsed: {}\n", lang.format_term(&*term));
 
@@ -1271,7 +1351,7 @@ fn main() {
         _ => {
             println!("[error] expected Proc, got {:?}", typed.0);
             return;
-        }
+        },
     };
 
     // Both source-level predicates are seeded true permanently. The
@@ -1312,28 +1392,21 @@ fn main() {
 
     // Override the SeedFacts-backed capacity guard with a marking-backed
     // closure: the gate closes dynamically when the store fills up.
-    install_capacity_guard(
-        &mut result.net,
-        cap_transition_id,
-        store_place_id,
-        STORE_CAPACITY,
-    );
+    install_capacity_guard(&mut result.net, cap_transition_id, store_place_id, STORE_CAPACITY);
 
     // Seed factory inventory at @1 only (not @3). Overwrites the
     // one-token default placed by petri_net_from_proc.
     let factory_place_id = find_place_by_label(&result.net, "@1")
         .expect("factory place @1 must exist after net construction");
-    result.net.set_initial_tokens(factory_place_id, FACTORY_INVENTORY);
+    result
+        .net
+        .set_initial_tokens(factory_place_id, FACTORY_INVENTORY);
     // Clear any stray seed tokens at @3 (shouldn't exist, defensive).
     result.net.set_initial_tokens(store_place_id, 0);
 
     let mut rng = StdRng::seed_from_u64(SEED);
-    let trace = simulate_with_customer_tau_leap(
-        &result.net,
-        store_place_id,
-        cap_transition_id,
-        &mut rng,
-    );
+    let trace =
+        simulate_with_customer_tau_leap(&result.net, store_place_id, cap_transition_id, &mut rng);
 
     println!("Per-leap inventory trace:\n");
     print_leap_trace(&trace, &result.net);

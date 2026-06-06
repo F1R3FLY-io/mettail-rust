@@ -30,11 +30,7 @@ pub fn generate_equation_tests(language: &LanguageDef) -> String {
 
     for (i, equation) in language.equations.iter().enumerate() {
         let eq_name = equation.name.to_string();
-        let test_name = format!(
-            "equation_{}_{}",
-            lang_name_lower,
-            eq_name.to_lowercase()
-        );
+        let test_name = format!("equation_{}_{}", lang_name_lower, eq_name.to_lowercase());
 
         // Check if equation has freshness conditions or other complex premises
         let has_complex_premises = equation.premises.iter().any(|p| {
@@ -49,15 +45,14 @@ pub fn generate_equation_tests(language: &LanguageDef) -> String {
 
         if has_complex_premises {
             // Emit with #[ignore] for equations with complex conditions
-            out.push_str(&format!(
-                "// Equation {} has freshness/complex conditions\n",
-                eq_name
-            ));
+            out.push_str(&format!("// Equation {} has freshness/complex conditions\n", eq_name));
             // Equation has freshness/complex conditions — metadata test only.
             out.push_str("#[test]\n");
             out.push_str(&format!("fn {}() {{\n", test_name));
             out.push_str(&format!("    let _lang = {};\n", lang_struct));
-            out.push_str("    // This equation requires freshness conditions or complex premises\n");
+            out.push_str(
+                "    // This equation requires freshness conditions or complex premises\n",
+            );
             out.push_str("    // that cannot be instantiated statically.\n");
             out.push_str("}\n\n");
         } else {
@@ -78,7 +73,8 @@ pub fn generate_equation_tests(language: &LanguageDef) -> String {
                  \x20       \"Expected at least {} equations in metadata, found {{}}\",\n\
                  \x20       equations.len()\n\
                  \x20   );\n",
-                i, i + 1
+                i,
+                i + 1
             ));
             out.push_str(&format!("    let eq = &equations[{}];\n", i));
 

@@ -73,10 +73,7 @@ impl<G: Clone + Eq + Hash + fmt::Debug + Ord + Send + Sync + 'static> Relational
 
     /// Create the empty relation (zero).
     pub fn empty(universe: Vec<G>) -> Self {
-        RelationalWeight {
-            pairs: HashSet::new(),
-            universe,
-        }
+        RelationalWeight { pairs: HashSet::new(), universe }
     }
 
     /// Create the identity relation (one).
@@ -189,7 +186,10 @@ impl<G: Clone + Eq + Hash + fmt::Debug + Ord + Send + Sync + 'static> HeapSemiri
             return self.pairs.is_empty();
         }
         self.pairs.len() == self.universe.len()
-            && self.universe.iter().all(|g| self.pairs.contains(&(g.clone(), g.clone())))
+            && self
+                .universe
+                .iter()
+                .all(|g| self.pairs.contains(&(g.clone(), g.clone())))
     }
 
     fn approx_eq(&self, other: &Self, _epsilon: f64) -> bool {

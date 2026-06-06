@@ -8,21 +8,538 @@ use mettail_languages::class3multi::*;
 use mettail_runtime::Language;
 use mettail_runtime::BehavioralPred;
 
+mod __mettail_analytical {
+use super::*;
 // ═══════════════════════════════════════════════════════════
 // Analytical tests (confluence, termination)
 // ═══════════════════════════════════════════════════════════
 
 // No rewrites defined — TRS analytical tests skipped.
 
+
+}
+
+mod __mettail_user_tests {
+use super::*;
 // ═══════════════════════════════════════════════════════════
 // User tests (from `tests { }` block)
 // ═══════════════════════════════════════════════════════════
 
 // No user tests defined for Class3Multi — `tests {}` block not yet supported in spec.
 
+
+}
+
+mod __mettail_program_tests {
+use super::*;
 // ═══════════════════════════════════════════════════════════
 // Program tests (from `program { }` blocks)
 // ═══════════════════════════════════════════════════════════
 
 // No program tests defined for Class3Multi — `program {}` blocks not yet supported in spec.
+
+
+}
+
+mod __mettail_ambiguity_exposure {
+use super::*;
+use mettail_runtime :: diagnostics ::
+{ self, clear_diagnostics, emit_d11, pending_count, take_diagnostics, };
+#[test] fn ambiguity_exposure_class3multi_00()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 2usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 2usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_01()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 3usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 3usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_02()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 4usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 4usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_03()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 5usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 5usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_04()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 6usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 6usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_05()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 7usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 7usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_06()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 8usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 8usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_07()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 9usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 9usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_08()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 10usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 10usize.to_string())); assert_eq!
+    (pending_count(), 0);
+} #[test] fn ambiguity_exposure_class3multi_09()
+{
+    clear_diagnostics(); emit_d11("Class3Multi", "TestCat", 11usize); let
+    drained = take_diagnostics(); assert_eq! (drained.len(), 1); assert_eq!
+    (drained [0].code, "D11"); assert_eq!
+    (drained [0].language, "Class3Multi"); assert!
+    (drained [0].message.contains(& 11usize.to_string())); assert_eq!
+    (pending_count(), 0);
+}
+}
+
+mod __mettail_binder_shadowing {
+use super::*;
+use mettail_prattail :: wpda_runtime :: { StackSymbolV2, WpdaState }; use
+mettail_prattail :: gss :: { WpdaGss, WpdaGssNode }; use mettail_prattail ::
+automata :: lex_weight :: LexicographicWeight; #[test] fn
+binder_shadowing_class3multi_00()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 1u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 2usize);
+} #[test] fn binder_shadowing_class3multi_01()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 2u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 3usize);
+} #[test] fn binder_shadowing_class3multi_02()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 3u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 4usize);
+} #[test] fn binder_shadowing_class3multi_03()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 4u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 5usize);
+} #[test] fn binder_shadowing_class3multi_04()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 5u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 6usize);
+} #[test] fn binder_shadowing_class3multi_05()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 6u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 7usize);
+} #[test] fn binder_shadowing_class3multi_06()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 7u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 8usize);
+} #[test] fn binder_shadowing_class3multi_07()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 8u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 9usize);
+} #[test] fn binder_shadowing_class3multi_08()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 9u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 10usize);
+} #[test] fn binder_shadowing_class3multi_09()
+{
+    let mut g : WpdaGss < LexicographicWeight > = WpdaGss :: new(); let root =
+    g.get_or_create_node(WpdaGssNode
+    { pos : 0, symbol : StackSymbolV2 :: category_entry(0), }); let mut cur =
+    root; for d in 0u8 .. 10u8
+    {
+        cur =
+        g.push_symbol(cur, StackSymbolV2 :: rule_at(0, 0, d, None), d as usize
+        + 1, LexicographicWeight :: from_cost(1.0, 0, 0),);
+    } let paths = g.paths_to_root(cur); assert_eq!
+    (paths.len(), 1, "linear binder chain has one path"); assert_eq!
+    (paths [0].len(), 11usize);
+}
+}
+
+mod __mettail_cross_cat_ambiguity {
+use super::*;
+use mettail_prattail :: automata :: lex_weight :: LexicographicWeight; use
+mettail_prattail :: automata :: semiring :: Semiring; use mettail_prattail ::
+wpda_runtime :: { StackSymbolV2, WpdaState }; #[test] fn
+cross_cat_ambiguity_class3multi_00()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 0u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 1u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 0u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_01()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 1u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 2u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 1u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_02()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 2u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 3u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 2u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_03()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 3u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 4u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 3u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_04()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 4u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 5u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 4u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_05()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 5u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 6u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 5u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_06()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 6u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 7u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 6u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_07()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 7u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 8u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 7u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_08()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 8u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 9u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 8u16, "lower src_idx wins on tiebreak");
+} #[test] fn cross_cat_ambiguity_class3multi_09()
+{
+    let earlier = LexicographicWeight :: from_cost(1.0, 9u16, 0); let later =
+    LexicographicWeight :: from_cost(1.0, 10u16, 0); let winner =
+    earlier.plus(& later); assert_eq!
+    (winner.src_idx, 9u16, "lower src_idx wins on tiebreak");
+}
+}
+
+mod __mettail_pratt_bp_boundaries {
+use super::*;
+use mettail_prattail :: wpda_runtime ::
+{ StackSymbolV2, SymbolKind, WpdaState }; #[test] fn
+pratt_bp_boundary_class3multi_00()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 0u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 5u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_01()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 10u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 15u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_02()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 20u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 25u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_03()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 30u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 35u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_04()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 40u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 45u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_05()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 50u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 55u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_06()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 60u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 65u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_07()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 70u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 75u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_08()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 80u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 85u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+} #[test] fn pratt_bp_boundary_class3multi_09()
+{
+    let a = StackSymbolV2 :: infix_continuation(0, 0, 90u8); let b =
+    StackSymbolV2 :: infix_continuation(0, 0, 95u8); assert_ne!
+    (a, b, "different BPs must produce distinct symbols"); assert_eq!
+    (a.kind, SymbolKind :: InfixContinuation); assert_eq!
+    (b.kind, SymbolKind :: InfixContinuation);
+}
+}
+
+mod __mettail_recovery_corruption {
+use super::*;
+use mettail_prattail :: wpda_runtime ::
+{
+    SliceTokenSource, StackSymbolV2, WpdaConfiguration, WpdaControl,
+    WpdaEvent, WpdaState,
+}; use mettail_prattail :: wpda_walker ::
+{ IdleEngine, NullConsumer, WalkerConsumer, WpdaEngine, WpdaWalker, }; use
+mettail_prattail :: automata :: lex_weight :: LexicographicWeight; #[test] fn
+recovery_corruption_class3multi_00()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 0usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 0usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_01()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 7usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 7usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_02()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 14usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 14usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_03()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 21usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 21usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_04()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 28usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 28usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_05()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 35usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 35usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_06()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 42usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 42usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_07()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 49usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 49usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_08()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 56usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 56usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+} #[test] fn recovery_corruption_class3multi_09()
+{
+    let mut w : WpdaWalker < LexicographicWeight, _ > = WpdaWalker ::
+    new(IdleEngine, 0); let empty_tokens = SliceTokenSource :: new(& []); let
+    _ =
+    w.process_event(WpdaEvent :: TokenConsumed
+    {
+        pos : 63usize, token : mettail_prattail :: automata :: TokenKind ::
+        Ident,
+    }, & empty_tokens); assert_eq! (w.position(), 63usize); let _ =
+    w.process_event(WpdaEvent :: Inspect, & empty_tokens); assert!
+    (! w.state().is_terminal());
+}
+}
 

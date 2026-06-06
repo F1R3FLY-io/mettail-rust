@@ -32,12 +32,8 @@ fn wpds_parse_lam_identity() {
     match &result {
         Ok(term @ Term::Lam(_)) => {
             let displayed = format!("{}", term);
-            assert!(
-                !displayed.is_empty(),
-                "expected non-empty Display, got {}",
-                displayed,
-            );
-        }
+            assert!(!displayed.is_empty(), "expected non-empty Display, got {}", displayed,);
+        },
         other => panic!("expected Ok(Term::Lam(...)), got {:?}", other),
     }
     assert_eq!(pos, 4, "consumed all 4 tokens");
@@ -57,7 +53,7 @@ fn wpds_parse_lam_with_distinct_binder_and_body() {
     let mut pos = 0usize;
     let result = parse_Term_via_wpda(&kinds, &texts, &mut pos, 0);
     match &result {
-        Ok(Term::Lam(_)) => {}
+        Ok(Term::Lam(_)) => {},
         other => panic!("expected Ok(Term::Lam(...)), got {:?}", other),
     }
     assert_eq!(pos, 4);

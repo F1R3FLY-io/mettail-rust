@@ -30,11 +30,10 @@
 //! push a `Build{OtherCat}` task onto the same work-stack — no recursive
 //! function calls.
 
-use mettail_ast::grammar::TermParam;
-use mettail_ast::language::LanguageDef;
 use crate::gen::native::native_type_to_string;
-use crate::gen::term_ops::subst::{FieldInfo, VariantKind, rule_to_variant_kind};
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use crate::gen::term_ops::subst::{rule_to_variant_kind, FieldInfo, VariantKind};
+use crate::gen::{generate_literal_label, generate_var_label};
+use mettail_ast::language::LanguageDef;
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -278,7 +277,9 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
     //    parseable auto-Literal. Symmetric to auto-Var, gated by the
     //    spec-derived predicate.
     if crate::gen::category_emits_parseable_auto_literal(category, language) {
-        let lit_label = language.types.iter()
+        let lit_label = language
+            .types
+            .iter()
             .find(|t| t.name == *category)
             .and_then(|t| t.native_type.as_ref())
             .map(|nt| generate_literal_label(nt))
@@ -292,10 +293,7 @@ fn collect_spec_only_variants(category: &syn::Ident, language: &LanguageDef) -> 
     variants
 }
 
-fn classify_variants(
-    category: &syn::Ident,
-    language: &LanguageDef,
-) -> VariantClassification {
+fn classify_variants(category: &syn::Ident, language: &LanguageDef) -> VariantClassification {
     let cat = category.to_string();
     let variants = collect_spec_only_variants(category, language);
 
@@ -310,7 +308,7 @@ fn classify_variants(
                     label_str.clone(),
                     format!("AnyTerm::Wrap{}({}::{})", cat, cat, label_str),
                 ));
-            }
+            },
             VariantKind::Literal { label } => {
                 let label_str = label.to_string();
                 // F1: spec-derived — `category_emits_parseable_auto_literal`
@@ -324,11 +322,10 @@ fn classify_variants(
                     .map(|t| native_type_to_string(t))
                     .expect("VariantKind::Literal requires the category to have a native_type per the spec");
 
-                let build_code = generate_literal_build_code(
-                    &cat, &label_str, &native_type_str, language,
-                );
+                let build_code =
+                    generate_literal_build_code(&cat, &label_str, &native_type_str, language);
                 leaves.push((label_str, build_code));
-            }
+            },
             VariantKind::Var { label } => {
                 // F2: spec-derived var name. Replaces hard-coded
                 // `["a","b","c","x","y","z"]` array with a single
@@ -354,12 +351,12 @@ fn classify_variants(
                     var_name = var_name,
                 );
                 leaves.push((label_str, code));
-            }
+            },
             VariantKind::Regular { label, fields } => {
                 // Check if any field references a known category (recursive)
-                let has_recursive_field = fields.iter().any(|f| {
-                    language.types.iter().any(|t| t.name == f.category)
-                });
+                let has_recursive_field = fields
+                    .iter()
+                    .any(|f| language.types.iter().any(|t| t.name == f.category));
 
                 if !has_recursive_field || fields.is_empty() {
                     // Treat as leaf (unknown category fields)
@@ -369,7 +366,7 @@ fn classify_variants(
                 let label_str = label.to_string();
                 let code = generate_regular_build_code(&cat, &label_str, fields, language);
                 recursive.push((label_str, code));
-            }
+            },
             VariantKind::Collection { label, element_cat, coll_type } => {
                 // Collections are recursive (contain elements)
                 let is_known = language.types.iter().any(|t| t.name == *element_cat);
@@ -384,13 +381,8 @@ fn classify_variants(
                     coll_type,
                 );
                 recursive.push((label_str, code));
-            }
-            VariantKind::Binder {
-                label,
-                pre_scope_fields,
-                body_cat,
-                ..
-            } => {
+            },
+            VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
                 let is_body_known = language.types.iter().any(|t| t.name == *body_cat);
                 if !is_body_known {
                     continue;
@@ -405,13 +397,8 @@ fn classify_variants(
                     language,
                 );
                 recursive.push((label_str, code));
-            }
-            VariantKind::MultiBinder {
-                label,
-                pre_scope_fields,
-                body_cat,
-                ..
-            } => {
+            },
+            VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
                 let is_body_known = language.types.iter().any(|t| t.name == *body_cat);
                 if !is_body_known {
                     continue;
@@ -426,7 +413,7 @@ fn classify_variants(
                     language,
                 );
                 recursive.push((label_str, code));
-            }
+            },
         }
     }
 
@@ -647,8 +634,7 @@ fn generate_regular_build_code(
             ));
         } else if field.is_collection {
             // For collection fields in a Regular variant, we'll handle them
-            // inline during assembly
-            // Push a placeholder task that just generates a Vec element
+            // inline during assembly.
             let elem_cat = field.category.to_string();
             code.push_str(&format!(
                 "    // Collection field {} ({}): handled during assembly\n",
@@ -675,7 +661,8 @@ fn generate_collection_build_code(
     coll_type: &mettail_ast::types::CollectionType,
 ) -> String {
     let coll_type_str = match coll_type {
-        mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => "HashBag",
+        mettail_ast::types::CollectionType::HashBag
+        | mettail_ast::types::CollectionType::HashMap => "HashBag",
         mettail_ast::types::CollectionType::HashSet => "HashSet",
         mettail_ast::types::CollectionType::Vec => "Vec",
     };
@@ -754,11 +741,7 @@ fn generate_binder_build_code(
 /// generic assembly machinery, we use a simpler direct approach:
 /// the tape is consumed left-to-right to build the term recursively
 /// but using an explicit stack instead of the call stack.
-fn generate_build_from_tape(
-    category: &syn::Ident,
-    language: &LanguageDef,
-    out: &mut String,
-) {
+fn generate_build_from_tape(category: &syn::Ident, language: &LanguageDef, out: &mut String) {
     let cat = category.to_string();
     let cat_lower = cat.to_lowercase();
     let classification = classify_variants(category, language);
@@ -770,10 +753,7 @@ fn generate_build_from_tape(
     // then directly builds the term. This avoids the complex slot/assembly
     // machinery and is clearer.
 
-    out.push_str(&format!(
-        "/// Build a `{}` term from an instruction tape.\n",
-        cat
-    ));
+    out.push_str(&format!("/// Build a `{}` term from an instruction tape.\n", cat));
     out.push_str(&format!(
         "///\n/// Consumes bytes from the tape to choose constructors.\n/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.\n/// At depth > 0, recursive constructors are also available.\n"
     ));
@@ -793,17 +773,9 @@ fn generate_build_from_tape(
     if num_leaves == 1 {
         // Only one leaf — use it directly
         let (_, ref code) = classification.leaves[0];
-        // Need to unwrap from AnyTerm
-        let unwrap_code = code
-            .replace(&format!("AnyTerm::Wrap{}(", cat), "")
-            .trim_end()
-            .to_string();
         // Actually, let's keep it simpler: build the term directly
         out.push_str(&format!("        let result = {};\n", code));
-        out.push_str(&format!(
-            "        return result.unwrap_{}();\n",
-            cat_lower
-        ));
+        out.push_str(&format!("        return result.unwrap_{}();\n", cat_lower));
     } else {
         out.push_str(&format!(
             "        let choice = (reader.next_byte() as usize) % {};\n",
@@ -818,10 +790,7 @@ fn generate_build_from_tape(
             }
         }
         out.push_str("        };\n");
-        out.push_str(&format!(
-            "        return result.unwrap_{}();\n",
-            cat_lower
-        ));
+        out.push_str(&format!("        return result.unwrap_{}();\n", cat_lower));
     }
     out.push_str("    }\n\n");
 
@@ -829,25 +798,16 @@ fn generate_build_from_tape(
     if num_recursive == 0 {
         // No recursive constructors — always choose a leaf
         out.push_str("    // No recursive constructors, fall back to leaf\n");
-        out.push_str(&format!(
-            "    build_{}_from_tape(reader, 0)\n",
-            cat_lower
-        ));
+        out.push_str(&format!("    build_{}_from_tape(reader, 0)\n", cat_lower));
     } else {
         // Bias toward recursive constructors at higher depths to ensure interesting terms
-        out.push_str(&format!(
-            "    let choice = (reader.next_byte() as usize) % {};\n",
-            total
-        ));
+        out.push_str(&format!("    let choice = (reader.next_byte() as usize) % {};\n", total));
         out.push_str("    let child_depth = depth - 1;\n");
         out.push_str("    match choice {\n");
 
         // Leaves first
         for (i, (_, ref code)) in classification.leaves.iter().enumerate() {
-            out.push_str(&format!(
-                "        {} => {}.unwrap_{}(),\n",
-                i, code, cat_lower
-            ));
+            out.push_str(&format!("        {} => {}.unwrap_{}(),\n", i, code, cat_lower));
         }
 
         // Then recursive constructors
@@ -861,12 +821,7 @@ fn generate_build_from_tape(
                 format!("        {} =>", idx)
             };
 
-            let code = generate_direct_recursive_build(
-                &cat,
-                label,
-                category,
-                language,
-            );
+            let code = generate_direct_recursive_build(&cat, label, category, language);
             out.push_str(&format!("{} {{\n", match_prefix));
             out.push_str(&code);
             out.push_str("        },\n");
@@ -892,19 +847,23 @@ fn generate_direct_recursive_build(
     let variants = collect_spec_only_variants(category, language);
 
     // Find the variant with this label
-    let variant = variants
-        .iter()
-        .find(|v| match v {
-            VariantKind::Regular { label: l, .. }
-            | VariantKind::Collection { label: l, .. }
-            | VariantKind::Binder { label: l, .. }
-            | VariantKind::MultiBinder { label: l, .. } => l.to_string() == label,
-            _ => false,
-        });
+    let variant = variants.iter().find(|v| match v {
+        VariantKind::Regular { label: l, .. }
+        | VariantKind::Collection { label: l, .. }
+        | VariantKind::Binder { label: l, .. }
+        | VariantKind::MultiBinder { label: l, .. } => l.to_string() == label,
+        _ => false,
+    });
 
     let variant = match variant {
         Some(v) => v,
-        None => return format!("            // Unknown variant {}\n            build_{}_from_tape(reader, 0)\n", label, cat.to_lowercase()),
+        None => {
+            return format!(
+                "            // Unknown variant {}\n            build_{}_from_tape(reader, 0)\n",
+                label,
+                cat.to_lowercase()
+            )
+        },
     };
 
     let cat_lower = cat.to_lowercase();
@@ -924,8 +883,12 @@ fn generate_direct_recursive_build(
                     // Phase 4 #3 (2026-05-12): Optional-Collection — visit
                     // both None and Some(empty Container) arms based on
                     // a tape byte. Spec admits both; generator must too.
-                    let coll_type = field.coll_type.as_ref()
-                        .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
+                    let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
+                        panic!(
+                            "collection field of category `{}` missing coll_type in language! spec",
+                            field.category
+                        )
+                    });
                     match coll_type {
                         mettail_ast::types::CollectionType::HashBag => {
                             code.push_str(&format!(
@@ -939,7 +902,7 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("f{}", i));
-                        }
+                        },
                         // Phase 4 #5b (2026-05-12): Optional-HashMap.
                         mettail_ast::types::CollectionType::HashMap => {
                             code.push_str(&format!(
@@ -957,7 +920,7 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("f{}", i));
-                        }
+                        },
                         mettail_ast::types::CollectionType::HashSet => {
                             code.push_str(&format!(
                                 "            let f{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
@@ -970,7 +933,7 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("f{}", i));
-                        }
+                        },
                         mettail_ast::types::CollectionType::Vec => {
                             code.push_str(&format!(
                                 "            let f{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
@@ -982,14 +945,18 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("f{}", i));
-                        }
+                        },
                     }
                 } else if field.is_collection {
                     // F5: spec-derived coll_type — every collection field
                     // MUST carry coll_type per the language! spec; missing is
                     // a synthetic insertion bug, surfaced loudly.
-                    let coll_type = field.coll_type.as_ref()
-                        .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
+                    let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
+                        panic!(
+                            "collection field of category `{}` missing coll_type in language! spec",
+                            field.category
+                        )
+                    });
                     match coll_type {
                         mettail_ast::types::CollectionType::HashBag => {
                             code.push_str(&format!(
@@ -1002,7 +969,7 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("coll_{}", i));
-                        }
+                        },
                         // Phase 4 #5b (2026-05-12): HashMap binder field —
                         // tape-driven construction produces `HashMapLit::default()`,
                         // then inserts pairs (each key + value from tape).
@@ -1019,7 +986,7 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("coll_{}", i));
-                        }
+                        },
                         mettail_ast::types::CollectionType::HashSet => {
                             code.push_str(&format!(
                                 "            let num_elems_{i} = (reader.next_byte() % 4) as usize;\n\
@@ -1031,7 +998,7 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("coll_{}", i));
-                        }
+                        },
                         mettail_ast::types::CollectionType::Vec => {
                             code.push_str(&format!(
                                 "            let num_elems_{i} = (reader.next_byte() % 4) as usize;\n\
@@ -1042,7 +1009,7 @@ fn generate_direct_recursive_build(
                                 fc = field_cat_lower,
                             ));
                             field_exprs.push(format!("coll_{}", i));
-                        }
+                        },
                     }
                 } else if field.is_optional {
                     // F7: Opt-Group — Optional fields visit BOTH None
@@ -1095,14 +1062,15 @@ fn generate_direct_recursive_build(
             ));
 
             code
-        }
+        },
 
         VariantKind::Collection { label, element_cat, coll_type } => {
             let label_str = label.to_string();
             let elem_cat_lower = element_cat.to_string().to_lowercase();
 
             match coll_type {
-                mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
+                mettail_ast::types::CollectionType::HashBag
+                | mettail_ast::types::CollectionType::HashMap => {
                     format!(
                         "            let num_elems = (reader.next_byte() % 4) as usize;\n\
                                      let mut bag = mettail_runtime::HashBag::new();\n\
@@ -1114,7 +1082,7 @@ fn generate_direct_recursive_build(
                         cat = cat,
                         label = label_str,
                     )
-                }
+                },
                 mettail_ast::types::CollectionType::HashSet => {
                     format!(
                         "            let num_elems = (reader.next_byte() % 4) as usize;\n\
@@ -1127,7 +1095,7 @@ fn generate_direct_recursive_build(
                         cat = cat,
                         label = label_str,
                     )
-                }
+                },
                 mettail_ast::types::CollectionType::Vec => {
                     format!(
                         "            let num_elems = (reader.next_byte() % 4) as usize;\n\
@@ -1139,34 +1107,35 @@ fn generate_direct_recursive_build(
                         cat = cat,
                         label = label_str,
                     )
-                }
+                },
             }
-        }
+        },
 
-        VariantKind::Binder {
-            label,
-            pre_scope_fields,
-            body_cat,
-            ..
-        } => {
-            generate_binder_direct_build(cat, &label.to_string(), pre_scope_fields, &body_cat.to_string(), false, language)
-        }
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
+            generate_binder_direct_build(
+                cat,
+                &label.to_string(),
+                pre_scope_fields,
+                &body_cat.to_string(),
+                false,
+                language,
+            )
+        },
 
-        VariantKind::MultiBinder {
-            label,
-            pre_scope_fields,
-            body_cat,
-            ..
-        } => {
-            generate_binder_direct_build(cat, &label.to_string(), pre_scope_fields, &body_cat.to_string(), true, language)
-        }
+        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
+            generate_binder_direct_build(
+                cat,
+                &label.to_string(),
+                pre_scope_fields,
+                &body_cat.to_string(),
+                true,
+                language,
+            )
+        },
 
         _ => {
-            format!(
-                "            build_{}_from_tape(reader, 0)\n",
-                cat_lower
-            )
-        }
+            format!("            build_{}_from_tape(reader, 0)\n", cat_lower)
+        },
     }
 }
 
@@ -1194,10 +1163,15 @@ fn generate_binder_direct_build(
         // is `Option<Container>` (bare, no Box). Mirrors the Regular path in
         // `generate_constructor_match_arms`.
         if field.is_optional && field.is_collection {
-            let coll_type = field.coll_type.as_ref()
-                .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
+            let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "collection field of category `{}` missing coll_type in language! spec",
+                    field.category
+                )
+            });
             match coll_type {
-                mettail_ast::types::CollectionType::HashBag | mettail_ast::types::CollectionType::HashMap => {
+                mettail_ast::types::CollectionType::HashBag
+                | mettail_ast::types::CollectionType::HashMap => {
                     code.push_str(&format!(
                         "            let pre_{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
                                          let num_elems = (reader.next_byte() % 4) as usize;\n\
@@ -1208,7 +1182,7 @@ fn generate_binder_direct_build(
                         i = i,
                         fc = field_cat_lower,
                     ));
-                }
+                },
                 mettail_ast::types::CollectionType::HashSet => {
                     code.push_str(&format!(
                         "            let pre_{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
@@ -1220,7 +1194,7 @@ fn generate_binder_direct_build(
                         i = i,
                         fc = field_cat_lower,
                     ));
-                }
+                },
                 mettail_ast::types::CollectionType::Vec => {
                     code.push_str(&format!(
                         "            let pre_{i} = if reader.next_byte() & 1 == 0 {{ None }} else {{\n\
@@ -1231,7 +1205,7 @@ fn generate_binder_direct_build(
                         i = i,
                         fc = field_cat_lower,
                     ));
-                }
+                },
             }
             pre_scope_exprs.push(format!("pre_{}", i));
             continue;
@@ -1255,8 +1229,12 @@ fn generate_binder_direct_build(
         } else if field.is_collection {
             // F5: spec-derived coll_type — every collection field MUST
             // carry coll_type per the language! spec.
-            let coll_type = field.coll_type.as_ref()
-                .unwrap_or_else(|| panic!("collection field of category `{}` missing coll_type in language! spec", field.category));
+            let coll_type = field.coll_type.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "collection field of category `{}` missing coll_type in language! spec",
+                    field.category
+                )
+            });
             match coll_type {
                 mettail_ast::types::CollectionType::Vec => {
                     code.push_str(&format!(
@@ -1266,7 +1244,7 @@ fn generate_binder_direct_build(
                         fc = field_cat_lower,
                     ));
                     pre_scope_exprs.push(format!("pre_{}", i));
-                }
+                },
                 _ => {
                     // HashBag/HashSet not typical for pre-scope, but handle
                     code.push_str(&format!(
@@ -1275,7 +1253,7 @@ fn generate_binder_direct_build(
                         fc = field_cat,
                     ));
                     pre_scope_exprs.push(format!("pre_{}", i));
-                }
+                },
             }
         }
     }
@@ -1310,10 +1288,7 @@ fn generate_binder_direct_build(
 
     // Assemble
     if pre_scope_exprs.is_empty() {
-        code.push_str(&format!(
-            "            {}::{}(scope)\n",
-            cat, label,
-        ));
+        code.push_str(&format!("            {}::{}(scope)\n", cat, label,));
     } else {
         code.push_str(&format!(
             "            {}::{}({}, scope)\n",
@@ -1327,18 +1302,11 @@ fn generate_binder_direct_build(
 }
 
 /// Generate `arb_{cat}` strategy function for one category.
-fn generate_arb_strategy(
-    category: &syn::Ident,
-    _language: &LanguageDef,
-    out: &mut String,
-) {
+fn generate_arb_strategy(category: &syn::Ident, _language: &LanguageDef, out: &mut String) {
     let cat = category.to_string();
     let cat_lower = cat.to_lowercase();
 
-    out.push_str(&format!(
-        "/// Generate an arbitrary `{}` term with bounded depth.\n",
-        cat
-    ));
+    out.push_str(&format!("/// Generate an arbitrary `{}` term with bounded depth.\n", cat));
     out.push_str(&format!(
         "///\n/// Uses a flat `Vec<u8>` tape interpreted by `build_{}_from_tape`.\n/// Proptest shrinking produces shorter tapes = simpler terms.\n",
         cat_lower
@@ -1593,7 +1561,7 @@ pub fn generate_public_strategies(language: &LanguageDef) -> TokenStream {
                 err, out
             );
             quote! { compile_error!(#msg); }
-        }
+        },
     }
 }
 
@@ -1746,10 +1714,7 @@ fn generate_public_build_from_tape(
     let cat_lower = cat.to_lowercase();
     let classification = classify_variants(category, language);
 
-    out.push_str(&format!(
-        "/// Build a `{}` term from an instruction tape.\n",
-        cat
-    ));
+    out.push_str(&format!("/// Build a `{}` term from an instruction tape.\n", cat));
     out.push_str("///\n/// Consumes bytes from the tape to choose constructors.\n/// At depth 0, only leaf constructors (nullary, literal, var) are chosen.\n/// At depth > 0, recursive constructors are also available.\n");
     out.push_str("#[allow(dead_code, unused_variables, clippy::let_and_return)]\n");
     out.push_str(&format!(
@@ -1767,10 +1732,7 @@ fn generate_public_build_from_tape(
     if num_leaves == 1 {
         let (_, ref code) = classification.leaves[0];
         out.push_str(&format!("        let result = {};\n", code));
-        out.push_str(&format!(
-            "        return result.unwrap_{}();\n",
-            cat_lower
-        ));
+        out.push_str(&format!("        return result.unwrap_{}();\n", cat_lower));
     } else {
         out.push_str(&format!(
             "        let choice = (reader.next_byte() as usize) % {};\n",
@@ -1785,34 +1747,22 @@ fn generate_public_build_from_tape(
             }
         }
         out.push_str("        };\n");
-        out.push_str(&format!(
-            "        return result.unwrap_{}();\n",
-            cat_lower
-        ));
+        out.push_str(&format!("        return result.unwrap_{}();\n", cat_lower));
     }
     out.push_str("    }\n\n");
 
     // At depth > 0, can choose leaves or recursive constructors
     if num_recursive == 0 {
         out.push_str("    // No recursive constructors, fall back to leaf\n");
-        out.push_str(&format!(
-            "    build_{}_from_tape(reader, 0)\n",
-            cat_lower
-        ));
+        out.push_str(&format!("    build_{}_from_tape(reader, 0)\n", cat_lower));
     } else {
-        out.push_str(&format!(
-            "    let choice = (reader.next_byte() as usize) % {};\n",
-            total
-        ));
+        out.push_str(&format!("    let choice = (reader.next_byte() as usize) % {};\n", total));
         out.push_str("    let child_depth = depth - 1;\n");
         out.push_str("    match choice {\n");
 
         // Leaves first
         for (i, (_, ref code)) in classification.leaves.iter().enumerate() {
-            out.push_str(&format!(
-                "        {} => {}.unwrap_{}(),\n",
-                i, code, cat_lower
-            ));
+            out.push_str(&format!("        {} => {}.unwrap_{}(),\n", i, code, cat_lower));
         }
 
         // Then recursive constructors
@@ -1826,12 +1776,7 @@ fn generate_public_build_from_tape(
                 format!("        {} =>", idx)
             };
 
-            let code = generate_direct_recursive_build(
-                &cat,
-                label,
-                category,
-                language,
-            );
+            let code = generate_direct_recursive_build(&cat, label, category, language);
             out.push_str(&format!("{} {{\n", match_prefix));
             out.push_str(&code);
             out.push_str("        },\n");
@@ -1844,18 +1789,11 @@ fn generate_public_build_from_tape(
 }
 
 /// Generate a public `arb_{cat}` strategy function for one category.
-fn generate_public_arb_strategy(
-    category: &syn::Ident,
-    _language: &LanguageDef,
-    out: &mut String,
-) {
+fn generate_public_arb_strategy(category: &syn::Ident, _language: &LanguageDef, out: &mut String) {
     let cat = category.to_string();
     let cat_lower = cat.to_lowercase();
 
-    out.push_str(&format!(
-        "/// Generate an arbitrary `{}` term with bounded depth.\n",
-        cat
-    ));
+    out.push_str(&format!("/// Generate an arbitrary `{}` term with bounded depth.\n", cat));
     out.push_str(&format!(
         "///\n/// Uses a flat `Vec<u8>` tape interpreted by `build_{}_from_tape`.\n/// Proptest shrinking produces shorter tapes = simpler terms.\n",
         cat_lower

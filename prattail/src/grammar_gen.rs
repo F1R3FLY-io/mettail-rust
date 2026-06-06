@@ -42,6 +42,25 @@ fn fallback_ident() -> String {
     IDENT_POOL[0].to_string()
 }
 
+fn predicate_var_name(param_name: &str) -> String {
+    let mut chars = param_name.chars();
+    let Some(first) = chars.next() else {
+        return fallback_ident();
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return fallback_ident();
+    }
+    if chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
+        param_name.to_string()
+    } else {
+        fallback_ident()
+    }
+}
+
+fn guard_predicate_for_param(param_name: &str) -> String {
+    format!("halts({})", predicate_var_name(param_name))
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Public API
 // ══════════════════════════════════════════════════════════════════════════════
@@ -382,7 +401,8 @@ fn syntax_item_strategy(
 
         SyntaxItemSpec::Sep { body, separator, .. } => {
             // Generate 1-3 copies of the body pattern joined by separator
-            let body_strat = syntax_item_strategy(body.as_ref(), rules_by_cat, cat_names, inner, current_cat);
+            let body_strat =
+                syntax_item_strategy(body.as_ref(), rules_by_cat, cat_names, inner, current_cat);
             let sep = separator.clone();
             prop::collection::vec(body_strat, 1..=3)
                 .prop_map(move |v| v.join(&format!(" {} ", sep)))
@@ -403,15 +423,7 @@ fn syntax_item_strategy(
                     .into_iter()
                     .fold(Just(String::new()).boxed(), |acc, next| {
                         (acc, next)
-                            .prop_map(
-                                |(a, b)| {
-                                    if a.is_empty() {
-                                        b
-                                    } else {
-                                        smart_join(&a, &b)
-                                    }
-                                },
-                            )
+                            .prop_map(|(a, b)| if a.is_empty() { b } else { smart_join(&a, &b) })
                             .boxed()
                     })
             }
@@ -452,11 +464,8 @@ fn syntax_item_strategy(
             }
         },
 
-        SyntaxItemSpec::GuardExpression { .. } => {
-            // Phase 2F: generator emits a placeholder predicate string.
-            // Proper predicate-sublanguage generation is deferred until
-            // the strategies pipeline gains a parser hook.
-            Just("halts(x)".to_string()).boxed()
+        SyntaxItemSpec::GuardExpression { param_name } => {
+            Just(guard_predicate_for_param(param_name)).boxed()
         },
     }
 }
@@ -615,7 +624,9 @@ impl RuleSpecOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec};
+    use crate::{
+        BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
+    };
 
     /// Build a minimal calculator spec for testing.
     fn calculator_spec() -> LanguageSpec {
@@ -716,6 +727,30 @@ mod tests {
         let inputs = generate_bench_inputs(&spec, "Expr", 5, 100);
         let has_operator = inputs.iter().any(|e| e.contains('+') || e.contains('-'));
         assert!(has_operator, "depth 5 with 100 samples should produce at least one operator");
+    }
+
+    #[test]
+    fn test_guard_expression_uses_guard_param_name() {
+        let pred = guard_predicate_for_param("cond");
+        assert_eq!(pred, "halts(cond)");
+        let parsed = crate::parser::predicate_pratt::parse_predicate_from_str(
+            &pred,
+            crate::parser::predicate_pratt::PredicateParserConfig::default(),
+        )
+        .expect("generated guard predicate should parse");
+        assert_eq!(
+            parsed,
+            crate::behavioral_pred::BehavioralPred::RelationQuery {
+                relation_name: "halts".to_string(),
+                args: vec![crate::behavioral_pred::PredArg::Var("cond".to_string())],
+                negated: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_guard_expression_sanitizes_invalid_param_name() {
+        assert_eq!(guard_predicate_for_param("0bad-name"), "halts(a)");
     }
 
     proptest::proptest! {

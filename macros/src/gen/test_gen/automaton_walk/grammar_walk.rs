@@ -25,8 +25,6 @@
 //! The `SelectionPolicy` trait below is the selection hook the plan
 //! promised for distributional control.
 
-use mettail_ast::language::LanguageDef;
-
 /// A selection policy over grammar rules applicable at a given
 /// non-terminal. Implementations consume tape bytes to pick a rule.
 ///
@@ -44,7 +42,11 @@ pub struct UniformPolicy;
 
 impl SelectionPolicy for UniformPolicy {
     fn pick(&self, num_rules: usize, tape_byte: u8) -> usize {
-        if num_rules == 0 { 0 } else { (tape_byte as usize) % num_rules }
+        if num_rules == 0 {
+            0
+        } else {
+            (tape_byte as usize) % num_rules
+        }
     }
 }
 
@@ -73,18 +75,6 @@ impl SelectionPolicy for WeightedPolicy {
         }
         num_rules - 1
     }
-}
-
-/// Count applicable rules for a category in a language definition.
-///
-/// Used by codegen to size the modulo at rule-selection sites so the
-/// tape byte maps to a valid rule index.
-pub fn applicable_rules_for(category_name: &str, language: &LanguageDef) -> usize {
-    language
-        .terms
-        .iter()
-        .filter(|r| r.category == category_name)
-        .count()
 }
 
 #[cfg(test)]

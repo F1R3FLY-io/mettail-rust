@@ -10,7 +10,7 @@ use mettail_simulation::invariant::{
     AlwaysParseable, BoundedDepth, BoundedSize, NormalFormReachable,
 };
 use mettail_languages::mixedmath::MixedMathLanguage;
-use mettail_languages::mixedmath::strategies::arb_bool;
+use mettail_languages::mixedmath::strategies::arb_int;
 use mettail_runtime::Language;
 use proptest::strategy::Strategy;
 use std::path::PathBuf;
@@ -124,7 +124,7 @@ fn main() {
     let mut runner = SimulationRunner::new(lang_ref, config);
 
     // Build the input strategy: generate random terms and display them as strings.
-    let strategy = arb_bool(3).prop_map(|term| format!("{}", term));
+    let strategy = arb_int(3).prop_map(|term| format!("{}", term));
 
     if args.verbose {
         eprintln!("Running simulation for MixedMath:");

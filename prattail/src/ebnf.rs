@@ -16,9 +16,9 @@ const EBNF_LINE_WIDTH: usize = 60;
 
 use crate::binding_power::{Associativity, BindingPowerTable, InfixOperator};
 use crate::grammar::ir::{CastRule, CollectionKind, CrossCategoryRule, RDRuleInfo, RDSyntaxItem};
+use crate::lint::DiagnosticId;
 use crate::pipeline::{CategoryInfo, ParserBundle};
 use crate::prediction::{compute_first_sets, compute_follow_sets_from_inputs, FirstSet};
-use crate::lint::DiagnosticId;
 use crate::{LanguageSpec, RuleSpec, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -163,7 +163,7 @@ pub fn write_ebnf_output(ebnf: &str, language_name: &str, dump_target: &str) {
                 grammar_name: None,
                 source_location: None,
             });
-        }
+        },
         Err(e) => {
             crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
                 id: DiagnosticId::I11,
@@ -176,7 +176,7 @@ pub fn write_ebnf_output(ebnf: &str, language_name: &str, dump_target: &str) {
                 grammar_name: None,
                 source_location: None,
             });
-        }
+        },
     }
 }
 
@@ -1375,9 +1375,9 @@ mod tests {
         // so we use run_pipeline logic. Instead, we replicate the extraction
         // inline for testing purposes.
         use crate::binding_power::{analyze_binding_powers, InfixRuleInfo};
+        use crate::grammar::ir::RDRuleInfo;
         use crate::grammar::ir::{CastRule, CrossCategoryRule};
         use crate::prediction::{FirstItem, FollowSetInput, RuleInfo};
-        use crate::grammar::ir::RDRuleInfo;
         use std::collections::BTreeMap;
 
         let categories: Vec<CategoryInfo> = spec
@@ -1568,6 +1568,7 @@ mod tests {
             recovery_config: crate::recovery::RecoveryConfig::default(),
             all_syntax,
             rule_locations: std::collections::HashMap::new(),
+            dead_rule_ignore_labels: std::collections::HashSet::new(),
             semantic_dependency_groups: Vec::new(),
             custom_tokens: Vec::new(),
             refinement_types: Vec::new(),
@@ -1645,7 +1646,7 @@ mod tests {
                 element_category,
                 separator,
                 kind,
-                key_val_separator,
+                key_val_separator: _,
             } => RDSyntaxItem::Collection {
                 param_name: param_name.clone(),
                 element_category: element_category.clone(),
@@ -1661,14 +1662,18 @@ mod tests {
             SyntaxItemSpec::Map { body_items } => RDSyntaxItem::Map {
                 body_items: body_items.iter().map(convert_syntax_item).collect(),
             },
-            SyntaxItemSpec::Zip { left_name, right_name, left_category, right_category, body } => {
-                RDSyntaxItem::Zip {
-                    left_name: left_name.clone(),
-                    right_name: right_name.clone(),
-                    left_category: left_category.clone(),
-                    right_category: right_category.clone(),
-                    body: Box::new(convert_syntax_item(body)),
-                }
+            SyntaxItemSpec::Zip {
+                left_name,
+                right_name,
+                left_category,
+                right_category,
+                body,
+            } => RDSyntaxItem::Zip {
+                left_name: left_name.clone(),
+                right_name: right_name.clone(),
+                left_category: left_category.clone(),
+                right_category: right_category.clone(),
+                body: Box::new(convert_syntax_item(body)),
             },
             SyntaxItemSpec::BinderCollection { param_name, separator } => {
                 RDSyntaxItem::BinderCollection {
@@ -1679,8 +1684,8 @@ mod tests {
             SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
                 inner: inner.iter().map(convert_syntax_item).collect(),
             },
-            SyntaxItemSpec::GuardExpression { param_name } => RDSyntaxItem::GuardExpression {
-                param_name: param_name.clone(),
+            SyntaxItemSpec::GuardExpression { param_name } => {
+                RDSyntaxItem::GuardExpression { param_name: param_name.clone() }
             },
         }
     }

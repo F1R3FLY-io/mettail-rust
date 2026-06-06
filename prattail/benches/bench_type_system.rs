@@ -19,10 +19,7 @@ fn build_lattice_type_system(depth: usize) -> (LatticeTypeSystem, Vec<TypeId>) {
     let mut store = LatticeStore::new();
 
     for i in 0..depth.saturating_sub(1) {
-        let constraint = SubtypeConstraint {
-            sub: ids[i],
-            sup: ids[i + 1],
-        };
+        let constraint = SubtypeConstraint { sub: ids[i], sup: ids[i + 1] };
         store = theory
             .propagate(&store, &constraint)
             .expect("propagation should succeed");
@@ -50,10 +47,7 @@ fn build_diamond_lattice() -> (LatticeTypeSystem, Vec<TypeId>) {
     let mut store = LatticeStore::new();
 
     for (sub, sup) in &[(bot, left), (bot, right), (left, top), (right, top)] {
-        let constraint = SubtypeConstraint {
-            sub: *sub,
-            sup: *sup,
-        };
+        let constraint = SubtypeConstraint { sub: *sub, sup: *sup };
         store = theory
             .propagate(&store, &constraint)
             .expect("propagation should succeed");

@@ -162,12 +162,8 @@ impl<W: Semiring, const K: usize> WeightedMultiTapeAutomaton<W, K> {
             "multi_tape: target state {to} out of range (num_states = {})",
             self.states.len()
         );
-        self.transitions.push(MultiTapeTransition {
-            from,
-            to,
-            labels,
-            weight,
-        });
+        self.transitions
+            .push(MultiTapeTransition { from, to, labels, weight });
     }
 
     /// Set a state as initial with the given entry weight.
@@ -368,11 +364,7 @@ fn dyn_view<W: Semiring, const K: usize>(
 fn materialize<W: Semiring, const K: usize>(
     d: &DynMultiTapeAutomaton<W>,
 ) -> WeightedMultiTapeAutomaton<W, K> {
-    assert_eq!(
-        d.k, K,
-        "materialize: dynamic arity {} does not match target K = {}",
-        d.k, K,
-    );
+    assert_eq!(d.k, K, "materialize: dynamic arity {} does not match target K = {}", d.k, K,);
     let mut out = WeightedMultiTapeAutomaton::<W, K>::new();
     out.states.reserve(d.states.len());
     for s in &d.states {
@@ -591,10 +583,7 @@ impl<W: Semiring, const K: usize> WeightedMultiTapeAutomaton<W, K> {
     ///
     /// Panics if `tape_idx >= K`.
     pub fn project(&self, tape_idx: usize) -> WeightedMultiTapeAutomaton<W, 1> {
-        assert!(
-            tape_idx < K,
-            "multi_tape::project: tape_idx {tape_idx} out of range (K = {K})"
-        );
+        assert!(tape_idx < K, "multi_tape::project: tape_idx {tape_idx} out of range (K = {K})");
 
         let mut result = WeightedMultiTapeAutomaton::<W, 1>::new();
 
@@ -634,14 +623,8 @@ impl<W: Semiring, const K: usize> WeightedMultiTapeAutomaton<W, K> {
     ///
     /// Panics if `tape_i >= K`, `tape_j >= K`, or `tape_i == tape_j`.
     pub fn auto_intersect(&self, tape_i: usize, tape_j: usize) -> Self {
-        assert!(
-            tape_i < K,
-            "multi_tape::auto_intersect: tape_i {tape_i} out of range (K = {K})"
-        );
-        assert!(
-            tape_j < K,
-            "multi_tape::auto_intersect: tape_j {tape_j} out of range (K = {K})"
-        );
+        assert!(tape_i < K, "multi_tape::auto_intersect: tape_i {tape_i} out of range (K = {K})");
+        assert!(tape_j < K, "multi_tape::auto_intersect: tape_j {tape_j} out of range (K = {K})");
         assert!(
             tape_i != tape_j,
             "multi_tape::auto_intersect: tape_i and tape_j must differ (both = {tape_i})"
@@ -815,17 +798,15 @@ impl<W: Semiring, const K: usize> WeightedMultiTapeAutomaton<W, K> {
                     match &t.labels[k] {
                         None => {
                             // Epsilon on tape k: no symbol consumed.
-                        }
+                        },
                         Some(sym) => {
-                            if positions[k] < inputs[k].len()
-                                && inputs[k][positions[k]] == *sym
-                            {
+                            if positions[k] < inputs[k].len() && inputs[k][positions[k]] == *sym {
                                 new_positions[k] = positions[k] + 1;
                             } else {
                                 can_take = false;
                                 break;
                             }
-                        }
+                        },
                     }
                 }
 
@@ -895,19 +876,14 @@ impl<W: Semiring, const K: usize> WeightedMultiTapeAutomaton<W, K> {
             }
         }
 
-        let disconnected_tapes: Vec<usize> = (0..K)
-            .filter(|&k| !tape_has_label[k])
-            .collect();
+        let disconnected_tapes: Vec<usize> = (0..K).filter(|&k| !tape_has_label[k]).collect();
 
         // Overlapping tapes: tapes i,j are overlapping if labels[i] == labels[j]
         // on every transition.
         let mut overlapping_tapes: Vec<(usize, usize)> = Vec::new();
         for i in 0..K {
             for j in (i + 1)..K {
-                let all_match = self
-                    .transitions
-                    .iter()
-                    .all(|t| t.labels[i] == t.labels[j]);
+                let all_match = self.transitions.iter().all(|t| t.labels[i] == t.labels[j]);
                 // Only report overlapping if there are transitions to compare.
                 if all_match && !self.transitions.is_empty() {
                     overlapping_tapes.push((i, j));
@@ -942,10 +918,7 @@ impl<W: Semiring, const K: usize> fmt::Display for WeightedMultiTapeAutomaton<W,
                     write!(f, ", ")?;
                 }
                 first = false;
-                let label = self.states[state]
-                    .label
-                    .as_deref()
-                    .unwrap_or("_");
+                let label = self.states[state].label.as_deref().unwrap_or("_");
                 write!(f, "{label}/{weight:?}")?;
             }
             writeln!(f, "]")?;
@@ -960,10 +933,7 @@ impl<W: Semiring, const K: usize> fmt::Display for WeightedMultiTapeAutomaton<W,
                     write!(f, ", ")?;
                 }
                 first = false;
-                let label = self.states[state]
-                    .label
-                    .as_deref()
-                    .unwrap_or("_");
+                let label = self.states[state].label.as_deref().unwrap_or("_");
                 write!(f, "{label}/{weight:?}")?;
             }
             writeln!(f, "]")?;
@@ -971,25 +941,14 @@ impl<W: Semiring, const K: usize> fmt::Display for WeightedMultiTapeAutomaton<W,
 
         // Transitions.
         for t in &self.transitions {
-            let from_label = self.states[t.from]
-                .label
-                .as_deref()
-                .unwrap_or("_");
-            let to_label = self.states[t.to]
-                .label
-                .as_deref()
-                .unwrap_or("_");
+            let from_label = self.states[t.from].label.as_deref().unwrap_or("_");
+            let to_label = self.states[t.to].label.as_deref().unwrap_or("_");
             let labels: Vec<String> = t
                 .labels
                 .iter()
                 .map(|l| l.as_deref().unwrap_or("eps").to_string())
                 .collect();
-            writeln!(
-                f,
-                "  {from_label} --[{}]--> {to_label} / {:?}",
-                labels.join(", "),
-                t.weight
-            )?;
+            writeln!(f, "  {from_label} --[{}]--> {to_label} / {:?}", labels.join(", "), t.weight)?;
         }
 
         writeln!(f, "}}")
@@ -1153,7 +1112,7 @@ fn collect_category_refs(
                     connected_to[dst].insert(src);
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Binder { category, .. } => {
             if category != rule_cat {
                 if let Some(&dst) = cat_to_idx.get(category.as_str()) {
@@ -1161,31 +1120,24 @@ fn collect_category_refs(
                     connected_to[dst].insert(src);
                 }
             }
-        }
-        crate::SyntaxItemSpec::Collection {
-            element_category, ..
-        } => {
+        },
+        crate::SyntaxItemSpec::Collection { element_category, .. } => {
             if element_category != rule_cat {
                 if let Some(&dst) = cat_to_idx.get(element_category.as_str()) {
                     connected_to[src].insert(dst);
                     connected_to[dst].insert(src);
                 }
             }
-        }
+        },
         crate::SyntaxItemSpec::Sep { body, .. } => {
             collect_category_refs(body, rule_cat, cat_to_idx, src, connected_to);
-        }
+        },
         crate::SyntaxItemSpec::Map { body_items } => {
             for sub in body_items {
                 collect_category_refs(sub, rule_cat, cat_to_idx, src, connected_to);
             }
-        }
-        crate::SyntaxItemSpec::Zip {
-            left_category,
-            right_category,
-            body,
-            ..
-        } => {
+        },
+        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             for ref_cat in [left_category.as_str(), right_category.as_str()] {
                 if ref_cat != rule_cat {
                     if let Some(&dst) = cat_to_idx.get(ref_cat) {
@@ -1195,13 +1147,13 @@ fn collect_category_refs(
                 }
             }
             collect_category_refs(body, rule_cat, cat_to_idx, src, connected_to);
-        }
+        },
         crate::SyntaxItemSpec::Optional { inner } => {
             for sub in inner {
                 collect_category_refs(sub, rule_cat, cat_to_idx, src, connected_to);
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -1417,8 +1369,7 @@ pub fn build_synced_stream_automaton<W: Semiring>(
     let mut combined = pair(stream_a, stream_b);
 
     // Step 2: Apply constraints and collect diagnostics.
-    let mut constraint_diagnostics =
-        Vec::with_capacity(sync.constraints.len());
+    let mut constraint_diagnostics = Vec::with_capacity(sync.constraints.len());
 
     for constraint in &sync.constraints {
         match constraint {
@@ -1428,10 +1379,8 @@ pub fn build_synced_stream_automaton<W: Semiring>(
                 boundary_pattern,
             } => {
                 // Check that this Align constraint applies to our two streams.
-                let applies = (constraint_a == stream_a_name
-                    && constraint_b == stream_b_name)
-                    || (constraint_a == stream_b_name
-                        && constraint_b == stream_a_name);
+                let applies = (constraint_a == stream_a_name && constraint_b == stream_b_name)
+                    || (constraint_a == stream_b_name && constraint_b == stream_a_name);
 
                 if !applies {
                     constraint_diagnostics.push(Ok(format!(
@@ -1463,16 +1412,22 @@ pub fn build_synced_stream_automaton<W: Semiring>(
                 if !tape_0_has_boundary {
                     constraint_diagnostics.push(Err(format!(
                         "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
-                        constraint_a, constraint_b, boundary_pattern,
-                        boundary_pattern, stream_a_name,
+                        constraint_a,
+                        constraint_b,
+                        boundary_pattern,
+                        boundary_pattern,
+                        stream_a_name,
                     )));
                     continue;
                 }
                 if !tape_1_has_boundary {
                     constraint_diagnostics.push(Err(format!(
                         "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
-                        constraint_a, constraint_b, boundary_pattern,
-                        boundary_pattern, stream_b_name,
+                        constraint_a,
+                        constraint_b,
+                        boundary_pattern,
+                        boundary_pattern,
+                        stream_b_name,
                     )));
                     continue;
                 }
@@ -1491,14 +1446,13 @@ pub fn build_synced_stream_automaton<W: Semiring>(
                 constraint_diagnostics.push(Ok(format!(
                     "Align({}, {}, '{}'): applied auto_intersect(0, 1) — \
                      {} transitions remain after synchronization",
-                    constraint_a, constraint_b, boundary_pattern,
+                    constraint_a,
+                    constraint_b,
+                    boundary_pattern,
                     combined.num_transitions(),
                 )));
-            }
-            crate::SyncConstraintSpec::Track {
-                auxiliary,
-                primary,
-            } => {
+            },
+            crate::SyncConstraintSpec::Track { auxiliary, primary } => {
                 // Track constraints are metadata — they instruct the runtime
                 // to maintain position correspondence between the auxiliary
                 // and primary streams but do not structurally constrain the
@@ -1507,7 +1461,7 @@ pub fn build_synced_stream_automaton<W: Semiring>(
                     "Track({} relative to {}): recorded (metadata-only, no structural constraint)",
                     auxiliary, primary,
                 )));
-            }
+            },
         }
     }
 
@@ -1593,11 +1547,7 @@ pub fn validate_sync_constraints(
 
     for constraint in &sync.constraints {
         match constraint {
-            crate::SyncConstraintSpec::Align {
-                stream_a,
-                stream_b,
-                boundary_pattern,
-            } => {
+            crate::SyncConstraintSpec::Align { stream_a, stream_b, boundary_pattern } => {
                 let a_tokens = stream_tokens.get(stream_a);
                 let b_tokens = stream_tokens.get(stream_b);
 
@@ -1605,22 +1555,21 @@ pub fn validate_sync_constraints(
                     (None, None) => {
                         diagnostics.push(Err(format!(
                             "Align({}, {}, '{}'): neither stream '{}' nor '{}' exists",
-                            stream_a, stream_b, boundary_pattern,
-                            stream_a, stream_b,
+                            stream_a, stream_b, boundary_pattern, stream_a, stream_b,
                         )));
-                    }
+                    },
                     (None, Some(_)) => {
                         diagnostics.push(Err(format!(
                             "Align({}, {}, '{}'): stream '{}' does not exist",
                             stream_a, stream_b, boundary_pattern, stream_a,
                         )));
-                    }
+                    },
                     (Some(_), None) => {
                         diagnostics.push(Err(format!(
                             "Align({}, {}, '{}'): stream '{}' does not exist",
                             stream_a, stream_b, boundary_pattern, stream_b,
                         )));
-                    }
+                    },
                     (Some(a_toks), Some(b_toks)) => {
                         let a_has = a_toks.iter().any(|t| t == boundary_pattern);
                         let b_has = b_toks.iter().any(|t| t == boundary_pattern);
@@ -1650,13 +1599,10 @@ pub fn validate_sync_constraints(
                                 b_toks.iter().filter(|t| *t == boundary_pattern).count(), stream_b,
                             )));
                         }
-                    }
+                    },
                 }
-            }
-            crate::SyncConstraintSpec::Track {
-                auxiliary,
-                primary,
-            } => {
+            },
+            crate::SyncConstraintSpec::Track { auxiliary, primary } => {
                 let aux_exists = stream_tokens.contains_key(auxiliary);
                 let pri_exists = stream_tokens.contains_key(primary);
 
@@ -1683,7 +1629,7 @@ pub fn validate_sync_constraints(
                         stream_tokens[primary].len(), primary,
                     )));
                 }
-            }
+            },
         }
     }
 
@@ -1725,8 +1671,7 @@ pub fn build_synced_stream_automaton_k<W: Semiring, const K: usize>(
     let mut combined = pair_n::<W, K>(streams);
 
     // Step 2: Apply constraints and collect diagnostics.
-    let mut constraint_diagnostics =
-        Vec::with_capacity(sync.constraints.len());
+    let mut constraint_diagnostics = Vec::with_capacity(sync.constraints.len());
 
     for constraint in &sync.constraints {
         match constraint {
@@ -1742,12 +1687,14 @@ pub fn build_synced_stream_automaton_k<W: Semiring, const K: usize>(
                         // Both names resolved to distinct tapes.
                         // Check boundary pattern presence in source streams
                         // (using the original 1-tape automata).
-                        let has_i = streams[i].transitions.iter().any(|t| {
-                            t.labels[0].as_deref() == Some(boundary_pattern.as_str())
-                        });
-                        let has_j = streams[j].transitions.iter().any(|t| {
-                            t.labels[0].as_deref() == Some(boundary_pattern.as_str())
-                        });
+                        let has_i = streams[i]
+                            .transitions
+                            .iter()
+                            .any(|t| t.labels[0].as_deref() == Some(boundary_pattern.as_str()));
+                        let has_j = streams[j]
+                            .transitions
+                            .iter()
+                            .any(|t| t.labels[0].as_deref() == Some(boundary_pattern.as_str()));
                         match (has_i, has_j) {
                             (false, false) => constraint_diagnostics.push(Err(format!(
                                 "Align({}, {}, '{}'): boundary pattern '{}' not found in either stream",
@@ -1773,7 +1720,7 @@ pub fn build_synced_stream_automaton_k<W: Semiring, const K: usize>(
                                 )));
                             }
                         }
-                    }
+                    },
                     (Some(_), Some(_)) => {
                         // i == j: degenerate self-align (e.g. Align("a", "a", ".")).
                         // Record as a no-op rather than an error.
@@ -1781,25 +1728,22 @@ pub fn build_synced_stream_automaton_k<W: Semiring, const K: usize>(
                             "Align({}, {}, '{}'): same stream — no-op",
                             constraint_a, constraint_b, boundary_pattern,
                         )));
-                    }
+                    },
                     _ => {
                         // At least one name doesn't appear in `names`.
                         constraint_diagnostics.push(Ok(format!(
                             "Align({}, {}, '{}'): skipped: does not involve any of our streams",
                             constraint_a, constraint_b, boundary_pattern,
                         )));
-                    }
+                    },
                 }
-            }
-            crate::SyncConstraintSpec::Track {
-                auxiliary,
-                primary,
-            } => {
+            },
+            crate::SyncConstraintSpec::Track { auxiliary, primary } => {
                 constraint_diagnostics.push(Ok(format!(
                     "Track({} relative to {}): recorded (metadata-only, no structural constraint)",
                     auxiliary, primary,
                 )));
-            }
+            },
         }
     }
 
@@ -1858,12 +1802,7 @@ mod tests {
         let q1 = a.add_state(Some("q1".into()));
         a.set_initial(q0, TropicalWeight::one());
         a.set_accepting(q1, TropicalWeight::one());
-        a.add_transition(
-            q0,
-            q1,
-            [Some("x".into()), Some("y".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q1, [Some("x".into()), Some("y".into())], TropicalWeight::one());
         assert_eq!(a.num_states(), 2);
         assert_eq!(a.num_transitions(), 1);
     }
@@ -1912,15 +1851,9 @@ mod tests {
         let paired = pair(&a1, &a2);
 
         // Evaluate with matching inputs on each tape via epsilon-extended transitions.
-        let result = paired.evaluate(&[
-            vec!["hello".into()],
-            vec!["world".into()],
-        ]);
+        let result = paired.evaluate(&[vec!["hello".into()], vec!["world".into()]]);
         // Should accept (via epsilon-extended paths).
-        assert!(
-            !result.is_zero(),
-            "pair should accept independent tape inputs"
-        );
+        assert!(!result.is_zero(), "pair should accept independent tape inputs");
     }
 
     // ── project() tests ─────────────────────────────────────────────────────
@@ -1943,10 +1876,7 @@ mod tests {
         assert_eq!(projected.num_states(), 2);
         assert_eq!(projected.num_transitions(), 1);
         // The single transition should have label "alpha" on tape 0.
-        assert_eq!(
-            projected.transitions[0].labels[0].as_deref(),
-            Some("alpha")
-        );
+        assert_eq!(projected.transitions[0].labels[0].as_deref(), Some("alpha"));
         assert_eq!(projected.transitions[0].weight, TropicalWeight::new(1.5));
     }
 
@@ -1968,10 +1898,7 @@ mod tests {
         assert_eq!(projected.num_states(), 2);
         assert_eq!(projected.num_transitions(), 1);
         // The single transition should have label "beta" on tape 1.
-        assert_eq!(
-            projected.transitions[0].labels[0].as_deref(),
-            Some("beta")
-        );
+        assert_eq!(projected.transitions[0].labels[0].as_deref(), Some("beta"));
         assert_eq!(projected.transitions[0].weight, TropicalWeight::new(2.0));
     }
 
@@ -1988,32 +1915,16 @@ mod tests {
         a.set_accepting(q2, TropicalWeight::one());
 
         // Matching labels on tapes 0 and 1.
-        a.add_transition(
-            q0,
-            q1,
-            [Some("x".into()), Some("x".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q1, [Some("x".into()), Some("x".into())], TropicalWeight::one());
         // Mismatched labels.
-        a.add_transition(
-            q0,
-            q2,
-            [Some("a".into()), Some("b".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q2, [Some("a".into()), Some("b".into())], TropicalWeight::one());
 
         let constrained = a.auto_intersect(0, 1);
         assert_eq!(constrained.num_states(), 3);
         // Only the matching transition survives.
         assert_eq!(constrained.num_transitions(), 1);
-        assert_eq!(
-            constrained.transitions[0].labels[0].as_deref(),
-            Some("x")
-        );
-        assert_eq!(
-            constrained.transitions[0].labels[1].as_deref(),
-            Some("x")
-        );
+        assert_eq!(constrained.transitions[0].labels[0].as_deref(), Some("x"));
+        assert_eq!(constrained.transitions[0].labels[1].as_deref(), Some("x"));
     }
 
     #[test]
@@ -2041,24 +1952,14 @@ mod tests {
         let a1 = a.add_state(Some("a1".into()));
         a.set_initial(a0, TropicalWeight::one());
         a.set_accepting(a1, TropicalWeight::one());
-        a.add_transition(
-            a0,
-            a1,
-            [Some("x".into()), Some("y".into())],
-            TropicalWeight::new(1.0),
-        );
+        a.add_transition(a0, a1, [Some("x".into()), Some("y".into())], TropicalWeight::new(1.0));
 
         let mut b = WeightedMultiTapeAutomaton::<TropicalWeight, 2>::new();
         let b0 = b.add_state(Some("b0".into()));
         let b1 = b.add_state(Some("b1".into()));
         b.set_initial(b0, TropicalWeight::one());
         b.set_accepting(b1, TropicalWeight::one());
-        b.add_transition(
-            b0,
-            b1,
-            [Some("x".into()), Some("y".into())],
-            TropicalWeight::new(2.0),
-        );
+        b.add_transition(b0, b1, [Some("x".into()), Some("y".into())], TropicalWeight::new(2.0));
 
         let product = multi_tape_intersect(&a, &b);
 
@@ -2077,12 +1978,7 @@ mod tests {
         let a1 = a.add_state(None);
         a.set_initial(a0, TropicalWeight::one());
         a.set_accepting(a1, TropicalWeight::one());
-        a.add_transition(
-            a0,
-            a1,
-            [Some("x".into()), Some("y".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(a0, a1, [Some("x".into()), Some("y".into())], TropicalWeight::one());
 
         let mut b = WeightedMultiTapeAutomaton::<TropicalWeight, 2>::new();
         let b0 = b.add_state(None);
@@ -2090,12 +1986,7 @@ mod tests {
         b.set_initial(b0, TropicalWeight::one());
         b.set_accepting(b1, TropicalWeight::one());
         // Labels differ on tape 0: "z" vs "x".
-        b.add_transition(
-            b0,
-            b1,
-            [Some("z".into()), Some("y".into())],
-            TropicalWeight::one(),
-        );
+        b.add_transition(b0, b1, [Some("z".into()), Some("y".into())], TropicalWeight::one());
 
         let product = multi_tape_intersect(&a, &b);
         // No matching transitions.
@@ -2111,12 +2002,7 @@ mod tests {
         let q1 = a.add_state(Some("q1".into()));
         a.set_initial(q0, TropicalWeight::one());
         a.set_accepting(q1, TropicalWeight::one());
-        a.add_transition(
-            q0,
-            q1,
-            [Some("a".into()), Some("b".into())],
-            TropicalWeight::new(1.0),
-        );
+        a.add_transition(q0, q1, [Some("a".into()), Some("b".into())], TropicalWeight::new(1.0));
 
         let result = a.evaluate(&[vec!["a".into()], vec!["b".into()]]);
         // Path weight: one() * 1.0 * one() = TropicalWeight(0.0 + 1.0 + 0.0) = 1.0.
@@ -2130,12 +2016,7 @@ mod tests {
         let q1 = a.add_state(None);
         a.set_initial(q0, TropicalWeight::one());
         a.set_accepting(q1, TropicalWeight::one());
-        a.add_transition(
-            q0,
-            q1,
-            [Some("a".into()), Some("b".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q1, [Some("a".into()), Some("b".into())], TropicalWeight::one());
 
         // Wrong input on tape 1.
         let result = a.evaluate(&[vec!["a".into()], vec!["WRONG".into()]]);
@@ -2152,19 +2033,9 @@ mod tests {
         a.set_accepting(q2, TropicalWeight::one());
 
         // q0 --[a, eps]--> q1 (consume "a" on tape 0, epsilon on tape 1).
-        a.add_transition(
-            q0,
-            q1,
-            [Some("a".into()), None],
-            TropicalWeight::new(1.0),
-        );
+        a.add_transition(q0, q1, [Some("a".into()), None], TropicalWeight::new(1.0));
         // q1 --[eps, b]--> q2 (epsilon on tape 0, consume "b" on tape 1).
-        a.add_transition(
-            q1,
-            q2,
-            [None, Some("b".into())],
-            TropicalWeight::new(2.0),
-        );
+        a.add_transition(q1, q2, [None, Some("b".into())], TropicalWeight::new(2.0));
 
         let result = a.evaluate(&[vec!["a".into()], vec!["b".into()]]);
         // Path: q0 --1.0--> q1 --2.0--> q2.
@@ -2186,12 +2057,7 @@ mod tests {
         let q1 = a.add_state(Some("q1".into()));
         a.set_initial(q0, TropicalWeight::one());
         a.set_accepting(q1, TropicalWeight::one());
-        a.add_transition(
-            q0,
-            q1,
-            [Some("hello".into())],
-            TropicalWeight::new(0.5),
-        );
+        a.add_transition(q0, q1, [Some("hello".into())], TropicalWeight::new(0.5));
 
         let result = a.evaluate(&[vec!["hello".into()]]);
         assert_eq!(result, TropicalWeight::new(0.5));
@@ -2208,12 +2074,7 @@ mod tests {
         a.set_accepting(q1, TropicalWeight::one());
 
         // Tape 0 and 2 have labels; tape 1 is always epsilon.
-        a.add_transition(
-            q0,
-            q1,
-            [Some("a".into()), None, Some("c".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q1, [Some("a".into()), None, Some("c".into())], TropicalWeight::one());
 
         let analysis = a.analyze();
         assert_eq!(analysis.num_tapes, 3);
@@ -2229,12 +2090,7 @@ mod tests {
         a.set_accepting(q1, TropicalWeight::one());
 
         // Both tapes always have the same label.
-        a.add_transition(
-            q0,
-            q1,
-            [Some("x".into()), Some("x".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q1, [Some("x".into()), Some("x".into())], TropicalWeight::one());
 
         let analysis = a.analyze();
         assert_eq!(analysis.overlapping_tapes, vec![(0, 1)]);
@@ -2248,12 +2104,7 @@ mod tests {
         a.set_initial(q0, TropicalWeight::one());
         a.set_accepting(q1, TropicalWeight::one());
 
-        a.add_transition(
-            q0,
-            q1,
-            [Some("x".into()), Some("y".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q1, [Some("x".into()), Some("y".into())], TropicalWeight::one());
 
         let analysis = a.analyze();
         assert!(analysis.overlapping_tapes.is_empty());
@@ -2268,12 +2119,7 @@ mod tests {
         let q1 = a.add_state(Some("end".into()));
         a.set_initial(q0, TropicalWeight::one());
         a.set_accepting(q1, TropicalWeight::one());
-        a.add_transition(
-            q0,
-            q1,
-            [Some("a".into()), None],
-            TropicalWeight::new(1.5),
-        );
+        a.add_transition(q0, q1, [Some("a".into()), None], TropicalWeight::new(1.5));
 
         let display = format!("{a}");
         assert!(display.contains("WeightedMultiTapeAutomaton<K=2>"));
@@ -2289,12 +2135,7 @@ mod tests {
         let q1 = a.add_state(None);
         a.set_initial(q0, TropicalWeight::one());
         a.set_accepting(q1, TropicalWeight::one());
-        a.add_transition(
-            q0,
-            q1,
-            [Some("a".into()), None, Some("a".into())],
-            TropicalWeight::one(),
-        );
+        a.add_transition(q0, q1, [Some("a".into()), None, Some("a".into())], TropicalWeight::one());
 
         let analysis = a.analyze();
         let display = format!("{analysis}");
@@ -2321,12 +2162,7 @@ mod tests {
         let q1 = a.add_state(Some("q1".into()));
         a.set_initial(q0, LogWeight::one());
         a.set_accepting(q1, LogWeight::one());
-        a.add_transition(
-            q0,
-            q1,
-            [Some("tok".into())],
-            LogWeight::new(0.5),
-        );
+        a.add_transition(q0, q1, [Some("tok".into())], LogWeight::new(0.5));
 
         let result = a.evaluate(&[vec!["tok".into()]]);
         // LogWeight::one() = 0.0, times = +, so path = 0.0 + 0.5 + 0.0 = 0.5.
@@ -2369,11 +2205,7 @@ mod tests {
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert_eq!(
-            result.disconnected_tapes.len(),
-            2,
-            "both categories should be disconnected"
-        );
+        assert_eq!(result.disconnected_tapes.len(), 2, "both categories should be disconnected");
     }
 
     #[test]
@@ -2453,10 +2285,7 @@ mod tests {
         ];
 
         let result = analyze_from_bundle(&all_syntax, &categories);
-        assert!(
-            !result.overlapping_tapes.is_empty(),
-            "identical rule structures should overlap"
-        );
+        assert!(!result.overlapping_tapes.is_empty(), "identical rule structures should overlap");
     }
 
     #[test]
@@ -2513,8 +2342,8 @@ mod tests {
 
     #[test]
     fn analyze_bundle_collection_cross_ref() {
-        use crate::pipeline::CategoryInfo;
         use crate::grammar::ir::CollectionKind;
+        use crate::pipeline::CategoryInfo;
 
         let categories = vec![
             CategoryInfo {
@@ -2664,18 +2493,9 @@ mod tests {
         let tokens: Vec<String> = vec!["a".into(), "b".into()];
         let automaton = build_stream_automaton::<TropicalWeight>("comments", &tokens);
 
-        assert_eq!(
-            automaton.states[0].label.as_deref(),
-            Some("comments:q0"),
-        );
-        assert_eq!(
-            automaton.states[1].label.as_deref(),
-            Some("comments:q1"),
-        );
-        assert_eq!(
-            automaton.states[2].label.as_deref(),
-            Some("comments:q2"),
-        );
+        assert_eq!(automaton.states[0].label.as_deref(), Some("comments:q0"),);
+        assert_eq!(automaton.states[1].label.as_deref(), Some("comments:q1"),);
+        assert_eq!(automaton.states[2].label.as_deref(), Some("comments:q2"),);
     }
 
     #[test]
@@ -2687,25 +2507,20 @@ mod tests {
         assert_eq!(automaton.num_transitions(), 1);
 
         let result = automaton.evaluate(&[vec!["tok".into()]]);
-        assert!(
-            result.approx_eq(&LogWeight::one(), 1e-9),
-            "all-one weights should yield one()"
-        );
+        assert!(result.approx_eq(&LogWeight::one(), 1e-9), "all-one weights should yield one()");
     }
 
     // ── Sprint 6C: build_synced_stream_automaton() tests ───────────────────
 
     #[test]
     fn synced_stream_track_only() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
-        let main_tokens: Vec<String> =
-            vec!["let".into(), "x".into(), "=".into(), "42".into()];
+        let main_tokens: Vec<String> = vec!["let".into(), "x".into(), "=".into(), "42".into()];
         let comment_tokens: Vec<String> = vec!["/* doc */".into()];
 
         let main_aut = build_stream_automaton::<TropicalWeight>("main", &main_tokens);
-        let comment_aut =
-            build_stream_automaton::<TropicalWeight>("comments", &comment_tokens);
+        let comment_aut = build_stream_automaton::<TropicalWeight>("comments", &comment_tokens);
 
         let sync = SyncSpec {
             constraints: vec![SyncConstraintSpec::Track {
@@ -2714,9 +2529,8 @@ mod tests {
             }],
         };
 
-        let result = build_synced_stream_automaton(
-            &main_aut, &comment_aut, "main", "comments", &sync,
-        );
+        let result =
+            build_synced_stream_automaton(&main_aut, &comment_aut, "main", "comments", &sync);
 
         // Track constraints don't modify the automaton, so it should be the
         // full pair() product and should be satisfiable.
@@ -2730,7 +2544,7 @@ mod tests {
 
     #[test]
     fn synced_stream_align_identical_tokens() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         // Two streams with the same tokens — Align should work.
         let tokens: Vec<String> = vec!["a".into(), "b".into()];
@@ -2745,9 +2559,7 @@ mod tests {
             }],
         };
 
-        let result = build_synced_stream_automaton(
-            &aut_a, &aut_b, "s1", "s2", &sync,
-        );
+        let result = build_synced_stream_automaton(&aut_a, &aut_b, "s1", "s2", &sync);
 
         assert_eq!(result.constraint_diagnostics.len(), 1);
         assert!(
@@ -2764,7 +2576,7 @@ mod tests {
 
     #[test]
     fn synced_stream_align_missing_boundary_in_one() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let tokens_a: Vec<String> = vec!["a".into(), "b".into()];
         let tokens_b: Vec<String> = vec!["c".into(), "d".into()];
@@ -2779,9 +2591,7 @@ mod tests {
             }],
         };
 
-        let result = build_synced_stream_automaton(
-            &aut_a, &aut_b, "s1", "s2", &sync,
-        );
+        let result = build_synced_stream_automaton(&aut_a, &aut_b, "s1", "s2", &sync);
 
         assert_eq!(result.constraint_diagnostics.len(), 1);
         assert!(
@@ -2792,7 +2602,7 @@ mod tests {
 
     #[test]
     fn synced_stream_align_missing_boundary_in_both() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let tokens_a: Vec<String> = vec!["a".into()];
         let tokens_b: Vec<String> = vec!["b".into()];
@@ -2807,9 +2617,7 @@ mod tests {
             }],
         };
 
-        let result = build_synced_stream_automaton(
-            &aut_a, &aut_b, "s1", "s2", &sync,
-        );
+        let result = build_synced_stream_automaton(&aut_a, &aut_b, "s1", "s2", &sync);
 
         assert_eq!(result.constraint_diagnostics.len(), 1);
         assert!(
@@ -2820,7 +2628,7 @@ mod tests {
 
     #[test]
     fn synced_stream_align_wrong_streams() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let tokens: Vec<String> = vec!["a".into()];
         let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens);
@@ -2835,9 +2643,7 @@ mod tests {
             }],
         };
 
-        let result = build_synced_stream_automaton(
-            &aut_a, &aut_b, "s1", "s2", &sync,
-        );
+        let result = build_synced_stream_automaton(&aut_a, &aut_b, "s1", "s2", &sync);
 
         // Constraint is skipped (doesn't apply to our streams), so the
         // automaton is unmodified and satisfiable.
@@ -2845,11 +2651,10 @@ mod tests {
         assert_eq!(result.constraint_diagnostics.len(), 1);
         assert!(result.constraint_diagnostics[0].is_ok());
         // Should contain "skipped" in the message.
-        let msg = result.constraint_diagnostics[0].as_ref().expect("should be Ok");
-        assert!(
-            msg.contains("skipped"),
-            "diagnostic should mention skipping: {msg}"
-        );
+        let msg = result.constraint_diagnostics[0]
+            .as_ref()
+            .expect("should be Ok");
+        assert!(msg.contains("skipped"), "diagnostic should mention skipping: {msg}");
     }
 
     #[test]
@@ -2860,13 +2665,9 @@ mod tests {
         let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens);
         let aut_b = build_stream_automaton::<TropicalWeight>("s2", &tokens);
 
-        let sync = SyncSpec {
-            constraints: vec![],
-        };
+        let sync = SyncSpec { constraints: vec![] };
 
-        let result = build_synced_stream_automaton(
-            &aut_a, &aut_b, "s1", "s2", &sync,
-        );
+        let result = build_synced_stream_automaton(&aut_a, &aut_b, "s1", "s2", &sync);
 
         // No constraints → just pair(), should be satisfiable.
         assert!(result.is_satisfiable);
@@ -2875,7 +2676,7 @@ mod tests {
 
     #[test]
     fn synced_stream_multiple_constraints() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let tokens: Vec<String> = vec!["a".into(), "b".into()];
         let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens);
@@ -2895,9 +2696,7 @@ mod tests {
             ],
         };
 
-        let result = build_synced_stream_automaton(
-            &aut_a, &aut_b, "s1", "s2", &sync,
-        );
+        let result = build_synced_stream_automaton(&aut_a, &aut_b, "s1", "s2", &sync);
 
         assert_eq!(result.constraint_diagnostics.len(), 2);
         assert!(result.constraint_diagnostics[0].is_ok()); // Track
@@ -2929,10 +2728,7 @@ mod tests {
         // Only transition: q0 -> q1 (not accepting)
         a.add_transition(q0, _q1, [Some("x".into())], TropicalWeight::one());
 
-        assert!(
-            !check_reachable_accepting(&a),
-            "accepting state q2 should be unreachable"
-        );
+        assert!(!check_reachable_accepting(&a), "accepting state q2 should be unreachable");
     }
 
     #[test]
@@ -2961,7 +2757,7 @@ mod tests {
 
     #[test]
     fn validate_sync_align_both_present() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let mut streams = HashMap::new();
         streams.insert("s1".into(), vec!["a".into(), "b".into(), "a".into()]);
@@ -2986,7 +2782,7 @@ mod tests {
 
     #[test]
     fn validate_sync_align_missing_stream() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let mut streams = HashMap::new();
         streams.insert("s1".into(), vec!["a".into()]);
@@ -3009,7 +2805,7 @@ mod tests {
 
     #[test]
     fn validate_sync_track_both_exist() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let mut streams = HashMap::new();
         streams.insert("comments".into(), vec!["/* x */".into()]);
@@ -3029,7 +2825,7 @@ mod tests {
 
     #[test]
     fn validate_sync_track_missing_primary() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let mut streams = HashMap::new();
         streams.insert("comments".into(), vec!["/* x */".into()]);
@@ -3050,9 +2846,7 @@ mod tests {
     #[test]
     fn validate_sync_empty_constraints() {
         let streams = HashMap::new();
-        let sync = crate::SyncSpec {
-            constraints: vec![],
-        };
+        let sync = crate::SyncSpec { constraints: vec![] };
 
         let diagnostics = validate_sync_constraints(&streams, &sync);
         assert!(diagnostics.is_empty());
@@ -3060,7 +2854,7 @@ mod tests {
 
     #[test]
     fn validate_sync_align_boundary_not_in_either_stream() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let mut streams = HashMap::new();
         streams.insert("s1".into(), vec!["x".into()]);
@@ -3086,7 +2880,7 @@ mod tests {
 
     #[test]
     fn validate_sync_multiple_mixed_constraints() {
-        use crate::{SyncSpec, SyncConstraintSpec};
+        use crate::{SyncConstraintSpec, SyncSpec};
 
         let mut streams = HashMap::new();
         streams.insert("main".into(), vec!["a".into(), "b".into()]);
@@ -3113,9 +2907,9 @@ mod tests {
 
         let diagnostics = validate_sync_constraints(&streams, &sync);
         assert_eq!(diagnostics.len(), 3);
-        assert!(diagnostics[0].is_ok());  // Track ws/main — both exist
+        assert!(diagnostics[0].is_ok()); // Track ws/main — both exist
         assert!(diagnostics[1].is_err()); // Align main/comments — "a" not in comments
-        assert!(diagnostics[2].is_ok());  // Track comments/main — both exist
+        assert!(diagnostics[2].is_ok()); // Track comments/main — both exist
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -3190,9 +2984,9 @@ mod tests {
     /// K=3: pair_n state count = product of source state counts.
     #[test]
     fn pair_n_k3_construction_state_count() {
-        let a = linear_1tape(&["a"]);            // 2 states
-        let b = linear_1tape(&["b1", "b2"]);     // 3 states
-        let c = linear_1tape(&["c"]);            // 2 states
+        let a = linear_1tape(&["a"]); // 2 states
+        let b = linear_1tape(&["b1", "b2"]); // 3 states
+        let c = linear_1tape(&["c"]); // 2 states
         let triple = pair_n::<TropicalWeight, 3>([&a, &b, &c]);
         assert_eq!(triple.num_states(), 2 * 3 * 2); // = 12
     }
@@ -3204,11 +2998,7 @@ mod tests {
         let b = linear_1tape(&["y"]);
         let c = linear_1tape(&["z"]);
         let triple = pair_n::<TropicalWeight, 3>([&a, &b, &c]);
-        let r = triple.evaluate(&[
-            vec!["x".into()],
-            vec!["y".into()],
-            vec!["z".into()],
-        ]);
+        let r = triple.evaluate(&[vec!["x".into()], vec!["y".into()], vec!["z".into()]]);
         assert_ne!(
             r,
             TropicalWeight::zero(),
@@ -3269,11 +3059,7 @@ mod tests {
             vec!["c".into()],
             vec!["y".into(), "z".into()],
         ]);
-        assert_ne!(
-            r,
-            TropicalWeight::zero(),
-            "K=4 product accepts all tapes simultaneously",
-        );
+        assert_ne!(r, TropicalWeight::zero(), "K=4 product accepts all tapes simultaneously",);
     }
 
     /// K=4 chained auto_intersect across two pairs (0,2) and (1,3).
@@ -3288,24 +3074,14 @@ mod tests {
         m.add_transition(
             q0,
             q1,
-            [
-                Some("a".into()),
-                Some("x".into()),
-                Some("a".into()),
-                Some("x".into()),
-            ],
+            [Some("a".into()), Some("x".into()), Some("a".into()), Some("x".into())],
             TropicalWeight::one(),
         );
         // Transition where labels[0] == labels[2] but labels[1] != labels[3]:
         m.add_transition(
             q0,
             q1,
-            [
-                Some("a".into()),
-                Some("x".into()),
-                Some("a".into()),
-                Some("DIFF".into()),
-            ],
+            [Some("a".into()), Some("x".into()), Some("a".into()), Some("DIFF".into())],
             TropicalWeight::one(),
         );
         let c1 = m.auto_intersect(0, 2);
@@ -3400,11 +3176,7 @@ mod tests {
         // |Q_ab| = 4 × |Q_c| = 2 → 8 product states.
         assert_eq!(triple.num_states(), 8);
         // Evaluation accepts all-three-tapes synchronized:
-        let r = triple.evaluate(&[
-            vec!["x".into()],
-            vec!["y".into()],
-            vec!["z".into()],
-        ]);
+        let r = triple.evaluate(&[vec!["x".into()], vec!["y".into()], vec!["z".into()]]);
         assert_ne!(r, TropicalWeight::zero());
     }
 
@@ -3432,9 +3204,9 @@ mod tests {
 #[cfg(test)]
 mod proptest_tests {
     use super::*;
-    use proptest::prelude::*;
     use crate::test_generators::*;
     use crate::SyntaxItemSpec;
+    use proptest::prelude::*;
 
     /// Collect all cross-category references (outbound and inbound).
     ///
@@ -3462,45 +3234,69 @@ mod proptest_tests {
         match item {
             SyntaxItemSpec::NonTerminal { category, .. } => {
                 if category != rule_cat {
-                    connections.entry(rule_cat.to_string()).or_default().insert(category.clone());
-                    connections.entry(category.clone()).or_default().insert(rule_cat.to_string());
+                    connections
+                        .entry(rule_cat.to_string())
+                        .or_default()
+                        .insert(category.clone());
+                    connections
+                        .entry(category.clone())
+                        .or_default()
+                        .insert(rule_cat.to_string());
                 }
-            }
+            },
             SyntaxItemSpec::Binder { category, .. } => {
                 if category != rule_cat {
-                    connections.entry(rule_cat.to_string()).or_default().insert(category.clone());
-                    connections.entry(category.clone()).or_default().insert(rule_cat.to_string());
+                    connections
+                        .entry(rule_cat.to_string())
+                        .or_default()
+                        .insert(category.clone());
+                    connections
+                        .entry(category.clone())
+                        .or_default()
+                        .insert(rule_cat.to_string());
                 }
-            }
+            },
             SyntaxItemSpec::Collection { element_category, .. } => {
                 if element_category != rule_cat {
-                    connections.entry(rule_cat.to_string()).or_default().insert(element_category.clone());
-                    connections.entry(element_category.clone()).or_default().insert(rule_cat.to_string());
+                    connections
+                        .entry(rule_cat.to_string())
+                        .or_default()
+                        .insert(element_category.clone());
+                    connections
+                        .entry(element_category.clone())
+                        .or_default()
+                        .insert(rule_cat.to_string());
                 }
-            }
+            },
             SyntaxItemSpec::Sep { body, .. } => {
                 collect_cross_refs(body, rule_cat, connections);
-            }
+            },
             SyntaxItemSpec::Map { body_items } => {
                 for sub in body_items {
                     collect_cross_refs(sub, rule_cat, connections);
                 }
-            }
+            },
             SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
                 for ref_cat in [left_category.as_str(), right_category.as_str()] {
                     if ref_cat != rule_cat {
-                        connections.entry(rule_cat.to_string()).or_default().insert(ref_cat.to_string());
-                        connections.entry(ref_cat.to_string()).or_default().insert(rule_cat.to_string());
+                        connections
+                            .entry(rule_cat.to_string())
+                            .or_default()
+                            .insert(ref_cat.to_string());
+                        connections
+                            .entry(ref_cat.to_string())
+                            .or_default()
+                            .insert(rule_cat.to_string());
                     }
                 }
                 collect_cross_refs(body, rule_cat, connections);
-            }
+            },
             SyntaxItemSpec::Optional { inner } => {
                 for sub in inner {
                     collect_cross_refs(sub, rule_cat, connections);
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 

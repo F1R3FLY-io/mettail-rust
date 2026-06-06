@@ -14,9 +14,6 @@ pub fn generate_binder_shadowing_section(language: &LanguageDef) -> TokenStream 
     let lang_name = language.name.to_string();
     let baseline = baseline_tests(&lang_name);
     quote! {
-        #![allow(non_snake_case, unused_imports, dead_code)]
-        //! Auto-generated binder shadowing tests for #lang_name.
-
         use mettail_prattail::wpda_runtime::{StackSymbolV2, WpdaState};
         use mettail_prattail::gss::{WpdaGss, WpdaGssNode};
         use mettail_prattail::automata::lex_weight::LexicographicWeight;
@@ -30,8 +27,9 @@ fn baseline_tests(lang_name: &str) -> TokenStream {
     let tests = (0..10).map(|i| {
         let s = format!("binder_shadowing_{}_{:02}", lang_lower, i);
         let name = proc_macro2::Ident::new(&s, proc_macro2::Span::call_site());
-        let depth = i + 1;
+        let depth: usize = i + 1;
         let depth_lit = depth as u8;
+        let expected_len = depth + 1;
         quote! {
             #[test]
             fn #name() {
@@ -54,7 +52,7 @@ fn baseline_tests(lang_name: &str) -> TokenStream {
                 }
                 let paths = g.paths_to_root(cur);
                 assert_eq!(paths.len(), 1, "linear binder chain has one path");
-                assert_eq!(paths[0].len(), #depth + 1);
+                assert_eq!(paths[0].len(), #expected_len);
             }
         }
     });

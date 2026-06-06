@@ -55,7 +55,7 @@
 //! - `exists`, `∃` → Quantified Exists
 //! - `in`, `∈`, `:` → set membership sugar
 
-use crate::behavioral_pred::{BehavioralPred, PredArg, Quantifier, QuantifiedDomain};
+use crate::behavioral_pred::{BehavioralPred, PredArg, QuantifiedDomain, Quantifier};
 use std::collections::HashMap;
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -165,16 +165,11 @@ fn tokenize(input: &str) -> Result<Vec<TokenSpan>, ParseError> {
         // Identifiers and keywords
         if c.is_ascii_alphabetic() || c == b'_' {
             let mut end = i + 1;
-            while end < bytes.len()
-                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
-            {
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
                 end += 1;
             }
             let ident = std::str::from_utf8(&bytes[i..end]).unwrap().to_string();
-            out.push(TokenSpan {
-                tok: Tok::Ident(ident),
-                pos: start,
-            });
+            out.push(TokenSpan { tok: Tok::Ident(ident), pos: start });
             i = end;
             continue;
         }
@@ -189,10 +184,7 @@ fn tokenize(input: &str) -> Result<Vec<TokenSpan>, ParseError> {
                 message: format!("invalid integer: {}", num_str),
                 position: start,
             })?;
-            out.push(TokenSpan {
-                tok: Tok::Int(n),
-                pos: start,
-            });
+            out.push(TokenSpan { tok: Tok::Int(n), pos: start });
             i = end;
             continue;
         }
@@ -209,10 +201,7 @@ fn tokenize(input: &str) -> Result<Vec<TokenSpan>, ParseError> {
                 });
             }
             let s = std::str::from_utf8(&bytes[i + 1..end]).unwrap().to_string();
-            out.push(TokenSpan {
-                tok: Tok::Str(s),
-                pos: start,
-            });
+            out.push(TokenSpan { tok: Tok::Str(s), pos: start });
             i = end + 1;
             continue;
         }
@@ -242,69 +231,69 @@ fn tokenize(input: &str) -> Result<Vec<TokenSpan>, ParseError> {
             b'(' => {
                 i += 1;
                 Tok::LParen
-            }
+            },
             b')' => {
                 i += 1;
                 Tok::RParen
-            }
+            },
             b'{' => {
                 i += 1;
                 Tok::LBrace
-            }
+            },
             b'}' => {
                 i += 1;
                 Tok::RBrace
-            }
+            },
             b',' => {
                 i += 1;
                 Tok::Comma
-            }
+            },
             b'.' => {
                 i += 1;
                 Tok::Dot
-            }
+            },
             b'=' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
                 i += 2;
                 Tok::Op("==".to_string())
-            }
+            },
             b'!' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
                 i += 2;
                 Tok::Op("!=".to_string())
-            }
+            },
             b'<' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
                 i += 2;
                 Tok::Op("<=".to_string())
-            }
+            },
             b'>' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
                 i += 2;
                 Tok::Op(">=".to_string())
-            }
+            },
             b'-' if i + 2 < bytes.len() && bytes[i + 1] == b'>' && bytes[i + 2] == b'*' => {
                 i += 3;
                 Tok::Op("->*".to_string())
-            }
+            },
             b'!' => {
                 i += 1;
                 Tok::Op("!".to_string())
-            }
+            },
             b'<' => {
                 i += 1;
                 Tok::Op("<".to_string())
-            }
+            },
             b'>' => {
                 i += 1;
                 Tok::Op(">".to_string())
-            }
+            },
             b':' => {
                 i += 1;
                 Tok::Op(":".to_string())
-            }
+            },
             _ => {
                 return Err(ParseError {
                     message: format!("unexpected character: {}", c as char),
                     position: start,
                 });
-            }
+            },
         };
         out.push(TokenSpan { tok, pos: start });
     }
@@ -419,10 +408,7 @@ impl PredicateParser {
             let b = self.parse_implication()?;
             self.expect_rparen()?;
             return Ok(BehavioralPred::And(
-                Box::new(BehavioralPred::Implies(
-                    Box::new(a.clone()),
-                    Box::new(b.clone()),
-                )),
+                Box::new(BehavioralPred::Implies(Box::new(a.clone()), Box::new(b.clone()))),
                 Box::new(BehavioralPred::Implies(Box::new(b), Box::new(a))),
             ));
         }
@@ -498,9 +484,7 @@ impl PredicateParser {
         //   forall(v, body)                — no domain
         //   forall(v, domain, body)        — comma separator
         //   forall(v in domain, body)      — `in` / `∈` keyword
-        let domain = if self.peek_keyword_role("entails")
-            && false
-        {
+        let domain = if self.peek_keyword_role("entails") && false {
             None
         } else if self.peek_in_keyword() {
             self.consume();
@@ -557,10 +541,7 @@ impl PredicateParser {
         if self.pos >= self.tokens.len() {
             return false;
         }
-        matches!(
-            &self.tokens[self.pos].tok,
-            Tok::Int(_) | Tok::LBrace | Tok::Ident(_)
-        )
+        matches!(&self.tokens[self.pos].tok, Tok::Int(_) | Tok::LBrace | Tok::Ident(_))
     }
 
     fn parse_domain(&mut self) -> Result<QuantifiedDomain, ParseError> {
@@ -570,7 +551,7 @@ impl PredicateParser {
                     let k = *n as usize;
                     self.consume();
                     return Ok(QuantifiedDomain::Bounded(k));
-                }
+                },
                 Tok::LBrace => {
                     self.consume();
                     let mut elems = Vec::new();
@@ -583,13 +564,13 @@ impl PredicateParser {
                     }
                     self.expect_rbrace()?;
                     return Ok(QuantifiedDomain::Enumerated(elems));
-                }
+                },
                 Tok::Ident(name) => {
                     let s = name.clone();
                     self.consume();
                     return Ok(QuantifiedDomain::Named(s));
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
         Err(self.error("expected domain (integer, identifier, or brace-enclosed set)"))
@@ -682,17 +663,17 @@ impl PredicateParser {
                 let v = *n;
                 self.consume();
                 Ok(PredArg::IntLit(v))
-            }
+            },
             Some(Tok::Str(s)) => {
                 let v = s.clone();
                 self.consume();
                 Ok(PredArg::StringLit(v))
-            }
+            },
             Some(Tok::Ident(name)) => {
                 let v = name.clone();
                 self.consume();
                 Ok(PredArg::Var(v))
-            }
+            },
             _ => Err(self.error("expected argument (identifier, integer, or string)")),
         }
     }
@@ -785,7 +766,7 @@ impl PredicateParser {
                 let v = name.clone();
                 self.consume();
                 Ok(v)
-            }
+            },
             _ => Err(self.error("expected identifier")),
         }
     }
@@ -796,10 +777,7 @@ impl PredicateParser {
             .get(self.pos)
             .map(|t| t.pos)
             .unwrap_or_else(|| self.tokens.last().map(|t| t.pos).unwrap_or(0));
-        ParseError {
-            message: message.to_string(),
-            position,
-        }
+        ParseError { message: message.to_string(), position }
     }
 }
 
@@ -849,16 +827,10 @@ mod tests {
         parse_predicate_from_str(s, PredicateParserConfig::default())
     }
 
-    fn parse_with_map(
-        s: &str,
-        map: Vec<(&str, Vec<&str>)>,
-    ) -> Result<BehavioralPred, ParseError> {
+    fn parse_with_map(s: &str, map: Vec<(&str, Vec<&str>)>) -> Result<BehavioralPred, ParseError> {
         let mut m = HashMap::new();
         for (role, spellings) in map {
-            m.insert(
-                role.to_string(),
-                spellings.iter().map(|s| s.to_string()).collect(),
-            );
+            m.insert(role.to_string(), spellings.iter().map(|s| s.to_string()).collect());
         }
         parse_predicate_from_str(
             s,
@@ -879,7 +851,7 @@ mod tests {
                 assert_eq!(relation_name, "halts");
                 assert!(args.is_empty());
                 assert!(!negated);
-            }
+            },
             _ => panic!("expected RelationQuery, got {:?}", pred),
         }
     }
@@ -892,7 +864,7 @@ mod tests {
                 assert_eq!(relation_name, "halts");
                 assert_eq!(args.len(), 1);
                 assert_eq!(args[0], PredArg::Var("x".to_string()));
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -904,7 +876,7 @@ mod tests {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "reachable");
                 assert_eq!(args.len(), 2);
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -915,7 +887,7 @@ mod tests {
         match pred {
             BehavioralPred::RelationQuery { args, .. } => {
                 assert_eq!(args[1], PredArg::IntLit(5));
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -926,7 +898,7 @@ mod tests {
     fn parse_conjunction() {
         let pred = parse("and(halts(x), safe(x))").expect("ok");
         match pred {
-            BehavioralPred::And(_, _) => {}
+            BehavioralPred::And(_, _) => {},
             _ => panic!("expected And, got {:?}", pred),
         }
     }
@@ -938,7 +910,7 @@ mod tests {
         match pred {
             BehavioralPred::And(_, rhs) => {
                 assert!(matches!(*rhs, BehavioralPred::And(_, _)));
-            }
+            },
             _ => panic!("expected nested And"),
         }
     }
@@ -979,7 +951,7 @@ mod tests {
                 if let BehavioralPred::RelationQuery { relation_name, .. } = *c {
                     assert_eq!(relation_name, "safe");
                 }
-            }
+            },
             _ => panic!("expected Implies"),
         }
     }
@@ -991,7 +963,7 @@ mod tests {
             BehavioralPred::And(lhs, rhs) => {
                 assert!(matches!(*lhs, BehavioralPred::Implies(_, _)));
                 assert!(matches!(*rhs, BehavioralPred::Implies(_, _)));
-            }
+            },
             _ => panic!("expected And(Implies, Implies)"),
         }
     }
@@ -1004,7 +976,7 @@ mod tests {
         match pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "eq");
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -1016,7 +988,7 @@ mod tests {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "lt");
                 assert_eq!(args[1], PredArg::IntLit(5));
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -1027,7 +999,7 @@ mod tests {
         match pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "ge");
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -1046,7 +1018,7 @@ mod tests {
             } => {
                 assert_eq!(var, "y");
                 assert_eq!(name, "nodes");
-            }
+            },
             _ => panic!("expected Quantified/ForAll/Named, got {:?}", pred),
         }
     }
@@ -1062,7 +1034,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(var, "y");
-            }
+            },
             _ => panic!("expected Quantified/Exists/None, got {:?}", pred),
         }
     }
@@ -1076,7 +1048,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(k, 100);
-            }
+            },
             _ => panic!("expected Bounded domain"),
         }
     }
@@ -1090,7 +1062,7 @@ mod tests {
                 ..
             } => {
                 assert_eq!(es.len(), 3);
-            }
+            },
             _ => panic!("expected Enumerated domain"),
         }
     }
@@ -1104,7 +1076,7 @@ mod tests {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "PosInt");
                 assert_eq!(args[0], PredArg::Var("x".to_string()));
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -1126,7 +1098,7 @@ mod tests {
         match pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "PosInt");
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -1139,7 +1111,7 @@ mod tests {
         match pred {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "rewrites_to");
-            }
+            },
             _ => panic!("expected RelationQuery"),
         }
     }
@@ -1169,17 +1141,13 @@ mod tests {
             BehavioralPred::RelationQuery { relation_name, args, .. } => {
                 assert_eq!(relation_name, "and");
                 assert!(args.is_empty());
-            }
+            },
             _ => panic!("expected bare identifier as nullary relation"),
         }
 
         // Context C: ML-like (not = "not" keyword, but no "and"/"or"
         // in the map). Prefix `not halts(x)` still parses.
-        let c = parse_with_map(
-            "not halts(x)",
-            vec![("not", vec!["not"])],
-        )
-        .expect("ml-like ok");
+        let c = parse_with_map("not halts(x)", vec![("not", vec!["not"])]).expect("ml-like ok");
         assert!(matches!(c, BehavioralPred::Not(_)));
     }
 
@@ -1190,15 +1158,12 @@ mod tests {
     fn closed_world_rejects_undeclared_connective() {
         // Only `and` and `not` are declared. `or(a, b)` must not
         // parse as a disjunction.
-        let result = parse_with_map(
-            "or",
-            vec![("and", vec!["and"]), ("not", vec!["not"])],
-        );
+        let result = parse_with_map("or", vec![("and", vec!["and"]), ("not", vec!["not"])]);
         // `or` becomes a bare identifier (a nullary relation named "or").
         match result.unwrap() {
             BehavioralPred::RelationQuery { relation_name, .. } => {
                 assert_eq!(relation_name, "or");
-            }
+            },
             _ => panic!("expected RelationQuery for bare `or`"),
         }
     }

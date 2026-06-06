@@ -30,11 +30,7 @@ fn parse_recovering_clean_input_yields_no_errors() {
     // clean parse. Empty error vec is the success contract.
     let (ast, errors) = Proc::parse_recovering("1 + 2");
     assert!(ast.is_some(), "should parse cleanly: errors = {:?}", errors);
-    assert!(
-        errors.is_empty(),
-        "well-formed input should produce no errors: {:?}",
-        errors,
-    );
+    assert!(errors.is_empty(), "well-formed input should produce no errors: {:?}", errors,);
 }
 
 #[test]

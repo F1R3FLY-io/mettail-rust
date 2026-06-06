@@ -9,8 +9,8 @@
 //! - ConstraintTheory propagation throughput
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use mettail_prattail::presburger::*;
 use mettail_prattail::logict::ConstraintTheory;
+use mettail_prattail::presburger::*;
 
 fn bench_nfa_construction(c: &mut Criterion) {
     let mut group = c.benchmark_group("presburger/nfa_construction");

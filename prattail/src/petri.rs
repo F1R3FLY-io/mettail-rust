@@ -74,11 +74,7 @@ pub struct Place {
 impl Place {
     /// Create an unbounded place.
     pub fn new(id: usize, name: impl Into<String>) -> Self {
-        Place {
-            id,
-            name: name.into(),
-            capacity: None,
-        }
+        Place { id, name: name.into(), capacity: None }
     }
 
     /// Create a bounded place.
@@ -178,9 +174,7 @@ pub struct Marking {
 impl Marking {
     /// Create a marking with all places having zero tokens.
     pub fn zero(num_places: usize) -> Self {
-        Marking {
-            tokens: vec![0; num_places],
-        }
+        Marking { tokens: vec![0; num_places] }
     }
 
     /// Create a marking from a token vector.
@@ -609,11 +603,7 @@ impl PetriNet {
     }
 
     /// Choose a pivot vertex `u` from `P ∪ X` that maximizes `|P ∩ N(u)|`.
-    fn choose_pivot(
-        p: &[usize],
-        x: &[usize],
-        adj: &[HashSet<usize>],
-    ) -> Option<usize> {
+    fn choose_pivot(p: &[usize], x: &[usize], adj: &[HashSet<usize>]) -> Option<usize> {
         let p_set: HashSet<usize> = p.iter().copied().collect();
         p.iter()
             .chain(x.iter())
@@ -738,7 +728,7 @@ pub fn check_coverability(net: &PetriNet, target: &Marking) -> bool {
         m.iter()
             .zip(target_tokens.iter())
             .all(|(m_val, &t_val)| match m_val {
-                None => true,      // omega >= anything
+                None => true, // omega >= anything
                 Some(v) => *v >= t_val,
             })
     };
@@ -749,9 +739,13 @@ pub fn check_coverability(net: &PetriNet, target: &Marking) -> bool {
         let mut has_strict = false;
         for (m_val, a_val) in m.iter().zip(ancestor.iter()) {
             match (m_val, a_val) {
-                (None, None) => {}                            // omega == omega
-                (None, Some(_)) => { has_strict = true; }     // omega > finite
-                (Some(_), None) => { return false; }          // finite < omega
+                (None, None) => {}, // omega == omega
+                (None, Some(_)) => {
+                    has_strict = true;
+                }, // omega > finite
+                (Some(_), None) => {
+                    return false;
+                }, // finite < omega
                 (Some(mv), Some(av)) => {
                     if mv < av {
                         return false;
@@ -759,7 +753,7 @@ pub fn check_coverability(net: &PetriNet, target: &Marking) -> bool {
                     if mv > av {
                         has_strict = true;
                     }
-                }
+                },
             }
         }
         has_strict
@@ -772,7 +766,7 @@ pub fn check_coverability(net: &PetriNet, target: &Marking) -> bool {
                 return false;
             }
             match m[p] {
-                None => true,      // omega >= any finite weight
+                None => true, // omega >= any finite weight
                 Some(v) => v >= w,
             }
         })
@@ -823,10 +817,7 @@ pub fn check_coverability(net: &PetriNet, target: &Marking) -> bool {
     }
 
     // Insert root node.
-    nodes.push(TreeNode {
-        marking: initial,
-        ancestors: vec![0],
-    });
+    nodes.push(TreeNode { marking: initial, ancestors: vec![0] });
     worklist.push_back(0);
 
     // Duplicate pruning: track seen markings to avoid re-exploring.
@@ -853,14 +844,14 @@ pub fn check_coverability(net: &PetriNet, target: &Marking) -> bool {
                         match (&successor[i], &ancestor_marking[i]) {
                             (Some(sv), Some(av)) if sv > av => {
                                 successor[i] = None; // accelerate to omega
-                            }
+                            },
                             (Some(_), None) => {
                                 // successor finite < ancestor omega: no acceleration
-                            }
+                            },
                             (None, _) => {
                                 // already omega
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 }
@@ -951,9 +942,8 @@ pub fn check_deadlock(net: &PetriNet) -> bool {
         })
     };
 
-    let is_deadlock_omega = |m: &OmegaMarking| -> bool {
-        net.transitions.iter().all(|t| !is_enabled_omega(t, m))
-    };
+    let is_deadlock_omega =
+        |m: &OmegaMarking| -> bool { net.transitions.iter().all(|t| !is_enabled_omega(t, m)) };
 
     let fire_omega = |t: &PetriTransition, m: &OmegaMarking| -> OmegaMarking {
         let mut result = m.clone();
@@ -980,9 +970,13 @@ pub fn check_deadlock(net: &PetriNet) -> bool {
         let mut has_strict = false;
         for (m_val, a_val) in m.iter().zip(ancestor.iter()) {
             match (m_val, a_val) {
-                (None, None) => {}
-                (None, Some(_)) => { has_strict = true; }
-                (Some(_), None) => { return false; }
+                (None, None) => {},
+                (None, Some(_)) => {
+                    has_strict = true;
+                },
+                (Some(_), None) => {
+                    return false;
+                },
                 (Some(mv), Some(av)) => {
                     if mv < av {
                         return false;
@@ -990,7 +984,7 @@ pub fn check_deadlock(net: &PetriNet) -> bool {
                     if mv > av {
                         has_strict = true;
                     }
-                }
+                },
             }
         }
         has_strict
@@ -1036,8 +1030,8 @@ pub fn check_deadlock(net: &PetriNet) -> bool {
                         match (&successor[i], &ancestor_marking[i]) {
                             (Some(sv), Some(av)) if sv > av => {
                                 successor[i] = None;
-                            }
-                            _ => {}
+                            },
+                            _ => {},
                         }
                     }
                 }
@@ -1102,8 +1096,8 @@ pub fn analyze_from_bundle(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     categories: &[crate::wpds::WpdsCategoryInfo],
 ) -> PetriAnalysis {
-    use std::collections::{HashMap, HashSet};
     use crate::SyntaxItemSpec;
+    use std::collections::{HashMap, HashSet};
 
     let mut net = PetriNet::new();
 
@@ -1124,27 +1118,27 @@ pub fn analyze_from_bundle(
         match item {
             SyntaxItemSpec::Terminal(t) if t == "|" || t == "||" || t == "par" => {
                 transition_names.push(format!("{}::{}", rule_label, t));
-            }
+            },
             SyntaxItemSpec::NonTerminal { category, .. } => {
                 channel_refs.insert(category.clone());
-            }
+            },
             SyntaxItemSpec::Optional { inner } => {
                 for sub in inner {
                     scan_item(sub, rule_label, transition_names, channel_refs);
                 }
-            }
+            },
             SyntaxItemSpec::Map { body_items } => {
                 for sub in body_items {
                     scan_item(sub, rule_label, transition_names, channel_refs);
                 }
-            }
+            },
             SyntaxItemSpec::Sep { body, .. } => {
                 scan_item(body, rule_label, transition_names, channel_refs);
-            }
+            },
             SyntaxItemSpec::Zip { body, .. } => {
                 scan_item(body, rule_label, transition_names, channel_refs);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -1455,10 +1449,7 @@ mod tests {
     fn coverability_construct_helper() {
         // Test the construct_petri_net helper.
         let net = construct_petri_net(
-            &[
-                ("p0".to_string(), 1),
-                ("p1".to_string(), 0),
-            ],
+            &[("p0".to_string(), 1), ("p1".to_string(), 0)],
             &[
                 ("t0".to_string(), vec![(0, 1)], vec![(1, 1)]),
                 ("t1".to_string(), vec![(1, 1)], vec![(0, 1)]),
@@ -1547,12 +1538,7 @@ mod tests {
         // All 4 transitions are pairwise independent.
         for i in 0..4 {
             for j in (i + 1)..4 {
-                assert!(
-                    net.check_independence(i, j),
-                    "t{} and t{} should be independent",
-                    i,
-                    j,
-                );
+                assert!(net.check_independence(i, j), "t{} and t{} should be independent", i, j,);
             }
         }
     }
@@ -1725,7 +1711,9 @@ mod tests {
         }];
         let result = analyze_from_bundle(&syntax, &categories);
         // PetriAnalysis is returned directly (not Option).
-        assert!(result.place_count > 0 || result.transition_count > 0,
-            "should produce a non-trivial Petri net from syntax");
+        assert!(
+            result.place_count > 0 || result.transition_count > 0,
+            "should produce a non-trivial Petri net from syntax"
+        );
     }
 }

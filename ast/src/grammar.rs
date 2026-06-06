@@ -52,7 +52,7 @@ impl NonTerminalKind {
 /// Item in a grammar rule
 #[derive(Debug, Clone, PartialEq)]
 pub enum GrammarItem {
-    Terminal(String),   // "0"
+    Terminal(String), // "0"
     /// Nonterminal reference with pre-classified kind.
     NonTerminal {
         ident: Ident,
@@ -348,7 +348,7 @@ pub fn parse_tier_directive(input: ParseStream) -> SynResult<Option<TierDirectiv
                 tier_ident.span(),
                 format!("expected t1/t2/t3/t4, found `{}`", other),
             ));
-        }
+        },
     };
 
     let mut bound: Option<usize> = None;
@@ -366,16 +366,16 @@ pub fn parse_tier_directive(input: ParseStream) -> SynResult<Option<TierDirectiv
                 let _ = parens.parse::<Token![=]>()?;
                 let lit: syn::LitInt = parens.parse()?;
                 bound = Some(lit.base10_parse::<usize>()?);
-            }
+            },
             "force" => {
                 // `force` is a flag — no `= value` part required.
                 force = true;
-            }
+            },
             "proof" => {
                 let _ = parens.parse::<Token![=]>()?;
                 let lit: syn::LitStr = parens.parse()?;
                 proof = Some(lit.value());
-            }
+            },
             other => {
                 return Err(syn::Error::new(
                     key.span(),
@@ -384,16 +384,11 @@ pub fn parse_tier_directive(input: ParseStream) -> SynResult<Option<TierDirectiv
                         other
                     ),
                 ));
-            }
+            },
         }
     }
 
-    Ok(Some(TierDirective {
-        tier,
-        bound,
-        force,
-        proof,
-    }))
+    Ok(Some(TierDirective { tier, bound, force, proof }))
 }
 
 /// Stage 3.27a (2026-05-04): consume zero or more `#[doc = "..."]`
@@ -1153,8 +1148,7 @@ pub fn convert_term_context_to_items(
 
                     if let TypeExpr::MultiBinder(inner) = domain.as_ref() {
                         if let TypeExpr::Base(binder_type) = inner.as_ref() {
-                            // For now, represent as a single Binder
-                            // TODO: proper multi-binder support
+                            // Represent the multi-binder domain by its binder category.
                             items.push(GrammarItem::Binder { category: binder_type.clone() });
                         }
                     }
@@ -1180,10 +1174,7 @@ pub fn convert_term_context_to_items(
                 // inner param so the destructure pattern length equals the
                 // variant arity. Recursively flatten and emit synthetic
                 // items mirroring the inner types.
-                fn flatten_optional_items(
-                    inner: &[TermParam],
-                    items: &mut Vec<GrammarItem>,
-                ) {
+                fn flatten_optional_items(inner: &[TermParam], items: &mut Vec<GrammarItem>) {
                     for p in inner {
                         match p {
                             TermParam::Simple { ty, .. } => {
@@ -1205,10 +1196,8 @@ pub fn convert_term_context_to_items(
                                     // GrammarItem::Collection {
                                     // coll_type: HashMap, element_type: V }
                                     // when K == V.
-                                    if let (
-                                        TypeExpr::Base(k_name),
-                                        TypeExpr::Base(v_name),
-                                    ) = (key.as_ref(), value.as_ref())
+                                    if let (TypeExpr::Base(k_name), TypeExpr::Base(v_name)) =
+                                        (key.as_ref(), value.as_ref())
                                     {
                                         if k_name == v_name {
                                             items.push(GrammarItem::Collection {
@@ -1303,20 +1292,14 @@ pub fn convert_items_to_term_context(rule: &mut GrammarRule) {
         match item {
             GrammarItem::Terminal(text) => {
                 sp.push(SyntaxExpr::Literal(text.clone()));
-            }
+            },
             GrammarItem::NonTerminal { ident, kind: NonTerminalKind::Category } => {
-                let pname = Ident::new(
-                    &format!("p{}", next_param_id),
-                    Span::call_site(),
-                );
+                let pname = Ident::new(&format!("p{}", next_param_id), Span::call_site());
                 next_param_id += 1;
 
                 if let Some(binder_cat) = pending_binder.take() {
                     // Abstraction: binder_cat -> ident
-                    let body_pname = Ident::new(
-                        &format!("p{}", next_param_id),
-                        Span::call_site(),
-                    );
+                    let body_pname = Ident::new(&format!("p{}", next_param_id), Span::call_site());
                     next_param_id += 1;
                     tc.push(TermParam::Abstraction {
                         binder: pname.clone(),
@@ -1336,7 +1319,7 @@ pub fn convert_items_to_term_context(rule: &mut GrammarRule) {
                     });
                     sp.push(SyntaxExpr::Param(pname));
                 }
-            }
+            },
             // Non-Category NonTerminals (Var/Integer/Boolean/etc.) caused
             // the early-return above — unreachable here.
             GrammarItem::NonTerminal { .. } => unreachable!(
@@ -1345,8 +1328,13 @@ pub fn convert_items_to_term_context(rule: &mut GrammarRule) {
             ),
             GrammarItem::Binder { category } => {
                 pending_binder = Some(category.clone());
-            }
-            GrammarItem::Collection { coll_type, element_type, separator, delimiters } => {
+            },
+            GrammarItem::Collection {
+                coll_type,
+                element_type,
+                separator,
+                delimiters,
+            } => {
                 if let Some((open, close)) = delimiters {
                     let elems_name = Ident::new("elems", Span::call_site());
                     tc.push(TermParam::Simple {
@@ -1367,7 +1355,7 @@ pub fn convert_items_to_term_context(rule: &mut GrammarRule) {
                     // Sep-only collection (no delimiters): out of scope.
                     return;
                 }
-            }
+            },
         }
     }
 

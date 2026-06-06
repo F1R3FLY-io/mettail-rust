@@ -52,7 +52,12 @@ pub enum ReparseError {
     EngineFailed(String),
 }
 
-impl<W: Semiring + crate::automata::semiring::TropicalDeltaWeight + crate::automata::semiring::LexProvenance> WpdaIncrementalSession<W> {
+impl<
+        W: Semiring
+            + crate::automata::semiring::TropicalDeltaWeight
+            + crate::automata::semiring::LexProvenance,
+    > WpdaIncrementalSession<W>
+{
     /// Create a new session with the given checkpoint interval.
     ///
     /// `checkpoint_interval = 1` means snapshot every token (sub-microsecond
@@ -85,10 +90,7 @@ impl<W: Semiring + crate::automata::semiring::TropicalDeltaWeight + crate::autom
     /// Locate the latest checkpoint at or before `pos`.
     ///
     /// Returns the position and the stored configuration. O(log N) via BTreeMap.
-    pub fn checkpoint_at_or_before(
-        &self,
-        pos: usize,
-    ) -> Option<(usize, &WpdaConfiguration<W>)> {
+    pub fn checkpoint_at_or_before(&self, pos: usize) -> Option<(usize, &WpdaConfiguration<W>)> {
         self.checkpoints
             .range(..=pos)
             .next_back()
@@ -165,15 +167,18 @@ impl<W: Semiring + crate::automata::semiring::TropicalDeltaWeight + crate::autom
         let _ = cp_pos;
         let final_state = walker.run_to_completion(max_steps, tokens);
         match final_state {
-            WpdaState::Error { ref message } => {
-                Err(ReparseError::EngineFailed(message.clone()))
-            }
+            WpdaState::Error { ref message } => Err(ReparseError::EngineFailed(message.clone())),
             other => Ok(other),
         }
     }
 }
 
-impl<W: Semiring + crate::automata::semiring::TropicalDeltaWeight + crate::automata::semiring::LexProvenance> Default for WpdaIncrementalSession<W> {
+impl<
+        W: Semiring
+            + crate::automata::semiring::TropicalDeltaWeight
+            + crate::automata::semiring::LexProvenance,
+    > Default for WpdaIncrementalSession<W>
+{
     fn default() -> Self {
         Self::new(1)
     }
@@ -187,10 +192,10 @@ impl<W: Semiring + crate::automata::semiring::TropicalDeltaWeight + crate::autom
 mod tests {
     use super::*;
     use crate::automata::lex_weight::LexicographicWeight;
-    use crate::wpda_runtime::{SliceTokenSource, StackSymbolV2, WpdaState, WpdaTokenSource};
-    use crate::wpda_walker::{IdleEngine, WpdaStepAction, WpdaEngine};
-    use crate::gss::{WpdaGss, WpdaGssNode};
     use crate::automata::TokenKind;
+    use crate::gss::{WpdaGss, WpdaGssNode};
+    use crate::wpda_runtime::{SliceTokenSource, StackSymbolV2, WpdaState, WpdaTokenSource};
+    use crate::wpda_walker::{IdleEngine, WpdaEngine, WpdaStepAction};
     use std::cell::RefCell;
 
     /// Empty token source used by tests that don't inspect input.
@@ -203,7 +208,11 @@ mod tests {
         LexicographicWeight::from_cost(c, s, r)
     }
 
-    fn cfg(pos: usize, state: WpdaState, stack_depth: usize) -> WpdaConfiguration<LexicographicWeight> {
+    fn cfg(
+        pos: usize,
+        state: WpdaState,
+        stack_depth: usize,
+    ) -> WpdaConfiguration<LexicographicWeight> {
         WpdaConfiguration {
             pos,
             state,
@@ -417,10 +426,7 @@ mod tests {
 
     #[test]
     fn reparse_runs_engine_to_acceptance() {
-        let engine = AdvanceThenAccept {
-            counter: RefCell::new(0),
-            n: 3,
-        };
+        let engine = AdvanceThenAccept { counter: RefCell::new(0), n: 3 };
         let mut s: WpdaIncrementalSession<LexicographicWeight> = WpdaIncrementalSession::new(1);
         s.record_checkpoint(0, cfg(0, WpdaState::Ready { min_bp: 0 }, 0));
         let r = s.reparse(0, engine, 100, &empty_tokens());

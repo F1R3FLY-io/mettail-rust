@@ -98,15 +98,15 @@ impl BooleanTest {
 
     fn collect_atoms(&self, acc: &mut HashSet<String>) {
         match self {
-            BooleanTest::True | BooleanTest::False => {}
+            BooleanTest::True | BooleanTest::False => {},
             BooleanTest::Atom(name) => {
                 acc.insert(name.clone());
-            }
+            },
             BooleanTest::Not(inner) => inner.collect_atoms(acc),
             BooleanTest::And(a, b) | BooleanTest::Or(a, b) => {
                 a.collect_atoms(acc);
                 b.collect_atoms(acc);
-            }
+            },
         }
     }
 }
@@ -247,11 +247,7 @@ impl fmt::Display for HoareTriple {
                 name, self.precondition, self.program, self.postcondition,
             )
         } else {
-            write!(
-                f,
-                "{{{} }} {} {{{} }}",
-                self.precondition, self.program, self.postcondition,
-            )
+            write!(f, "{{{} }} {} {{{} }}", self.precondition, self.program, self.postcondition,)
         }
     }
 }
@@ -388,12 +384,12 @@ pub fn check_equivalence_bounded(a: &KatExpr, b: &KatExpr, depth_limit: usize) -
 /// Collect all atomic test names from a KAT expression.
 fn collect_atoms_expr(expr: &KatExpr, acc: &mut HashSet<String>) {
     match expr {
-        KatExpr::Zero | KatExpr::One | KatExpr::Action(_) => {}
+        KatExpr::Zero | KatExpr::One | KatExpr::Action(_) => {},
         KatExpr::Test(t) => t.collect_atoms(acc),
         KatExpr::Seq(a, b) | KatExpr::Alt(a, b) => {
             collect_atoms_expr(a, acc);
             collect_atoms_expr(b, acc);
-        }
+        },
         KatExpr::Star(inner) => collect_atoms_expr(inner, acc),
     }
 }
@@ -401,14 +397,14 @@ fn collect_atoms_expr(expr: &KatExpr, acc: &mut HashSet<String>) {
 /// Collect all action names from a KAT expression.
 fn collect_actions(expr: &KatExpr, acc: &mut HashSet<String>) {
     match expr {
-        KatExpr::Zero | KatExpr::One | KatExpr::Test(_) => {}
+        KatExpr::Zero | KatExpr::One | KatExpr::Test(_) => {},
         KatExpr::Action(name) => {
             acc.insert(name.clone());
-        }
+        },
         KatExpr::Seq(a, b) | KatExpr::Alt(a, b) => {
             collect_actions(a, acc);
             collect_actions(b, acc);
-        }
+        },
         KatExpr::Star(inner) => collect_actions(inner, acc),
     }
 }
@@ -477,7 +473,7 @@ fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -
             } else {
                 KatExpr::Zero
             }
-        }
+        },
         KatExpr::Seq(p, q) => {
             // D_a(p;q) = D_a(p);q + (if nullable(p) then D_a(q) else 0)
             let dp = derivative(p, action, valuation);
@@ -488,17 +484,17 @@ fn derivative(expr: &KatExpr, action: &str, valuation: &HashMap<String, bool>) -
             } else {
                 left
             }
-        }
+        },
         KatExpr::Alt(p, q) => {
             let dp = derivative(p, action, valuation);
             let dq = derivative(q, action, valuation);
             KatExpr::Alt(Box::new(dp), Box::new(dq))
-        }
+        },
         KatExpr::Star(p) => {
             // D_a(p*) = D_a(p) ; p*
             let dp = derivative(p, action, valuation);
             KatExpr::Seq(Box::new(dp), Box::new(KatExpr::Star(p.clone())))
-        }
+        },
     }
 }
 
@@ -529,7 +525,7 @@ fn simplify(expr: &KatExpr) -> KatExpr {
                 (_, KatExpr::One) => sa,
                 _ => KatExpr::Seq(Box::new(sa), Box::new(sb)),
             }
-        }
+        },
         KatExpr::Alt(a, b) => {
             let sa = simplify(a);
             let sb = simplify(b);
@@ -539,7 +535,7 @@ fn simplify(expr: &KatExpr) -> KatExpr {
                 _ if sa == sb => sa,
                 _ => KatExpr::Alt(Box::new(sa), Box::new(sb)),
             }
-        }
+        },
         KatExpr::Star(inner) => {
             let si = simplify(inner);
             match &si {
@@ -547,7 +543,7 @@ fn simplify(expr: &KatExpr) -> KatExpr {
                 KatExpr::Star(_) => si,
                 _ => KatExpr::Star(Box::new(si)),
             }
-        }
+        },
     }
 }
 
@@ -610,18 +606,14 @@ pub fn check_from_bundle(
     let mut equivalence_results = Vec::new();
 
     // Build a set of categories that appear in syntax rules for quick lookup.
-    let syntax_categories: std::collections::HashSet<&str> = all_syntax
-        .iter()
-        .map(|(_, cat, _)| cat.as_str())
-        .collect();
+    let syntax_categories: std::collections::HashSet<&str> =
+        all_syntax.iter().map(|(_, cat, _)| cat.as_str()).collect();
 
     // For each call edge in the WPDS call graph, construct a KAT expression
     // representing the caller→callee transition and verify a Hoare triple:
     //   {caller_reachable} call_action {callee_reachable}
     for edge in &call_graph.edges {
-        let call_action = KatExpr::action(format!(
-            "call_{}_{}", edge.caller_cat, edge.callee_cat
-        ));
+        let call_action = KatExpr::action(format!("call_{}_{}", edge.caller_cat, edge.callee_cat));
 
         // Precondition: caller category is reachable.
         let pre = BooleanTest::atom(format!("{}_reachable", edge.caller_cat));
@@ -662,11 +654,7 @@ pub fn check_from_bundle(
         let double_star = KatExpr::seq(starred.clone(), starred.clone());
         let equiv = check_equivalence(&starred, &double_star);
 
-        equivalence_results.push((
-            format!("{}", starred),
-            format!("{}", double_star),
-            equiv,
-        ));
+        equivalence_results.push((format!("{}", starred), format!("{}", double_star), equiv));
     }
 
     // For categories that appear both in the syntax rules and in the reachable
@@ -677,22 +665,14 @@ pub fn check_from_bundle(
             let program = KatExpr::action(format!("parse_{}", cat_name));
             let post = BooleanTest::atom(format!("{}_parsed", cat_name));
 
-            let triple = HoareTriple::named(
-                format!("parse {}", cat_name),
-                pre,
-                program,
-                post,
-            );
+            let triple = HoareTriple::named(format!("parse {}", cat_name), pre, program, post);
 
             let valid = verify_hoare_triple(&triple);
             hoare_results.push((triple.to_string(), valid));
         }
     }
 
-    Some(KatCheck {
-        hoare_results,
-        equivalence_results,
-    })
+    Some(KatCheck { hoare_results, equivalence_results })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -739,11 +719,8 @@ mod tests {
 
     #[test]
     fn hoare_condition_construction() {
-        let condition = KatExpr::hoare_condition(
-            BooleanTest::True,
-            KatExpr::action("skip"),
-            BooleanTest::True,
-        );
+        let condition =
+            KatExpr::hoare_condition(BooleanTest::True, KatExpr::action("skip"), BooleanTest::True);
         // {true} skip {true} → [1] ; (skip ; [~1]) → should be 0 for validity
         assert!(condition.to_string().contains("skip"));
     }
@@ -755,10 +732,7 @@ mod tests {
     #[test]
     fn equivalence_reflexive_and_trivial() {
         // Every expression is equivalent to itself.
-        let expr = KatExpr::seq(
-            KatExpr::action("shift"),
-            KatExpr::action("reduce"),
-        );
+        let expr = KatExpr::seq(KatExpr::action("shift"), KatExpr::action("reduce"));
         assert!(check_equivalence(&expr, &expr));
 
         // Zero is equivalent to Zero.
@@ -805,30 +779,20 @@ mod tests {
     #[test]
     fn equivalence_with_tests() {
         // Test(True) is equivalent to One.
-        assert!(check_equivalence(
-            &KatExpr::test(BooleanTest::True),
-            &KatExpr::One,
-        ));
+        assert!(check_equivalence(&KatExpr::test(BooleanTest::True), &KatExpr::One,));
 
         // Test(False) is equivalent to Zero.
-        assert!(check_equivalence(
-            &KatExpr::test(BooleanTest::False),
-            &KatExpr::Zero,
-        ));
+        assert!(check_equivalence(&KatExpr::test(BooleanTest::False), &KatExpr::Zero,));
 
         // b ; ~b = 0 (a test followed by its negation is always zero)
         let b = BooleanTest::atom("x_positive");
-        let b_then_not_b = KatExpr::seq(
-            KatExpr::test(b.clone()),
-            KatExpr::test(BooleanTest::not(b.clone())),
-        );
+        let b_then_not_b =
+            KatExpr::seq(KatExpr::test(b.clone()), KatExpr::test(BooleanTest::not(b.clone())));
         assert!(check_equivalence(&b_then_not_b, &KatExpr::Zero));
 
         // b + ~b = 1 (law of excluded middle)
-        let b_or_not_b = KatExpr::alt(
-            KatExpr::test(b.clone()),
-            KatExpr::test(BooleanTest::not(b.clone())),
-        );
+        let b_or_not_b =
+            KatExpr::alt(KatExpr::test(b.clone()), KatExpr::test(BooleanTest::not(b.clone())));
         assert!(check_equivalence(&b_or_not_b, &KatExpr::One));
     }
 
@@ -890,8 +854,14 @@ mod tests {
             call_sites: 1,
             total_weight: 1.0,
         });
-        wpds_analysis.call_graph.categories.insert("Expr".to_string());
-        wpds_analysis.call_graph.categories.insert("Type".to_string());
+        wpds_analysis
+            .call_graph
+            .categories
+            .insert("Expr".to_string());
+        wpds_analysis
+            .call_graph
+            .categories
+            .insert("Type".to_string());
         let syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = vec![(
             "TypedExpr".to_string(),
             "Expr".to_string(),

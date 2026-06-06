@@ -11,21 +11,21 @@
 //! about semantics or syntax. All recursive operations use iterative
 //! work-stacks (trampolines).
 
-pub mod ground_term_enum;
-pub mod symbolic_eval;
-pub mod expr_string_gen;
-pub mod nested_expr_gen;
-pub mod edge_case_gen;
-pub mod cross_category_tests;
 pub mod algebraic_property_tests;
-pub mod wfst_guided;
+pub mod cross_category_tests;
+pub mod edge_case_gen;
+pub mod expr_string_gen;
+pub mod ground_term_enum;
+pub mod nested_expr_gen;
 pub mod precedence_assoc_tests;
-pub mod wpda_guided;
+pub mod symbolic_eval;
 pub mod type_preservation;
+pub mod wfst_guided;
+pub mod wpda_guided;
 
+use crate::gen::native::native_type_to_string;
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr};
 use mettail_ast::language::LanguageDef;
-use crate::gen::native::native_type_to_string;
 use mettail_prattail::PipelineAnalysis;
 use std::collections::{HashMap, HashSet};
 
@@ -43,10 +43,7 @@ use std::collections::{HashMap, HashSet};
 /// cross-category tests, algebraic properties, WFST/WPDS-guided tests,
 /// precedence/associativity verification, type preservation, and proptest
 /// metamorphic relations.
-pub fn generate_operational_tests(
-    language: &LanguageDef,
-    pipeline: &PipelineAnalysis,
-) -> String {
+pub fn generate_operational_tests(language: &LanguageDef, pipeline: &PipelineAnalysis) -> String {
     let lang_name = language.name.to_string();
     let lang_name_lower = lang_name.to_lowercase();
     let lang_struct = format!("{}Language", lang_name);
@@ -59,7 +56,7 @@ pub fn generate_operational_tests(
 
     if ground_terms.is_empty() {
         return String::from(
-            "// No operational eval tests generated — no rules with rust_code found.\n\n"
+            "// No operational eval tests generated — no rules with rust_code found.\n\n",
         );
     }
 
@@ -97,10 +94,8 @@ pub fn generate_operational_tests(
         let mut all_params_resolved = true;
         for (i, pi) in param_info.iter().enumerate() {
             if i < gt.param_values.len() {
-                let sym_val = ground_term_enum::raw_value_to_sym_value(
-                    &gt.param_values[i],
-                    &pi.native_type,
-                );
+                let sym_val =
+                    ground_term_enum::raw_value_to_sym_value(&gt.param_values[i], &pi.native_type);
                 if let Some(sv) = sym_val {
                     env.insert(pi.name.clone(), sv);
                 } else {
@@ -158,60 +153,39 @@ pub fn generate_operational_tests(
     // Phase 2: Nested expressions + edge cases
     // ═════════════════════════════════════════════════════════
 
-    let nested_cases = nested_expr_gen::generate_nested_tests(
-        language,
-        &ambiguous_prefix_rules,
-    );
+    let nested_cases = nested_expr_gen::generate_nested_tests(language, &ambiguous_prefix_rules);
 
-    let edge_cases = edge_case_gen::generate_edge_case_tests(
-        language,
-        &ambiguous_prefix_rules,
-    );
+    let edge_cases = edge_case_gen::generate_edge_case_tests(language, &ambiguous_prefix_rules);
 
     // ═════════════════════════════════════════════════════════
     // Phase 3: Cross-category + algebraic properties
     // ═════════════════════════════════════════════════════════
 
-    let cross_cat_cases = cross_category_tests::generate_cross_category_tests(
-        language,
-        &ambiguous_prefix_rules,
-    );
+    let cross_cat_cases =
+        cross_category_tests::generate_cross_category_tests(language, &ambiguous_prefix_rules);
 
     let (algebraic_cases, algebraic_proptest_blocks) =
-        algebraic_property_tests::generate_algebraic_tests(
-            language,
-            &ambiguous_prefix_rules,
-        );
+        algebraic_property_tests::generate_algebraic_tests(language, &ambiguous_prefix_rules);
 
     // ═════════════════════════════════════════════════════════
     // Phase 4: WFST dispatch + precedence/associativity
     // ═════════════════════════════════════════════════════════
 
-    let wfst_cases = wfst_guided::generate_wfst_guided_tests(
-        language,
-        pipeline,
-        &ambiguous_prefix_rules,
-    );
+    let wfst_cases =
+        wfst_guided::generate_wfst_guided_tests(language, pipeline, &ambiguous_prefix_rules);
 
-    let prec_cases = precedence_assoc_tests::generate_precedence_assoc_tests(
-        language,
-        &ambiguous_prefix_rules,
-    );
+    let prec_cases =
+        precedence_assoc_tests::generate_precedence_assoc_tests(language, &ambiguous_prefix_rules);
 
     // ═════════════════════════════════════════════════════════
     // Phase 5: WPDS path coverage + type preservation
     // ═════════════════════════════════════════════════════════
 
-    let wpda_cases = wpda_guided::generate_wpda_guided_tests(
-        language,
-        pipeline,
-        &ambiguous_prefix_rules,
-    );
+    let wpda_cases =
+        wpda_guided::generate_wpda_guided_tests(language, pipeline, &ambiguous_prefix_rules);
 
-    let type_pres_cases = type_preservation::generate_type_preservation_tests(
-        language,
-        &ambiguous_prefix_rules,
-    );
+    let type_pres_cases =
+        type_preservation::generate_type_preservation_tests(language, &ambiguous_prefix_rules);
 
     // ═════════════════════════════════════════════════════════
     // Deduplicate test names
@@ -506,16 +480,11 @@ pub(crate) fn is_dangerous_input(rule: &GrammarRule, param_values: &[String]) ->
 ///
 /// This is a simplified check for nested expressions where we don't have
 /// structured param_values. Uses string matching on the construction code.
-pub(crate) fn is_dangerous_nested_construction(rule: &GrammarRule, _construction: &str) -> bool {
+pub(crate) fn is_dangerous_nested_construction(_rule: &GrammarRule, _construction: &str) -> bool {
     // For nested expressions, the primary danger is already handled by:
     // 1. The inner ground term filtering (Phase 1)
     // 2. The safe representative values used for non-inner slots
     // So this is conservative: only flag if the rule itself is known-dangerous.
-    let rust_code = match &rule.rust_code {
-        Some(rc) => rc,
-        None => return false,
-    };
-
     // If the rule has division, we're already using safe non-zero values
     // for the simple leaf slots, so the main risk is from the inner term.
     // The inner term was already filtered by Phase 1's is_dangerous_input.

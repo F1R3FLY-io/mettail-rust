@@ -48,10 +48,10 @@
 
 #![allow(clippy::cmp_owned)]
 
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use mettail_ast::grammar::{GrammarItem, GrammarRule, NonTerminalKind, TermParam};
 use mettail_ast::language::LanguageDef;
 use mettail_ast::types::{CollectionType, TypeExpr};
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -180,7 +180,9 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
     let hol_pairs = crate::logic::common::compute_hol_domain_pairs(language);
     let is_variable_bearing = |cat_name: &syn::Ident| -> bool {
         let cat_str = cat_name.to_string();
-        hol_pairs.iter().any(|(c, d)| c == &cat_str || d == &cat_str)
+        hol_pairs
+            .iter()
+            .any(|(c, d)| c == &cat_str || d == &cat_str)
             || language
                 .terms
                 .iter()
@@ -261,6 +263,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                     quote! {
                         /// Substitute variables by name from an env map
                         /// (preserves insertion order via IndexMap).
+                        #[allow(unreachable_patterns)]
                         fn #method_name(
                             &self,
                             env_map: &indexmap::IndexMap<String, #repl_cat>,
@@ -323,6 +326,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                     /// PDA-driven unify implementation. Walks the whole
                     /// tree via the subst work-stack, canonicalizing
                     /// every Var::Free encountered.
+                    #[allow(unreachable_patterns)]
                     pub fn unify_freevars_impl(&self) -> Self {
                         let result: Self = SUBST_TASK_POOL.with(|t| {
                             SUBST_RESULT_POOL.with(|r| {
@@ -507,14 +511,9 @@ fn generate_subst_task_enum(language: &LanguageDef) -> TokenStream {
 
 /// Emit one Assemble variant declaration for a non-leaf constructor.
 /// Returns `None` for leaf variants (Var, Literal, Nullary).
-fn generate_assemble_variant_decl(
-    category: &Ident,
-    variant: &VariantKind,
-) -> Option<TokenStream> {
+fn generate_assemble_variant_decl(category: &Ident, variant: &VariantKind) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
-            None
-        }
+        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
 
         VariantKind::Regular { label, fields } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
@@ -557,32 +556,28 @@ fn generate_assemble_variant_decl(
             Some(quote! {
                 #variant_name { slot: usize, #(#field_slots),* }
             })
-        }
+        },
 
         VariantKind::Collection { label, coll_type, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
             match coll_type {
-                CollectionType::HashBag | CollectionType::HashMap => {
-                    Some(quote! {
-                        #variant_name {
-                            slot: usize,
-                            elements_start: usize,
-                            elements_count: usize,
-                            counts_vec: Vec<usize>,
-                        }
-                    })
-                }
-                _ => {
-                    Some(quote! {
-                        #variant_name {
-                            slot: usize,
-                            elements_start: usize,
-                            elements_count: usize,
-                        }
-                    })
-                }
+                CollectionType::HashBag | CollectionType::HashMap => Some(quote! {
+                    #variant_name {
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                        counts_vec: Vec<usize>,
+                    }
+                }),
+                _ => Some(quote! {
+                    #variant_name {
+                        slot: usize,
+                        elements_start: usize,
+                        elements_count: usize,
+                    }
+                }),
             }
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
@@ -596,7 +591,7 @@ fn generate_assemble_variant_decl(
                     body_slot: usize,
                 }
             })
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
             let variant_name = format_ident!("Assemble{}_{}", category, label);
@@ -610,7 +605,7 @@ fn generate_assemble_variant_decl(
                     body_slot: usize,
                 }
             })
-        }
+        },
     }
 }
 
@@ -641,7 +636,7 @@ fn emit_pre_field_decl_list(pre_scope_fields: &[FieldInfo]) -> Vec<TokenStream> 
                     CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name: usize, #count_name: usize, #counts_name: Vec<usize> }
-                    }
+                    },
                     _ => quote! { #start_name: usize, #count_name: usize },
                 }
             } else {
@@ -737,7 +732,13 @@ fn generate_subst_driver(language: &LanguageDef) -> TokenStream {
         /// for reads for the duration of this function call. This is
         /// guaranteed because they derive from `&self` in the public
         /// wrappers and the source tree is immutable (shared reference).
-        #[allow(dead_code, unused_variables, clippy::needless_range_loop, non_snake_case)]
+        #[allow(
+            dead_code,
+            unused_variables,
+            unreachable_patterns,
+            clippy::needless_range_loop,
+            non_snake_case
+        )]
         fn subst_iterative(
             stack: &mut Vec<SubstTask>,
             results: &mut Vec<Option<AnySubstTerm>>,
@@ -764,7 +765,13 @@ fn generate_visit_helper_fn(cat: &Ident, language: &LanguageDef) -> TokenStream 
         .collect();
     quote! {
         #[inline(never)]
-        #[allow(dead_code, unused_variables, clippy::needless_range_loop, non_snake_case)]
+        #[allow(
+            dead_code,
+            unused_variables,
+            unreachable_patterns,
+            clippy::needless_range_loop,
+            non_snake_case
+        )]
         fn #helper_fn(
             stack: &mut Vec<SubstTask>,
             results: &mut Vec<Option<AnySubstTerm>>,
@@ -791,28 +798,28 @@ fn generate_visit_variant_arm(
         VariantKind::Var { label } => generate_var_visit_arm(cat, label, language),
         VariantKind::Literal { label } => generate_literal_visit_arm(cat, label, language),
         VariantKind::Nullary { label } => generate_nullary_visit_arm(cat, label),
-        VariantKind::Regular { label, fields } => {
-            generate_regular_visit_arm(cat, label, fields)
-        }
+        VariantKind::Regular { label, fields } => generate_regular_visit_arm(cat, label, fields),
         VariantKind::Collection { label, element_cat, coll_type } => {
             generate_collection_visit_arm(cat, label, element_cat, coll_type)
-        }
-        VariantKind::Binder { label, pre_scope_fields, binder_cat, body_cat } => {
-            generate_binder_visit_arm(cat, label, pre_scope_fields, binder_cat, body_cat)
-        }
-        VariantKind::MultiBinder { label, pre_scope_fields, binder_cat, body_cat } => {
-            generate_multi_binder_visit_arm(cat, label, pre_scope_fields, binder_cat, body_cat)
-        }
+        },
+        VariantKind::Binder {
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+        } => generate_binder_visit_arm(cat, label, pre_scope_fields, binder_cat, body_cat),
+        VariantKind::MultiBinder {
+            label,
+            pre_scope_fields,
+            binder_cat,
+            body_cat,
+        } => generate_multi_binder_visit_arm(cat, label, pre_scope_fields, binder_cat, body_cat),
     }
 }
 
 /// Literal arm: just wrap the cloned literal value. Mirrors iterative_clone's
 /// literal handling. Native literals (i32/String/etc.) may be Copy or Clone.
-fn generate_literal_visit_arm(
-    cat: &Ident,
-    label: &Ident,
-    language: &LanguageDef,
-) -> TokenStream {
+fn generate_literal_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) -> TokenStream {
     let wrap = format_ident!("Wrap{}", cat);
 
     // Match the iterative_clone behavior: clone for non-Copy, copy for Copy.
@@ -863,11 +870,7 @@ fn generate_nullary_visit_arm(cat: &Ident, label: &Ident) -> TokenStream {
 /// alt is `Float::FloatId(Float::FVar(x))` with env.bool["x"] = BoolLit(true) —
 /// the new EnvBool arm substitutes `Float::FVar(x)` with `Float::BoolToFloat(
 /// Box::new(BoolLit(true)))` so eval can reduce to `FloatLit(1.0)`.
-fn generate_var_visit_arm(
-    cat: &Ident,
-    label: &Ident,
-    language: &LanguageDef,
-) -> TokenStream {
+fn generate_var_visit_arm(cat: &Ident, label: &Ident, language: &LanguageDef) -> TokenStream {
     let wrap = format_ident!("Wrap{}", cat);
     let match_variant = format_ident!("Match{}", cat);
     let env_variant = format_ident!("Env{}", cat);
@@ -881,12 +884,18 @@ fn generate_var_visit_arm(
         if rule.category.to_string() != cat_name {
             continue;
         }
-        let Some(tc) = rule.term_context.as_ref() else { continue; };
+        let Some(tc) = rule.term_context.as_ref() else {
+            continue;
+        };
         if tc.len() != 1 {
             continue;
         }
-        let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else { continue; };
-        let mettail_ast::types::TypeExpr::Base(source_ident) = ty else { continue; };
+        let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else {
+            continue;
+        };
+        let mettail_ast::types::TypeExpr::Base(source_ident) = ty else {
+            continue;
+        };
         let source_name = source_ident.to_string();
         if source_name == cat_name {
             continue;
@@ -972,11 +981,7 @@ fn generate_var_visit_arm(
 
 /// Regular arm: allocate child slots, push Assemble + per-field Visits with
 /// the same op_idx. Collection fields expand to a slot range.
-fn generate_regular_visit_arm(
-    cat: &Ident,
-    label: &Ident,
-    fields: &[FieldInfo],
-) -> TokenStream {
+fn generate_regular_visit_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
 
@@ -1052,7 +1057,7 @@ fn generate_regular_visit_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name, #counts_name });
-                }
+                },
                 // Phase 4 #5b (2026-05-12): HashMap stores 2*N flat
                 // slots (K, V, K, V, ...) — same shape as normalize.rs.
                 CollectionType::HashMap => {
@@ -1081,7 +1086,7 @@ fn generate_regular_visit_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::Vec => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1100,7 +1105,7 @@ fn generate_regular_visit_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::HashSet => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1119,7 +1124,7 @@ fn generate_regular_visit_arm(
                         }
                     });
                     assemble_fields.push(quote! { #start_name, #count_name });
-                }
+                },
             }
         } else {
             let slot_name = format_ident!("f{}_slot", i);
@@ -1183,7 +1188,7 @@ fn generate_collection_visit_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::Vec => {
             quote! {
                 #cat::#label(ref coll) => {
@@ -1206,7 +1211,7 @@ fn generate_collection_visit_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::HashSet => {
             quote! {
                 #cat::#label(ref coll) => {
@@ -1229,7 +1234,7 @@ fn generate_collection_visit_arm(
                     }
                 }
             }
-        }
+        },
     }
 }
 
@@ -1461,7 +1466,7 @@ fn emit_pre_field_visit_alloc(
                         }
                     });
                     assemble_refs.push(quote! { #start_name, #count_name, #counts_name });
-                }
+                },
                 CollectionType::Vec => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1480,7 +1485,7 @@ fn emit_pre_field_visit_alloc(
                         }
                     });
                     assemble_refs.push(quote! { #start_name, #count_name });
-                }
+                },
                 CollectionType::HashSet => {
                     alloc_stmts.push(quote! {
                         let #start_name = results.len();
@@ -1499,7 +1504,7 @@ fn emit_pre_field_visit_alloc(
                         }
                     });
                     assemble_refs.push(quote! { #start_name, #count_name });
-                }
+                },
             }
         } else {
             let slot_name = format_ident!("pf{}_slot", i);
@@ -1527,26 +1532,21 @@ fn emit_pre_field_visit_alloc(
 
 /// Dispatch per-variant Assemble arm emission. Leaf variants don't need
 /// Assemble arms (they write to results directly during Visit).
-fn generate_assemble_arm_for_variant(
-    cat: &Ident,
-    variant: &VariantKind,
-) -> Option<TokenStream> {
+fn generate_assemble_arm_for_variant(cat: &Ident, variant: &VariantKind) -> Option<TokenStream> {
     match variant {
-        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => {
-            None
-        }
+        VariantKind::Var { .. } | VariantKind::Literal { .. } | VariantKind::Nullary { .. } => None,
         VariantKind::Regular { label, fields } => {
             Some(generate_regular_assemble_arm(cat, label, fields))
-        }
+        },
         VariantKind::Collection { label, element_cat, coll_type } => {
             Some(generate_collection_assemble_arm(cat, label, element_cat, coll_type))
-        }
+        },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             Some(generate_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
-        }
+        },
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             Some(generate_multi_binder_assemble_arm(cat, label, pre_scope_fields, body_cat))
-        }
+        },
     }
 }
 
@@ -1558,11 +1558,7 @@ fn generate_assemble_arm_for_variant(
 /// `Box::new(...)`, collection builders) live in the helper's frame instead
 /// of `subst_iterative`'s. See `iterative_clone.rs::generate_regular_assemble_arm`
 /// for the same idiom.
-fn generate_regular_assemble_arm(
-    cat: &Ident,
-    label: &Ident,
-    fields: &[FieldInfo],
-) -> TokenStream {
+fn generate_regular_assemble_arm(cat: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
     let assemble_variant = format_ident!("Assemble{}_{}", cat, label);
     let wrap = format_ident!("Wrap{}", cat);
 
@@ -1723,7 +1719,7 @@ fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         }
                     }
                 }
-            }
+            },
             // Phase 4 #5b (2026-05-12): HashMap — 2*N flat slots.
             CollectionType::HashMap => {
                 quote! {
@@ -1751,7 +1747,7 @@ fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         #result_ident.insert(k, v);
                     }
                 }
-            }
+            },
             CollectionType::Vec => {
                 quote! {
                     let mut #result_ident = Vec::with_capacity(#count_name);
@@ -1764,7 +1760,7 @@ fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         }
                     }
                 }
-            }
+            },
             CollectionType::HashSet => {
                 quote! {
                     let mut #result_ident = std::collections::HashSet::with_capacity(#count_name);
@@ -1777,7 +1773,7 @@ fn emit_field_extract(i: usize, field: &FieldInfo) -> TokenStream {
                         }
                     }
                 }
-            }
+            },
         }
     } else {
         let slot_name = format_ident!("f{}_slot", i);
@@ -1832,7 +1828,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count, counts_vec);
                 }
             }
-        }
+        },
         CollectionType::Vec => {
             quote! {
                 SubstTask::#assemble_variant { slot, elements_start, elements_count } => {
@@ -1858,7 +1854,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count);
                 }
             }
-        }
+        },
         CollectionType::HashSet => {
             quote! {
                 SubstTask::#assemble_variant { slot, elements_start, elements_count } => {
@@ -1884,7 +1880,7 @@ fn generate_collection_assemble_arm(
                     assemble(results, slot, elements_start, elements_count);
                 }
             }
-        }
+        },
     }
 }
 
@@ -1976,7 +1972,7 @@ fn emit_pre_field_assemble_slot_pattern(pre_scope_fields: &[FieldInfo]) -> Vec<T
                     CollectionType::HashBag | CollectionType::HashMap => {
                         let counts_name = format_ident!("pf{}_counts", i);
                         quote! { #start_name, #count_name, #counts_name }
-                    }
+                    },
                     _ => quote! { #start_name, #count_name },
                 }
             } else {
@@ -2142,6 +2138,7 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
             quote! {
                 /// Cross-category substitution: replace variables of the
                 /// replacement category type with the provided values.
+                #[allow(unreachable_patterns)]
                 pub fn #method_name(
                     &self,
                     vars: &[&mettail_runtime::FreeVar<String>],
@@ -2226,6 +2223,7 @@ fn generate_subst_wrappers(category: &Ident, language: &LanguageDef) -> TokenStr
             }
 
             /// Multi-variable simultaneous substitution (capture-avoiding).
+            #[allow(unreachable_patterns)]
             pub fn subst(
                 &self,
                 vars: &[&mettail_runtime::FreeVar<String>],
@@ -2590,13 +2588,15 @@ pub(crate) fn variant_kind_from_items(
             .iter()
             .take(*binder_idx)
             .filter_map(|item| match item {
-                GrammarItem::NonTerminal { ident: cat, kind } if *kind != NonTerminalKind::Var => Some(FieldInfo {
-                    category: cat.clone(),
-                    is_collection: false,
-                    coll_type: None,
-                    is_predicate: false,
-                    is_optional: false,
-                }),
+                GrammarItem::NonTerminal { ident: cat, kind } if *kind != NonTerminalKind::Var => {
+                    Some(FieldInfo {
+                        category: cat.clone(),
+                        is_collection: false,
+                        coll_type: None,
+                        is_predicate: false,
+                        is_optional: false,
+                    })
+                },
                 GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
                     category: element_type.clone(),
                     is_collection: true,
@@ -2619,13 +2619,15 @@ pub(crate) fn variant_kind_from_items(
     let fields: Vec<FieldInfo> = items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal { ident: cat, kind } if *kind != NonTerminalKind::Var => Some(FieldInfo {
-                category: cat.clone(),
-                is_collection: false,
-                coll_type: None,
-                is_predicate: false,
-                is_optional: false,
-            }),
+            GrammarItem::NonTerminal { ident: cat, kind } if *kind != NonTerminalKind::Var => {
+                Some(FieldInfo {
+                    category: cat.clone(),
+                    is_collection: false,
+                    coll_type: None,
+                    is_predicate: false,
+                    is_optional: false,
+                })
+            },
             GrammarItem::Collection { element_type, coll_type, .. } => Some(FieldInfo {
                 category: element_type.clone(),
                 is_collection: true,
@@ -2724,21 +2726,18 @@ pub(crate) fn field_info_for_guard_slot() -> FieldInfo {
 /// GuardBody contributes one FieldInfo with `is_optional: true`. Returns
 /// a Vec because Optional groups may contain multiple inner params, each
 /// becoming its own variant field.
-pub(crate) fn field_infos_from_term_param(
-    param: &TermParam,
-    in_optional: bool,
-) -> Vec<FieldInfo> {
+pub(crate) fn field_infos_from_term_param(param: &TermParam, in_optional: bool) -> Vec<FieldInfo> {
     match param {
         TermParam::Simple { ty, .. } => {
             let mut info = field_info_from_type_expr(ty);
             info.is_optional = in_optional;
             vec![info]
-        }
+        },
         TermParam::GuardBody { .. } => {
             let mut info = field_info_for_guard_slot();
             info.is_optional = in_optional;
             vec![info]
-        }
+        },
         TermParam::Optional { params: inner } => inner
             .iter()
             .flat_map(|p| field_infos_from_term_param(p, true))
@@ -2758,7 +2757,7 @@ pub(crate) fn field_infos_from_term_param(
                 is_predicate: false,
                 is_optional: true,
             }]
-        }
+        },
         TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => vec![],
     }
 }

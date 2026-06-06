@@ -59,7 +59,7 @@ fn encode_tree(tree: &TokenTree, buf: &mut Vec<u8>) {
             buf.push(TAG_IDENT);
             buf.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
             buf.extend_from_slice(name_bytes);
-        }
+        },
         TokenTree::Punct(punct) => {
             buf.push(TAG_PUNCT);
             buf.push(punct.as_char() as u8);
@@ -67,14 +67,14 @@ fn encode_tree(tree: &TokenTree, buf: &mut Vec<u8>) {
                 Spacing::Alone => SPACING_ALONE,
                 Spacing::Joint => SPACING_JOINT,
             });
-        }
+        },
         TokenTree::Literal(lit) => {
             let repr = lit.to_string();
             let repr_bytes = repr.as_bytes();
             buf.push(TAG_LITERAL);
             buf.extend_from_slice(&(repr_bytes.len() as u16).to_le_bytes());
             buf.extend_from_slice(repr_bytes);
-        }
+        },
         TokenTree::Group(group) => {
             let tag = match group.delimiter() {
                 Delimiter::Parenthesis => TAG_GROUP_PAREN,
@@ -84,7 +84,7 @@ fn encode_tree(tree: &TokenTree, buf: &mut Vec<u8>) {
             };
             buf.push(tag);
 
-            // Encode children into a temporary buffer to get byte length
+            // Encode children into a scratch buffer to get byte length.
             let mut children_buf = Vec::new();
             for child in group.stream() {
                 encode_tree(&child, &mut children_buf);
@@ -92,7 +92,7 @@ fn encode_tree(tree: &TokenTree, buf: &mut Vec<u8>) {
 
             buf.extend_from_slice(&(children_buf.len() as u32).to_le_bytes());
             buf.extend_from_slice(&children_buf);
-        }
+        },
     }
 }
 
@@ -116,10 +116,10 @@ fn decode_tree(cursor: &mut Cursor<'_>) -> TokenTree {
         TAG_IDENT => {
             let len = cursor.read_u16_le() as usize;
             let name_bytes = cursor.read_bytes(len);
-            let name = std::str::from_utf8(name_bytes)
-                .expect("token_codec: invalid UTF-8 in ident name");
+            let name =
+                std::str::from_utf8(name_bytes).expect("token_codec: invalid UTF-8 in ident name");
             TokenTree::Ident(Ident::new(name, Span::call_site()))
-        }
+        },
         TAG_PUNCT => {
             let ch = cursor.read_u8() as char;
             let spacing = match cursor.read_u8() {
@@ -128,16 +128,17 @@ fn decode_tree(cursor: &mut Cursor<'_>) -> TokenTree {
                 other => panic!("token_codec: invalid spacing byte: {}", other),
             };
             TokenTree::Punct(Punct::new(ch, spacing))
-        }
+        },
         TAG_LITERAL => {
             let len = cursor.read_u16_le() as usize;
             let repr_bytes = cursor.read_bytes(len);
             let repr = std::str::from_utf8(repr_bytes)
                 .expect("token_codec: invalid UTF-8 in literal repr");
-            let lit: Literal = repr.parse()
-                .unwrap_or_else(|e| panic!("token_codec: failed to parse literal '{}': {}", repr, e));
+            let lit: Literal = repr.parse().unwrap_or_else(|e| {
+                panic!("token_codec: failed to parse literal '{}': {}", repr, e)
+            });
             TokenTree::Literal(lit)
-        }
+        },
         TAG_GROUP_PAREN | TAG_GROUP_BRACE | TAG_GROUP_BRACKET | TAG_GROUP_NONE => {
             let delimiter = match tag {
                 TAG_GROUP_PAREN => Delimiter::Parenthesis,
@@ -158,7 +159,7 @@ fn decode_tree(cursor: &mut Cursor<'_>) -> TokenTree {
 
             let inner = TokenStream::from_iter(children);
             TokenTree::Group(Group::new(delimiter, inner))
-        }
+        },
         other => panic!("token_codec: unknown tag byte: 0x{:02x}", other),
     }
 }
@@ -225,14 +226,14 @@ mod tests {
             TokenTree::Punct(p) => {
                 assert_eq!(p.as_char(), '+');
                 assert!(matches!(p.spacing(), Spacing::Joint));
-            }
+            },
             other => panic!("expected Punct, got {:?}", other),
         }
         match &tokens[1] {
             TokenTree::Punct(p) => {
                 assert_eq!(p.as_char(), '=');
                 assert!(matches!(p.spacing(), Spacing::Alone));
-            }
+            },
             other => panic!("expected Punct, got {:?}", other),
         }
     }

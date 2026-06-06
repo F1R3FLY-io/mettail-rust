@@ -152,14 +152,7 @@ impl fmt::Display for CraTransition {
             .iter()
             .map(|(r, e)| format!("r{} := {}", r, e))
             .collect();
-        write!(
-            f,
-            "q{} --{}-> q{} [{}]",
-            self.from,
-            guard,
-            self.to,
-            updates.join("; "),
-        )
+        write!(f, "q{} --{}-> q{} [{}]", self.from, guard, self.to, updates.join("; "),)
     }
 }
 
@@ -262,11 +255,7 @@ impl<W: Semiring> fmt::Display for CostRegisterAutomaton<W> {
 /// accepting run exists.
 /// Evaluate a single register expression against the current register values
 /// and input cost.
-fn eval_expr<W: Semiring>(
-    expr: &RegisterExpr,
-    registers: &[W],
-    input_cost: &W,
-) -> W {
+fn eval_expr<W: Semiring>(expr: &RegisterExpr, registers: &[W], input_cost: &W) -> W {
     match expr {
         RegisterExpr::Reg(r) => registers[r.index],
         RegisterExpr::InputCost => *input_cost,
@@ -276,35 +265,29 @@ fn eval_expr<W: Semiring>(
             let va = eval_expr(a, registers, input_cost);
             let vb = eval_expr(b, registers, input_cost);
             va.plus(&vb)
-        }
+        },
         RegisterExpr::Times(a, b) => {
             let va = eval_expr(a, registers, input_cost);
             let vb = eval_expr(b, registers, input_cost);
             va.times(&vb)
-        }
+        },
     }
 }
 
-pub fn evaluate_stream<W: Semiring>(
-    cra: &CostRegisterAutomaton<W>,
-    stream: &[(String, W)],
-) -> W {
+pub fn evaluate_stream<W: Semiring>(cra: &CostRegisterAutomaton<W>, stream: &[(String, W)]) -> W {
     let mut current_state = cra.initial_state;
     let mut registers = cra.initial_values.clone();
 
     for (symbol, cost) in stream {
         // Find the first enabled transition from the current state that matches
         // the input symbol (guard = None matches any symbol).
-        let transition = cra
-            .transitions
-            .iter()
-            .find(|t| {
-                t.from == current_state
-                    && match &t.guard {
-                        Some(g) => g == symbol,
-                        None => true,
-                    }
-            });
+        let transition = cra.transitions.iter().find(|t| {
+            t.from == current_state
+                && match &t.guard {
+                    Some(g) => g == symbol,
+                    None => true,
+                }
+        });
 
         let transition = match transition {
             Some(t) => t,
@@ -312,7 +295,7 @@ pub fn evaluate_stream<W: Semiring>(
                 // No enabled transition: the CRA is stuck. Return zero
                 // (no accepting run).
                 return W::zero();
-            }
+            },
         };
 
         // Compute all new register values from the old snapshot.
@@ -395,7 +378,10 @@ pub fn cra_check_equivalence_bounded<W: Semiring>(
     // Enumerate all input sequences up to max_length.
     for length in 0..=max_length {
         // Generate all sequences of the given length over the alphabet.
-        let num_sequences = alphabet.len().checked_pow(length as u32).unwrap_or(usize::MAX);
+        let num_sequences = alphabet
+            .len()
+            .checked_pow(length as u32)
+            .unwrap_or(usize::MAX);
         // Safety bound: if the enumeration space is too large, stop early
         // (bounded approximation).
         if num_sequences > 100_000 {
@@ -488,8 +474,7 @@ mod tests {
 
     #[test]
     fn cra_construction() {
-        let mut cra: CostRegisterAutomaton<TropicalWeight> =
-            CostRegisterAutomaton::new(2, 2);
+        let mut cra: CostRegisterAutomaton<TropicalWeight> = CostRegisterAutomaton::new(2, 2);
         cra.set_initial_value(0, TropicalWeight::one());
         cra.set_output_register(1, 0);
         cra.add_transition(CraTransition {
@@ -512,8 +497,7 @@ mod tests {
         // Build a CRA that accumulates costs via tropical times (real addition).
         // State 0 is a self-loop on any "a" symbol, accumulating costs in r0.
         // r0 starts at TropicalWeight::one() = 0.0 (tropical multiplicative id).
-        let mut cra: CostRegisterAutomaton<TropicalWeight> =
-            CostRegisterAutomaton::new(1, 1);
+        let mut cra: CostRegisterAutomaton<TropicalWeight> = CostRegisterAutomaton::new(1, 1);
         cra.set_initial_value(0, TropicalWeight::one()); // 0.0
         cra.set_output_register(0, 0);
         cra.add_transition(CraTransition {
@@ -542,8 +526,7 @@ mod tests {
 
     #[test]
     fn evaluate_stream_empty_input() {
-        let mut cra: CostRegisterAutomaton<TropicalWeight> =
-            CostRegisterAutomaton::new(1, 1);
+        let mut cra: CostRegisterAutomaton<TropicalWeight> = CostRegisterAutomaton::new(1, 1);
         cra.set_initial_value(0, TropicalWeight::new(42.0));
         cra.set_output_register(0, 0);
 
@@ -558,8 +541,7 @@ mod tests {
 
     #[test]
     fn evaluate_stream_no_matching_transition() {
-        let mut cra: CostRegisterAutomaton<TropicalWeight> =
-            CostRegisterAutomaton::new(1, 1);
+        let mut cra: CostRegisterAutomaton<TropicalWeight> = CostRegisterAutomaton::new(1, 1);
         cra.set_initial_value(0, TropicalWeight::one());
         cra.set_output_register(0, 0);
         // Only a transition on "a", but we feed "b".
@@ -580,8 +562,7 @@ mod tests {
     fn cra_equivalence_identical() {
         // Two identical CRAs should be equivalent.
         let build = || {
-            let mut cra: CostRegisterAutomaton<TropicalWeight> =
-                CostRegisterAutomaton::new(1, 1);
+            let mut cra: CostRegisterAutomaton<TropicalWeight> = CostRegisterAutomaton::new(1, 1);
             cra.set_initial_value(0, TropicalWeight::one());
             cra.set_output_register(0, 0);
             cra.add_transition(CraTransition {
@@ -602,8 +583,7 @@ mod tests {
         use crate::automata::semiring::CountingWeight;
 
         // CRA A: r0 := r0 + cost (counting: accumulate count)
-        let mut a: CostRegisterAutomaton<CountingWeight> =
-            CostRegisterAutomaton::new(1, 1);
+        let mut a: CostRegisterAutomaton<CountingWeight> = CostRegisterAutomaton::new(1, 1);
         a.set_initial_value(0, CountingWeight::new(0));
         a.set_output_register(0, 0);
         a.add_transition(CraTransition {
@@ -617,8 +597,7 @@ mod tests {
         });
 
         // CRA B: r0 := r0 (no update, stays at 0)
-        let mut b: CostRegisterAutomaton<CountingWeight> =
-            CostRegisterAutomaton::new(1, 1);
+        let mut b: CostRegisterAutomaton<CountingWeight> = CostRegisterAutomaton::new(1, 1);
         b.set_initial_value(0, CountingWeight::new(0));
         b.set_output_register(0, 0);
         b.add_transition(CraTransition {

@@ -321,18 +321,42 @@ impl IntSuffix {
         IntSuffix::Unsuffixed
     }
 
-    pub fn matches_i8(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::I8) }
-    pub fn matches_i16(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::I16) }
-    pub fn matches_i32(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::I32) }
-    pub fn matches_i64(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::I64 | IntSuffix::Isize) }
-    pub fn matches_i128(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::I128) }
-    pub fn matches_isize(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::Isize | IntSuffix::I64) }
-    pub fn matches_u8(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::U8) }
-    pub fn matches_u16(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::U16) }
-    pub fn matches_u32(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::U32) }
-    pub fn matches_u64(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::U64 | IntSuffix::Usize) }
-    pub fn matches_u128(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::U128) }
-    pub fn matches_usize(&self) -> bool { matches!(self, IntSuffix::Unsuffixed | IntSuffix::Usize | IntSuffix::U64) }
+    pub fn matches_i8(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I8)
+    }
+    pub fn matches_i16(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I16)
+    }
+    pub fn matches_i32(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I32)
+    }
+    pub fn matches_i64(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I64 | IntSuffix::Isize)
+    }
+    pub fn matches_i128(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::I128)
+    }
+    pub fn matches_isize(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::Isize | IntSuffix::I64)
+    }
+    pub fn matches_u8(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U8)
+    }
+    pub fn matches_u16(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U16)
+    }
+    pub fn matches_u32(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U32)
+    }
+    pub fn matches_u64(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U64 | IntSuffix::Usize)
+    }
+    pub fn matches_u128(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::U128)
+    }
+    pub fn matches_usize(&self) -> bool {
+        matches!(self, IntSuffix::Unsuffixed | IntSuffix::Usize | IntSuffix::U64)
+    }
 }
 
 fn split_suffix(s: &str) -> (&str, Option<Suffix>) {
@@ -445,14 +469,9 @@ pub fn parse_int_lit(text: &str, default_suffix: Option<Suffix>) -> Result<IntLi
         return try_fit_type(&big, hint).ok_or(());
     }
 
-    for candidate in [
-        Suffix::I32,
-        Suffix::U32,
-        Suffix::I64,
-        Suffix::U64,
-        Suffix::I128,
-        Suffix::U128,
-    ] {
+    for candidate in
+        [Suffix::I32, Suffix::U32, Suffix::I64, Suffix::U64, Suffix::I128, Suffix::U128]
+    {
         if let Some(lit) = try_fit_type(&big, &candidate) {
             return Ok(lit);
         }

@@ -49,7 +49,9 @@ use super::subst::{collect_category_variants, FieldInfo, VariantKind};
 /// `macros/src/gen/runtime/wpda_codegen/prefix.rs:1041+`, ensuring the marked
 /// rule set is exactly the rules Pass 2c synthesizes implicit-cast arms for.
 fn is_cross_cat_unary_cast(rule: &mettail_ast::grammar::GrammarRule) -> bool {
-    let Some(tc) = rule.term_context.as_ref() else { return false; };
+    let Some(tc) = rule.term_context.as_ref() else {
+        return false;
+    };
     if tc.len() != 1 {
         return false;
     }
@@ -59,7 +61,9 @@ fn is_cross_cat_unary_cast(rule: &mettail_ast::grammar::GrammarRule) -> bool {
     let mettail_ast::types::TypeExpr::Base(source) = ty else {
         return false;
     };
-    let Some(sp) = rule.syntax_pattern.as_ref() else { return false; };
+    let Some(sp) = rule.syntax_pattern.as_ref() else {
+        return false;
+    };
     if sp.len() < 3 {
         return false;
     }
@@ -206,18 +210,18 @@ fn generate_arm(
     match variant {
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => {} }
-        }
+        },
         VariantKind::Literal { label } => {
             quote! { #category::#label(_) => { *has_native_lit = true; } }
-        }
+        },
         VariantKind::Nullary { label } => {
             quote! { #category::#label => {} }
-        }
+        },
         VariantKind::Regular { label, fields } => {
             let label_str = label.to_string();
             let is_auto_inj = auto_inj_labels.contains(&label_str);
             generate_regular_arm(category, label, fields, is_auto_inj)
-        }
+        },
         VariantKind::Collection { label, element_cat, coll_type } => {
             // Recurse into elements only if they're same-category.
             let recurse = if element_cat == category {
@@ -228,11 +232,11 @@ fn generate_arm(
             quote! {
                 #category::#label(coll) => { #recurse }
             }
-        }
+        },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. }
         | VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
             generate_binder_arm(category, label, pre_scope_fields, body_cat)
-        }
+        },
     }
 }
 
@@ -270,23 +274,24 @@ fn generate_regular_arm(
         // Auto-injected wrapper: set has_auto_inj. Don't recurse into
         // foreign-cat children (their auto-inj status is governed by
         // their own home cat's visitor).
-        let suppress_unused: Vec<TokenStream> = field_names
-            .iter()
-            .map(|n| quote! { let _ = #n; })
-            .collect();
+        let suppress_unused: Vec<TokenStream> =
+            field_names.iter().map(|n| quote! { let _ = #n; }).collect();
         quote! {
             *has_auto_inj = true;
             #(#suppress_unused)*
         }
     } else if recurse_calls.is_empty() {
         // No same-cat recursion needed; suppress unused bindings.
-        let suppress_unused: Vec<TokenStream> = field_names
-            .iter()
-            .map(|n| quote! { let _ = #n; })
-            .collect();
+        let suppress_unused: Vec<TokenStream> =
+            field_names.iter().map(|n| quote! { let _ = #n; }).collect();
         quote! { #(#suppress_unused)* }
     } else {
-        quote! { #(#recurse_calls)* }
+        let suppress_unused: Vec<TokenStream> =
+            field_names.iter().map(|n| quote! { let _ = #n; }).collect();
+        quote! {
+            #(#suppress_unused)*
+            #(#recurse_calls)*
+        }
     };
 
     quote! {

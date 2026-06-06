@@ -278,14 +278,7 @@ impl<T, S, W: Semiring> TokenLattice<T, S, W> {
     }
 
     /// Add an edge from `from_node` to `to_node` with the given token/span/weight.
-    pub fn add_edge(
-        &mut self,
-        from_node: usize,
-        to_node: usize,
-        token: T,
-        span: S,
-        weight: W,
-    ) {
+    pub fn add_edge(&mut self, from_node: usize, to_node: usize, token: T, span: S, weight: W) {
         self.ensure_nodes(to_node + 1);
         self.edges[from_node].push(LatticeEdge {
             token_span: (token, span),
@@ -983,19 +976,31 @@ mod tests {
         // Path 3: 0 --d(2.0, 1)--> 2  (tropical=2.0, edits=1)
         let mut lattice: TokenLattice<TestToken, TestSpan, PW> = TokenLattice::new();
         lattice.add_edge(
-            0, 2, "a".to_string(), (0, 2),
+            0,
+            2,
+            "a".to_string(),
+            (0, 2),
             PW::new(TropicalWeight::new(1.0), EditWeight::new(2)),
         );
         lattice.add_edge(
-            0, 1, "b".to_string(), (0, 1),
+            0,
+            1,
+            "b".to_string(),
+            (0, 1),
             PW::new(TropicalWeight::new(0.5), EditWeight::new(3)),
         );
         lattice.add_edge(
-            1, 2, "c".to_string(), (1, 2),
+            1,
+            2,
+            "c".to_string(),
+            (1, 2),
             PW::new(TropicalWeight::new(0.5), EditWeight::new(1)),
         );
         lattice.add_edge(
-            0, 2, "d".to_string(), (0, 2),
+            0,
+            2,
+            "d".to_string(),
+            (0, 2),
             PW::new(TropicalWeight::new(2.0), EditWeight::new(1)),
         );
 
@@ -1028,17 +1033,17 @@ mod tests {
         // because they're the same value. This is expected — counting semiring
         // should be used via ProductWeight or forward-backward, not Viterbi.
         let result = viterbi_generic(&lattice, 2);
-        assert!(result.is_none(), "counting weight Viterbi should fail: zero() == smallest, breaks DP invariant");
+        assert!(
+            result.is_none(),
+            "counting weight Viterbi should fail: zero() == smallest, breaks DP invariant"
+        );
     }
 
     #[test]
     fn test_generic_lattice_linear_conversion() {
         use crate::automata::semiring::EditWeight;
 
-        let tokens = vec![
-            ("a".to_string(), (0, 1)),
-            ("b".to_string(), (1, 2)),
-        ];
+        let tokens = vec![("a".to_string(), (0, 1)), ("b".to_string(), (1, 2))];
         let lattice: TokenLattice<TestToken, TestSpan, EditWeight> =
             linear_to_lattice_generic(tokens);
 
@@ -1152,10 +1157,8 @@ mod tests {
     #[test]
     fn test_b3_from_weighted_linear_path() {
         // B3: from_weighted with unambiguous tokens returns Linear.
-        let tokens: Vec<(String, (usize, usize), f64)> = vec![
-            ("a".to_string(), (0, 1), 0.0),
-            ("b".to_string(), (1, 2), 0.5),
-        ];
+        let tokens: Vec<(String, (usize, usize), f64)> =
+            vec![("a".to_string(), (0, 1), 0.0), ("b".to_string(), (1, 2), 0.5)];
         let source = TokenSource::from_weighted(tokens);
         assert!(source.is_linear(), "unambiguous tokens should produce Linear");
         let resolved = source.resolve().expect("resolve should succeed");

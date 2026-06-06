@@ -68,11 +68,7 @@ fn ast_pinputsopttagged_qs_some_nonempty_constructs_and_clones() {
     let pat = Vec::<mettail_runtime::Binder<String>>::new();
     let body = std::sync::Arc::new(Proc::PZero);
     let scope = mettail_runtime::Scope::from_parts_unsafe(pat, body);
-    let term = Proc::PInputsOptTagged(
-        Vec::new(),
-        Some(vec![Proc::PZero, Proc::PZero]),
-        scope,
-    );
+    let term = Proc::PInputsOptTagged(Vec::new(), Some(vec![Proc::PZero, Proc::PZero]), scope);
     let cloned = term.clone();
     assert_eq!(term, cloned);
     // Debug format works.
@@ -98,11 +94,7 @@ fn ast_pinputsopttagged_qs_some_different_lengths_ne() {
     let scope_a = mettail_runtime::Scope::from_parts_unsafe(pat.clone(), body.clone());
     let scope_b = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let a = Proc::PInputsOptTagged(Vec::new(), Some(vec![Proc::PZero]), scope_a);
-    let b = Proc::PInputsOptTagged(
-        Vec::new(),
-        Some(vec![Proc::PZero, Proc::PZero]),
-        scope_b,
-    );
+    let b = Proc::PInputsOptTagged(Vec::new(), Some(vec![Proc::PZero, Proc::PZero]), scope_b);
     assert_ne!(a, b);
 }
 
@@ -128,9 +120,7 @@ fn ast_pinputsopttagged_qs_some_hash_consistent_with_eq() {
 
 #[test]
 fn ast_pinputsopttagged_with_names_constructs_and_clones() {
-    let pat = vec![mettail_runtime::Binder(
-        mettail_runtime::FreeVar::fresh(Some("x".to_string())),
-    )];
+    let pat = vec![mettail_runtime::Binder(mettail_runtime::FreeVar::fresh(Some("x".to_string())))];
     let body = std::sync::Arc::new(Proc::PZero);
     let scope = mettail_runtime::Scope::from_parts_unsafe(pat, body);
     let term = Proc::PInputsOptTagged(
@@ -152,34 +142,27 @@ fn ast_pinputsopttagged_with_names_constructs_and_clones() {
 
 #[test]
 fn pred1_opt_skipped_empty_names_via_wpds() {
-    let result = Proc::parse_via_wpda("( ) . { 0 }")
-        .expect("'( ) . { 0 }' parses");
+    let result = Proc::parse_via_wpda("( ) . { 0 }").expect("'( ) . { 0 }' parses");
     match &result {
         Proc::PInputsOptTagged(ns, qs, _scope) => {
             assert_eq!(ns.len(), 0, "ns should be empty");
             assert!(qs.is_none(), "qs should be None when *opt skipped");
-        }
-        other => panic!(
-            "expected Proc::PInputsOptTagged([], None, _), got {:?}",
-            other
-        ),
+        },
+        other => panic!("expected Proc::PInputsOptTagged([], None, _), got {:?}", other),
     }
 }
 
 #[test]
 fn pred2_opt_skipped_single_binder_via_wpds() {
-    let result = Proc::parse_via_wpda("( @(0) ? x ) . { 0 }")
-        .expect("'( @(0) ? x ) . { 0 }' parses");
+    let result =
+        Proc::parse_via_wpda("( @(0) ? x ) . { 0 }").expect("'( @(0) ? x ) . { 0 }' parses");
     match &result {
         Proc::PInputsOptTagged(ns, qs, _scope) => {
             assert_eq!(ns.len(), 1, "ns should have 1 element");
             assert!(matches!(&ns[0], Name::NQuote(_)));
             assert!(qs.is_none(), "qs should be None when *opt skipped");
-        }
-        other => panic!(
-            "expected Proc::PInputsOptTagged([_], None, _), got {:?}",
-            other
-        ),
+        },
+        other => panic!("expected Proc::PInputsOptTagged([_], None, _), got {:?}", other),
     }
 }
 

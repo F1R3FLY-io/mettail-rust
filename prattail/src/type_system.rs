@@ -58,9 +58,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 
-use crate::lattice_theory::{LatticeStore, LatticeTheory, TypeId};
 #[cfg(test)]
 use crate::lattice_theory::SubtypeConstraint;
+use crate::lattice_theory::{LatticeStore, LatticeTheory, TypeId};
 use crate::logict::ConstraintTheory;
 
 // ==============================================================================
@@ -113,20 +113,10 @@ pub trait TypeSystem: Clone + fmt::Debug + Send + Sync + 'static {
     fn is_subtype(&self, env: &Self::TypeEnv, sub: &Self::Type, sup: &Self::Type) -> bool;
 
     /// Join (LUB): narrowest common supertype. None if no finite join.
-    fn join(
-        &self,
-        env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type>;
+    fn join(&self, env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type>;
 
     /// Meet (GLB): widest common subtype. None if no finite meet.
-    fn meet(
-        &self,
-        env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type>;
+    fn meet(&self, env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type>;
 
     /// Extend environment with a new variable binding.
     fn extend(&self, env: &Self::TypeEnv, var: &str, ty: &Self::Type) -> Self::TypeEnv;
@@ -164,9 +154,7 @@ pub struct LatticeTypeEnv {
 impl LatticeTypeEnv {
     /// Create an empty type environment.
     pub fn new() -> Self {
-        LatticeTypeEnv {
-            bindings: HashMap::new(),
-        }
+        LatticeTypeEnv { bindings: HashMap::new() }
     }
 }
 
@@ -268,8 +256,7 @@ impl LatticeTypeSystem {
             LatticeTerm::Var(name) => env.bindings.get(name).copied(),
             LatticeTerm::Const { ty, .. } => Some(*ty),
             LatticeTerm::App { head, args } => {
-                let (expected_arg_types, result_type) =
-                    self.constructor_types.get(head)?;
+                let (expected_arg_types, result_type) = self.constructor_types.get(head)?;
                 if args.len() != expected_arg_types.len() {
                     return None;
                 }
@@ -280,7 +267,7 @@ impl LatticeTypeSystem {
                     }
                 }
                 Some(*result_type)
-            }
+            },
         }
     }
 }
@@ -294,12 +281,7 @@ impl TypeSystem for LatticeTypeSystem {
         LatticeTypeEnv::new()
     }
 
-    fn check(
-        &self,
-        env: &LatticeTypeEnv,
-        term: &LatticeTerm,
-        ty: &TypeId,
-    ) -> bool {
+    fn check(&self, env: &LatticeTypeEnv, term: &LatticeTerm, ty: &TypeId) -> bool {
         let mut store = self.store.clone();
         match self.infer_single(env, term, &mut store) {
             Some(inferred) => self.theory.is_subtype(&mut store, inferred, *ty),
@@ -307,11 +289,7 @@ impl TypeSystem for LatticeTypeSystem {
         }
     }
 
-    fn infer(
-        &self,
-        env: &LatticeTypeEnv,
-        term: &LatticeTerm,
-    ) -> Vec<TypeId> {
+    fn infer(&self, env: &LatticeTypeEnv, term: &LatticeTerm) -> Vec<TypeId> {
         let mut store = self.store.clone();
         match self.infer_single(env, term, &mut store) {
             Some(ty) => vec![ty],
@@ -319,42 +297,22 @@ impl TypeSystem for LatticeTypeSystem {
         }
     }
 
-    fn is_subtype(
-        &self,
-        _env: &LatticeTypeEnv,
-        sub: &TypeId,
-        sup: &TypeId,
-    ) -> bool {
+    fn is_subtype(&self, _env: &LatticeTypeEnv, sub: &TypeId, sup: &TypeId) -> bool {
         let mut store = self.store.clone();
         self.theory.is_subtype(&mut store, *sub, *sup)
     }
 
-    fn join(
-        &self,
-        _env: &LatticeTypeEnv,
-        a: &TypeId,
-        b: &TypeId,
-    ) -> Option<TypeId> {
+    fn join(&self, _env: &LatticeTypeEnv, a: &TypeId, b: &TypeId) -> Option<TypeId> {
         let mut store = self.store.clone();
         self.theory.join(&mut store, *a, *b)
     }
 
-    fn meet(
-        &self,
-        _env: &LatticeTypeEnv,
-        a: &TypeId,
-        b: &TypeId,
-    ) -> Option<TypeId> {
+    fn meet(&self, _env: &LatticeTypeEnv, a: &TypeId, b: &TypeId) -> Option<TypeId> {
         let mut store = self.store.clone();
         self.theory.meet(&mut store, *a, *b)
     }
 
-    fn extend(
-        &self,
-        env: &LatticeTypeEnv,
-        var: &str,
-        ty: &TypeId,
-    ) -> LatticeTypeEnv {
+    fn extend(&self, env: &LatticeTypeEnv, var: &str, ty: &TypeId) -> LatticeTypeEnv {
         let mut new_env = env.clone();
         new_env.bindings.insert(var.to_string(), *ty);
         new_env
@@ -395,10 +353,7 @@ pub enum TypePred<S: TypeSystem> {
     /// Type membership: term has type T.
     HasType(S::Type),
     /// Subtype relation: S <: T.
-    Subtype {
-        sub: S::Type,
-        sup: S::Type,
-    },
+    Subtype { sub: S::Type, sup: S::Type },
     /// Conjunction.
     And(Box<TypePred<S>>, Box<TypePred<S>>),
     /// Disjunction.
@@ -414,7 +369,7 @@ impl<S: TypeSystem> PartialEq for TypePred<S> {
             (TypePred::HasType(a), TypePred::HasType(b)) => a == b,
             (TypePred::Subtype { sub: s1, sup: p1 }, TypePred::Subtype { sub: s2, sup: p2 }) => {
                 s1 == s2 && p1 == p2
-            }
+            },
             (TypePred::And(a1, b1), TypePred::And(a2, b2))
             | (TypePred::Or(a1, b1), TypePred::Or(a2, b2)) => a1 == a2 && b1 == b2,
             (TypePred::Not(a), TypePred::Not(b)) => a == b,
@@ -429,16 +384,16 @@ impl<S: TypeSystem> Hash for TypePred<S> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            TypePred::True | TypePred::False => {}
+            TypePred::True | TypePred::False => {},
             TypePred::HasType(ty) => ty.hash(state),
             TypePred::Subtype { sub, sup } => {
                 sub.hash(state);
                 sup.hash(state);
-            }
+            },
             TypePred::And(a, b) | TypePred::Or(a, b) => {
                 a.hash(state);
                 b.hash(state);
-            }
+            },
             TypePred::Not(inner) => inner.hash(state),
         }
     }
@@ -479,9 +434,7 @@ impl<S: TypeSystem> TypeSystemAlgebra<S> {
             TypePred::True => true,
             TypePred::False => false,
             TypePred::HasType(ty) => self.system.is_inhabited(&self.env, ty),
-            TypePred::Subtype { sub, sup } => {
-                self.system.is_subtype(&self.env, sub, sup)
-            }
+            TypePred::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
             TypePred::And(a, b) => self.evaluate_pred(a) && self.evaluate_pred(b),
             TypePred::Or(a, b) => self.evaluate_pred(a) || self.evaluate_pred(b),
             TypePred::Not(a) => !self.evaluate_pred(a),
@@ -494,15 +447,9 @@ impl<S: TypeSystem> TypeSystemAlgebra<S> {
             TypePred::True => true,
             TypePred::False => false,
             TypePred::HasType(ty) => self.system.is_inhabited(&self.env, ty),
-            TypePred::Subtype { sub, sup } => {
-                self.system.is_subtype(&self.env, sub, sup)
-            }
-            TypePred::And(a, b) => {
-                self.is_satisfiable_pred(a) && self.is_satisfiable_pred(b)
-            }
-            TypePred::Or(a, b) => {
-                self.is_satisfiable_pred(a) || self.is_satisfiable_pred(b)
-            }
+            TypePred::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
+            TypePred::And(a, b) => self.is_satisfiable_pred(a) && self.is_satisfiable_pred(b),
+            TypePred::Or(a, b) => self.is_satisfiable_pred(a) || self.is_satisfiable_pred(b),
             TypePred::Not(a) => !self.evaluate_pred(a),
         }
     }
@@ -511,10 +458,8 @@ impl<S: TypeSystem> TypeSystemAlgebra<S> {
     ///
     /// Returns true if `a ∧ ¬b` is unsatisfiable.
     pub fn implies_pred(&self, a: &TypePred<S>, b: &TypePred<S>) -> bool {
-        let counter = TypePred::And(
-            Box::new(a.clone()),
-            Box::new(TypePred::Not(Box::new(b.clone()))),
-        );
+        let counter =
+            TypePred::And(Box::new(a.clone()), Box::new(TypePred::Not(Box::new(b.clone()))));
         !self.is_satisfiable_pred(&counter)
     }
 }
@@ -576,31 +521,31 @@ impl<S: TypeSystem> crate::symbolic::BooleanAlgebra for TypeSystemAlgebra<S> {
                 } else {
                     None
                 }
-            }
+            },
             TypePred::Subtype { sub, sup } => {
                 if self.system.is_subtype(&self.env, sub, sup) {
                     Some(sub.clone())
                 } else {
                     None
                 }
-            }
+            },
             TypePred::And(a_inner, b_inner) => {
                 // For conjunction, need a witness that satisfies both
                 let wa = self.witness(a_inner)?;
                 let wb = self.witness(b_inner)?;
                 // Try meeting the two witnesses
                 self.system.meet(&self.env, &wa, &wb)
-            }
+            },
             TypePred::Or(a_inner, b_inner) => {
                 self.witness(a_inner).or_else(|| self.witness(b_inner))
-            }
+            },
             TypePred::Not(inner) => {
                 if !self.evaluate_pred(inner) {
                     self.system.top()
                 } else {
                     None
                 }
-            }
+            },
         }
     }
 
@@ -609,15 +554,9 @@ impl<S: TypeSystem> crate::symbolic::BooleanAlgebra for TypeSystemAlgebra<S> {
             TypePred::True => true,
             TypePred::False => false,
             TypePred::HasType(ty) => self.system.is_subtype(&self.env, elem, ty),
-            TypePred::Subtype { sub, sup } => {
-                self.system.is_subtype(&self.env, sub, sup)
-            }
-            TypePred::And(a, b) => {
-                self.evaluate(a, elem) && self.evaluate(b, elem)
-            }
-            TypePred::Or(a, b) => {
-                self.evaluate(a, elem) || self.evaluate(b, elem)
-            }
+            TypePred::Subtype { sub, sup } => self.system.is_subtype(&self.env, sub, sup),
+            TypePred::And(a, b) => self.evaluate(a, elem) && self.evaluate(b, elem),
+            TypePred::Or(a, b) => self.evaluate(a, elem) || self.evaluate(b, elem),
             TypePred::Not(inner) => !self.evaluate(inner, elem),
         }
     }
@@ -653,7 +592,11 @@ pub enum RefType<Ty: Clone + fmt::Debug + Eq + Hash, C: Clone + fmt::Debug + Eq 
 
 /// Type environment for the refinement type system.
 #[derive(Clone, Debug)]
-pub struct RefinementTypeEnv<BaseEnv: Clone + fmt::Debug, C: Clone + fmt::Debug + Eq + Hash, Ty: Clone + fmt::Debug + Eq + Hash> {
+pub struct RefinementTypeEnv<
+    BaseEnv: Clone + fmt::Debug,
+    C: Clone + fmt::Debug + Eq + Hash,
+    Ty: Clone + fmt::Debug + Eq + Hash,
+> {
     /// The base type system's environment.
     pub base_env: BaseEnv,
     /// Refinement bindings: variable → (base type, predicate).
@@ -719,11 +662,7 @@ where
     /// the constraints into the `TheoryAlgebra<T>` `BooleanAlgebra`
     /// wrapper (which exposes negation) and checks
     /// `!is_satisfiable(P ∧ ¬Q)`.
-    pub fn predicate_entails(
-        &self,
-        premise: &T::Constraint,
-        conclusion: &T::Constraint,
-    ) -> bool {
+    pub fn predicate_entails(&self, premise: &T::Constraint, conclusion: &T::Constraint) -> bool {
         use crate::logict::{TheoryAlgebra, TheoryPred};
         use crate::symbolic::BooleanAlgebra;
 
@@ -771,16 +710,21 @@ where
                 // into a fresh store. If the result is satisfiable, the substitution
                 // is valid.
                 let store = self.constraint_theory.empty_store();
-                let Some(store_with_pred) = self.constraint_theory.propagate(&store, &refined.predicate) else {
+                let Some(store_with_pred) =
+                    self.constraint_theory.propagate(&store, &refined.predicate)
+                else {
                     return None; // Original predicate was unsatisfiable
                 };
-                let Some(_store_final) = self.constraint_theory.propagate(&store_with_pred, constraint_value) else {
+                let Some(_store_final) = self
+                    .constraint_theory
+                    .propagate(&store_with_pred, constraint_value)
+                else {
                     return None; // Value doesn't satisfy the predicate
                 };
 
                 // After ground substitution, the refinement is satisfied — return base type
                 Some(RefType::Base(refined.base.clone()))
-            }
+            },
         }
     }
 
@@ -797,13 +741,15 @@ where
             RefType::Base(_) => true, // No predicate to check
             RefType::Refined(refined) => {
                 let store = self.constraint_theory.empty_store();
-                let Some(store_with_pred) = self.constraint_theory.propagate(&store, &refined.predicate) else {
+                let Some(store_with_pred) =
+                    self.constraint_theory.propagate(&store, &refined.predicate)
+                else {
                     return false; // Predicate itself is unsatisfiable
                 };
                 self.constraint_theory
                     .propagate(&store_with_pred, value_constraint)
                     .is_some()
-            }
+            },
         }
     }
 }
@@ -825,12 +771,7 @@ where
         }
     }
 
-    fn check(
-        &self,
-        env: &Self::TypeEnv,
-        term: &Self::Term,
-        ty: &Self::Type,
-    ) -> bool {
+    fn check(&self, env: &Self::TypeEnv, term: &Self::Term, ty: &Self::Type) -> bool {
         let base_ty = Self::base_type(ty);
         // First check base type
         if !self.base_system.check(&env.base_env, term, base_ty) {
@@ -845,11 +786,7 @@ where
         }
     }
 
-    fn infer(
-        &self,
-        env: &Self::TypeEnv,
-        term: &Self::Term,
-    ) -> Vec<Self::Type> {
+    fn infer(&self, env: &Self::TypeEnv, term: &Self::Term) -> Vec<Self::Type> {
         self.base_system
             .infer(&env.base_env, term)
             .into_iter()
@@ -857,17 +794,15 @@ where
             .collect()
     }
 
-    fn is_subtype(
-        &self,
-        env: &Self::TypeEnv,
-        sub: &Self::Type,
-        sup: &Self::Type,
-    ) -> bool {
+    fn is_subtype(&self, env: &Self::TypeEnv, sub: &Self::Type, sup: &Self::Type) -> bool {
         let sub_base = Self::base_type(sub);
         let sup_base = Self::base_type(sup);
 
         // Base type must be a subtype
-        if !self.base_system.is_subtype(&env.base_env, sub_base, sup_base) {
+        if !self
+            .base_system
+            .is_subtype(&env.base_env, sub_base, sup_base)
+        {
             return false;
         }
 
@@ -883,21 +818,18 @@ where
                 // We approximate: check if propagating Q produces a valid store
                 // (conservative — this may reject valid subtypings)
                 let store = self.constraint_theory.empty_store();
-                self.constraint_theory.propagate(&store, &r.predicate).is_some()
-            }
+                self.constraint_theory
+                    .propagate(&store, &r.predicate)
+                    .is_some()
+            },
             // Refined <: Refined → base subtype + P ⟹ Q
             (RefType::Refined(r1), RefType::Refined(r2)) => {
                 self.predicate_entails(&r1.predicate, &r2.predicate)
-            }
+            },
         }
     }
 
-    fn join(
-        &self,
-        env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type> {
+    fn join(&self, env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
         let base_a = Self::base_type(a);
         let base_b = Self::base_type(b);
         let base_join = self.base_system.join(&env.base_env, base_a, base_b)?;
@@ -906,12 +838,7 @@ where
         Some(RefType::Base(base_join))
     }
 
-    fn meet(
-        &self,
-        env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type> {
+    fn meet(&self, env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
         let base_a = Self::base_type(a);
         let base_b = Self::base_type(b);
         let base_meet = self.base_system.meet(&env.base_env, base_a, base_b)?;
@@ -919,12 +846,7 @@ where
         Some(RefType::Base(base_meet))
     }
 
-    fn extend(
-        &self,
-        env: &Self::TypeEnv,
-        var: &str,
-        ty: &Self::Type,
-    ) -> Self::TypeEnv {
+    fn extend(&self, env: &Self::TypeEnv, var: &str, ty: &Self::Type) -> Self::TypeEnv {
         let base_ty = Self::base_type(ty);
         RefinementTypeEnv {
             base_env: self.base_system.extend(&env.base_env, var, base_ty),
@@ -936,11 +858,7 @@ where
         }
     }
 
-    fn is_inhabited(
-        &self,
-        env: &Self::TypeEnv,
-        ty: &Self::Type,
-    ) -> bool {
+    fn is_inhabited(&self, env: &Self::TypeEnv, ty: &Self::Type) -> bool {
         let base_ty = Self::base_type(ty);
         if !self.base_system.is_inhabited(&env.base_env, base_ty) {
             return false;
@@ -961,7 +879,7 @@ where
 }
 
 // Re-export from lib.rs for backward compatibility.
-pub use crate::{RefinementTypeSpec, RefinementPredKind};
+pub use crate::{RefinementPredKind, RefinementTypeSpec};
 
 // ==============================================================================
 // RT10: SFA Integration for Refinement Type Dispatch
@@ -1036,17 +954,25 @@ pub fn analyze_refinement_dispatch(
                 let overlap = classify_predicate_overlap(a, b);
                 match overlap {
                     PredicateOverlap::Disjoint => {
-                        analysis.disjoint_pairs.push((a.name.clone(), b.name.clone()));
-                    }
+                        analysis
+                            .disjoint_pairs
+                            .push((a.name.clone(), b.name.clone()));
+                    },
                     PredicateOverlap::Subtype => {
-                        analysis.subtype_pairs.push((a.name.clone(), b.name.clone()));
-                    }
+                        analysis
+                            .subtype_pairs
+                            .push((a.name.clone(), b.name.clone()));
+                    },
                     PredicateOverlap::Supertype => {
-                        analysis.subtype_pairs.push((b.name.clone(), a.name.clone()));
-                    }
+                        analysis
+                            .subtype_pairs
+                            .push((b.name.clone(), a.name.clone()));
+                    },
                     PredicateOverlap::Overlapping => {
-                        analysis.overlapping_pairs.push((a.name.clone(), b.name.clone()));
-                    }
+                        analysis
+                            .overlapping_pairs
+                            .push((a.name.clone(), b.name.clone()));
+                    },
                 }
             }
         }
@@ -1099,10 +1025,14 @@ fn classify_predicate_overlap(
 
         // Check if one repr is a prefix of the other with additional conjuncts
         // (stricter predicate is a subtype)
-        if a.predicate_repr.contains(&b.predicate_repr) && a.predicate_repr.len() > b.predicate_repr.len() {
+        if a.predicate_repr.contains(&b.predicate_repr)
+            && a.predicate_repr.len() > b.predicate_repr.len()
+        {
             return PredicateOverlap::Subtype; // a is more restrictive
         }
-        if b.predicate_repr.contains(&a.predicate_repr) && b.predicate_repr.len() > a.predicate_repr.len() {
+        if b.predicate_repr.contains(&a.predicate_repr)
+            && b.predicate_repr.len() > a.predicate_repr.len()
+        {
             return PredicateOverlap::Supertype; // b is more restrictive
         }
     }
@@ -1118,11 +1048,7 @@ fn classify_predicate_overlap(
 /// - `x>=0` vs `x<0`
 /// - `x==0` vs `x!=0`
 fn is_complement_predicate(a: &str, b: &str) -> bool {
-    let complement_pairs = [
-        (">", "<="),
-        (">=", "<"),
-        ("==", "!="),
-    ];
+    let complement_pairs = [(">", "<="), (">=", "<"), ("==", "!=")];
 
     for (op1, op2) in &complement_pairs {
         // Check a has op1 and b has op2 with same operands
@@ -1220,16 +1146,16 @@ pub struct SetTheoreticTypeSystem {
     /// Constructors with their arities (defines the term algebra).
     pub constructors: HashMap<String, usize>,
     /// Named type definitions: type name → tree automaton accepting the type's values.
-    pub type_defs: HashMap<String, crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight>>,
+    pub type_defs: HashMap<
+        String,
+        crate::tree_automaton::TreeAutomaton<crate::automata::semiring::BooleanWeight>,
+    >,
 }
 
 impl SetTheoreticTypeSystem {
     /// Create a new set-theoretic type system with the given constructors.
     pub fn new(constructors: HashMap<String, usize>) -> Self {
-        SetTheoreticTypeSystem {
-            constructors,
-            type_defs: HashMap::new(),
-        }
+        SetTheoreticTypeSystem { constructors, type_defs: HashMap::new() }
     }
 
     /// Register a named type definition backed by a tree automaton.
@@ -1266,21 +1192,21 @@ impl SetTheoreticTypeSystem {
                     // Unknown atom: empty automaton (no values)
                     TreeAutomaton::new()
                 }
-            }
+            },
             SetType::Union(a, b) => {
                 let aut_a = self.type_to_automaton(a);
                 let aut_b = self.type_to_automaton(b);
                 self.union_automata(&aut_a, &aut_b)
-            }
+            },
             SetType::Intersection(a, b) => {
                 let aut_a = self.type_to_automaton(a);
                 let aut_b = self.type_to_automaton(b);
                 self.intersect_automata(&aut_a, &aut_b)
-            }
+            },
             SetType::Negation(inner) => {
                 let aut = self.type_to_automaton(inner);
                 self.complement_automaton(&aut)
-            }
+            },
             SetType::Arrow(_, _) => {
                 // Arrow types are modeled structurally: the "arrow" constructor
                 // has arity 2, with domain and codomain as children.
@@ -1290,7 +1216,7 @@ impl SetTheoreticTypeSystem {
                 } else {
                     TreeAutomaton::new()
                 }
-            }
+            },
             SetType::Top => {
                 // Universal automaton: one accepting state, all constructors
                 // transition to it with Boolean true.
@@ -1306,11 +1232,11 @@ impl SetTheoreticTypeSystem {
                     });
                 }
                 aut
-            }
+            },
             SetType::Bottom => {
                 // Empty automaton: no final states, no transitions.
                 TreeAutomaton::new()
-            }
+            },
         }
     }
 
@@ -1360,7 +1286,9 @@ impl SetTheoreticTypeSystem {
         }
 
         for (sym, a_trans) in &a_by_sym {
-            let Some(b_trans) = b_by_sym.get(sym) else { continue };
+            let Some(b_trans) = b_by_sym.get(sym) else {
+                continue;
+            };
             for ta in a_trans {
                 for tb in b_trans {
                     if ta.child_states.len() != tb.child_states.len() {
@@ -1548,7 +1476,7 @@ impl SetTheoreticTypeSystem {
                         });
                     }
                 }
-            }
+            },
             2 => {
                 for &q1 in states {
                     for &q2 in states {
@@ -1563,7 +1491,7 @@ impl SetTheoreticTypeSystem {
                         }
                     }
                 }
-            }
+            },
             3 => {
                 for &q1 in states {
                     for &q2 in states {
@@ -1580,7 +1508,7 @@ impl SetTheoreticTypeSystem {
                         }
                     }
                 }
-            }
+            },
             _ => {
                 // For higher arities, only add the all-sink combination as a fallback.
                 // Full enumeration would be |states|^arity which is infeasible.
@@ -1593,7 +1521,7 @@ impl SetTheoreticTypeSystem {
                         weight: BooleanWeight(true),
                     });
                 }
-            }
+            },
         }
     }
 
@@ -1628,10 +1556,8 @@ impl SetTheoreticTypeSystem {
                     continue; // already reached
                 }
                 // Check if all children are reachable
-                let all_children_reachable = t
-                    .child_states
-                    .iter()
-                    .all(|child| reachable.contains(child));
+                let all_children_reachable =
+                    t.child_states.iter().all(|child| reachable.contains(child));
                 if all_children_reachable {
                     reachable.insert(t.target_state);
                     changed = true;
@@ -1650,9 +1576,7 @@ impl TypeSystem for SetTheoreticTypeSystem {
     type Term = crate::tree_automaton::Term;
 
     fn empty_env(&self) -> Self::TypeEnv {
-        SetTypeEnv {
-            bindings: HashMap::new(),
-        }
+        SetTypeEnv { bindings: HashMap::new() }
     }
 
     fn check(
@@ -1694,12 +1618,7 @@ impl TypeSystem for SetTheoreticTypeSystem {
         result
     }
 
-    fn is_subtype(
-        &self,
-        _env: &Self::TypeEnv,
-        sub: &Self::Type,
-        sup: &Self::Type,
-    ) -> bool {
+    fn is_subtype(&self, _env: &Self::TypeEnv, sub: &Self::Type, sup: &Self::Type) -> bool {
         // S <: T iff L(S) ⊆ L(T) iff L(S) ∩ L(¬T) = ∅
         let aut_sub = self.type_to_automaton(sub);
         let aut_not_sup = self.type_to_automaton(&SetType::Negation(Box::new(sup.clone())));
@@ -1707,42 +1626,23 @@ impl TypeSystem for SetTheoreticTypeSystem {
         Self::is_empty(&intersection)
     }
 
-    fn join(
-        &self,
-        _env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type> {
+    fn join(&self, _env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
         // Join = union type
         Some(SetType::Union(Box::new(a.clone()), Box::new(b.clone())))
     }
 
-    fn meet(
-        &self,
-        _env: &Self::TypeEnv,
-        a: &Self::Type,
-        b: &Self::Type,
-    ) -> Option<Self::Type> {
+    fn meet(&self, _env: &Self::TypeEnv, a: &Self::Type, b: &Self::Type) -> Option<Self::Type> {
         // Meet = intersection type
         Some(SetType::Intersection(Box::new(a.clone()), Box::new(b.clone())))
     }
 
-    fn extend(
-        &self,
-        env: &Self::TypeEnv,
-        var: &str,
-        ty: &Self::Type,
-    ) -> Self::TypeEnv {
+    fn extend(&self, env: &Self::TypeEnv, var: &str, ty: &Self::Type) -> Self::TypeEnv {
         let mut bindings = env.bindings.clone();
         bindings.insert(var.to_string(), ty.clone());
         SetTypeEnv { bindings }
     }
 
-    fn is_inhabited(
-        &self,
-        _env: &Self::TypeEnv,
-        ty: &Self::Type,
-    ) -> bool {
+    fn is_inhabited(&self, _env: &Self::TypeEnv, ty: &Self::Type) -> bool {
         let aut = self.type_to_automaton(ty);
         !Self::is_empty(&aut)
     }
@@ -1812,7 +1712,9 @@ mod tests {
         for (sub, sup) in &edges {
             let ct = &theory;
             let constraint = SubtypeConstraint { sub: *sub, sup: *sup };
-            store = ct.propagate(&store, &constraint).expect("propagation should succeed");
+            store = ct
+                .propagate(&store, &constraint)
+                .expect("propagation should succeed");
         }
 
         (theory, store)
@@ -1823,9 +1725,9 @@ mod tests {
         let mut ctor_types = HashMap::new();
         // Constructor: int_lit(value) → Int
         ctor_types.insert("int_lit".to_string(), (vec![], 2)); // Int = 2
-        // Constructor: float_lit(value) → Float
+                                                               // Constructor: float_lit(value) → Float
         ctor_types.insert("float_lit".to_string(), (vec![], 3)); // Float = 3
-        // Constructor: add(Int, Int) → Int
+                                                                 // Constructor: add(Int, Int) → Int
         ctor_types.insert("add".to_string(), (vec![2, 2], 2));
 
         LatticeTypeSystem::with_bounds(theory, store, ctor_types, 0, 6)
@@ -1917,10 +1819,7 @@ mod tests {
     fn lattice_infer_const() {
         let sys = test_system();
         let env = sys.empty_env();
-        let term = LatticeTerm::Const {
-            name: "42".to_string(),
-            ty: 2,
-        };
+        let term = LatticeTerm::Const { name: "42".to_string(), ty: 2 };
         assert_eq!(sys.infer(&env, &term), vec![2]);
     }
 
@@ -2099,7 +1998,11 @@ mod tests {
             },
         ];
         let result = analyze_refinement_dispatch(&specs);
-        assert_eq!(result.overlapping_pairs.len(), 1, "non-complementary predicates should be overlapping");
+        assert_eq!(
+            result.overlapping_pairs.len(),
+            1,
+            "non-complementary predicates should be overlapping"
+        );
     }
 
     #[test]
@@ -2160,17 +2063,12 @@ mod tests {
         let string_inhabited = TypePred::HasType(4);
 
         // And: both inhabited
-        let both = TypePred::And(
-            Box::new(int_inhabited.clone()),
-            Box::new(string_inhabited.clone()),
-        );
+        let both =
+            TypePred::And(Box::new(int_inhabited.clone()), Box::new(string_inhabited.clone()));
         assert!(algebra.evaluate_pred(&both));
 
         // Or: at least one
-        let either = TypePred::Or(
-            Box::new(int_inhabited.clone()),
-            Box::new(TypePred::False),
-        );
+        let either = TypePred::Or(Box::new(int_inhabited.clone()), Box::new(TypePred::False));
         assert!(algebra.evaluate_pred(&either));
 
         // Not: negation
@@ -2254,9 +2152,8 @@ mod tests {
     #[test]
     fn refinement_top_bottom() {
         let (theory, store) = test_lattice();
-        let base_sys = LatticeTypeSystem::with_bounds(
-            theory.clone(), store.clone(), HashMap::new(), 0, 6,
-        );
+        let base_sys =
+            LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
         let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
 
         assert_eq!(ref_sys.top(), Some(RefType::Base(0))); // Top
@@ -2268,9 +2165,8 @@ mod tests {
     #[test]
     fn apply_substitution_base_type_passthrough() {
         let (theory, store) = test_lattice();
-        let base_sys = LatticeTypeSystem::with_bounds(
-            theory.clone(), store.clone(), HashMap::new(), 0, 6,
-        );
+        let base_sys =
+            LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
         let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
 
         let base_ty: RefType<TypeId, SubtypeConstraint> = RefType::Base(2); // Int
@@ -2283,9 +2179,8 @@ mod tests {
     #[test]
     fn apply_substitution_mismatched_var() {
         let (theory, store) = test_lattice();
-        let base_sys = LatticeTypeSystem::with_bounds(
-            theory.clone(), store.clone(), HashMap::new(), 0, 6,
-        );
+        let base_sys =
+            LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
         let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
 
         let refined = RefType::Refined(RefinedType {
@@ -2303,9 +2198,8 @@ mod tests {
     #[test]
     fn apply_substitution_matching_var_satisfiable() {
         let (theory, store) = test_lattice();
-        let base_sys = LatticeTypeSystem::with_bounds(
-            theory.clone(), store.clone(), HashMap::new(), 0, 6,
-        );
+        let base_sys =
+            LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
         let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
 
         let refined = RefType::Refined(RefinedType {
@@ -2324,24 +2218,24 @@ mod tests {
     #[test]
     fn value_satisfies_refinement_base_always_true() {
         let (theory, store) = test_lattice();
-        let base_sys = LatticeTypeSystem::with_bounds(
-            theory.clone(), store.clone(), HashMap::new(), 0, 6,
-        );
+        let base_sys =
+            LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
         let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
 
         let base_ty: RefType<TypeId, SubtypeConstraint> = RefType::Base(2);
         let constraint = SubtypeConstraint { sub: 999, sup: 888 };
 
-        assert!(ref_sys.value_satisfies_refinement(&base_ty, &constraint),
-            "base type has no predicate — always satisfied");
+        assert!(
+            ref_sys.value_satisfies_refinement(&base_ty, &constraint),
+            "base type has no predicate — always satisfied"
+        );
     }
 
     #[test]
     fn value_satisfies_refinement_consistent() {
         let (theory, store) = test_lattice();
-        let base_sys = LatticeTypeSystem::with_bounds(
-            theory.clone(), store.clone(), HashMap::new(), 0, 6,
-        );
+        let base_sys =
+            LatticeTypeSystem::with_bounds(theory.clone(), store.clone(), HashMap::new(), 0, 6);
         let ref_sys = RefinementTypeSystem::new(base_sys, theory.clone(), 100);
 
         let refined = RefType::Refined(RefinedType {
@@ -2351,8 +2245,10 @@ mod tests {
         });
         let consistent = SubtypeConstraint { sub: 2, sup: 0 }; // Int <: Top
 
-        assert!(ref_sys.value_satisfies_refinement(&refined, &consistent),
-            "consistent constraint should satisfy refinement");
+        assert!(
+            ref_sys.value_satisfies_refinement(&refined, &consistent),
+            "consistent constraint should satisfy refinement"
+        );
     }
 
     // ── BooleanAlgebra integration ──
@@ -2625,10 +2521,7 @@ mod tests {
             let joined = sys.join(&env, &nat, &bool_ty);
             assert_eq!(
                 joined,
-                Some(SetType::Union(
-                    Box::new(nat.clone()),
-                    Box::new(bool_ty.clone()),
-                ))
+                Some(SetType::Union(Box::new(nat.clone()), Box::new(bool_ty.clone()),))
             );
         }
 
@@ -2641,10 +2534,7 @@ mod tests {
             let met = sys.meet(&env, &nat, &bool_ty);
             assert_eq!(
                 met,
-                Some(SetType::Intersection(
-                    Box::new(nat.clone()),
-                    Box::new(bool_ty.clone()),
-                ))
+                Some(SetType::Intersection(Box::new(nat.clone()), Box::new(bool_ty.clone()),))
             );
         }
 

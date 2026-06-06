@@ -180,9 +180,7 @@ pub fn validate_guard_config(language: &LanguageDef) -> Result<(), ValidationErr
         // checking each `RelationQuery.relation_name` against the table.
         let walk = |pred: &BehavioralPred,
                     table: &HashSet<String>|
-         -> Result<(), ValidationError> {
-            walk_behavioral_pred(pred, table)
-        };
+         -> Result<(), ValidationError> { walk_behavioral_pred(pred, table) };
 
         for eq in &language.equations {
             for premise in &eq.premises {
@@ -208,11 +206,8 @@ pub fn validate_guard_config(language: &LanguageDef) -> Result<(), ValidationErr
             .iter()
             .map(|d| d.category.to_string())
             .collect();
-        let known_constructors: HashSet<String> = language
-            .terms
-            .iter()
-            .map(|r| r.label.to_string())
-            .collect();
+        let known_constructors: HashSet<String> =
+            language.terms.iter().map(|r| r.label.to_string()).collect();
 
         for jp in &channels.join_patterns {
             // TW03
@@ -248,10 +243,7 @@ fn walk_behavioral_pred(
 ) -> Result<(), ValidationError> {
     use crate::language::BehavioralPred;
     match pred {
-        BehavioralPred::RelationQuery {
-            relation_name,
-            ..
-        } => {
+        BehavioralPred::RelationQuery { relation_name, .. } => {
             let name = relation_name.to_string();
             if !table.contains(&name) {
                 let mut available: Vec<String> = table.iter().cloned().collect();
@@ -263,23 +255,21 @@ fn walk_behavioral_pred(
                 });
             }
             Ok(())
-        }
-        BehavioralPred::And(a, b)
-        | BehavioralPred::Or(a, b)
-        | BehavioralPred::Implies(a, b) => {
+        },
+        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
             walk_behavioral_pred(a, table)?;
             walk_behavioral_pred(b, table)
-        }
+        },
         BehavioralPred::Not(inner) => walk_behavioral_pred(inner, table),
         BehavioralPred::Quantified { body, .. } => walk_behavioral_pred(body, table),
         BehavioralPred::AcMatch { .. } => {
             // AcMatch is a structural form, not a named predicate.
             Ok(())
-        }
+        },
         BehavioralPred::Top => {
-            // Always-true placeholder — no named predicate to resolve.
+            // Always-true identity predicate; no named predicate to resolve.
             Ok(())
-        }
+        },
     }
 }
 

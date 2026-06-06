@@ -45,10 +45,7 @@ pub struct InternTable<T: Hash + Eq + Clone> {
 impl<T: Hash + Eq + Clone> InternTable<T> {
     /// Create an empty interning table.
     pub fn new() -> Self {
-        Self {
-            epoch: 0,
-            map: HashMap::new(),
-        }
+        Self { epoch: 0, map: HashMap::new() }
     }
 
     /// Clear the table if the epoch has advanced.
@@ -233,20 +230,14 @@ mod tests {
 
     #[test]
     fn test_hash_consing_analysis() {
-        let analysis = HashConsingAnalysis::new(
-            vec!["Proc".to_string(), "Name".to_string()],
-            0.35,
-        );
+        let analysis = HashConsingAnalysis::new(vec!["Proc".to_string(), "Name".to_string()], 0.35);
         assert!(analysis.recommended);
         assert_eq!(analysis.recursive_categories.len(), 2);
 
         let no_recursive = HashConsingAnalysis::new(vec![], 0.0);
         assert!(!no_recursive.recommended);
 
-        let low_sharing = HashConsingAnalysis::new(
-            vec!["Proc".to_string()],
-            0.05,
-        );
+        let low_sharing = HashConsingAnalysis::new(vec!["Proc".to_string()], 0.05);
         assert!(!low_sharing.recommended);
     }
 

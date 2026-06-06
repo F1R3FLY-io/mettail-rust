@@ -45,11 +45,11 @@
 //!   children from a category value and pushes them as drop tasks
 //! - `impl Drop for Cat`: orchestrates the iterative drop for each category
 
-use mettail_ast::language::LanguageDef;
-use mettail_ast::types::CollectionType;
+use crate::gen::generate_var_label;
 use crate::gen::native::NativeType;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
-use crate::gen::generate_var_label;
+use mettail_ast::language::LanguageDef;
+use mettail_ast::types::CollectionType;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -159,7 +159,7 @@ fn generate_dummy_fn(category: &Ident, language: &LanguageDef) -> TokenStream {
             return quote! {
                 /// Return the cheapest possible leaf value for this category.
                 ///
-                /// Used as a placeholder when extracting children during
+                /// Used as a leaf fallback when extracting children during
                 /// iterative drop. Must be a leaf (no `Box<T>` children).
                 #[inline]
                 #[allow(dead_code)]
@@ -216,7 +216,7 @@ fn generate_literal_default(category: &Ident, language: &LanguageDef) -> TokenSt
                 NativeType::Str => quote! { std::string::String::new() },
                 _ => quote! { Default::default() },
             }
-        }
+        },
         None => quote! { 0i32 }, // fallback
     }
 }
@@ -276,49 +276,41 @@ fn generate_push_children_arm(
             quote! {
                 #category::#label(_) => {}
             }
-        }
+        },
 
         // Literal: leaf value, no children to extract
         VariantKind::Literal { label } => {
             quote! {
                 #category::#label(_) => {}
             }
-        }
+        },
 
         // Nullary: leaf value, no fields at all
         VariantKind::Nullary { label } => {
             quote! {
                 #category::#label => {}
             }
-        }
+        },
 
         // Regular: extract Box<T> children, push as DropTasks
         VariantKind::Regular { label, fields } => {
             generate_regular_push_arm(category, label, fields, language)
-        }
+        },
 
         // Collection: take the collection, push each element
-        VariantKind::Collection {
-            label,
-            element_cat,
-            coll_type,
-        } => generate_collection_push_arm(category, label, element_cat, coll_type, language),
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            generate_collection_push_arm(category, label, element_cat, coll_type, language)
+        },
 
         // Binder: extract pre-scope Box<T> children and the scope body
-        VariantKind::Binder {
-            label,
-            pre_scope_fields,
-            body_cat,
-            ..
-        } => generate_binder_push_arm(category, label, pre_scope_fields, body_cat, language),
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
+            generate_binder_push_arm(category, label, pre_scope_fields, body_cat, language)
+        },
 
         // MultiBinder: same as Binder
-        VariantKind::MultiBinder {
-            label,
-            pre_scope_fields,
-            body_cat,
-            ..
-        } => generate_multi_binder_push_arm(category, label, pre_scope_fields, body_cat, language),
+        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
+            generate_multi_binder_push_arm(category, label, pre_scope_fields, body_cat, language)
+        },
     }
 }
 
@@ -401,7 +393,7 @@ fn generate_regular_push_arm(
                                 stack.push(DropTask::#task_variant(elem));
                             }
                         }
-                    }
+                    },
                     CollectionType::HashBag => {
                         quote! {
                             for (elem, count) in std::mem::take(#name).into_iter() {
@@ -410,7 +402,7 @@ fn generate_regular_push_arm(
                                 stack.push(DropTask::#task_variant(elem));
                             }
                         }
-                    }
+                    },
                     CollectionType::HashMap => {
                         // Phase 4 #5b (2026-05-12): HashMap field — HashMapLit
                         // is a key-value store, not a multiset. `take` swaps
@@ -427,14 +419,14 @@ fn generate_regular_push_arm(
                                 stack.push(DropTask::#task_variant(v));
                             }
                         }
-                    }
+                    },
                     CollectionType::HashSet => {
                         quote! {
                             for elem in std::mem::take(#name) {
                                 stack.push(DropTask::#task_variant(elem));
                             }
                         }
-                    }
+                    },
                 }
             } else {
                 // Arc<T> field (ARC refactor): replace with a cheap dummy
@@ -486,7 +478,7 @@ fn generate_collection_push_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::HashBag | CollectionType::HashMap => {
             quote! {
                 #category::#label(ref mut coll) => {
@@ -495,7 +487,7 @@ fn generate_collection_push_arm(
                     }
                 }
             }
-        }
+        },
         CollectionType::HashSet => {
             quote! {
                 #category::#label(ref mut coll) => {
@@ -504,7 +496,7 @@ fn generate_collection_push_arm(
                     }
                 }
             }
-        }
+        },
     }
 }
 
@@ -553,7 +545,7 @@ fn generate_binder_push_arm(
                             }
                         }
                     });
-                }
+                },
                 CollectionType::HashBag | CollectionType::HashMap => {
                     push_stmts.push(quote! {
                         if let Some(__c) = #name.take() {
@@ -562,7 +554,7 @@ fn generate_binder_push_arm(
                             }
                         }
                     });
-                }
+                },
             }
             continue;
         }
@@ -575,21 +567,21 @@ fn generate_binder_push_arm(
                             stack.push(DropTask::#task_variant(elem));
                         }
                     });
-                }
+                },
                 CollectionType::HashBag | CollectionType::HashMap => {
                     push_stmts.push(quote! {
                         for (elem, _count) in std::mem::take(#name).into_iter() {
                             stack.push(DropTask::#task_variant(elem));
                         }
                     });
-                }
+                },
                 CollectionType::HashSet => {
                     push_stmts.push(quote! {
                         for elem in std::mem::take(#name) {
                             stack.push(DropTask::#task_variant(elem));
                         }
                     });
-                }
+                },
             }
         } else {
             push_stmts.push(quote! {
@@ -670,7 +662,7 @@ fn generate_multi_binder_push_arm(
                             }
                         }
                     });
-                }
+                },
                 CollectionType::HashBag | CollectionType::HashMap => {
                     push_stmts.push(quote! {
                         if let Some(__c) = #name.take() {
@@ -679,7 +671,7 @@ fn generate_multi_binder_push_arm(
                             }
                         }
                     });
-                }
+                },
             }
             continue;
         }
@@ -692,21 +684,21 @@ fn generate_multi_binder_push_arm(
                             stack.push(DropTask::#task_variant(elem));
                         }
                     });
-                }
+                },
                 CollectionType::HashBag | CollectionType::HashMap => {
                     push_stmts.push(quote! {
                         for (elem, _count) in std::mem::take(#name).into_iter() {
                             stack.push(DropTask::#task_variant(elem));
                         }
                     });
-                }
+                },
                 CollectionType::HashSet => {
                     push_stmts.push(quote! {
                         for elem in std::mem::take(#name) {
                             stack.push(DropTask::#task_variant(elem));
                         }
                     });
-                }
+                },
             }
         } else {
             push_stmts.push(quote! {

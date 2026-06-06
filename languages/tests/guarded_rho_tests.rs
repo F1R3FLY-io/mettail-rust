@@ -22,8 +22,7 @@ use mettail_runtime::{BehavioralPred, Language, PredArg};
 // ────────────────────────────────────────────────────────────────────────────
 
 fn parse(input: &str) -> Proc {
-    Proc::parse(input)
-        .unwrap_or_else(|e| panic!("parse failed for `{}`: {}", input, e))
+    Proc::parse(input).unwrap_or_else(|e| panic!("parse failed for `{}`: {}", input, e))
 }
 
 fn fresh() {
@@ -78,11 +77,7 @@ fn guarded_input_predicate_field_is_relation_query() {
         panic!("expected PGuardedInput, got {:?}", term);
     };
     match pred {
-        BehavioralPred::RelationQuery {
-            relation_name,
-            args,
-            negated,
-        } => {
+        BehavioralPred::RelationQuery { relation_name, args, negated } => {
             assert_eq!(relation_name, "halts");
             assert_eq!(args.len(), 1);
             assert!(
@@ -104,11 +99,7 @@ fn guarded_input_nullary_predicate_has_zero_args() {
         panic!("expected PGuardedInput, got {:?}", term);
     };
     match pred {
-        BehavioralPred::RelationQuery {
-            relation_name,
-            args,
-            negated,
-        } => {
+        BehavioralPred::RelationQuery { relation_name, args, negated } => {
             assert_eq!(relation_name, "safe");
             assert!(args.is_empty(), "expected zero args, got {:?}", args);
             assert!(!*negated);
@@ -125,11 +116,7 @@ fn guarded_input_two_arg_predicate_preserves_order() {
         panic!("expected PGuardedInput, got {:?}", term);
     };
     match pred {
-        BehavioralPred::RelationQuery {
-            relation_name,
-            args,
-            ..
-        } => {
+        BehavioralPred::RelationQuery { relation_name, args, .. } => {
             assert_eq!(relation_name, "eq");
             assert_eq!(args.len(), 2);
             assert!(matches!(&args[0], PredArg::Var(v) if v == "x"));
@@ -213,13 +200,8 @@ fn poutput_standalone_parses_at_prefix() {
 fn language_parse_term_accepts_guarded_source() {
     fresh();
     let lang = GuardedRhoLanguage;
-    let result =
-        lang.parse_term("for(x <- @1 where halts(x)){ Nil }");
-    assert!(
-        result.is_ok(),
-        "Language::parse_term failed: {:?}",
-        result.err()
-    );
+    let result = lang.parse_term("for(x <- @1 where halts(x)){ Nil }");
+    assert!(result.is_ok(), "Language::parse_term failed: {:?}", result.err());
 }
 
 #[test]
@@ -251,16 +233,11 @@ fn guarded_input_parse_is_deterministic() {
     fresh();
     let b = parse(src);
 
-    let (Proc::PGuardedInput(_, pred_a, _), Proc::PGuardedInput(_, pred_b, _)) =
-        (&a, &b)
-    else {
+    let (Proc::PGuardedInput(_, pred_a, _), Proc::PGuardedInput(_, pred_b, _)) = (&a, &b) else {
         panic!("expected both parses to be PGuardedInput");
     };
 
     // BehavioralPred is a free-standing leaf type with no var IDs, so its
     // PartialEq is safe to compare across two `fresh()`-separated parses.
-    assert_eq!(
-        pred_a, pred_b,
-        "parses of the same source should produce equal predicates"
-    );
+    assert_eq!(pred_a, pred_b, "parses of the same source should produce equal predicates");
 }

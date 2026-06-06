@@ -8,10 +8,10 @@
 use super::common::{
     generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter, PoolArm,
 };
-use mettail_ast::grammar::{GrammarItem, GrammarRule};
-use mettail_ast::language::LanguageDef;
 use crate::logic::bloom_filter::BloomFilter;
 use crate::logic::rules as unified_rules;
+use mettail_ast::grammar::{GrammarItem, GrammarRule};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -57,14 +57,28 @@ pub fn generate_equation_rules(
     // 2. Add demand-driven congruence rules for all constructors
     // These only equate terms that already exist, not synthesize new ones
     // (ART06: skip non-demanded categories; BCG06: sort by dependency depth)
-    rules.extend(generate_congruence_rules(language, cat_filter, analysis, emit_diagnostics, demanded, strat_info));
+    rules.extend(generate_congruence_rules(
+        language,
+        cat_filter,
+        analysis,
+        emit_diagnostics,
+        demanded,
+        strat_info,
+    ));
 
     // 3. Generate user-defined equation rules using unified approach,
     //    filtering out subsumed equations (Sprint A N10 DCE) and
     //    cancellation pair equations (would cause non-convergence)
     //    (ART06: skip rules targeting non-demanded categories)
     //    (BCG06: sort by stratum index for faster convergence)
-    rules.extend(unified_rules::generate_equation_rules(language, cat_filter, subsumed_equations, cancellation_equations, demanded, strat_info));
+    rules.extend(unified_rules::generate_equation_rules(
+        language,
+        cat_filter,
+        subsumed_equations,
+        cancellation_equations,
+        demanded,
+        strat_info,
+    ));
 
     quote! {
         #(#rules)*
@@ -320,7 +334,8 @@ fn generate_congruence_rules(
     // cross-constructor pairs from the O(|cat|²) scan before the pool match executes.
     let mut per_category_bloom: BTreeMap<String, BloomFilter> = BTreeMap::new();
     for ((cat_str, _), constructors) in &groups {
-        let bloom = per_category_bloom.entry(cat_str.clone())
+        let bloom = per_category_bloom
+            .entry(cat_str.clone())
             .or_insert_with(|| BloomFilter::new(constructors.len().max(1)));
         for rule in constructors {
             bloom.insert_str(&rule.label.to_string());
@@ -361,11 +376,13 @@ fn generate_congruence_rules(
         let mut sorted_constructors: Vec<&&GrammarRule> = constructors.iter().collect();
         if let Some(ref a) = analysis {
             sorted_constructors.sort_by(|a_rule, b_rule| {
-                let a_weight = a.constructor_weights
+                let a_weight = a
+                    .constructor_weights
                     .get(&a_rule.label.to_string())
                     .copied()
                     .unwrap_or(f64::INFINITY);
-                let b_weight = a.constructor_weights
+                let b_weight = a
+                    .constructor_weights
                     .get(&b_rule.label.to_string())
                     .copied()
                     .unwrap_or(f64::INFINITY);
@@ -433,14 +450,8 @@ fn generate_congruence_rules(
         // Sort by category weight descending (highest weight = most diverse = check first)
         if let Some(ref a) = analysis {
             eq_check_pairs.sort_by(|(_, ft_a), (_, ft_b)| {
-                let w_a = a.category_weights
-                    .get(ft_a)
-                    .copied()
-                    .unwrap_or(0.0);
-                let w_b = a.category_weights
-                    .get(ft_b)
-                    .copied()
-                    .unwrap_or(0.0);
+                let w_a = a.category_weights.get(ft_a).copied().unwrap_or(0.0);
+                let w_b = a.category_weights.get(ft_b).copied().unwrap_or(0.0);
                 // Higher weight first (descending) → more diverse → fail-fast
                 w_b.total_cmp(&w_a)
             });
@@ -448,7 +459,7 @@ fn generate_congruence_rules(
 
         // F1: Eqrel dereference fix — ascent_par! uses parallel eqrel relations
         // (CEqRelIndCommon) whose iterators yield &&(T, T) instead of &(T, T).
-        // We bind fresh temporary variables from the eqrel join and immediately
+        // We bind fresh local variables from the eqrel join and immediately
         // clone-dereference them via `if *sf == sf_tmp.clone()`. This performs
         // the equality check while normalizing the reference level.
         // Works with both ascent! (no-op clone) and ascent_par! (strips &&T → T).
@@ -509,14 +520,14 @@ fn generate_congruence_rules(
 
         // Collect the constructor labels in this group for the matches!() guard.
         // The bloom filter ensures we include every constructor that could participate.
-        let group_constructor_labels: Vec<&Ident> = constructors
-            .iter()
-            .map(|rule| &rule.label)
-            .collect();
+        let group_constructor_labels: Vec<&Ident> =
+            constructors.iter().map(|rule| &rule.label).collect();
 
         // Count total constructors in this category to decide if the matches!() guard
         // adds value beyond the discriminant equality check.
-        let total_cat_constructors = language.terms.iter()
+        let total_cat_constructors = language
+            .terms
+            .iter()
             .filter(|r| r.category.to_string() == *cat_str)
             .count();
 
@@ -566,55 +577,52 @@ fn generate_congruence_rules(
 
     // B-CG03: Emit lint diagnostic if any constructors were pruned.
     if emit_diagnostics && bcg03_pruned_count > 0 {
-        mettail_prattail::lint::emit_diagnostic(
-            &mettail_prattail::lint::LintDiagnostic {
-                id: mettail_prattail::lint::DiagnosticId::G36,
-                name: "equation-inert-congruence-pruned",
-                severity: mettail_prattail::lint::LintSeverity::Note,
-                category: None,
-                rule: None,
-                message: format!(
-                    "{} equation-inert constructor(s) pruned from congruence rules (B-CG03) \
+        mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
+            id: mettail_prattail::lint::DiagnosticId::G36,
+            name: "equation-inert-congruence-pruned",
+            severity: mettail_prattail::lint::LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} equation-inert constructor(s) pruned from congruence rules (B-CG03) \
                      — {} equation-active constructor(s) retained",
-                    bcg03_pruned_count,
-                    equation_active.len(),
-                ),
-                hint: Some(
-                    "equation-inert constructors never participate in equations \
+                bcg03_pruned_count,
+                equation_active.len(),
+            ),
+            hint: Some(
+                "equation-inert constructors never participate in equations \
                      (directly or transitively); their congruence match arms are unnecessary"
-                        .to_string(),
-                ),
-                grammar_name: Some(language.name.to_string()),
-                source_location: None,
-            },
-        );
+                    .to_string(),
+            ),
+            grammar_name: Some(language.name.to_string()),
+            source_location: None,
+        });
     }
 
     // A-RT04: Emit lint diagnostic for bloom filter / discriminant pre-check optimization.
     if emit_diagnostics && art04_eq_guarded_count > 0 {
-        let bloom_summary: Vec<String> = per_category_bloom.iter()
+        let bloom_summary: Vec<String> = per_category_bloom
+            .iter()
             .map(|(cat, bloom)| format!("{}: {} bits set", cat, bloom.occupancy()))
             .collect();
-        mettail_prattail::lint::emit_diagnostic(
-            &mettail_prattail::lint::LintDiagnostic {
-                id: mettail_prattail::lint::DiagnosticId::G37,
-                name: "bloom-filter-eq-congruence-guard",
-                severity: mettail_prattail::lint::LintSeverity::Note,
-                category: None,
-                rule: None,
-                message: format!(
-                    "{} equality congruence group(s) guarded by discriminant pre-check (A-RT04) \
+        mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
+            id: mettail_prattail::lint::DiagnosticId::G37,
+            name: "bloom-filter-eq-congruence-guard",
+            severity: mettail_prattail::lint::LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} equality congruence group(s) guarded by discriminant pre-check (A-RT04) \
                      — eliminates O(|cat|²) cross-constructor pairs before pool evaluation",
-                    art04_eq_guarded_count,
-                ),
-                hint: Some(format!(
-                    "per-category bloom filter occupancy: [{}]",
-                    bloom_summary.join(", "),
-                )),
-                grammar_name: Some(language.name.to_string()),
-                source_location: None,
-            },
-        );
+                art04_eq_guarded_count,
+            ),
+            hint: Some(format!(
+                "per-category bloom filter occupancy: [{}]",
+                bloom_summary.join(", "),
+            )),
+            grammar_name: Some(language.name.to_string()),
+            source_location: None,
+        });
     }
 
     rules
@@ -911,10 +919,7 @@ pub fn stratify_equation_rules(language: &LanguageDef) -> StratificationInfo {
             .iter()
             .map(|&rule_id| classified[rule_id].clone())
             .collect();
-        strata.push(Stratum {
-            index: stratum_idx,
-            rules,
-        });
+        strata.push(Stratum { index: stratum_idx, rules });
     }
 
     StratificationInfo {
@@ -1028,7 +1033,10 @@ fn tarjan_scc(n: usize, adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
         if state.lowlink[v] == state.index[v].expect("index must be set") {
             let mut scc = Vec::new();
             loop {
-                let w = state.stack.pop().expect("stack must not be empty during SCC extraction");
+                let w = state
+                    .stack
+                    .pop()
+                    .expect("stack must not be empty during SCC extraction");
                 state.on_stack[w] = false;
                 scc.push(w);
                 if w == v {
@@ -1089,7 +1097,8 @@ mod tests {
         let sccs = tarjan_scc(2, &adj);
         assert_eq!(sccs.len(), 2);
         // Reverse topological: leaf (1) first, then root (0)
-        let scc_sets: Vec<HashSet<usize>> = sccs.iter().map(|s| s.iter().copied().collect()).collect();
+        let scc_sets: Vec<HashSet<usize>> =
+            sccs.iter().map(|s| s.iter().copied().collect()).collect();
         assert!(scc_sets[0].contains(&1));
         assert!(scc_sets[1].contains(&0));
     }
@@ -1117,7 +1126,12 @@ mod tests {
         }
         // Topological order: 3 before 1,2 before 0
         let order: Vec<usize> = sccs.iter().map(|s| s[0]).collect();
-        let pos_of = |node: usize| order.iter().position(|&n| n == node).expect("node not found");
+        let pos_of = |node: usize| {
+            order
+                .iter()
+                .position(|&n| n == node)
+                .expect("node not found")
+        };
         assert!(pos_of(3) < pos_of(1), "3 should come before 1");
         assert!(pos_of(3) < pos_of(2), "3 should come before 2");
         assert!(pos_of(1) < pos_of(0), "1 should come before 0");
@@ -1130,13 +1144,20 @@ mod tests {
         let adj = vec![vec![1, 3], vec![2], vec![0], vec![4], vec![]];
         let sccs = tarjan_scc(5, &adj);
         assert_eq!(sccs.len(), 3, "should have 3 SCCs: {{0,1,2}}, {{3}}, {{4}}");
-        let scc_sets: Vec<HashSet<usize>> = sccs.iter().map(|s| s.iter().copied().collect()).collect();
+        let scc_sets: Vec<HashSet<usize>> =
+            sccs.iter().map(|s| s.iter().copied().collect()).collect();
         // Find the large SCC
-        let large_scc = scc_sets.iter().find(|s| s.len() == 3).expect("should have a 3-element SCC");
+        let large_scc = scc_sets
+            .iter()
+            .find(|s| s.len() == 3)
+            .expect("should have a 3-element SCC");
         assert!(large_scc.contains(&0) && large_scc.contains(&1) && large_scc.contains(&2));
         // Singletons {4} and {3} should precede the large SCC in reverse topological order
         let pos_of_scc = |target: &HashSet<usize>| {
-            scc_sets.iter().position(|s| s == target).expect("SCC not found")
+            scc_sets
+                .iter()
+                .position(|s| s == target)
+                .expect("SCC not found")
         };
         let pos_large = pos_of_scc(large_scc);
         let singleton_4: HashSet<usize> = [4].iter().copied().collect();
@@ -1190,7 +1211,7 @@ mod tests {
     fn make_test_language(
         types: Vec<&str>,
         terms: Vec<(&str, &str, Vec<&str>)>, // (label, category, [field_categories])
-        equations: Vec<(&str, &str, &str)>,   // (name, lhs_constructor, rhs_constructor)
+        equations: Vec<(&str, &str, &str)>,  // (name, lhs_constructor, rhs_constructor)
     ) -> LanguageDef {
         use mettail_ast::grammar::{GrammarItem, GrammarRule};
         use mettail_ast::language::{Equation, LangType, LanguageDef};
@@ -1247,10 +1268,7 @@ mod tests {
                             Span::call_site(),
                         )))],
                     }),
-                    right: Pattern::Term(PatternTerm::Var(Ident::new(
-                        "X",
-                        Span::call_site(),
-                    ))),
+                    right: Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site()))),
                 }
             })
             .collect();
@@ -1312,11 +1330,8 @@ mod tests {
         // Congruence for PFoo reads eq_Name, writes eq_Proc
         // Reflexivity for Proc writes eq_Proc
         // Reflexivity for Name writes eq_Name
-        let lang = make_test_language(
-            vec!["Proc", "Name"],
-            vec![("PFoo", "Proc", vec!["Name"])],
-            vec![],
-        );
+        let lang =
+            make_test_language(vec!["Proc", "Name"], vec![("PFoo", "Proc", vec!["Name"])], vec![]);
         let info = stratify_equation_rules(&lang);
         assert_eq!(info.reflexivity_count, 2);
         assert_eq!(info.congruence_count, 1);
@@ -1338,9 +1353,9 @@ mod tests {
             .strata
             .iter()
             .find(|s| {
-                s.rules.iter().any(|r| {
-                    r.kind == EqRuleKind::Reflexivity && r.writes_category == "Name"
-                })
+                s.rules
+                    .iter()
+                    .any(|r| r.kind == EqRuleKind::Reflexivity && r.writes_category == "Name")
             })
             .expect("should find reflexivity:Name stratum");
         let cong_stratum = info
@@ -1422,10 +1437,7 @@ mod tests {
         // Similarly for NBar. These should be independent SCCs.
         let lang = make_test_language(
             vec!["Proc", "Name"],
-            vec![
-                ("PFoo", "Proc", vec!["Proc"]),
-                ("NBar", "Name", vec!["Name"]),
-            ],
+            vec![("PFoo", "Proc", vec!["Proc"]), ("NBar", "Name", vec!["Name"])],
             vec![],
         );
         let info = stratify_equation_rules(&lang);
@@ -1462,8 +1474,8 @@ mod tests {
         let lang = make_test_language(
             vec!["Proc", "Name", "Int"],
             vec![
-                ("NWrap", "Name", vec!["Int"]),           // reads eq_Int → 1 dep
-                ("PBin", "Proc", vec!["Name", "Name"]),    // reads eq_Name → 1 dep
+                ("NWrap", "Name", vec!["Int"]),         // reads eq_Int → 1 dep
+                ("PBin", "Proc", vec!["Name", "Name"]), // reads eq_Name → 1 dep
                 ("PTriple", "Proc", vec!["Name", "Int", "Name"]), // reads eq_Name, eq_Int → 2 deps
             ],
             vec![("Eq1", "PBin", "PBin")], // need equation to make constructors equation-active
@@ -1473,7 +1485,8 @@ mod tests {
         let demanded: BTreeSet<String> = lang.types.iter().map(|t| t.name.to_string()).collect();
 
         // Generate congruence rules WITH strat_info
-        let rules_ordered = generate_congruence_rules(&lang, None, None, false, &demanded, Some(&strat_info));
+        let rules_ordered =
+            generate_congruence_rules(&lang, None, None, false, &demanded, Some(&strat_info));
 
         // Generate congruence rules WITHOUT strat_info for comparison
         let rules_unordered = generate_congruence_rules(&lang, None, None, false, &demanded, None);
@@ -1486,10 +1499,7 @@ mod tests {
         );
 
         // With BCG06 ordering, the output should be non-empty
-        assert!(
-            !rules_ordered.is_empty(),
-            "should have at least one congruence group"
-        );
+        assert!(!rules_ordered.is_empty(), "should have at least one congruence group");
     }
 
     #[test]
@@ -1497,26 +1507,21 @@ mod tests {
         // Same language generated twice should produce identical output.
         let lang = make_test_language(
             vec!["Proc", "Name"],
-            vec![
-                ("PFoo", "Proc", vec!["Name"]),
-                ("NBar", "Name", vec!["Proc"]),
-            ],
+            vec![("PFoo", "Proc", vec!["Name"]), ("NBar", "Name", vec!["Proc"])],
             vec![("Eq1", "PFoo", "PFoo")],
         );
 
         let strat_info = stratify_equation_rules(&lang);
         let demanded: BTreeSet<String> = lang.types.iter().map(|t| t.name.to_string()).collect();
 
-        let rules1 = generate_congruence_rules(&lang, None, None, false, &demanded, Some(&strat_info));
-        let rules2 = generate_congruence_rules(&lang, None, None, false, &demanded, Some(&strat_info));
+        let rules1 =
+            generate_congruence_rules(&lang, None, None, false, &demanded, Some(&strat_info));
+        let rules2 =
+            generate_congruence_rules(&lang, None, None, false, &demanded, Some(&strat_info));
 
         assert_eq!(rules1.len(), rules2.len(), "deterministic: same count");
         for (r1, r2) in rules1.iter().zip(rules2.iter()) {
-            assert_eq!(
-                r1.to_string(),
-                r2.to_string(),
-                "deterministic: same rule content"
-            );
+            assert_eq!(r1.to_string(), r2.to_string(), "deterministic: same rule content");
         }
     }
 
@@ -1529,23 +1534,24 @@ mod tests {
         // The stratification should place NBar-related rules before PFoo-related rules.
         let lang = make_test_language(
             vec!["Proc", "Name"],
-            vec![
-                ("PFoo", "Proc", vec!["Name"]),
-                ("NBar", "Name", vec![]),
-            ],
+            vec![("PFoo", "Proc", vec!["Name"]), ("NBar", "Name", vec![])],
             vec![
                 ("EqP", "PFoo", "PFoo"), // writes eq_Proc, reads eq_Name (from congruence)
-                ("EqN", "NBar", "NBar"),  // writes eq_Name, no eq_* reads
+                ("EqN", "NBar", "NBar"), // writes eq_Name, no eq_* reads
             ],
         );
 
         let strat_info = stratify_equation_rules(&lang);
 
         // Find stratum indices for each user equation
-        let eq_p_stratum = strat_info.strata.iter()
+        let eq_p_stratum = strat_info
+            .strata
+            .iter()
             .find(|s| s.rules.iter().any(|r| r.label.contains("EqP")))
             .expect("should find EqP stratum");
-        let eq_n_stratum = strat_info.strata.iter()
+        let eq_n_stratum = strat_info
+            .strata
+            .iter()
             .find(|s| s.rules.iter().any(|r| r.label.contains("EqN")))
             .expect("should find EqN stratum");
 

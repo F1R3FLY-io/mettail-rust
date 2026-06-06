@@ -172,12 +172,7 @@ impl EarleyChart {
     /// Register a rule with an explicit body. Each `RuleItem` is
     /// either a `NonTerminal { category }` or `Terminal { tag }`
     /// expectation.
-    pub fn add_rule_with_body(
-        &mut self,
-        label: &str,
-        category: &str,
-        body: Vec<RuleItem>,
-    ) {
+    pub fn add_rule_with_body(&mut self, label: &str, category: &str, body: Vec<RuleItem>) {
         self.rules.insert(
             label.to_string(),
             Rule {
@@ -194,7 +189,7 @@ impl EarleyChart {
 
     /// Backward-compatible rule registration with body length only.
     /// Bodies are populated with `RuleItem::Terminal { tag: 0 }`
-    /// placeholders — useful ONLY for tests that exercise the
+    /// sentinel items — useful ONLY for tests that exercise the
     /// recognition-acceptance API without driving scan/complete (e.g.
     /// `test_chart_recognize`, `test_chart_total_items`).
     /// New code should use `add_rule_with_body`.
@@ -215,10 +210,7 @@ impl EarleyChart {
             .cloned()
             .unwrap_or_default();
         for label in labels {
-            let rule = self
-                .rules
-                .get(&label)
-                .expect("rule must be registered");
+            let rule = self.rules.get(&label).expect("rule must be registered");
             let item = EarleyItem {
                 rule_label: rule.label.clone(),
                 category: rule.category.clone(),
@@ -325,8 +317,7 @@ impl EarleyChart {
             if iterations > cap {
                 break;
             }
-            let snapshot: Vec<EarleyItem> =
-                self.items_at(pos).iter().cloned().collect();
+            let snapshot: Vec<EarleyItem> = self.items_at(pos).iter().cloned().collect();
             let mut any_advanced = false;
             for item in &snapshot {
                 if self.complete(pos, item) > 0 {
@@ -518,8 +509,7 @@ impl EarleyChart {
         rule_weights: &HashMap<String, W>,
     ) -> Option<SppfId> {
         let rule = self.rules.get(&item.rule_label)?;
-        let (rule_idx, _cat_nt_tag) =
-            rule_label_to_meta.get(&item.rule_label)?.clone();
+        let (rule_idx, _cat_nt_tag) = rule_label_to_meta.get(&item.rule_label)?.clone();
         let weight = rule_weights.get(&item.rule_label)?.clone();
         // Plan v6 H1 fix (2026-05-27): compute min-trailing-tokens per
         // body position. trailing_min[k] = min number of tokens that
@@ -550,7 +540,7 @@ impl EarleyChart {
                     }
                     children.push(terminal_sppf_ids[pos]);
                     pos += 1;
-                }
+                },
                 RuleItem::NonTerminal { category } => {
                     // Sub-NT's max_hi excludes the room needed for
                     // trailing body items. For chain grammar's
@@ -558,8 +548,7 @@ impl EarleyChart {
                     // (one "+" + one Atom), so Chain's max_hi
                     // = hi_pos - 2. This avoids self-recursion at
                     // hi=hi_pos.
-                    let sub_max_hi = (hi_pos as usize)
-                        .saturating_sub(trailing_min[k + 1]);
+                    let sub_max_hi = (hi_pos as usize).saturating_sub(trailing_min[k + 1]);
                     if sub_max_hi <= pos {
                         return None;
                     }
@@ -574,7 +563,7 @@ impl EarleyChart {
                     )?;
                     children.push(sub_id);
                     pos = sub_hi as usize;
-                }
+                },
             }
         }
         // Verify we consumed exactly up to hi_pos.
@@ -582,8 +571,7 @@ impl EarleyChart {
             return None;
         }
         // Intern outer Symbol + Packing + link.
-        let symbol_id =
-            sppf.intern_symbol(nt_tag, item.origin as u32, hi_pos);
+        let symbol_id = sppf.intern_symbol(nt_tag, item.origin as u32, hi_pos);
         let packing_id = sppf.intern_packing(rule_idx, children, weight);
         sppf.link_packing_to_symbol(symbol_id, packing_id);
         Some(symbol_id)
@@ -603,18 +591,13 @@ impl EarleyChart {
         terminal_sppf_ids: &[SppfId],
         rule_weights: &HashMap<String, W>,
     ) -> Option<(SppfId, u32)> {
-        let (_, nt_tag) = rule_label_to_meta
-            .values()
-            .find(|(_, _tag)| true) // placeholder; corrected below
-            .copied()?;
         // Look up nt_tag for `category` from any rule of that category.
         let nt_tag = self
             .rules_by_category
             .get(category)
             .and_then(|labels| labels.first())
             .and_then(|label| rule_label_to_meta.get(label))
-            .map(|(_, tag)| *tag)
-            .unwrap_or(nt_tag);
+            .map(|(_, tag)| *tag)?;
         // Plan v6 H1 fix (2026-05-27): iterate hi DESCENDING so left-
         // recursive sub-non-terminals find the LONGEST completion that
         // fits within max_hi. The caller (emit_for_item) computes
@@ -714,11 +697,7 @@ mod tests {
                 RuleItem::NonTerminal { category: "Expr".to_string() },
             ],
         );
-        chart.add_rule_with_body(
-            "Lit",
-            "Expr",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("Lit", "Expr", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Expr", 0);
         assert_eq!(chart.items_at(0).len(), 2);
     }
@@ -726,11 +705,7 @@ mod tests {
     #[test]
     fn test_scan_advances_matching_terminal() {
         let mut chart = EarleyChart::new(1);
-        chart.add_rule_with_body(
-            "Lit",
-            "Expr",
-            vec![RuleItem::Terminal { tag: 7 }],
-        );
+        chart.add_rule_with_body("Lit", "Expr", vec![RuleItem::Terminal { tag: 7 }]);
         chart.predict("Expr", 0);
         let advanced = chart.scan(0, 7);
         assert_eq!(advanced, 1);
@@ -740,11 +715,7 @@ mod tests {
     #[test]
     fn test_scan_does_not_advance_mismatched_terminal() {
         let mut chart = EarleyChart::new(1);
-        chart.add_rule_with_body(
-            "Lit",
-            "Expr",
-            vec![RuleItem::Terminal { tag: 7 }],
-        );
+        chart.add_rule_with_body("Lit", "Expr", vec![RuleItem::Terminal { tag: 7 }]);
         chart.predict("Expr", 0);
         let advanced = chart.scan(0, 99);
         assert_eq!(advanced, 0);
@@ -764,11 +735,7 @@ mod tests {
                 RuleItem::NonTerminal { category: "Atom".to_string() },
             ],
         );
-        chart.add_rule_with_body(
-            "atom",
-            "Atom",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("atom", "Atom", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Expr", 0);
         // After predict, sets[0] has chain (dot=0) + atom (dot=0 from predict
         // recursive expansion — but we haven't recursed; predict only seeds
@@ -815,11 +782,7 @@ mod tests {
                 RuleItem::NonTerminal { category: "Atom".to_string() },
             ],
         );
-        chart.add_rule_with_body(
-            "atom",
-            "Atom",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("atom", "Atom", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Expr", 0);
         for pos in 0..input_tags.len() {
             chart.predict("Atom", pos);
@@ -828,8 +791,7 @@ mod tests {
             let mut changed = true;
             while changed {
                 changed = false;
-                let snapshot: Vec<EarleyItem> =
-                    chart.items_at(pos + 1).iter().cloned().collect();
+                let snapshot: Vec<EarleyItem> = chart.items_at(pos + 1).iter().cloned().collect();
                 for item in &snapshot {
                     let rule = match chart.rules.get(&item.rule_label) {
                         Some(r) => r,
@@ -863,11 +825,7 @@ mod tests {
                 RuleItem::NonTerminal { category: "Atom".to_string() },
             ],
         );
-        chart.add_rule_with_body(
-            "atom",
-            "Atom",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("atom", "Atom", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Expr", 0);
         for pos in 0..input_tags.len() {
             chart.predict("Atom", pos);
@@ -918,11 +876,7 @@ mod tests {
     #[test]
     fn test_recognize_via_manual_insertion() {
         let mut chart = EarleyChart::new(1);
-        chart.add_rule_with_body(
-            "Lit",
-            "Expr",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("Lit", "Expr", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Expr", 0);
         chart.scan(0, 2);
         assert!(chart.recognizes("Expr"));
@@ -932,11 +886,7 @@ mod tests {
     #[test]
     fn test_recognize_empty_input_no_epsilon_rule() {
         let mut chart = EarleyChart::new(0);
-        chart.add_rule_with_body(
-            "Lit",
-            "Expr",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("Lit", "Expr", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Expr", 0);
         // No tokens to scan; sets[0] has predicted Lit at dot=0, but
         // sets[0] is the FINAL set since input_len=0. Lit's dot_position
@@ -958,11 +908,7 @@ mod tests {
     #[test]
     fn test_total_items_counts_across_sets() {
         let mut chart = EarleyChart::new(3);
-        chart.add_rule_with_body(
-            "Lit",
-            "Expr",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("Lit", "Expr", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Expr", 0);
         chart.predict("Expr", 2);
         assert_eq!(chart.total_items(), 2);
@@ -974,11 +920,7 @@ mod tests {
         // Input: just [tag=2]
         let input_tags = vec![2u32];
         let mut chart = EarleyChart::new(input_tags.len());
-        chart.add_rule_with_body(
-            "atom",
-            "Atom",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("atom", "Atom", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Atom", 0);
         chart.scan(0, 2);
         assert!(chart.recognizes("Atom"));
@@ -995,27 +937,13 @@ mod tests {
         let mut weights = HashMap::new();
         weights.insert("atom".to_string(), unit_weight());
         let root_id = chart
-            .emit_sppf_subforest(
-                &mut sppf,
-                "Atom",
-                100,
-                &rule_label_to_meta,
-                &[term_id],
-                &weights,
-            )
+            .emit_sppf_subforest(&mut sppf, "Atom", 100, &rule_label_to_meta, &[term_id], &weights)
             .expect("must produce root SppfId");
         // Sanity: root_id was produced by intern_symbol — it must be
         // a valid SppfId (assigned u32 within Sppf::nodes range).
         // Replaying the emit must dedup to the same id.
         let root_id2 = chart
-            .emit_sppf_subforest(
-                &mut sppf,
-                "Atom",
-                100,
-                &rule_label_to_meta,
-                &[term_id],
-                &weights,
-            )
+            .emit_sppf_subforest(&mut sppf, "Atom", 100, &rule_label_to_meta, &[term_id], &weights)
             .expect("replay must produce root SppfId");
         assert_eq!(root_id, root_id2, "intern dedup must collapse replays");
     }
@@ -1049,11 +977,7 @@ mod tests {
             ],
         );
         // atom: Atom → Integer
-        chart.add_rule_with_body(
-            "atom",
-            "Atom",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("atom", "Atom", vec![RuleItem::Terminal { tag: 2 }]);
         chart
     }
 
@@ -1079,8 +1003,7 @@ mod tests {
             let mut changed = true;
             while changed {
                 changed = false;
-                let snapshot: Vec<EarleyItem> =
-                    chart.items_at(pos + 1).iter().cloned().collect();
+                let snapshot: Vec<EarleyItem> = chart.items_at(pos + 1).iter().cloned().collect();
                 for item in &snapshot {
                     let rule = match chart.rules.get(&item.rule_label) {
                         Some(r) => r,
@@ -1156,12 +1079,8 @@ mod tests {
             } else {
                 (crate::automata::TokenKind::Integer, Some("1"))
             };
-            let sid = sppf.intern_terminal(
-                kind,
-                crate::sppf::PosOrSynth::Real(pos as u32),
-                text,
-                false,
-            );
+            let sid =
+                sppf.intern_terminal(kind, crate::sppf::PosOrSynth::Real(pos as u32), text, false);
             terminal_sppf_ids.push(sid);
         }
 
@@ -1210,11 +1129,7 @@ mod tests {
         // root SppfId (dedup safety).
         let input_tags = vec![2u32];
         let mut chart = EarleyChart::new(input_tags.len());
-        chart.add_rule_with_body(
-            "atom",
-            "Atom",
-            vec![RuleItem::Terminal { tag: 2 }],
-        );
+        chart.add_rule_with_body("atom", "Atom", vec![RuleItem::Terminal { tag: 2 }]);
         chart.predict("Atom", 0);
         chart.scan(0, 2);
         let mut sppf: Sppf<LexicographicWeight> = Sppf::new();
@@ -1229,24 +1144,10 @@ mod tests {
         let mut weights = HashMap::new();
         weights.insert("atom".to_string(), unit_weight());
         let root1 = chart
-            .emit_sppf_subforest(
-                &mut sppf,
-                "Atom",
-                100,
-                &rule_label_to_meta,
-                &[term_id],
-                &weights,
-            )
+            .emit_sppf_subforest(&mut sppf, "Atom", 100, &rule_label_to_meta, &[term_id], &weights)
             .expect("call 1");
         let root2 = chart
-            .emit_sppf_subforest(
-                &mut sppf,
-                "Atom",
-                100,
-                &rule_label_to_meta,
-                &[term_id],
-                &weights,
-            )
+            .emit_sppf_subforest(&mut sppf, "Atom", 100, &rule_label_to_meta, &[term_id], &weights)
             .expect("call 2");
         assert_eq!(root1, root2, "repeated emit must produce identical SppfId");
     }
@@ -1254,7 +1155,7 @@ mod tests {
     #[test]
     fn test_legacy_add_rule_compat() {
         // Old API for tests that bypass scan/complete by direct
-        // sets[...].insert. Body becomes Terminal { tag: 0 } placeholders.
+        // sets[...].insert. Body becomes Terminal { tag: 0 } sentinel items.
         let mut chart = EarleyChart::new(1);
         chart.add_rule("Lit", "Expr", 1);
         let completed = EarleyItem {

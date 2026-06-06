@@ -9,8 +9,8 @@
 
 use super::common::{in_cat_filter, CategoryFilter};
 use mettail_ast::language::{
-    Condition, FreshnessCondition, FreshnessTarget, LanguageDef,
-    LinearRelation, RefinementPredicate,
+    Condition, FreshnessCondition, FreshnessTarget, LanguageDef, LinearRelation,
+    RefinementPredicate,
 };
 use mettail_ast::pattern::{AscentClauses, Pattern, VariableBinding};
 use proc_macro2::TokenStream;
@@ -136,7 +136,7 @@ pub fn generate_rule_clause_with_category(
     //
     // F1: Eqrel dereference fix — ascent_par! uses parallel eqrel relations
     // (CEqRelIndCommon) that return &&(T, T) iterators instead of &(T, T).
-    // We bind temporary variables from the eqrel join and immediately
+    // We bind local variables from the eqrel join and immediately
     // clone-dereference them into the expected variable names. This works
     // correctly with both ascent! (serial, no-op clone) and ascent_par!
     // (parallel, strips extra reference level).
@@ -270,7 +270,7 @@ fn condition_binds(condition: &Condition) -> HashSet<String> {
             // First arg is the lookup key (already bound by LHS),
             // subsequent args are result bindings.
             args.iter().skip(1).map(|a| a.to_string()).collect()
-        }
+        },
         // Phase A: synthetic-injection guard is pure rejection; binds nothing.
         Condition::SyntheticInjGuard { .. } => HashSet::new(),
         _ => HashSet::new(),
@@ -291,10 +291,10 @@ fn condition_requires(condition: &Condition) -> HashSet<String> {
             match &fc.term {
                 FreshnessTarget::CollectionRest(v) | FreshnessTarget::Var(v) => {
                     required.insert(v.to_string());
-                }
+                },
             }
             required
-        }
+        },
         Condition::EnvQuery { args, .. } => {
             // First arg is the lookup key (required from LHS or prior condition)
             let mut required = HashSet::new();
@@ -302,18 +302,18 @@ fn condition_requires(condition: &Condition) -> HashSet<String> {
                 required.insert(first.to_string());
             }
             required
-        }
+        },
         Condition::ForAll { collection, body, .. } => {
             let mut required = HashSet::new();
             required.insert(collection.to_string());
             required.extend(condition_requires(body));
             required
-        }
+        },
         Condition::BehavioralGuard(pred) => {
             // Behavioral guards require all free variables referenced in
             // the predicate to be bound by LHS or prior conditions.
             collect_pred_free_vars(pred)
-        }
+        },
         Condition::SyntheticInjGuard { inner_var, .. } => {
             // Phase A: synthetic-injection guard requires the inner_var
             // to be bound by a prior `if let Cast<Src>(ref v) = s` clause
@@ -321,7 +321,7 @@ fn condition_requires(condition: &Condition) -> HashSet<String> {
             let mut required = HashSet::new();
             required.insert(inner_var.to_string());
             required
-        }
+        },
     }
 }
 
@@ -352,21 +352,19 @@ fn collect_pred_free_vars_inner(
                     }
                 }
             }
-        }
+        },
         BehavioralPred::Quantified { var, body, .. } => {
             let mut inner_bound = bound.clone();
             inner_bound.insert(var.to_string());
             collect_pred_free_vars_inner(body, free, &inner_bound);
-        }
-        BehavioralPred::And(a, b)
-        | BehavioralPred::Or(a, b)
-        | BehavioralPred::Implies(a, b) => {
+        },
+        BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) | BehavioralPred::Implies(a, b) => {
             collect_pred_free_vars_inner(a, free, bound);
             collect_pred_free_vars_inner(b, free, bound);
-        }
+        },
         BehavioralPred::Not(inner) => {
             collect_pred_free_vars_inner(inner, free, bound);
-        }
+        },
         BehavioralPred::AcMatch { bag, .. } => {
             // The bag variable must be bound by LHS or prior conditions.
             // The element variables and rest are *bound* by ac_match, not required.
@@ -374,10 +372,38 @@ fn collect_pred_free_vars_inner(
             if !bound.contains(&name) {
                 free.insert(name);
             }
-        }
+        },
         BehavioralPred::Top => {
-            // Always-true placeholder — no free variables.
-        }
+            // Always-true identity predicate; no free variables.
+        },
+    }
+}
+
+fn unsupported_behavioral_guard_message(pred: &mettail_ast::language::BehavioralPred) -> String {
+    format!(
+        "unsupported behavioral guard shape `{}` in equation/rewrite premise; \
+         use relation queries, conjunctions of relation queries, negated relation \
+         queries, or AC-match. Complex disjunction, implication, quantified, and \
+         nested negation guards need a runtime fact source and cannot be lowered \
+         soundly in this Ascent rule body.",
+        behavioral_pred_kind(pred),
+    )
+}
+
+fn behavioral_pred_kind(pred: &mettail_ast::language::BehavioralPred) -> &'static str {
+    use mettail_ast::language::BehavioralPred;
+    match pred {
+        BehavioralPred::RelationQuery { .. } => "relation",
+        BehavioralPred::Quantified { .. } => "quantified",
+        BehavioralPred::And(_, _) => "and",
+        BehavioralPred::Or(_, _) => "or",
+        BehavioralPred::Not(inner) => match inner.as_ref() {
+            BehavioralPred::RelationQuery { .. } => "not-relation",
+            _ => "nested-not",
+        },
+        BehavioralPred::Implies(_, _) => "implies",
+        BehavioralPred::AcMatch { .. } => "ac-match",
+        BehavioralPred::Top => "top",
     }
 }
 
@@ -417,7 +443,10 @@ fn sort_conditions_by_cost(conditions: &[Condition]) -> Vec<Condition> {
                 // A requirement is "from another condition" if some condition j (j != i)
                 // binds it. If no condition binds it, it's from the LHS and always available.
                 requires[i].iter().all(|req| {
-                    let bound_by_condition = binds.iter().enumerate().any(|(j, b)| j != i && b.contains(req));
+                    let bound_by_condition = binds
+                        .iter()
+                        .enumerate()
+                        .any(|(j, b)| j != i && b.contains(req));
                     !bound_by_condition || available_from_conditions.contains(req)
                 })
             })
@@ -428,7 +457,7 @@ fn sort_conditions_by_cost(conditions: &[Condition]) -> Vec<Condition> {
                 emitted[idx] = true;
                 available_from_conditions.extend(binds[idx].iter().cloned());
                 result.push(conditions[idx].clone());
-            }
+            },
             None => {
                 // Cycle detected or all remaining have unsatisfied deps.
                 // Emit remaining in declaration order (safe fallback).
@@ -438,7 +467,7 @@ fn sort_conditions_by_cost(conditions: &[Condition]) -> Vec<Condition> {
                     }
                 }
                 break;
-            }
+            },
         }
     }
 
@@ -478,10 +507,7 @@ struct PositionedClause {
 /// required variable was bound. Returns the maximum clause index among all
 /// required variables. If a required variable is not found in the binding
 /// index (e.g., it comes from the initial relation lookup), returns 0.
-fn condition_earliest_position(
-    condition: &Condition,
-    lhs_clauses: &AscentClauses,
-) -> usize {
+fn condition_earliest_position(condition: &Condition, lhs_clauses: &AscentClauses) -> usize {
     let required = condition_requires(condition);
     required
         .iter()
@@ -519,18 +545,12 @@ fn generate_positioned_condition_clauses(
         match cond {
             Condition::Freshness(freshness) => {
                 if let Some(clause) = generate_freshness_clause(freshness, lhs_clauses) {
-                    positioned.push(PositionedClause {
-                        clause,
-                        earliest_position: earliest,
-                    });
+                    positioned.push(PositionedClause { clause, earliest_position: earliest });
                 }
             },
             Condition::ForAll { collection, param, body } => {
                 if let Some(clause) = generate_forall_clause(collection, param, body, lhs_clauses) {
-                    positioned.push(PositionedClause {
-                        clause,
-                        earliest_position: earliest,
-                    });
+                    positioned.push(PositionedClause { clause, earliest_position: earliest });
                 }
             },
             Condition::EnvQuery { relation, args } => {
@@ -584,15 +604,10 @@ fn generate_positioned_condition_clauses(
                 );
             },
             Condition::BehavioralGuard(pred) => {
-                use mettail_ast::language::BehavioralPred;
                 use crate::gen::runtime::guard_codegen;
+                use mettail_ast::language::BehavioralPred;
 
-                if let BehavioralPred::AcMatch {
-                    bag,
-                    elements,
-                    rest,
-                } = pred
-                {
+                if let BehavioralPred::AcMatch { bag, elements, rest } = pred {
                     // AC-match: generate partition enumeration code
                     let bag_binding = lhs_clauses
                         .bindings
@@ -640,70 +655,34 @@ fn generate_positioned_condition_clauses(
                         },
                         earliest_position: earliest,
                     });
+                } else if matches!(pred, BehavioralPred::Top) {
+                    // Identity predicate; no body clause is needed.
                 } else if guard_codegen::can_compile_to_ascent_join(pred) {
                     // T2 fast path: compile guard to direct Ascent join clauses.
                     // This uses Ascent's native indexing instead of evaluate_quantified(),
                     // providing much better performance for simple relation queries.
-                    let ascent_clauses = compile_guard_to_ascent_clauses(
-                        pred, lhs_clauses, earliest,
-                    );
+                    let ascent_clauses =
+                        compile_guard_to_ascent_clauses(pred, lhs_clauses, earliest);
                     positioned.extend(ascent_clauses);
                 } else {
-                    // Complex guard (quantified, Or, Implies): use QuantifiedFormula
-                    // evaluation via LogicT. The callbacks are wired to resolve
-                    // variables from the LHS bindings and format as strings for
-                    // the evaluate_quantified() interface.
-                    let formula_expr = pred.to_quantified_formula();
-                    let free_vars = collect_pred_free_vars(pred);
-                    let env_inserts: Vec<_> = free_vars
-                        .iter()
-                        .map(|var_name| {
-                            let var_ident = format_ident!("{}", var_name);
-                            let binding_expr = lhs_clauses
-                                .bindings
-                                .get(var_name)
-                                .map(|b| b.expression.clone())
-                                .unwrap_or_else(|| quote! { #var_ident });
-                            quote! {
-                                __guard_env.insert(
-                                    #var_name.to_string(),
-                                    format!("{:?}", #binding_expr),
-                                );
-                            }
-                        })
-                        .collect();
-
+                    let msg = unsupported_behavioral_guard_message(pred);
+                    let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
                     positioned.push(PositionedClause {
                         clause: quote! {
                             if {
-                                let __guard_formula = #formula_expr;
-                                let mut __guard_env = ::std::collections::HashMap::new();
-                                #(#env_inserts)*
-                                // Guard evaluation callbacks. For complex guards
-                                // (quantified/Or/Implies), relation access requires
-                                // the LogicT evaluate_quantified() path. The callbacks
-                                // are conservative stubs; full relation wiring requires
-                                // runtime integration via thread-local snapshots.
-                                let __guard_relation_query = |_rel: &str, _args: &[String]| -> bool {
-                                    false
-                                };
-                                let __guard_domain_enumerate = |_dom: &str| -> Vec<Vec<String>> {
-                                    Vec::new()
-                                };
-                                mettail_prattail::logict::evaluate_quantified(
-                                    &__guard_formula,
-                                    &__guard_env,
-                                    &__guard_relation_query,
-                                    &__guard_domain_enumerate,
-                                    1000,
-                                )
+                                compile_error!(#msg_lit);
+                                false
                             }
                         },
                         earliest_position: earliest,
                     });
                 }
             },
-            Condition::SyntheticInjGuard { inner_var, source_category, excluded_variants } => {
+            Condition::SyntheticInjGuard {
+                inner_var,
+                source_category,
+                excluded_variants,
+            } => {
                 // Phase A (2026-05-16): emit `if !matches!(inner_expr,
                 //     <Src>::<v1>(_) | <Src>::<v2>(_) | ...)`.
                 //
@@ -763,21 +742,24 @@ fn generate_positioned_condition_clauses(
 ///
 /// For `And(a, b)`: Recursively generates clauses for both sub-guards.
 ///
-/// For `Not(RelationQuery)`: Generates `if` guard with negation.
+/// For `Not(RelationQuery)`: generates Ascent's native negated relation
+/// clause. Complex negation is rejected by the caller before this helper is
+/// reached.
 fn compile_guard_to_ascent_clauses(
     pred: &mettail_ast::language::BehavioralPred,
     lhs_clauses: &mettail_ast::pattern::AscentClauses,
     earliest: usize,
 ) -> Vec<PositionedClause> {
-    use mettail_ast::language::BehavioralPred;
     use crate::gen::runtime::guard_codegen;
+    use mettail_ast::language::BehavioralPred;
 
     match pred {
         BehavioralPred::RelationQuery { relation_name, args, negated } => {
             // Resolve each argument to an expression using LHS bindings
-            let arg_exprs: Vec<TokenStream> = args.iter().map(|a| {
-                guard_codegen::resolve_pred_arg(a, &lhs_clauses.bindings)
-            }).collect();
+            let arg_exprs: Vec<TokenStream> = args
+                .iter()
+                .map(|a| guard_codegen::resolve_pred_arg(a, &lhs_clauses.bindings))
+                .collect();
 
             let rel = format_ident!("{}", relation_name);
 
@@ -802,7 +784,7 @@ fn compile_guard_to_ascent_clauses(
                     earliest_position: earliest,
                 }]
             }
-        }
+        },
 
         BehavioralPred::And(a, b) => {
             // Phase 7A: Order conjuncts by selectivity — most selective first
@@ -813,7 +795,7 @@ fn compile_guard_to_ascent_clauses(
             let mut clauses = compile_guard_to_ascent_clauses(first, lhs_clauses, earliest);
             clauses.extend(compile_guard_to_ascent_clauses(second, lhs_clauses, earliest));
             clauses
-        }
+        },
 
         BehavioralPred::Not(inner) => {
             // Not(RelationQuery): delegate with flipped negation
@@ -826,18 +808,19 @@ fn compile_guard_to_ascent_clauses(
                 };
                 compile_guard_to_ascent_clauses(&flipped, lhs_clauses, earliest)
             } else {
-                // Not(complex): fall back to filter guard
+                let msg = unsupported_behavioral_guard_message(pred);
+                let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
                 vec![PositionedClause {
                     clause: quote! {
                         if {
-                            // Complex negation guard — conservative pass-through.
-                            true
+                            compile_error!(#msg_lit);
+                            false
                         }
                     },
                     earliest_position: earliest,
                 }]
             }
-        }
+        },
 
         // Or/Implies/Quantified/AcMatch should not reach here
         // (can_compile_to_ascent_join returns false for these)
@@ -1252,11 +1235,9 @@ fn pattern_depth(pattern: &mettail_ast::pattern::Pattern) -> u32 {
         Pattern::Collection { elements, .. } => {
             let max_elem = elements.iter().map(pattern_depth).max().unwrap_or(0);
             1 + max_elem
-        }
+        },
         Pattern::Map { body, .. } => 1 + pattern_depth(body),
-        Pattern::Zip { first, second } => {
-            1 + pattern_depth(first).max(pattern_depth(second))
-        }
+        Pattern::Zip { first, second } => 1 + pattern_depth(first).max(pattern_depth(second)),
     }
 }
 
@@ -1269,17 +1250,17 @@ fn pattern_term_depth(pt: &mettail_ast::pattern::PatternTerm) -> u32 {
         PatternTerm::Apply { args, .. } => {
             let max_arg = args.iter().map(pattern_depth).max().unwrap_or(0);
             1 + max_arg
-        }
+        },
         PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
             1 + pattern_depth(body)
-        }
+        },
         PatternTerm::Subst { term, replacement, .. } => {
             1 + pattern_depth(term).max(pattern_depth(replacement))
-        }
+        },
         PatternTerm::MultiSubst { scope, replacements } => {
             let max_rep = replacements.iter().map(pattern_depth).max().unwrap_or(0);
             1 + pattern_depth(scope).max(max_rep)
-        }
+        },
     }
 }
 
@@ -1368,11 +1349,9 @@ pub fn is_depth_bounded(results: &[DepthDeltaResult]) -> bool {
 /// fire on both sides, enabling downstream rules that depend on subterms.
 ///
 /// Returns a vec of seed `TokenStream` fragments and a count of detected ground rewrites.
-pub fn generate_ground_rewrite_seeds(
-    language: &LanguageDef,
-) -> (Vec<TokenStream>, usize) {
-    use std::collections::HashMap;
+pub fn generate_ground_rewrite_seeds(language: &LanguageDef) -> (Vec<TokenStream>, usize) {
     use mettail_ast::pattern::VariableBinding;
+    use std::collections::HashMap;
 
     let mut seeds = Vec::new();
     let empty_bindings: HashMap<String, VariableBinding> = HashMap::new();
@@ -1478,6 +1457,7 @@ pub fn generate_freshness_functions(_language: &LanguageDef) -> TokenStream {
 ///
 /// # Returns
 /// A `TokenStream` for `is_refined_<name>(var)` join clause.
+#[cfg(test)]
 pub fn generate_refinement_join_clause(
     var_name: &proc_macro2::Ident,
     refinement_type_name: &str,
@@ -1494,6 +1474,7 @@ pub fn generate_refinement_join_clause(
 /// When no specific refinement type is annotated but the base category
 /// has refinement types, all refinement types for that base are available
 /// for explicit use.
+#[cfg(test)]
 pub fn generate_refinement_membership_check(
     var_name: &proc_macro2::Ident,
     refinement_type_name: &str,
@@ -1501,7 +1482,9 @@ pub fn generate_refinement_membership_check(
 ) -> Option<TokenStream> {
     // Check that the refinement type exists in the language
     let rdef = language.refinement_types.iter().find(|r| {
-        r.name.to_string().eq_ignore_ascii_case(refinement_type_name)
+        r.name
+            .to_string()
+            .eq_ignore_ascii_case(refinement_type_name)
     })?;
     let _ = rdef; // Existence check passed
 
@@ -1591,11 +1574,14 @@ pub fn generate_refinement_type_rules(language: &LanguageDef) -> TokenStream {
 /// Returns a `TokenStream` fragment suitable for use as an Ascent rule body clause.
 /// The generated code evaluates the predicate at runtime, using the binding variable
 /// from the preceding relation clause.
-fn generate_refinement_guard(pred: &RefinementPredicate, binding_var: &proc_macro2::Ident) -> TokenStream {
+fn generate_refinement_guard(
+    pred: &RefinementPredicate,
+    binding_var: &proc_macro2::Ident,
+) -> TokenStream {
     match pred {
         RefinementPredicate::Linear { terms, relation, rhs } => {
             generate_linear_guard(terms, relation, *rhs, binding_var)
-        }
+        },
         RefinementPredicate::Relation { name, args, negated } => {
             let arg_exprs: Vec<_> = args.iter().map(|a| pred_arg_to_expr(a)).collect();
             // Define the callback inline so it exists in scope.
@@ -1611,7 +1597,7 @@ fn generate_refinement_guard(pred: &RefinementPredicate, binding_var: &proc_macr
             } else {
                 quote! { if #call }
             }
-        }
+        },
         RefinementPredicate::Quantified { .. } => {
             // Convert the full predicate tree to a QuantifiedFormula and use
             // evaluate_quantified() — same infrastructure as BehavioralGuard.
@@ -1652,74 +1638,77 @@ fn generate_refinement_guard(pred: &RefinementPredicate, binding_var: &proc_macr
                     )
                 }
             }
-        }
+        },
         RefinementPredicate::And(a, b) => {
             let ga = generate_refinement_guard_expr(a, binding_var);
             let gb = generate_refinement_guard_expr(b, binding_var);
             quote! { if (#ga && #gb) }
-        }
+        },
         RefinementPredicate::Or(a, b) => {
             let ga = generate_refinement_guard_expr(a, binding_var);
             let gb = generate_refinement_guard_expr(b, binding_var);
             quote! { if (#ga || #gb) }
-        }
+        },
         RefinementPredicate::Not(inner) => {
             let gi = generate_refinement_guard_expr(inner, binding_var);
             quote! { if !#gi }
-        }
+        },
         RefinementPredicate::Implies(a, b) => {
             let ga = generate_refinement_guard_expr(a, binding_var);
             let gb = generate_refinement_guard_expr(b, binding_var);
             quote! { if (!#ga || #gb) }
-        }
+        },
         RefinementPredicate::TermEq(a, b) => {
             let ea = pred_arg_to_expr(a);
             let eb = pred_arg_to_expr(b);
             quote! { if #ea == #eb }
-        }
+        },
         RefinementPredicate::TermNeq(a, b) => {
             let ea = pred_arg_to_expr(a);
             let eb = pred_arg_to_expr(b);
             quote! { if #ea != #eb }
-        }
+        },
     }
 }
 
 /// Generate a guard *expression* (no `if` prefix) for use in compound predicates.
-fn generate_refinement_guard_expr(pred: &RefinementPredicate, binding_var: &proc_macro2::Ident) -> TokenStream {
+fn generate_refinement_guard_expr(
+    pred: &RefinementPredicate,
+    binding_var: &proc_macro2::Ident,
+) -> TokenStream {
     match pred {
         RefinementPredicate::Linear { terms, relation, rhs } => {
             generate_linear_expr(terms, relation, *rhs, binding_var)
-        }
+        },
         RefinementPredicate::And(a, b) => {
             let ga = generate_refinement_guard_expr(a, binding_var);
             let gb = generate_refinement_guard_expr(b, binding_var);
             quote! { (#ga && #gb) }
-        }
+        },
         RefinementPredicate::Or(a, b) => {
             let ga = generate_refinement_guard_expr(a, binding_var);
             let gb = generate_refinement_guard_expr(b, binding_var);
             quote! { (#ga || #gb) }
-        }
+        },
         RefinementPredicate::Not(inner) => {
             let gi = generate_refinement_guard_expr(inner, binding_var);
             quote! { !#gi }
-        }
+        },
         RefinementPredicate::Implies(a, b) => {
             let ga = generate_refinement_guard_expr(a, binding_var);
             let gb = generate_refinement_guard_expr(b, binding_var);
             quote! { (!#ga || #gb) }
-        }
+        },
         RefinementPredicate::TermEq(a, b) => {
             let ea = pred_arg_to_expr(a);
             let eb = pred_arg_to_expr(b);
             quote! { (#ea == #eb) }
-        }
+        },
         RefinementPredicate::TermNeq(a, b) => {
             let ea = pred_arg_to_expr(a);
             let eb = pred_arg_to_expr(b);
             quote! { (#ea != #eb) }
-        }
+        },
         RefinementPredicate::Relation { name, args, negated } => {
             let arg_exprs: Vec<_> = args.iter().map(|a| pred_arg_to_expr(a)).collect();
             let call = quote! {
@@ -1733,7 +1722,7 @@ fn generate_refinement_guard_expr(pred: &RefinementPredicate, binding_var: &proc
             } else {
                 quote! { #call }
             }
-        }
+        },
         RefinementPredicate::Quantified { .. } => {
             let formula_expr = refinement_pred_to_quantified_formula(pred);
             let free_vars = collect_refinement_free_vars(pred);
@@ -1771,7 +1760,7 @@ fn generate_refinement_guard_expr(pred: &RefinementPredicate, binding_var: &proc
                     )
                 }
             }
-        }
+        },
     }
 }
 
@@ -1862,10 +1851,13 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
     match pred {
         RefinementPredicate::Relation { name, args, negated } => {
             let name_str = name.to_string();
-            let arg_strs: Vec<_> = args.iter().map(|a| match a {
-                mettail_ast::language::PredArg::Var(id) => id.to_string(),
-                mettail_ast::language::PredArg::Constant(id) => id.to_string(),
-            }).collect();
+            let arg_strs: Vec<_> = args
+                .iter()
+                .map(|a| match a {
+                    mettail_ast::language::PredArg::Var(id) => id.to_string(),
+                    mettail_ast::language::PredArg::Constant(id) => id.to_string(),
+                })
+                .collect();
             let atom = quote! {
                 mettail_prattail::logict::QuantifiedFormula::atom(
                     #name_str.to_string(),
@@ -1877,7 +1869,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
             } else {
                 atom
             }
-        }
+        },
         RefinementPredicate::Quantified { quantifier, var, domain, bound, body } => {
             let body_expr = refinement_pred_to_quantified_formula(body);
             let var_str = var.to_string();
@@ -1885,7 +1877,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                 Some(d) => {
                     let d_str = d.to_string();
                     quote! { Some(#d_str.to_string()) }
-                }
+                },
                 None => quote! { None },
             };
             let bound_expr = match bound {
@@ -1910,26 +1902,26 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     )
                 },
             }
-        }
+        },
         RefinementPredicate::And(a, b) => {
             let ae = refinement_pred_to_quantified_formula(a);
             let be = refinement_pred_to_quantified_formula(b);
             quote! { mettail_prattail::logict::QuantifiedFormula::and(#ae, #be) }
-        }
+        },
         RefinementPredicate::Or(a, b) => {
             let ae = refinement_pred_to_quantified_formula(a);
             let be = refinement_pred_to_quantified_formula(b);
             quote! { mettail_prattail::logict::QuantifiedFormula::or(#ae, #be) }
-        }
+        },
         RefinementPredicate::Not(inner) => {
             let ie = refinement_pred_to_quantified_formula(inner);
             quote! { mettail_prattail::logict::QuantifiedFormula::not(#ie) }
-        }
+        },
         RefinementPredicate::Implies(a, b) => {
             let ae = refinement_pred_to_quantified_formula(a);
             let be = refinement_pred_to_quantified_formula(b);
             quote! { mettail_prattail::logict::QuantifiedFormula::implies(#ae, #be) }
-        }
+        },
         // Linear/TermEq/TermNeq are not representable as QuantifiedFormula —
         // they should be handled by inline guards, not evaluate_quantified().
         // If they appear here, it means the predicate is mixed and needs
@@ -1937,7 +1929,11 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
         RefinementPredicate::Linear { terms, relation, rhs } => {
             let repr = format!(
                 "{}{}{}",
-                terms.iter().map(|(v, c)| format!("{}*{}", c, v)).collect::<Vec<_>>().join("+"),
+                terms
+                    .iter()
+                    .map(|(v, c)| format!("{}*{}", c, v))
+                    .collect::<Vec<_>>()
+                    .join("+"),
                 relation,
                 rhs,
             );
@@ -1947,7 +1943,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     vec![],
                 )
             }
-        }
+        },
         RefinementPredicate::TermEq(a, b) => {
             let a_str = match a {
                 mettail_ast::language::PredArg::Var(id) => id.to_string(),
@@ -1964,7 +1960,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     vec![#a_str.to_string(), #b_str.to_string()],
                 )
             }
-        }
+        },
         RefinementPredicate::TermNeq(a, b) => {
             let a_str = match a {
                 mettail_ast::language::PredArg::Var(id) => id.to_string(),
@@ -1981,7 +1977,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     vec![#a_str.to_string(), #b_str.to_string()],
                 )
             }
-        }
+        },
     }
 }
 
@@ -2012,8 +2008,8 @@ pub fn generate_guarded_comm_rules(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
 ) -> Vec<TokenStream> {
-    use mettail_ast::grammar::TermParam;
     use crate::gen::runtime::guard_codegen;
+    use mettail_ast::grammar::TermParam;
 
     let mut rules = Vec::new();
 
@@ -2029,7 +2025,7 @@ pub fn generate_guarded_comm_rules(
     //
     // The channel-grouping block below is preserved structurally but
     // now always uses `BehavioralPred::Top` (always-true) as the
-    // compile-time placeholder so that the downstream guard-set
+    // compile-time identity predicate so that the downstream guard-set
     // analysis has a consistent input shape. Real per-instance
     // predicate evaluation happens via direct Ascent JOIN clauses
     // inside the generated Comm rule body (see
@@ -2066,15 +2062,12 @@ pub fn generate_guarded_comm_rules(
                 })
             });
             if let Some(ch) = channel_name {
-                // Always use `Top` as the placeholder: per-instance
+                // Always use `Top` as the identity predicate: per-instance
                 // predicates cannot be known at macro-expansion time.
                 channel_guards
                     .entry(ch)
                     .or_default()
-                    .push((
-                        guard_idx,
-                        mettail_ast::language::BehavioralPred::Top,
-                    ));
+                    .push((guard_idx, mettail_ast::language::BehavioralPred::Top));
             }
             guard_idx += 1;
         }
@@ -2146,7 +2139,7 @@ pub fn generate_guarded_comm_rules(
         // (Phase 3D correction 2026-04-08) The guard predicate is now
         // per-instance runtime data stored on the generated enum
         // variant, not a language-spec-time field. We use `Top` as
-        // the compile-time placeholder — it preserves the structural
+        // the compile-time identity predicate — it preserves the structural
         // comm-rule generation path while deferring behavioral
         // predicate evaluation to the direct Ascent JOIN clauses
         // inside the rule body (which this simplified path does not
@@ -2352,7 +2345,7 @@ fn generate_structural_comm_rule(
     let match_var = format_ident!("s");
     let result_var = format_ident!("t");
 
-    // F1: Eqrel dereference fix — temporary variables for eqrel join
+    // F1: Eqrel dereference fix — local variables for eqrel join
     let source_var_eq = format_ident!("__eqrel_{}", source_var);
     let match_var_eq = format_ident!("__eqrel_{}", match_var);
 
@@ -2433,7 +2426,9 @@ fn generate_structural_comm_rule(
 /// inline in the Ascent rule body.
 ///
 /// For simple `RelationQuery` predicates, generates direct Ascent join clauses.
-/// For quantified predicates, generates `evaluate_quantified()` with inline closures.
+/// Unsupported compile-time predicate shapes emit a macro-time error; the
+/// actual per-instance guarded-Comm predicate is checked by
+/// `mettail_runtime::evaluate_pred_with_bindings` in the structural rule.
 fn generate_behavioral_comm_rule(
     cat: &Ident,
     _cat_lower: &Ident,
@@ -2451,7 +2446,7 @@ fn generate_behavioral_comm_rule(
     let match_var = format_ident!("s");
     let result_var = format_ident!("t");
 
-    // F1: Eqrel dereference fix — temporary variables for eqrel join
+    // F1: Eqrel dereference fix — local variables for eqrel join
     let source_var_eq = format_ident!("__eqrel_{}", source_var);
     let match_var_eq = format_ident!("__eqrel_{}", match_var);
 
@@ -2564,10 +2559,8 @@ fn generate_behavioral_comm_rule(
 ///   - `And(a, b)` → both clauses, comma-separated
 ///   - `Top` → no clauses (the rule fires unconditionally)
 ///   - `Quantified` / `Or` / `Implies` / `AcMatch` / `Not(complex)` →
-///     fall back to a `let` clause that calls
-///     `mettail_prattail::logict::evaluate_quantified` with closures
-///     that read from the runtime relation snapshot (Phase 4 wires the
-///     snapshot at run_ascent boundary).
+///     macro-time error, because this helper has no relation/domain
+///     snapshot to query soundly.
 fn generate_inline_guard_eval(
     pred: &mettail_ast::language::BehavioralPred,
     _language: &LanguageDef,
@@ -2579,11 +2572,11 @@ fn generate_inline_guard_eval(
             mettail_ast::language::PredArg::Var(id) => {
                 let ident = format_ident!("{}", id);
                 quote! { #ident.clone() }
-            }
+            },
             mettail_ast::language::PredArg::Constant(id) => {
                 let id_str = id.to_string();
                 quote! { #id_str.to_string() }
-            }
+            },
         }
     }
 
@@ -2591,7 +2584,7 @@ fn generate_inline_guard_eval(
         BehavioralPred::Top => {
             // No-op clause: emits nothing. The rule fires unconditionally.
             quote! { if true }
-        }
+        },
 
         BehavioralPred::RelationQuery { relation_name, args, negated } => {
             let rel = format_ident!("{}", relation_name);
@@ -2605,7 +2598,7 @@ fn generate_inline_guard_eval(
                 // strategy — Ascent's index gives O(1) probes).
                 quote! { #rel(#(#arg_exprs),*) }
             }
-        }
+        },
 
         BehavioralPred::And(a, b) => {
             // Phase 3D: both conjuncts join, comma-separated. Ascent
@@ -2614,15 +2607,11 @@ fn generate_inline_guard_eval(
             let clause_a = generate_inline_guard_eval(a, _language);
             let clause_b = generate_inline_guard_eval(b, _language);
             quote! { #clause_a, #clause_b }
-        }
+        },
 
         BehavioralPred::Not(inner) => {
             // Not(RelationQuery): flip the negation flag and recurse.
-            // Not(complex): not directly expressible as an Ascent clause;
-            // fall through to the LogicT path.
-            if let BehavioralPred::RelationQuery { relation_name, args, negated } =
-                inner.as_ref()
-            {
+            if let BehavioralPred::RelationQuery { relation_name, args, negated } = inner.as_ref() {
                 let flipped = BehavioralPred::RelationQuery {
                     relation_name: relation_name.clone(),
                     args: args.clone(),
@@ -2630,25 +2619,32 @@ fn generate_inline_guard_eval(
                 };
                 generate_inline_guard_eval(&flipped, _language)
             } else {
-                // Complex negation: emit an `if` filter that always
-                // succeeds — the LogicT path handles negation properly
-                // through `evaluate_quantified` lifting.
-                quote! { if true }
+                let msg = unsupported_behavioral_guard_message(pred);
+                let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
+                quote! {
+                    if {
+                        compile_error!(#msg_lit);
+                        false
+                    }
+                }
             }
-        }
+        },
 
         // Quantified / Or / Implies / AcMatch: not directly expressible
-        // as a single Ascent join clause. The compiler emits an `if`
-        // filter that always passes; the runtime evaluation of these
-        // shapes happens via the snapshot mechanism at the call site
-        // when the predicate is per-instance, or via codegen
-        // specialization in Phase 7 (per-tier T2/T3/T4 paths).
+        // as a single Ascent join clause in this compile-time helper.
         BehavioralPred::Or(_, _)
         | BehavioralPred::Implies(_, _)
         | BehavioralPred::Quantified { .. }
         | BehavioralPred::AcMatch { .. } => {
-            quote! { if true }
-        }
+            let msg = unsupported_behavioral_guard_message(pred);
+            let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
+            quote! {
+                if {
+                    compile_error!(#msg_lit);
+                    false
+                }
+            }
+        },
     }
 }
 
@@ -2673,7 +2669,7 @@ fn collect_refinement_free_vars_inner(
                     free.insert(name);
                 }
             }
-        }
+        },
         RefinementPredicate::Relation { args, .. } => {
             for arg in args {
                 if let mettail_ast::language::PredArg::Var(id) = arg {
@@ -2683,7 +2679,7 @@ fn collect_refinement_free_vars_inner(
                     }
                 }
             }
-        }
+        },
         RefinementPredicate::Quantified { var, body, .. } => {
             let var_name = var.to_string();
             let was_bound = bound.contains(&var_name);
@@ -2692,16 +2688,16 @@ fn collect_refinement_free_vars_inner(
             if !was_bound {
                 bound.remove(&var_name);
             }
-        }
+        },
         RefinementPredicate::And(a, b)
         | RefinementPredicate::Or(a, b)
         | RefinementPredicate::Implies(a, b) => {
             collect_refinement_free_vars_inner(a, free, bound);
             collect_refinement_free_vars_inner(b, free, bound);
-        }
+        },
         RefinementPredicate::Not(inner) => {
             collect_refinement_free_vars_inner(inner, free, bound);
-        }
+        },
         RefinementPredicate::TermEq(a, b) | RefinementPredicate::TermNeq(a, b) => {
             for arg in [a, b] {
                 if let mettail_ast::language::PredArg::Var(id) = arg {
@@ -2711,7 +2707,7 @@ fn collect_refinement_free_vars_inner(
                     }
                 }
             }
-        }
+        },
     }
 }
 
@@ -2809,8 +2805,8 @@ mod tests {
         // EnvQuery binds "v", Freshness requires "v"
         // Even though Freshness is cheaper, EnvQuery must come first
         let conditions = vec![
-            make_freshness("v", "P"),  // cost 2, requires "v" (bound by EnvQuery)
-            make_env_query("env_var", "x", "v"),  // cost 5, binds "v"
+            make_freshness("v", "P"), // cost 2, requires "v" (bound by EnvQuery)
+            make_env_query("env_var", "x", "v"), // cost 5, binds "v"
         ];
 
         let sorted = sort_conditions_by_cost(&conditions);
@@ -2888,10 +2884,7 @@ mod tests {
     #[test]
     fn test_interleave_no_conditions() {
         let first = quote! { cat(s) };
-        let lhs = vec![
-            quote! { if let Proc::PNew(f0) = s },
-            quote! { let f0_deref = &**f0 },
-        ];
+        let lhs = vec![quote! { if let Proc::PNew(f0) = s }, quote! { let f0_deref = &**f0 }];
         let eq_checks: Vec<TokenStream> = vec![];
         let conditions: Vec<PositionedClause> = vec![];
         let rhs = quote! { let t = P.clone() };
@@ -2904,10 +2897,7 @@ mod tests {
     fn test_interleave_condition_at_position_0() {
         // Condition can go before any LHS clause
         let first = quote! { cat(s) };
-        let lhs = vec![
-            quote! { if let Proc::PNew(f0) = s },
-            quote! { let f0_deref = &**f0 },
-        ];
+        let lhs = vec![quote! { if let Proc::PNew(f0) = s }, quote! { let f0_deref = &**f0 }];
         let eq_checks: Vec<TokenStream> = vec![];
         let conditions = vec![PositionedClause {
             clause: quote! { if !free_vars_check },
@@ -2948,11 +2938,7 @@ mod tests {
     fn test_interleave_multiple_conditions_different_positions() {
         // Two conditions at different positions
         let first = quote! { cat(s) };
-        let lhs = vec![
-            quote! { clause_0 },
-            quote! { clause_1 },
-            quote! { clause_2 },
-        ];
+        let lhs = vec![quote! { clause_0 }, quote! { clause_1 }, quote! { clause_2 }];
         let eq_checks: Vec<TokenStream> = vec![];
         let conditions = vec![
             PositionedClause {
@@ -3185,7 +3171,7 @@ mod tests {
 
     #[test]
     fn refinement_free_vars_excludes_quantifier_bound() {
-        use mettail_ast::language::{Quantifier, PredArg};
+        use mettail_ast::language::{PredArg, Quantifier};
 
         let pred = RefinementPredicate::Quantified {
             quantifier: Quantifier::ForAll,
@@ -3194,10 +3180,7 @@ mod tests {
             bound: None,
             body: Box::new(RefinementPredicate::Relation {
                 name: make_ident("reachable"),
-                args: vec![
-                    PredArg::Var(make_ident("x")),
-                    PredArg::Var(make_ident("y")),
-                ],
+                args: vec![PredArg::Var(make_ident("x")), PredArg::Var(make_ident("y"))],
                 negated: false,
             }),
         };
@@ -3243,18 +3226,16 @@ mod tests {
             include_names: vec![],
             mixin_names: vec![],
             types: vec![],
-            refinement_types: vec![
-                RefinementTypeDef {
-                    name: make_ident("PosInt"),
-                    var: make_ident("x"),
-                    base_type: TypeExpr::Base(make_ident("Int")),
-                    predicate: RefinementPredicate::Linear {
-                        terms: vec![(make_ident("x"), 1)],
-                        relation: LinearRelation::Gt,
-                        rhs: 0,
-                    },
+            refinement_types: vec![RefinementTypeDef {
+                name: make_ident("PosInt"),
+                var: make_ident("x"),
+                base_type: TypeExpr::Base(make_ident("Int")),
+                predicate: RefinementPredicate::Linear {
+                    terms: vec![(make_ident("x"), 1)],
+                    relation: LinearRelation::Gt,
+                    rhs: 0,
                 },
-            ],
+            }],
             token_defs: vec![],
             mode_defs: vec![],
             sync_constraints: vec![],
@@ -3297,18 +3278,16 @@ mod tests {
             include_names: vec![],
             mixin_names: vec![],
             types: vec![],
-            refinement_types: vec![
-                RefinementTypeDef {
-                    name: make_ident("PosInt"),
-                    var: make_ident("x"),
-                    base_type: TypeExpr::Base(make_ident("Int")),
-                    predicate: RefinementPredicate::Linear {
-                        terms: vec![(make_ident("x"), 1)],
-                        relation: LinearRelation::Gt,
-                        rhs: 0,
-                    },
+            refinement_types: vec![RefinementTypeDef {
+                name: make_ident("PosInt"),
+                var: make_ident("x"),
+                base_type: TypeExpr::Base(make_ident("Int")),
+                predicate: RefinementPredicate::Linear {
+                    terms: vec![(make_ident("x"), 1)],
+                    relation: LinearRelation::Gt,
+                    rhs: 0,
                 },
-            ],
+            }],
             token_defs: vec![],
             mode_defs: vec![],
             sync_constraints: vec![],

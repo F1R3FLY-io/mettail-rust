@@ -116,14 +116,13 @@ impl std::fmt::Display for SchedulerEvent {
         match self {
             Self::ChannelMessage { channel_id } => {
                 write!(f, "ChannelMessage({})", channel_id)
-            }
+            },
             Self::ThreadCompleted { thread_id } => {
                 write!(f, "ThreadCompleted({})", thread_id)
-            }
-            Self::ForkRequest {
-                parent_id,
-                category,
-            } => write!(f, "ForkRequest(parent={}, cat={})", parent_id, category),
+            },
+            Self::ForkRequest { parent_id, category } => {
+                write!(f, "ForkRequest(parent={}, cat={})", parent_id, category)
+            },
             Self::TimerExpired => write!(f, "TimerExpired"),
             Self::ShutdownRequested => write!(f, "ShutdownRequested"),
             Self::NoWork => write!(f, "NoWork"),
@@ -160,10 +159,7 @@ pub enum SchedulerAction {
     /// Park all native workers (no runnable threads).
     ParkWorkers,
     /// Notify that a thread has completed with a result.
-    NotifyComplete {
-        thread_id: GreenThreadId,
-        result: String,
-    },
+    NotifyComplete { thread_id: GreenThreadId, result: String },
     /// Dispatch a green thread to a worker with a specific quantum size.
     ///
     /// The quantum size is determined by the current `BackpressureTier`:
@@ -308,10 +304,7 @@ impl std::fmt::Debug for Scheduler {
         f.debug_struct("Scheduler")
             .field("state", &self.state)
             .field("ready_queue_len", &self.ready_queue.len())
-            .field(
-                "parallel_budget",
-                &self.parallel_budget.load(Ordering::Relaxed),
-            )
+            .field("parallel_budget", &self.parallel_budget.load(Ordering::Relaxed))
             .finish()
     }
 }
@@ -385,7 +378,7 @@ impl Scheduler {
                     new_state: SchedulerState::Shutdown,
                     actions: vec![SchedulerAction::EmitMetrics],
                 }
-            }
+            },
 
             // ── CheckChannels transitions ────────────────────────────────
             (SchedulerState::CheckChannels, SchedulerEvent::ChannelMessage { .. }) => {
@@ -398,14 +391,14 @@ impl Scheduler {
                     new_state: SchedulerState::DispatchReady,
                     actions: vec![],
                 }
-            }
+            },
             (SchedulerState::CheckChannels, SchedulerEvent::NoWork) => {
                 self.state = SchedulerState::ParkIdle;
                 SchedulerTransition {
                     new_state: SchedulerState::ParkIdle,
                     actions: vec![SchedulerAction::ParkWorkers],
                 }
-            }
+            },
             (SchedulerState::CheckChannels, SchedulerEvent::TimerExpired) => {
                 // Timer tick while checking — transition to dispatch if we have work.
                 if self.ready_queue.is_empty() {
@@ -421,7 +414,7 @@ impl Scheduler {
                         actions: vec![],
                     }
                 }
-            }
+            },
 
             // ── DispatchReady transitions ────────────────────────────────
             (SchedulerState::DispatchReady, _) => {
@@ -458,13 +451,11 @@ impl Scheduler {
                         actions,
                     }
                 }
-            }
+            },
 
             // ── Execute transitions ──────────────────────────────────────
             (SchedulerState::Execute, SchedulerEvent::ThreadCompleted { thread_id }) => {
-                self.metrics
-                    .total_completed
-                    .fetch_add(1, Ordering::Relaxed);
+                self.metrics.total_completed.fetch_add(1, Ordering::Relaxed);
                 // Replenish budget: one thread finished, one slot opens.
                 self.replenish_budget(1);
                 let mut actions = vec![SchedulerAction::NotifyComplete {
@@ -494,11 +485,8 @@ impl Scheduler {
                         actions,
                     }
                 }
-            }
-            (SchedulerState::Execute, SchedulerEvent::ForkRequest {
-                parent_id,
-                category,
-            }) => {
+            },
+            (SchedulerState::Execute, SchedulerEvent::ForkRequest { parent_id, category }) => {
                 self.metrics.total_forks.fetch_add(1, Ordering::Relaxed);
                 let actions = vec![SchedulerAction::SpawnThread {
                     parent: Some(*parent_id),
@@ -509,7 +497,7 @@ impl Scheduler {
                     new_state: SchedulerState::Execute,
                     actions,
                 }
-            }
+            },
             (SchedulerState::Execute, SchedulerEvent::ChannelMessage { .. }) => {
                 // Message during execution — note it, stay executing.
                 self.metrics
@@ -519,7 +507,7 @@ impl Scheduler {
                     new_state: SchedulerState::Execute,
                     actions: vec![],
                 }
-            }
+            },
 
             // ── ParkIdle transitions ─────────────────────────────────────
             (SchedulerState::ParkIdle, SchedulerEvent::ChannelMessage { .. }) => {
@@ -531,11 +519,8 @@ impl Scheduler {
                     new_state: SchedulerState::CheckChannels,
                     actions: vec![],
                 }
-            }
-            (SchedulerState::ParkIdle, SchedulerEvent::ForkRequest {
-                parent_id,
-                category,
-            }) => {
+            },
+            (SchedulerState::ParkIdle, SchedulerEvent::ForkRequest { parent_id, category }) => {
                 self.metrics.total_forks.fetch_add(1, Ordering::Relaxed);
                 self.state = SchedulerState::DispatchReady;
                 SchedulerTransition {
@@ -545,7 +530,7 @@ impl Scheduler {
                         category: category.clone(),
                     }],
                 }
-            }
+            },
             (SchedulerState::ParkIdle, SchedulerEvent::TimerExpired) => {
                 // Periodic wake from park — check channels.
                 self.state = SchedulerState::CheckChannels;
@@ -553,14 +538,14 @@ impl Scheduler {
                     new_state: SchedulerState::CheckChannels,
                     actions: vec![],
                 }
-            }
+            },
             (SchedulerState::ParkIdle, SchedulerEvent::NoWork) => {
                 // Still idle, stay parked.
                 SchedulerTransition {
                     new_state: SchedulerState::ParkIdle,
                     actions: vec![],
                 }
-            }
+            },
 
             // ── Shutdown: absorb all events ──────────────────────────────
             (SchedulerState::Shutdown, _) => SchedulerTransition {
@@ -576,7 +561,7 @@ impl Scheduler {
                     new_state: SchedulerState::CheckChannels,
                     actions: vec![],
                 }
-            }
+            },
         }
     }
 
@@ -596,51 +581,45 @@ impl Scheduler {
 
         // Check if any registered channel has pending messages.
         let has_pending = self.channels.channel_ids().iter().any(|id| {
-            self.channels
-                .get_channel(*id)
-                .map_or(false, |handle| {
-                    // We check via the type-erased handle's cached id;
-                    // actual message availability would require downcasting.
-                    // For scheduling purposes, we treat any non-empty channel
-                    // as having pending work. The ChannelMap's channel_count > 0
-                    // is a proxy when we cannot inspect message counts without
-                    // the concrete type.
-                    //
-                    // In a full implementation, the ChannelMap would expose a
-                    // has_pending_messages() method. For now, we rely on
-                    // external event delivery (SchedulerEvent::ChannelMessage)
-                    // for actual wake-ups.
-                    let _ = handle;
-                    false
-                })
+            self.channels.get_channel(*id).map_or(false, |handle| {
+                // We check via the type-erased handle's cached id;
+                // actual message availability would require downcasting.
+                // For scheduling purposes, we treat any non-empty channel
+                // as having pending work. The ChannelMap's channel_count > 0
+                // is a proxy when we cannot inspect message counts without
+                // the concrete type.
+                //
+                // In a full implementation, the ChannelMap would expose a
+                // has_pending_messages() method. For now, we rely on
+                // external event delivery (SchedulerEvent::ChannelMessage)
+                // for actual wake-ups.
+                let _ = handle;
+                false
+            })
         });
 
         let event = match self.state {
             SchedulerState::CheckChannels => {
                 if has_pending {
-                    SchedulerEvent::ChannelMessage {
-                        channel_id: ChannelId(0),
-                    }
+                    SchedulerEvent::ChannelMessage { channel_id: ChannelId(0) }
                 } else if !self.ready_queue.is_empty() {
                     SchedulerEvent::TimerExpired
                 } else {
                     SchedulerEvent::NoWork
                 }
-            }
+            },
             SchedulerState::DispatchReady => SchedulerEvent::TimerExpired,
             SchedulerState::Execute => {
                 // In a real implementation, this would check completion queues.
                 SchedulerEvent::TimerExpired
-            }
+            },
             SchedulerState::ParkIdle => {
                 if has_pending {
-                    SchedulerEvent::ChannelMessage {
-                        channel_id: ChannelId(0),
-                    }
+                    SchedulerEvent::ChannelMessage { channel_id: ChannelId(0) }
                 } else {
                     SchedulerEvent::NoWork
                 }
-            }
+            },
             SchedulerState::Shutdown => return vec![],
         };
 
@@ -689,11 +668,7 @@ impl Scheduler {
         }
         let child_id = self.registry.spawn_child(parent_id, category)?;
         // Child inherits parent's priority (default 0).
-        let priority = self
-            .registry
-            .get(child_id)
-            .map(|t| t.priority)
-            .unwrap_or(0);
+        let priority = self.registry.get(child_id).map(|t| t.priority).unwrap_or(0);
         self.enqueue(child_id, priority);
         self.metrics.total_forks.fetch_add(1, Ordering::Relaxed);
         Some(child_id)
@@ -800,10 +775,7 @@ impl SchedulerAutomaton {
     /// # Arguments
     /// * `channels` — Channel names in declaration order.
     /// * `join_patterns` — Join patterns with their required channel sets.
-    pub fn from_spec(
-        channels: &[String],
-        join_patterns: &[(String, Vec<String>)],
-    ) -> Self {
+    pub fn from_spec(channels: &[String], join_patterns: &[(String, Vec<String>)]) -> Self {
         let channel_index: std::collections::HashMap<&str, usize> = channels
             .iter()
             .enumerate()
@@ -848,7 +820,9 @@ impl SchedulerAutomaton {
         for pattern in &self.join_patterns {
             if (channel_states & pattern.required_channels) == pattern.required_channels {
                 result.ready_patterns.push(pattern.name.clone());
-                result.threads_to_wake.extend_from_slice(&pattern.wake_threads);
+                result
+                    .threads_to_wake
+                    .extend_from_slice(&pattern.wake_threads);
             }
         }
         result
@@ -886,9 +860,8 @@ mod tests {
     #[test]
     fn test_check_channels_to_dispatch_ready_on_message() {
         let mut sched = make_scheduler(4);
-        let trans = sched.process_event(SchedulerEvent::ChannelMessage {
-            channel_id: ChannelId(1),
-        });
+        let trans =
+            sched.process_event(SchedulerEvent::ChannelMessage { channel_id: ChannelId(1) });
         assert_eq!(trans.new_state, SchedulerState::DispatchReady);
     }
 
@@ -930,9 +903,8 @@ mod tests {
     fn test_execute_to_check_channels_on_completion() {
         let mut sched = make_scheduler(4);
         sched.state = SchedulerState::Execute;
-        let trans = sched.process_event(SchedulerEvent::ThreadCompleted {
-            thread_id: GreenThreadId(1),
-        });
+        let trans =
+            sched.process_event(SchedulerEvent::ThreadCompleted { thread_id: GreenThreadId(1) });
         // With empty ready queue, should go to CheckChannels.
         assert_eq!(trans.new_state, SchedulerState::CheckChannels);
         assert!(trans.actions.iter().any(|a| matches!(
@@ -945,9 +917,8 @@ mod tests {
     fn test_park_idle_to_check_channels_on_message() {
         let mut sched = make_scheduler(4);
         sched.state = SchedulerState::ParkIdle;
-        let trans = sched.process_event(SchedulerEvent::ChannelMessage {
-            channel_id: ChannelId(42),
-        });
+        let trans =
+            sched.process_event(SchedulerEvent::ChannelMessage { channel_id: ChannelId(42) });
         assert_eq!(trans.new_state, SchedulerState::CheckChannels);
     }
 
@@ -975,9 +946,8 @@ mod tests {
     fn test_shutdown_absorbs_events() {
         let mut sched = make_scheduler(4);
         sched.state = SchedulerState::Shutdown;
-        let trans = sched.process_event(SchedulerEvent::ChannelMessage {
-            channel_id: ChannelId(1),
-        });
+        let trans =
+            sched.process_event(SchedulerEvent::ChannelMessage { channel_id: ChannelId(1) });
         assert_eq!(trans.new_state, SchedulerState::Shutdown);
         assert!(trans.actions.is_empty());
     }
@@ -1121,7 +1091,9 @@ mod tests {
         // Second tick: dispatch the thread.
         let actions = sched.tick();
         assert_eq!(sched.current_state(), SchedulerState::Execute);
-        assert!(actions.iter().any(|a| matches!(a, SchedulerAction::WakeThread(id) if *id == t1)));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, SchedulerAction::WakeThread(id) if *id == t1)));
     }
 
     // ── Display ──────────────────────────────────────────────────────────
@@ -1185,7 +1157,9 @@ mod tests {
         // Tick again -> dispatches thread.
         let actions = sched.tick();
         assert_eq!(sched.current_state(), SchedulerState::Execute);
-        assert!(actions.iter().any(|a| matches!(a, SchedulerAction::WakeThread(id) if *id == t1)));
+        assert!(actions
+            .iter()
+            .any(|a| matches!(a, SchedulerAction::WakeThread(id) if *id == t1)));
 
         // Thread completes.
         let trans = sched.process_event(SchedulerEvent::ThreadCompleted { thread_id: t1 });
@@ -1202,29 +1176,13 @@ mod tests {
         let mut sched = make_scheduler(4);
 
         // Message from CheckChannels.
-        sched.process_event(SchedulerEvent::ChannelMessage {
-            channel_id: ChannelId(1),
-        });
-        assert_eq!(
-            sched
-                .metrics()
-                .total_resumptions
-                .load(Ordering::Acquire),
-            1
-        );
+        sched.process_event(SchedulerEvent::ChannelMessage { channel_id: ChannelId(1) });
+        assert_eq!(sched.metrics().total_resumptions.load(Ordering::Acquire), 1);
 
         // Message from ParkIdle.
         sched.state = SchedulerState::ParkIdle;
-        sched.process_event(SchedulerEvent::ChannelMessage {
-            channel_id: ChannelId(2),
-        });
-        assert_eq!(
-            sched
-                .metrics()
-                .total_resumptions
-                .load(Ordering::Acquire),
-            2
-        );
+        sched.process_event(SchedulerEvent::ChannelMessage { channel_id: ChannelId(2) });
+        assert_eq!(sched.metrics().total_resumptions.load(Ordering::Acquire), 2);
     }
 
     // ── Multi-Tape Scheduler Automaton ───────────────────────────────────
@@ -1258,9 +1216,7 @@ mod tests {
     #[test]
     fn test_automaton_join_pattern_two_channels() {
         let channels = vec!["ch_a".to_string(), "ch_b".to_string()];
-        let patterns = vec![
-            ("join_ab".to_string(), vec!["ch_a".to_string(), "ch_b".to_string()]),
-        ];
+        let patterns = vec![("join_ab".to_string(), vec!["ch_a".to_string(), "ch_b".to_string()])];
         let automaton = SchedulerAutomaton::from_spec(&channels, &patterns);
 
         assert_eq!(automaton.join_patterns[0].required_channels, 0b11);
@@ -1303,9 +1259,7 @@ mod tests {
     fn test_automaton_unknown_channel_in_pattern() {
         let channels = vec!["ch_a".to_string()];
         // Pattern references ch_b which doesn't exist — bit not set.
-        let patterns = vec![
-            ("recv_unknown".to_string(), vec!["ch_b".to_string()]),
-        ];
+        let patterns = vec![("recv_unknown".to_string(), vec!["ch_b".to_string()])];
         let automaton = SchedulerAutomaton::from_spec(&channels, &patterns);
 
         // Required mask is 0 (unknown channel not mapped) → always fires.

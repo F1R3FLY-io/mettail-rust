@@ -842,9 +842,9 @@ mod tests {
         let language = parse2::<LanguageDef>(input).expect("parse ok");
         let rule = &language.terms[0];
         let ctx = rule.term_context.as_ref().expect("has term_context");
-        let has_guard_slot = ctx.iter().any(|p| {
-            matches!(p, TermParam::GuardBody { name } if name == "guard")
-        });
+        let has_guard_slot = ctx
+            .iter()
+            .any(|p| matches!(p, TermParam::GuardBody { name } if name == "guard"));
         assert!(has_guard_slot, "expected TermParam::GuardBody {{ name: \"guard\" }}");
     }
 
@@ -862,9 +862,9 @@ mod tests {
         let language = parse2::<LanguageDef>(input).expect("parse ok");
         let rule = &language.terms[0];
         let ctx = rule.term_context.as_ref().expect("has term_context");
-        let has_pred_slot = ctx.iter().any(|p| {
-            matches!(p, TermParam::GuardBody { name } if name == "pred")
-        });
+        let has_pred_slot = ctx
+            .iter()
+            .any(|p| matches!(p, TermParam::GuardBody { name } if name == "pred"));
         assert!(has_pred_slot, "expected TermParam::GuardBody {{ name: \"pred\" }}");
     }
 
@@ -881,11 +881,7 @@ mod tests {
         };
         let err = parse2::<LanguageDef>(input).expect_err("should reject `Trigger`");
         let msg = err.to_string();
-        assert!(
-            msg.contains("Guard"),
-            "error message should mention `Guard`: {}",
-            msg
-        );
+        assert!(msg.contains("Guard"), "error message should mention `Guard`: {}", msg);
     }
 
     /// A constructor with both a regular Simple param and a `?guard:Guard`
@@ -939,9 +935,7 @@ mod tests {
         assert_eq!(language.terms.len(), 2);
         for rule in &language.terms {
             let ctx = rule.term_context.as_ref().expect("has term_context");
-            let has_guard_slot = ctx.iter().any(|p| {
-                matches!(p, TermParam::GuardBody { .. })
-            });
+            let has_guard_slot = ctx.iter().any(|p| matches!(p, TermParam::GuardBody { .. }));
             assert!(has_guard_slot, "{} should have a guard slot", rule.label);
         }
     }
@@ -1008,8 +1002,10 @@ mod tests {
             }
         };
         let language = parse2::<LanguageDef>(input).expect("parse ok");
-        let directive =
-            language.terms[0].tier_directive.as_ref().expect("tier directive");
+        let directive = language.terms[0]
+            .tier_directive
+            .as_ref()
+            .expect("tier directive");
         assert_eq!(directive.tier, TierRequest::T3);
         assert_eq!(directive.bound, Some(256));
     }
@@ -1025,8 +1021,10 @@ mod tests {
             }
         };
         let language = parse2::<LanguageDef>(input).expect("parse ok");
-        let directive =
-            language.terms[0].tier_directive.as_ref().expect("tier directive");
+        let directive = language.terms[0]
+            .tier_directive
+            .as_ref()
+            .expect("tier directive");
         assert_eq!(directive.tier, TierRequest::T4);
         assert!(directive.force);
         assert_eq!(directive.proof, Some("proofs/foo.v".to_string()));
@@ -1043,8 +1041,10 @@ mod tests {
             }
         };
         let language = parse2::<LanguageDef>(input).expect("parse ok");
-        let directive =
-            language.terms[0].tier_directive.as_ref().expect("tier directive");
+        let directive = language.terms[0]
+            .tier_directive
+            .as_ref()
+            .expect("tier directive");
         assert_eq!(directive.tier, TierRequest::T2);
     }
 
@@ -1113,11 +1113,7 @@ mod tests {
         "#;
 
         let result = syn::parse_str::<LanguageDef>(input);
-        assert!(
-            result.is_ok(),
-            "Failed to parse literals block: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "Failed to parse literals block: {:?}", result.err());
 
         let language = result.unwrap();
         assert_eq!(
@@ -1142,10 +1138,7 @@ mod tests {
         let bool_tok = &language.token_defs[1];
         assert_eq!(bool_tok.name.to_string(), "Boolean");
         assert_eq!(bool_tok.pattern, "yes|no");
-        assert_eq!(
-            bool_tok.category.as_ref().map(|c| c.to_string()),
-            Some("Bool".to_string())
-        );
+        assert_eq!(bool_tok.category.as_ref().map(|c| c.to_string()), Some("Bool".to_string()));
     }
 
     /// Two integer-typed categories sharing the standard `Token::Integer`
@@ -1176,7 +1169,10 @@ mod tests {
         assert_eq!(language.token_defs.len(), 2);
         // Both share the standard Integer family variant.
         assert!(
-            language.token_defs.iter().all(|td| td.name.to_string() == "Integer"),
+            language
+                .token_defs
+                .iter()
+                .all(|td| td.name.to_string() == "Integer"),
             "both literals should map to Token::Integer family"
         );
         // The original block names are recoverable via `category`.
@@ -1214,7 +1210,10 @@ mod tests {
             .expect("Int + Long sharing Token::Integer should parse");
         assert_eq!(language.token_defs.len(), 2);
         assert!(
-            language.token_defs.iter().all(|td| td.name.to_string() == "Integer"),
+            language
+                .token_defs
+                .iter()
+                .all(|td| td.name.to_string() == "Integer"),
             "both literals should map to Token::Integer family"
         );
         let cats: Vec<String> = language
@@ -1268,23 +1267,28 @@ mod tests {
             terms { }
         "#;
 
-        let language = syn::parse_str::<LanguageDef>(input)
-            .expect("Int + BigInt should parse");
+        let language = syn::parse_str::<LanguageDef>(input).expect("Int + BigInt should parse");
         assert_eq!(language.token_defs.len(), 2);
 
-        let int_td = language.token_defs.iter()
+        let int_td = language
+            .token_defs
+            .iter()
             .find(|td| td.category.as_ref().map(|c| c.to_string()) == Some("Int".to_string()))
             .expect("Int token_def present");
         assert_eq!(
-            int_td.name.to_string(), "Integer",
+            int_td.name.to_string(),
+            "Integer",
             "Int collapses onto the unified Token::Integer family"
         );
 
-        let bigint_td = language.token_defs.iter()
+        let bigint_td = language
+            .token_defs
+            .iter()
             .find(|td| td.category.as_ref().map(|c| c.to_string()) == Some("BigInt".to_string()))
             .expect("BigInt token_def present");
         assert_eq!(
-            bigint_td.name.to_string(), "BigInt",
+            bigint_td.name.to_string(),
+            "BigInt",
             "BigInt keeps its OWN Token::BigInt(&'a str) variant for precision preservation"
         );
     }
@@ -1398,10 +1402,7 @@ mod tests {
             }
         };
         let language = parse2::<LanguageDef>(input).expect("parse ok");
-        assert!(
-            language.terms[0].doc_comment.is_none(),
-            "no /// → doc_comment should be None",
-        );
+        assert!(language.terms[0].doc_comment.is_none(), "no /// → doc_comment should be None",);
         assert!(
             language.terms[0].tier_directive.is_some(),
             "tier directive must be parsed when no doc comment precedes it",

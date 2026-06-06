@@ -36,7 +36,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::cesk_store::StoreAddr;
 #[cfg(test)]
 use crate::cesk_store::{
-    AllocStrategy, CeskConfig, KCfaAlloc, MonotonicAlloc, OneCfaAlloc, StoreValue, ZeroCfaAlloc,
+    AllocStrategy, CeskConfig, KCfaAlloc, MonotonicAlloc, OneCfaAlloc, ZeroCfaAlloc,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -85,9 +85,7 @@ pub enum AbstractValue {
 impl AbstractStore {
     /// Create an empty abstract store.
     pub fn new() -> Self {
-        Self {
-            cells: HashMap::new(),
-        }
+        Self { cells: HashMap::new() }
     }
 
     /// Join a value into the abstract cell at the given address.
@@ -158,16 +156,14 @@ pub fn abstract_live_locations(
         if let Some(values) = store.get(addr) {
             for value in values {
                 match value {
-                    AbstractValue::Closure {
-                        captured_addrs, ..
-                    } => {
+                    AbstractValue::Closure { captured_addrs, .. } => {
                         for &a in captured_addrs {
                             if !live.contains(&a) {
                                 worklist.push_back(a);
                             }
                         }
-                    }
-                    AbstractValue::Atom(_) | AbstractValue::Void | AbstractValue::Top => {}
+                    },
+                    AbstractValue::Atom(_) | AbstractValue::Void | AbstractValue::Top => {},
                 }
             }
         }
@@ -180,10 +176,7 @@ pub fn abstract_live_locations(
 ///
 /// Removes all addresses not reachable from the root environment.
 /// Returns the number of addresses collected.
-pub fn abstract_gc(
-    env: &HashMap<String, StoreAddr>,
-    store: &mut AbstractStore,
-) -> usize {
+pub fn abstract_gc(env: &HashMap<String, StoreAddr>, store: &mut AbstractStore) -> usize {
     let live = abstract_live_locations(env, store);
     let all_addrs: Vec<u64> = store.addresses();
     let mut collected = 0;
@@ -340,12 +333,7 @@ impl DyckStateGraph {
         symbol: EvalStackSymbol,
         is_push: bool,
     ) {
-        self.edges.push(DsgEdge {
-            source,
-            target,
-            symbol,
-            is_push,
-        });
+        self.edges.push(DsgEdge { source, target, symbol, is_push });
     }
 
     /// Number of nodes in the DSG.
@@ -504,22 +492,8 @@ mod tests {
             store_fingerprint: 0,
         });
 
-        dsg.add_edge(
-            s0,
-            s1,
-            EvalStackSymbol::BinOp {
-                operator: "+".to_string(),
-            },
-            true,
-        );
-        dsg.add_edge(
-            s1,
-            s2,
-            EvalStackSymbol::BinOp {
-                operator: "+".to_string(),
-            },
-            false,
-        );
+        dsg.add_edge(s0, s1, EvalStackSymbol::BinOp { operator: "+".to_string() }, true);
+        dsg.add_edge(s1, s2, EvalStackSymbol::BinOp { operator: "+".to_string() }, false);
 
         assert_eq!(dsg.node_count(), 3);
         assert_eq!(dsg.edge_count(), 2);
@@ -570,10 +544,7 @@ mod tests {
             stack_depth: 0,
         };
         let a1 = alloc.alloc("x", &config);
-        let config2 = CeskConfig {
-            control: "expr2".to_string(),
-            ..config
-        };
+        let config2 = CeskConfig { control: "expr2".to_string(), ..config };
         let a2 = alloc.alloc("x", &config2);
         assert_eq!(a1, a2, "0CFA: same var → same addr regardless of context");
     }
@@ -595,10 +566,7 @@ mod tests {
         };
         let a1 = alloc.alloc("x", &config1);
         let a2 = alloc.alloc("x", &config2);
-        assert_ne!(
-            a1, a2,
-            "1CFA: same var at different call sites → different addrs"
-        );
+        assert_ne!(a1, a2, "1CFA: same var at different call sites → different addrs");
     }
 
     #[test]
@@ -626,9 +594,6 @@ mod tests {
         alloc.tick(&config_a); // now context = [b, a]
         let addr_ba = alloc.alloc("x", &config_a);
 
-        assert_ne!(
-            addr_ab, addr_ba,
-            "k-CFA: different context histories → different addrs"
-        );
+        assert_ne!(addr_ab, addr_ba, "k-CFA: different context histories → different addrs");
     }
 }

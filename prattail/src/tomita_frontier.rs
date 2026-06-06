@@ -38,7 +38,7 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::automata::semiring::SemiringRef;
 use crate::dispatch_cohort::DispatchKey;
@@ -142,9 +142,10 @@ impl<W: SemiringRef> TomitaShell<W> {
             // sppf_stack_baseline carry. For now we read them from the
             // cursor verbatim; Substage 6 may refine to enforce strict
             // shell-invariance via classifier predicates.
-            dispatch_key: cursor.cohort_origin.clone().unwrap_or(DispatchKey::new(
-                cursor.pos, 0, 0, 0, 0,
-            )),
+            dispatch_key: cursor
+                .cohort_origin
+                .clone()
+                .unwrap_or(DispatchKey::new(cursor.pos, 0, 0, 0, 0)),
             sppf_stack_baseline_id: cursor.sppf_stack_id,
             recovery_depth: cursor.recovery_depth,
             _phantom: PhantomData,
@@ -304,9 +305,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
     /// Per the Exp 14 plan §3.6 risk register R6/R8: divergent arc
     /// state (sppf_stack_id, lex provenance, cohort origin) MUST keep
     /// arcs distinct; only same-disambiguator arcs may collapse.
-    pub fn merge_disambiguator(
-        &self,
-    ) -> (StackId, Option<DispatchKey>, u16, u16, u16) {
+    pub fn merge_disambiguator(&self) -> (StackId, Option<DispatchKey>, u16, u16, u16) {
         (
             self.sppf_stack_id,
             self.cohort_origin.clone(),
@@ -524,14 +523,14 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                 node.push_arc(arc, gen);
                 self.dedup_hits = self.dedup_hits.saturating_add(1);
                 node.arc_count()
-            }
+            },
             None => {
                 let stamp = self.next_insertion_stamp;
                 self.next_insertion_stamp = self.next_insertion_stamp.saturating_add(1);
                 let node = FrontierNode::new(shell_if_new, arc, gen, stamp);
                 self.map.insert(key, node);
                 1
-            }
+            },
         }
     }
 
@@ -623,14 +622,14 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
                     self.dedup_hits = self.dedup_hits.saturating_add(1);
                     node.arc_count()
                 }
-            }
+            },
             None => {
                 let stamp = self.next_insertion_stamp;
                 self.next_insertion_stamp = self.next_insertion_stamp.saturating_add(1);
                 let node = FrontierNode::new(shell_if_new, arc, gen, stamp);
                 self.map.insert(key, node);
                 1
-            }
+            },
         }
     }
 
@@ -654,9 +653,7 @@ impl<W: SemiringRef> TomitaFrontierMap<W> {
     /// removes them from the map and yields ownership in **insertion-
     /// stamp order** (NOT HashMap iteration order — see FrontierNode
     /// docstring for why this matters).
-    pub fn drain_current_generation(
-        &mut self,
-    ) -> Vec<(TomitaKey, FrontierNode<W>)> {
+    pub fn drain_current_generation(&mut self) -> Vec<(TomitaKey, FrontierNode<W>)> {
         let cur = self.current_generation;
         let mut keyed_stamps: Vec<(TomitaKey, u64)> = self
             .map
@@ -746,13 +743,7 @@ mod tests {
     use crate::wpda_runtime::WpdaState;
 
     fn fresh_key() -> TomitaKey {
-        TomitaKey::new(
-            WpdaState::Ready { min_bp: 0 },
-            0,
-            0,
-            None,
-            0,
-        )
+        TomitaKey::new(WpdaState::Ready { min_bp: 0 }, 0, 0, None, 0)
     }
 
     fn fresh_shell() -> TomitaShell<LexicographicWeight> {
@@ -989,18 +980,9 @@ mod tests {
 
     #[test]
     fn tomita_divergence_variants_are_distinct() {
-        assert_ne!(
-            TomitaDivergence::ObsInvariantOverArcs,
-            TomitaDivergence::ObsDivergentOverArcs,
-        );
-        assert_ne!(
-            TomitaDivergence::ObsInvariantOverArcs,
-            TomitaDivergence::DispatchResolved,
-        );
-        assert_ne!(
-            TomitaDivergence::ObsDivergentOverArcs,
-            TomitaDivergence::DispatchResolved,
-        );
+        assert_ne!(TomitaDivergence::ObsInvariantOverArcs, TomitaDivergence::ObsDivergentOverArcs,);
+        assert_ne!(TomitaDivergence::ObsInvariantOverArcs, TomitaDivergence::DispatchResolved,);
+        assert_ne!(TomitaDivergence::ObsDivergentOverArcs, TomitaDivergence::DispatchResolved,);
     }
 
     #[test]
@@ -1047,8 +1029,7 @@ mod tests {
         // Two arcs at the same TomitaKey can have different heavy
         // Arcs — register_arc must preserve each arc's Arcs (not
         // drop them via shell-overwrite as the prior plan would have).
-        let mut map: TomitaFrontierMap<LexicographicWeight> =
-            TomitaFrontierMap::new();
+        let mut map: TomitaFrontierMap<LexicographicWeight> = TomitaFrontierMap::new();
         let mut deltas_a = Vec::new();
         deltas_a.push(BuilderDelta::EndBinderScope);
         let deltas_a_arc: Arc<Vec<BuilderDelta>> = Arc::new(deltas_a);
@@ -1102,8 +1083,7 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
         );
-        let mut map: TomitaFrontierMap<LexicographicWeight> =
-            TomitaFrontierMap::new();
+        let mut map: TomitaFrontierMap<LexicographicWeight> = TomitaFrontierMap::new();
         map.register_arc(fresh_key(), fresh_shell(), arc_a);
         map.register_arc(fresh_key(), fresh_shell(), arc_b);
         let node = map.get(&fresh_key()).expect("node present");
@@ -1157,16 +1137,13 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
         );
-        let mut map: TomitaFrontierMap<LexicographicWeight> =
-            TomitaFrontierMap::new();
+        let mut map: TomitaFrontierMap<LexicographicWeight> = TomitaFrontierMap::new();
         map.register_arc(fresh_key(), fresh_shell(), arc_a);
         map.register_arc(fresh_key(), fresh_shell(), arc_b);
         let node = map.get(&fresh_key()).expect("node present");
         // Materialize both arcs:
-        let cursor_a =
-            materialize_branch_cursor_from_arc(&node.shell, &node.arcs[0]);
-        let cursor_b =
-            materialize_branch_cursor_from_arc(&node.shell, &node.arcs[1]);
+        let cursor_a = materialize_branch_cursor_from_arc(&node.shell, &node.arcs[0]);
+        let cursor_b = materialize_branch_cursor_from_arc(&node.shell, &node.arcs[1]);
         // Each cursor preserved its own recovery_deltas:
         assert_eq!(cursor_a.recovery_deltas.len(), 1);
         assert_eq!(cursor_b.recovery_deltas.len(), 0);

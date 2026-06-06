@@ -59,10 +59,10 @@ fn probe_run_to_nf_dash_space_zero() {
     match trace.outcome {
         TraceOutcome::NormalForm { term, steps } => {
             eprintln!("NF for \"- 0\" = {:?}, steps = {}", term, steps);
-        }
+        },
         other => {
             eprintln!("did not reach NF: {:?}", other);
-        }
+        },
     }
 }
 
@@ -83,17 +83,11 @@ fn probe_dump_all_terms_dash_space_zero() {
     };
     eprintln!("== all_terms ==");
     for (i, t) in results.all_terms.iter().enumerate() {
-        eprintln!(
-            "  [{}] id={} is_nf={} display={:?}",
-            i, t.term_id, t.is_normal_form, t.display
-        );
+        eprintln!("  [{}] id={} is_nf={} display={:?}", i, t.term_id, t.is_normal_form, t.display);
     }
     eprintln!("== rewrites ==");
     for rw in results.rewrites.iter() {
-        eprintln!(
-            "  from_id={} to_id={} rule={:?}",
-            rw.from_id, rw.to_id, rw.rule_name
-        );
+        eprintln!("  from_id={} to_id={} rule={:?}", rw.from_id, rw.to_id, rw.rule_name);
     }
     eprintln!("== initial term id = {}", arc_term.term_id());
 }
@@ -111,17 +105,11 @@ fn probe_language_parse_dash_space_zero() {
     let results = lang.run_ascent(parsed.as_ref()).expect("ascent");
     eprintln!("== all_terms (via Language::parse) ==");
     for (i, t) in results.all_terms.iter().enumerate() {
-        eprintln!(
-            "  [{}] id={} is_nf={} display={:?}",
-            i, t.term_id, t.is_normal_form, t.display
-        );
+        eprintln!("  [{}] id={} is_nf={} display={:?}", i, t.term_id, t.is_normal_form, t.display);
     }
     eprintln!("== rewrites ==");
     for rw in results.rewrites.iter() {
-        eprintln!(
-            "  from_id={} to_id={} rule={:?}",
-            rw.from_id, rw.to_id, rw.rule_name
-        );
+        eprintln!("  from_id={} to_id={} rule={:?}", rw.from_id, rw.to_id, rw.rule_name);
     }
 }
 
@@ -146,10 +134,10 @@ fn probe_run_to_nf_dash_zero() {
     match trace.outcome {
         TraceOutcome::NormalForm { term, steps } => {
             eprintln!("NF for \"-0\" = {:?}, steps = {}", term, steps);
-        }
+        },
         other => {
             eprintln!("did not reach NF: {:?}", other);
-        }
+        },
     }
 }
 
@@ -177,7 +165,7 @@ fn probe_fork_parse_dash_3_bang_emits_alternatives() {
         Ok(t) => {
             eprintln!("parse(\"-3!\") OK = {:?}", t);
             eprintln!("Display(parse(\"-3!\")) = {:?}", format!("{}", t));
-        }
+        },
         Err(e) => eprintln!("parse(\"-3!\") ERR = {:?}", e),
     }
 }
@@ -257,7 +245,7 @@ fn probe_parse_via_wpda_all_dash_n_inputs() {
                 for (i, t) in ts.iter().enumerate() {
                     eprintln!("    [{}] debug={:?} display={:?}", i, t, format!("{}", t));
                 }
-            }
+            },
             Err(e) => eprintln!("parse_via_wpda_all({:?}) ERR = {:?}", input, e),
         }
     }
@@ -273,7 +261,7 @@ fn probe_i32_min_atomic_lex() {
         Ok(t) => {
             eprintln!("parse('-2147483648') = {:?}", t);
             eprintln!("Display = {:?}", format!("{}", t));
-        }
+        },
         Err(e) => eprintln!("parse('-2147483648') ERR = {:?}", e),
     }
 }
@@ -284,9 +272,7 @@ fn probe_parse_dash_zero_point_zero_float() {
     use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
     // Direct Float::parse_structured of "-0.0" to see if it fails here too
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        Float::parse_structured("-0.0")
-    }));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Float::parse_structured("-0.0")));
     match result {
         Ok(Ok(t)) => eprintln!("Float::parse_structured('-0.0') = {:?}", t),
         Ok(Err(e)) => eprintln!("Float::parse_structured('-0.0') ERR = {:?}", e),
@@ -300,9 +286,7 @@ fn probe_parse_dash_zero_point_zero_proc() {
     use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
     let lang = CalculatorLanguage;
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        lang.parse_term("-0.0")
-    }));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| lang.parse_term("-0.0")));
     match result {
         Ok(Ok(t)) => eprintln!("CalculatorLanguage::parse_term('-0.0') = {:?}", format!("{}", t)),
         Ok(Err(e)) => eprintln!("CalculatorLanguage::parse_term('-0.0') ERR = {:?}", e),
@@ -314,7 +298,7 @@ fn probe_parse_dash_zero_point_zero_proc() {
             } else {
                 eprintln!("PANIC: unknown payload");
             }
-        }
+        },
     }
 }
 
@@ -323,16 +307,14 @@ fn probe_parse_via_wpda_all_dash_zero_point_zero_float() {
     use mettail_languages::calculator::Float;
     use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        Float::parse_via_wpda_all("-0.0")
-    }));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Float::parse_via_wpda_all("-0.0")));
     match result {
         Ok(Ok(ts)) => {
             eprintln!("Float::parse_via_wpda_all('-0.0') = {} alts", ts.len());
             for (i, t) in ts.iter().enumerate() {
                 eprintln!("    [{}] debug={:?} display={:?}", i, t, format!("{}", t));
             }
-        }
+        },
         Ok(Err(e)) => eprintln!("Float::parse_via_wpda_all('-0.0') ERR = {:?}", e),
         Err(p) => {
             if let Some(s) = p.downcast_ref::<String>() {
@@ -342,7 +324,7 @@ fn probe_parse_via_wpda_all_dash_zero_point_zero_float() {
             } else {
                 eprintln!("PANIC: unknown payload");
             }
-        }
+        },
     }
 }
 
@@ -351,9 +333,7 @@ fn probe_minimal_atomic_int_lit() {
     // Simplest possible atomic int parse.
     use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        Int::parse_structured("42")
-    }));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Int::parse_structured("42")));
     match result {
         Ok(Ok(t)) => eprintln!("Int::parse_structured('42') = {:?}", t),
         Ok(Err(e)) => eprintln!("Int::parse_structured('42') ERR = {:?}", e),
@@ -365,7 +345,7 @@ fn probe_minimal_atomic_int_lit() {
             } else {
                 eprintln!("PANIC: unknown payload");
             }
-        }
+        },
     }
 }
 
@@ -373,9 +353,7 @@ fn probe_minimal_atomic_int_lit() {
 fn probe_minimal_atomic_int_lit_negative() {
     use std::panic::AssertUnwindSafe;
     mettail_runtime::clear_var_cache();
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-        Int::parse_structured("-5")
-    }));
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| Int::parse_structured("-5")));
     match result {
         Ok(Ok(t)) => eprintln!("Int::parse_structured('-5') = {:?}", t),
         Ok(Err(e)) => eprintln!("Int::parse_structured('-5') ERR = {:?}", e),
@@ -387,7 +365,7 @@ fn probe_minimal_atomic_int_lit_negative() {
             } else {
                 eprintln!("PANIC: unknown payload");
             }
-        }
+        },
     }
 }
 

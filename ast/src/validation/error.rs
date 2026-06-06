@@ -50,7 +50,6 @@ pub enum ValidationError {
     },
 
     // ── Guard configuration lints (design doc §2A) ────────────────────────
-
     /// CONN01: a connective keyword is mapped to multiple roles.
     DuplicateConnectiveKeyword {
         keyword: String,
@@ -193,8 +192,7 @@ impl ValidationError {
                         name
                     )
                 } else {
-                    let preview: Vec<&str> =
-                        available.iter().take(8).map(|s| s.as_str()).collect();
+                    let preview: Vec<&str> = available.iter().take(8).map(|s| s.as_str()).collect();
                     let suffix = if available.len() > 8 { ", ..." } else { "" };
                     format!(
                         "GUARD01: unknown predicate `{}` in guard expression \

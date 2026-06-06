@@ -62,9 +62,9 @@
 //! - `semantic_hash_iterative<H: Hasher>(&mut Vec<SemanticHashTask>, &mut H)`
 //! - `impl Cat { pub fn semantic_hash<H>(&self, &mut H) }` for each category
 
-use mettail_ast::language::LanguageDef;
 use crate::gen::runtime::wpda_codegen::builtin_metadata::classify_simple_projection_shape;
 use crate::gen::term_ops::subst::{collect_category_variants, FieldInfo, VariantKind};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::HashSet;
@@ -161,7 +161,8 @@ fn generate_semantic_engine(
                 variants.len() <= 255,
                 "Category {} has {} variants > 255; semantic_hash variant_idx is u8. \
                  Bump to u16 if a real language hits this.",
-                cat, variants.len(),
+                cat,
+                variants.len(),
             );
             let variant_arms: Vec<TokenStream> = variants
                 .iter()
@@ -197,10 +198,8 @@ fn generate_semantic_engine(
         .map(|t| {
             let cat = &t.name;
             let task_variant = format_ident!("SemHash{}", cat);
-            let helper_fn = format_ident!(
-                "semantic_hash_handle_{}",
-                cat.to_string().to_lowercase()
-            );
+            let helper_fn =
+                format_ident!("semantic_hash_handle_{}", cat.to_string().to_lowercase());
             quote! {
                 SemanticHashTask::#task_variant(ptr) => {
                     #helper_fn(stack, state, ptr);
@@ -251,7 +250,7 @@ fn generate_semantic_variant_arm(
                     state.write_u8(#variant_idx);
                 }
             }
-        }
+        },
 
         VariantKind::Literal { label } => {
             quote! {
@@ -260,7 +259,7 @@ fn generate_semantic_variant_arm(
                     std::hash::Hash::hash(v, state);
                 }
             }
-        }
+        },
 
         VariantKind::Var { label } => {
             quote! {
@@ -269,11 +268,16 @@ fn generate_semantic_variant_arm(
                     std::hash::Hash::hash(v, state);
                 }
             }
-        }
+        },
 
-        VariantKind::Regular { label, fields } => {
-            generate_semantic_regular_arm(category, variant_idx, label, fields, transparent_labels, language)
-        }
+        VariantKind::Regular { label, fields } => generate_semantic_regular_arm(
+            category,
+            variant_idx,
+            label,
+            fields,
+            transparent_labels,
+            language,
+        ),
 
         VariantKind::Collection { label, .. } => {
             // Collections: emit variant_idx + delegate to collection's
@@ -289,15 +293,21 @@ fn generate_semantic_variant_arm(
                     std::hash::Hash::hash(coll, state);
                 }
             }
-        }
+        },
 
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
             generate_semantic_binder_arm(category, variant_idx, label, pre_scope_fields, body_cat)
-        }
+        },
 
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            generate_semantic_multi_binder_arm(category, variant_idx, label, pre_scope_fields, body_cat)
-        }
+            generate_semantic_multi_binder_arm(
+                category,
+                variant_idx,
+                label,
+                pre_scope_fields,
+                body_cat,
+            )
+        },
     }
 }
 
@@ -360,8 +370,7 @@ fn generate_semantic_regular_arm(
         // Non-transparent: emit u8 variant_idx + recurse on fields.
         // Follows the iterative_hash pattern with eager Box<T> hashing
         // when before a collection field, stack push for trailing Box<T>.
-        let field_names: Vec<Ident> =
-            (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+        let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
 
         let last_coll_idx = fields.iter().rposition(|f| f.is_collection);
         let eager_end = last_coll_idx.map(|i| i + 1).unwrap_or(0);
@@ -419,11 +428,8 @@ fn generate_semantic_regular_arm(
 
         // Trailing Box<T> fields after last collection: push in reverse
         // order so they pop in field order.
-        let deferred: Vec<(usize, &FieldInfo)> = fields
-            .iter()
-            .enumerate()
-            .skip(eager_end)
-            .collect();
+        let deferred: Vec<(usize, &FieldInfo)> =
+            fields.iter().enumerate().skip(eager_end).collect();
 
         for &(i, field) in deferred.iter().rev() {
             let name = &field_names[i];

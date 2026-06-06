@@ -33,7 +33,7 @@
 //! validator is invoked from
 //! `mettail-macros::logic::generate_logic_block`.
 
-use mettail_ast::language::{BehavioralPred, LanguageDef};
+use mettail_ast::language::{BehavioralPred, LanguageDef, Premise};
 use mettail_prattail::lint::DiagnosticId;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -88,12 +88,10 @@ enum EdgeKind {
 ///   referenced by the guard predicate, with the edge classified as
 ///   `Negative` iff the reference is wrapped in a `Not(...)`.
 ///
-/// In the current `LanguageDef` schema, the only place a relation is
-/// "defined by a rule" is via `equations { }` and `terms { }`
-/// rewrites — relations are declared abstractly and populated by the
-/// auto-generated congruence + Comm rules. For Phase 3F, we examine the
-/// guard predicates declared on `?guard:Guard(<inline>)` slots, since
-/// those are the rules that introduce negation in the first place.
+/// Equation and rewrite premises can carry behavioral guards. We use the
+/// equation/rewrite name as the defining node and add an edge to each
+/// referenced relation. Positive `rel(args)` premises are included too,
+/// so Tarjan sees the full premise dependency graph.
 pub fn analyze(language: &LanguageDef) -> StratificationReport {
     let mut graph: BTreeMap<String, Vec<(String, EdgeKind)>> = BTreeMap::new();
     let mut node_set: BTreeSet<String> = BTreeSet::new();
@@ -133,6 +131,14 @@ pub fn analyze(language: &LanguageDef) -> StratificationReport {
                 graph.entry(label.clone()).or_default();
             }
         }
+    }
+
+    for eq in &language.equations {
+        add_premise_edges(&eq.name.to_string(), &eq.premises, &mut graph, &mut node_set);
+    }
+
+    for rw in &language.rewrites {
+        add_premise_edges(&rw.name.to_string(), &rw.premises, &mut graph, &mut node_set);
     }
 
     // Ensure every node has an (empty) entry in the adjacency map.
@@ -179,10 +185,62 @@ pub fn analyze(language: &LanguageDef) -> StratificationReport {
 /// along with whether the reference is negated.
 ///
 /// Used by callers that build the graph from inline guard predicates.
-pub fn collect_relation_refs(pred: &BehavioralPred) -> Vec<(String, EdgeKind)> {
+fn collect_relation_refs(pred: &BehavioralPred) -> Vec<(String, EdgeKind)> {
     let mut acc = Vec::new();
     collect_relation_refs_inner(pred, false, &mut acc);
     acc
+}
+
+fn add_premise_edges(
+    source: &str,
+    premises: &[Premise],
+    graph: &mut BTreeMap<String, Vec<(String, EdgeKind)>>,
+    node_set: &mut BTreeSet<String>,
+) {
+    node_set.insert(source.to_string());
+    graph.entry(source.to_string()).or_default();
+
+    for premise in premises {
+        add_premise_edge(source, premise, graph, node_set);
+    }
+}
+
+fn add_premise_edge(
+    source: &str,
+    premise: &Premise,
+    graph: &mut BTreeMap<String, Vec<(String, EdgeKind)>>,
+    node_set: &mut BTreeSet<String>,
+) {
+    match premise {
+        Premise::RelationQuery { relation, .. } => {
+            add_edge(source, relation.to_string(), EdgeKind::Positive, graph, node_set);
+        },
+        Premise::BehavioralGuard(pred) => {
+            for (target, kind) in collect_relation_refs(pred) {
+                add_edge(source, target, kind, graph, node_set);
+            }
+        },
+        Premise::ForAll { body, .. } => {
+            add_premise_edge(source, body, graph, node_set);
+        },
+        Premise::Freshness(_) | Premise::Congruence { .. } | Premise::SyntheticInjGuard { .. } => {
+        },
+    }
+}
+
+fn add_edge(
+    source: &str,
+    target: String,
+    kind: EdgeKind,
+    graph: &mut BTreeMap<String, Vec<(String, EdgeKind)>>,
+    node_set: &mut BTreeSet<String>,
+) {
+    node_set.insert(source.to_string());
+    node_set.insert(target.clone());
+    graph
+        .entry(source.to_string())
+        .or_default()
+        .push((target, kind));
 }
 
 fn collect_relation_refs_inner(
@@ -191,11 +249,7 @@ fn collect_relation_refs_inner(
     acc: &mut Vec<(String, EdgeKind)>,
 ) {
     match pred {
-        BehavioralPred::RelationQuery {
-            relation_name,
-            negated,
-            ..
-        } => {
+        BehavioralPred::RelationQuery { relation_name, negated, .. } => {
             let effective_negated = inside_negation ^ negated;
             let kind = if effective_negated {
                 EdgeKind::Negative
@@ -203,23 +257,23 @@ fn collect_relation_refs_inner(
                 EdgeKind::Positive
             };
             acc.push((relation_name.to_string(), kind));
-        }
+        },
         BehavioralPred::Not(inner) => {
             collect_relation_refs_inner(inner, !inside_negation, acc);
-        }
+        },
         BehavioralPred::And(a, b) | BehavioralPred::Or(a, b) => {
             collect_relation_refs_inner(a, inside_negation, acc);
             collect_relation_refs_inner(b, inside_negation, acc);
-        }
+        },
         BehavioralPred::Implies(a, b) => {
             // P ⟹ Q ≡ ¬P ∨ Q : the antecedent is negated.
             collect_relation_refs_inner(a, !inside_negation, acc);
             collect_relation_refs_inner(b, inside_negation, acc);
-        }
+        },
         BehavioralPred::Quantified { body, .. } => {
             collect_relation_refs_inner(body, inside_negation, acc);
-        }
-        BehavioralPred::AcMatch { .. } | BehavioralPred::Top => {}
+        },
+        BehavioralPred::AcMatch { .. } | BehavioralPred::Top => {},
     }
 }
 
@@ -227,9 +281,7 @@ fn collect_relation_refs_inner(
 ///
 /// Returns SCCs in reverse topological order. Each SCC is a vector of
 /// node names; single-node SCCs are included.
-fn tarjan_scc(
-    graph: &BTreeMap<String, Vec<(String, EdgeKind)>>,
-) -> Vec<Vec<String>> {
+fn tarjan_scc(graph: &BTreeMap<String, Vec<(String, EdgeKind)>>) -> Vec<Vec<String>> {
     struct State<'a> {
         graph: &'a BTreeMap<String, Vec<(String, EdgeKind)>>,
         index: usize,
@@ -300,17 +352,50 @@ fn tarjan_scc(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mettail_ast::language::PredArg;
+    use mettail_ast::{
+        language::{AttributeValue, Equation, GuardConfig, LangType, PredArg, RewriteRule},
+        pattern::{Pattern, PatternTerm},
+    };
+    use std::collections::HashMap;
 
     fn pred_var(name: &str) -> PredArg {
         PredArg::Var(syn::Ident::new(name, proc_macro2::Span::call_site()))
     }
 
+    fn ident(name: &str) -> syn::Ident {
+        syn::Ident::new(name, proc_macro2::Span::call_site())
+    }
+
+    fn var_pattern(name: &str) -> Pattern {
+        Pattern::Term(PatternTerm::Var(ident(name)))
+    }
+
     fn rel(name: &str, args: Vec<PredArg>, negated: bool) -> BehavioralPred {
         BehavioralPred::RelationQuery {
-            relation_name: syn::Ident::new(name, proc_macro2::Span::call_site()),
+            relation_name: ident(name),
             args,
             negated,
+        }
+    }
+
+    fn minimal_lang() -> LanguageDef {
+        LanguageDef {
+            name: ident("TestLang"),
+            options: HashMap::<String, AttributeValue>::new(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::<LangType>::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None::<GuardConfig>,
         }
     }
 
@@ -356,12 +441,48 @@ mod tests {
     }
 
     #[test]
+    fn analyze_detects_negative_behavioral_guard_self_cycle_in_rewrite() {
+        let mut lang = minimal_lang();
+        lang.rewrites.push(RewriteRule {
+            name: ident("halts"),
+            type_context: Vec::new(),
+            premises: vec![Premise::BehavioralGuard(BehavioralPred::Not(Box::new(rel(
+                "halts",
+                vec![pred_var("x")],
+                false,
+            ))))],
+            left: var_pattern("x"),
+            right: var_pattern("x"),
+            is_auto_injected: false,
+        });
+
+        let report = analyze(&lang);
+        assert!(report.has_violations());
+        assert_eq!(report.negative_cycles, vec![vec!["halts".to_string(), "halts".to_string()]]);
+    }
+
+    #[test]
+    fn analyze_keeps_positive_self_reference_stratified() {
+        let mut lang = minimal_lang();
+        lang.equations.push(Equation {
+            name: ident("safe"),
+            type_context: Vec::new(),
+            premises: vec![Premise::RelationQuery {
+                relation: ident("safe"),
+                args: vec![ident("x")],
+            }],
+            left: var_pattern("x"),
+            right: var_pattern("x"),
+        });
+
+        let report = analyze(&lang);
+        assert!(!report.has_violations(), "{:?}", report);
+    }
+
+    #[test]
     fn tarjan_self_cycle_detected() {
         let mut graph = BTreeMap::new();
-        graph.insert(
-            "A".to_string(),
-            vec![("A".to_string(), EdgeKind::Negative)],
-        );
+        graph.insert("A".to_string(), vec![("A".to_string(), EdgeKind::Negative)]);
         let sccs = tarjan_scc(&graph);
         assert_eq!(sccs.len(), 1);
         assert_eq!(sccs[0], vec!["A".to_string()]);
@@ -370,14 +491,8 @@ mod tests {
     #[test]
     fn tarjan_two_cycle_detected() {
         let mut graph = BTreeMap::new();
-        graph.insert(
-            "A".to_string(),
-            vec![("B".to_string(), EdgeKind::Positive)],
-        );
-        graph.insert(
-            "B".to_string(),
-            vec![("A".to_string(), EdgeKind::Negative)],
-        );
+        graph.insert("A".to_string(), vec![("B".to_string(), EdgeKind::Positive)]);
+        graph.insert("B".to_string(), vec![("A".to_string(), EdgeKind::Negative)]);
         let sccs = tarjan_scc(&graph);
         // Both nodes should land in the same SCC.
         let two_cycle = sccs.iter().find(|s| s.len() == 2);
@@ -387,10 +502,7 @@ mod tests {
     #[test]
     fn tarjan_acyclic_returns_singletons() {
         let mut graph = BTreeMap::new();
-        graph.insert(
-            "A".to_string(),
-            vec![("B".to_string(), EdgeKind::Positive)],
-        );
+        graph.insert("A".to_string(), vec![("B".to_string(), EdgeKind::Positive)]);
         graph.insert("B".to_string(), vec![]);
         let sccs = tarjan_scc(&graph);
         assert_eq!(sccs.len(), 2);

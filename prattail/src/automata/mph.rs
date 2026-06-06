@@ -240,11 +240,7 @@ impl MphTable {
                 let mut trial_ok = true;
 
                 for &kw_idx in bucket {
-                    let slot = hash_slot(
-                        keywords[kw_idx].0.as_bytes(),
-                        d,
-                        table_size,
-                    ) as usize;
+                    let slot = hash_slot(keywords[kw_idx].0.as_bytes(), d, table_size) as usize;
 
                     if occupied[slot] || trial_slots.contains(&(slot as u32)) {
                         trial_ok = false;
@@ -259,10 +255,7 @@ impl MphTable {
                     for (i, &kw_idx) in bucket.iter().enumerate() {
                         let slot = trial_slots[i] as usize;
                         occupied[slot] = true;
-                        values[slot] = Some((
-                            keywords[kw_idx].0.clone(),
-                            keywords[kw_idx].1,
-                        ));
+                        values[slot] = Some((keywords[kw_idx].0.clone(), keywords[kw_idx].1));
                     }
                     found = true;
                     break 'search;
@@ -363,9 +356,7 @@ impl MphTable {
 pub fn write_mph_tables(buf: &mut String, table: &MphTable) {
     if table.is_empty() {
         // Emit a trivial probe function that always returns None.
-        buf.push_str(
-            "#[inline(always)] fn mph_probe(_text: &str) -> Option<usize> { None }\n",
-        );
+        buf.push_str("#[inline(always)] fn mph_probe(_text: &str) -> Option<usize> { None }\n");
         return;
     }
 
@@ -442,9 +433,7 @@ pub fn write_mph_tables(buf: &mut String, table: &MphTable) {
 ///
 /// Extracts keyword-like terminals (alphanumeric `Fixed` tokens) and assigns
 /// each a sequential token ID. Returns `None` if no keywords are found.
-pub fn build_mph_from_terminals(
-    terminals: &[super::TerminalPattern],
-) -> Option<MphTable> {
+pub fn build_mph_from_terminals(terminals: &[super::TerminalPattern]) -> Option<MphTable> {
     let keywords: Vec<(String, usize)> = terminals
         .iter()
         .enumerate()
@@ -539,27 +528,18 @@ mod tests {
 
     #[test]
     fn test_non_keywords_return_none() {
-        let keywords = vec![
-            ("true".to_string(), 0),
-            ("false".to_string(), 1),
-            ("null".to_string(), 2),
-        ];
+        let keywords =
+            vec![("true".to_string(), 0), ("false".to_string(), 1), ("null".to_string(), 2)];
         let table = MphTable::build(&keywords);
 
         // Strings that are definitely not keywords.
         let non_keywords = [
-            "", "t", "tr", "tru", "truee", "True", "TRUE",
-            "f", "fa", "fal", "fals", "falsee", "False", "FALSE",
-            "n", "nu", "nul", "nulll", "Null", "NULL",
-            "hello", "world", "12345", "!@#$%",
+            "", "t", "tr", "tru", "truee", "True", "TRUE", "f", "fa", "fal", "fals", "falsee",
+            "False", "FALSE", "n", "nu", "nul", "nulll", "Null", "NULL", "hello", "world", "12345",
+            "!@#$%",
         ];
         for nk in &non_keywords {
-            assert_eq!(
-                table.probe(nk),
-                None,
-                "'{}' should not be found in keyword table",
-                nk
-            );
+            assert_eq!(table.probe(nk), None, "'{}' should not be found in keyword table", nk);
         }
     }
 
@@ -602,15 +582,56 @@ mod tests {
     fn test_large_keyword_set() {
         // Test with ~50 keywords to verify CHD handles larger sets.
         let keyword_strs = [
-            "abstract", "assert", "boolean", "break", "byte", "case",
-            "catch", "char", "class", "const", "continue", "default",
-            "do", "double", "else", "enum", "extends", "final",
-            "finally", "float", "for", "goto", "if", "implements",
-            "import", "instanceof", "int", "interface", "long",
-            "native", "new", "package", "private", "protected",
-            "public", "return", "short", "static", "strictfp",
-            "super", "switch", "synchronized", "this", "throw",
-            "throws", "transient", "try", "void", "volatile", "while",
+            "abstract",
+            "assert",
+            "boolean",
+            "break",
+            "byte",
+            "case",
+            "catch",
+            "char",
+            "class",
+            "const",
+            "continue",
+            "default",
+            "do",
+            "double",
+            "else",
+            "enum",
+            "extends",
+            "final",
+            "finally",
+            "float",
+            "for",
+            "goto",
+            "if",
+            "implements",
+            "import",
+            "instanceof",
+            "int",
+            "interface",
+            "long",
+            "native",
+            "new",
+            "package",
+            "private",
+            "protected",
+            "public",
+            "return",
+            "short",
+            "static",
+            "strictfp",
+            "super",
+            "switch",
+            "synchronized",
+            "this",
+            "throw",
+            "throws",
+            "transient",
+            "try",
+            "void",
+            "volatile",
+            "while",
         ];
         let keywords: Vec<(String, usize)> = keyword_strs
             .iter()
@@ -622,13 +643,7 @@ mod tests {
         assert_eq!(table.len(), keyword_strs.len());
 
         for (kw, id) in &keywords {
-            assert_eq!(
-                table.probe(kw),
-                Some(*id),
-                "Java keyword '{}' should map to {}",
-                kw,
-                id
-            );
+            assert_eq!(table.probe(kw), Some(*id), "Java keyword '{}' should map to {}", kw, id);
         }
 
         // Non-keywords
@@ -649,10 +664,7 @@ mod tests {
 
     #[test]
     fn test_write_mph_tables_nonempty() {
-        let keywords = vec![
-            ("if".to_string(), 0),
-            ("else".to_string(), 1),
-        ];
+        let keywords = vec![("if".to_string(), 0), ("else".to_string(), 1)];
         let table = MphTable::build(&keywords);
         let mut buf = String::new();
         write_mph_tables(&mut buf, &table);
@@ -723,11 +735,7 @@ mod tests {
     #[test]
     fn test_deterministic_construction() {
         // Building the same keyword set twice should produce identical tables.
-        let keywords = vec![
-            ("fn".to_string(), 0),
-            ("let".to_string(), 1),
-            ("mut".to_string(), 2),
-        ];
+        let keywords = vec![("fn".to_string(), 0), ("let".to_string(), 1), ("mut".to_string(), 2)];
         let table1 = MphTable::build(&keywords);
         let table2 = MphTable::build(&keywords);
 

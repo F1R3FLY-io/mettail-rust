@@ -431,19 +431,12 @@ pub enum EdgeKind {
     /// InfixLoop dispatch's `ConsumeAndPush` of an InfixContinuation
     /// symbol (after matching the infix operator). Payload = (cat, rule,
     /// bp from symbol).
-    InfixContinuation {
-        cat_src: u16,
-        rule_idx: u16,
-        l_bp: u8,
-    },
+    InfixContinuation { cat_src: u16, rule_idx: u16, l_bp: u8 },
     /// Lex-alternative Fork branch (LexAlt family). Payload =
     /// (cat, rule). Distinguished from PrefixRuleEntry because lex-Fork
     /// is a Fork-time variant; runtime semantics are similar but
     /// emission context differs.
-    LexAltLiteral {
-        cat_src: u16,
-        rule_idx: u16,
-    },
+    LexAltLiteral { cat_src: u16, rule_idx: u16 },
     /// Optional-group `OptionalGroupAt(sub_pos)` marker. Payload =
     /// (cat, rule, sub_pos, outer_bp).
     OptionalGroupAt {
@@ -463,10 +456,7 @@ pub enum EdgeKind {
     },
     /// Grouping marker push. Pop restores the outer Pratt `cur_bp`.
     /// Comparison falls back to GssEdgeId.
-    GroupingMarker {
-        result_src: u16,
-        outer_bp: u8,
-    },
+    GroupingMarker { result_src: u16, outer_bp: u8 },
     /// Mixfix continuation marker. Comparison falls back to GssEdgeId.
     MixfixMarker {
         result_src: u16,
@@ -475,10 +465,7 @@ pub enum EdgeKind {
     },
     /// Return-frame push. Comparison falls back to GssEdgeId (divergent
     /// because the return frame's predecessor varies per cursor history).
-    ReturnFrame {
-        cat_src: u16,
-        rule_idx: u16,
-    },
+    ReturnFrame { cat_src: u16, rule_idx: u16 },
 }
 
 impl EdgeKind {
@@ -493,7 +480,7 @@ impl EdgeKind {
                 // callers that know it's cross-cat should construct the
                 // CrossCatProjection variant explicitly.
                 EdgeKind::CategoryEntryRoot
-            }
+            },
             SymbolKind::RuleAt(item_pos) => EdgeKind::PrefixRuleEntry {
                 cat_src: sym.category_src_idx,
                 rule_idx: sym.rule_index_in_category,
@@ -614,7 +601,7 @@ impl<W: SemiringRef> WpdaGss<W> {
     ///    weighted differently — the semiring sum is the canonical
     ///    representative.
     pub fn add_edge(&mut self, source: GssNodeId, target: GssNodeId, weight: W) -> GssEdgeId {
-        // Phase F.13 H13 Step 0 (2026-05-21): tag with Generic placeholder.
+        // Phase F.13 H13 Step 0 (2026-05-21): tag with the Generic edge kind.
         // Higher-level callers (push_symbol_with_edge_id_kind /
         // replace_top_with_edge_id_kind) should use `add_edge_kind` to
         // pass a specific EdgeKind.
@@ -627,11 +614,7 @@ impl<W: SemiringRef> WpdaGss<W> {
         }
         let idx = edges.len();
         let edge_id = pack_edge_id(source, idx);
-        edges.push(WpdaGssEdge {
-            target,
-            weight,
-            kind: EdgeKind::Generic,
-        });
+        edges.push(WpdaGssEdge { target, weight, kind: EdgeKind::Generic });
         edge_id
     }
 
@@ -658,11 +641,7 @@ impl<W: SemiringRef> WpdaGss<W> {
         }
         let idx = edges.len();
         let edge_id = pack_edge_id(source, idx);
-        edges.push(WpdaGssEdge {
-            target,
-            weight,
-            kind,
-        });
+        edges.push(WpdaGssEdge { target, weight, kind });
         edge_id
     }
 
@@ -671,9 +650,9 @@ impl<W: SemiringRef> WpdaGss<W> {
     /// does not exist.
     pub fn edge_kind(&self, edge_id: GssEdgeId) -> Option<EdgeKind> {
         let (source, idx) = unpack_edge_id(edge_id);
-        self.edges.get(&source).and_then(|edges| {
-            edges.get(idx as usize).map(|e| e.kind.clone())
-        })
+        self.edges
+            .get(&source)
+            .and_then(|edges| edges.get(idx as usize).map(|e| e.kind.clone()))
     }
 
     /// Stage 3.12.6 (2026-05-02): look up the target node of a specific
@@ -768,7 +747,8 @@ impl<W: SemiringRef> WpdaGss<W> {
         pos: usize,
         weight: W,
     ) -> GssNodeId {
-        self.push_symbol_with_edge_id(frontier_node, symbol, pos, weight).0
+        self.push_symbol_with_edge_id(frontier_node, symbol, pos, weight)
+            .0
     }
 
     /// Stage 3.12.6 (2026-05-02): variant of `push_symbol` that returns
@@ -828,7 +808,8 @@ impl<W: SemiringRef> WpdaGss<W> {
         // cursor's edge (returns first predecessor edge id). Walker
         // callers should use `replace_top_with_edge_id` directly with
         // the cursor's recorded incoming edge.
-        self.replace_top_with_edge_id(frontier_node, new_symbol, pos, weight, None).0
+        self.replace_top_with_edge_id(frontier_node, new_symbol, pos, weight, None)
+            .0
     }
 
     /// Stage 3.12.6 (2026-05-02): variant of `replace_top` that returns
@@ -978,9 +959,9 @@ impl<W: SemiringRef> WpdaGss<W> {
                     0 => {
                         state.insert(target, 1);
                         work.push((target, 0));
-                    }
+                    },
                     1 => return true, // back-edge — cycle
-                    _ => { /* already finished — not a back edge */ }
+                    _ => { /* already finished — not a back edge */ },
                 }
             } else {
                 state.insert(node, 2);
@@ -1024,28 +1005,11 @@ mod tests {
     #[test]
     fn test_gss_fork() {
         let mut gss = GraphStructuredStack::new();
-        let root = gss.get_or_create_node(GssNode {
-            pos: 0,
-            frame_tag: "Root".to_string(),
-        });
+        let root = gss.get_or_create_node(GssNode { pos: 0, frame_tag: "Root".to_string() });
         gss.push_frontier(root);
 
-        let fork1 = gss.fork(
-            root,
-            GssNode {
-                pos: 1,
-                frame_tag: "Alt_A".to_string(),
-            },
-            0.5,
-        );
-        let fork2 = gss.fork(
-            root,
-            GssNode {
-                pos: 1,
-                frame_tag: "Alt_B".to_string(),
-            },
-            0.7,
-        );
+        let fork1 = gss.fork(root, GssNode { pos: 1, frame_tag: "Alt_A".to_string() }, 0.5);
+        let fork2 = gss.fork(root, GssNode { pos: 1, frame_tag: "Alt_B".to_string() }, 0.7);
 
         assert_eq!(gss.node_count(), 3);
         assert_eq!(gss.edge_count(), 2);
@@ -1063,18 +1027,9 @@ mod tests {
     #[test]
     fn test_gss_paths_to_root() {
         let mut gss = GraphStructuredStack::new();
-        let root = gss.get_or_create_node(GssNode {
-            pos: 0,
-            frame_tag: "Root".to_string(),
-        });
-        let mid = gss.get_or_create_node(GssNode {
-            pos: 1,
-            frame_tag: "Mid".to_string(),
-        });
-        let top = gss.get_or_create_node(GssNode {
-            pos: 2,
-            frame_tag: "Top".to_string(),
-        });
+        let root = gss.get_or_create_node(GssNode { pos: 0, frame_tag: "Root".to_string() });
+        let mid = gss.get_or_create_node(GssNode { pos: 1, frame_tag: "Mid".to_string() });
+        let top = gss.get_or_create_node(GssNode { pos: 2, frame_tag: "Top".to_string() });
 
         gss.add_edge(mid, root, 1.0);
         gss.add_edge(top, mid, 1.0);
@@ -1087,14 +1042,8 @@ mod tests {
     #[test]
     fn test_sppf_basic() {
         let mut sppf = Sppf::new();
-        let t1 = sppf.add_node(SppfNode::Terminal {
-            pos: 0,
-            text: "1".to_string(),
-        });
-        let t2 = sppf.add_node(SppfNode::Terminal {
-            pos: 2,
-            text: "2".to_string(),
-        });
+        let t1 = sppf.add_node(SppfNode::Terminal { pos: 0, text: "1".to_string() });
+        let t2 = sppf.add_node(SppfNode::Terminal { pos: 2, text: "2".to_string() });
         let add = sppf.add_node(SppfNode::Interior {
             label: "Add".to_string(),
             start: 0,
@@ -1115,10 +1064,7 @@ mod tests {
 
         // Two alternative derivations
         let packed = sppf.add_node(SppfNode::Packed {
-            alternatives: vec![
-                vec![t1, t2],
-                vec![t2, t3],
-            ],
+            alternatives: vec![vec![t1, t2], vec![t2, t3]],
         });
 
         assert_eq!(sppf.tree_count(packed), 2);
@@ -1136,7 +1082,10 @@ mod tests {
     #[test]
     fn test_wpds_gss_create_and_share() {
         let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
-        let n = WpdaGssNode { pos: 0, symbol: StackSymbolV2::category_entry(3) };
+        let n = WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(3),
+        };
         let id1 = g.get_or_create_node(n.clone());
         let id2 = g.get_or_create_node(n);
         assert_eq!(id1, id2, "structural sharing on (pos, symbol)");
@@ -1150,7 +1099,8 @@ mod tests {
             pos: 0,
             symbol: StackSymbolV2::category_entry(0),
         });
-        let pushed = g.push_symbol(root, StackSymbolV2::rule_at(0, 1, 0, Some(5)), 1, lex(2.0, 0, 1));
+        let pushed =
+            g.push_symbol(root, StackSymbolV2::rule_at(0, 1, 0, Some(5)), 1, lex(2.0, 0, 1));
         assert_eq!(g.node_count(), 2);
         assert_eq!(g.edge_count(), 1);
         let edges = g.edges_from(pushed);
@@ -1181,12 +1131,7 @@ mod tests {
             symbol: StackSymbolV2::category_entry(0),
         });
         let mid = g.push_symbol(root, StackSymbolV2::rule_at(0, 0, 0, None), 1, lex(1.0, 0, 0));
-        let replaced = g.replace_top(
-            mid,
-            StackSymbolV2::rule_at(0, 0, 1, None),
-            2,
-            lex(0.5, 0, 0),
-        );
+        let replaced = g.replace_top(mid, StackSymbolV2::rule_at(0, 0, 1, None), 2, lex(0.5, 0, 0));
         let pred = g.pop_symbol(replaced);
         assert_eq!(pred, Some(root), "replace inherits the predecessor");
     }
@@ -1201,12 +1146,18 @@ mod tests {
         g.push_frontier(root);
         let alt_a = g.fork(
             root,
-            WpdaGssNode { pos: 1, symbol: StackSymbolV2::rule_at(0, 0, 0, None) },
+            WpdaGssNode {
+                pos: 1,
+                symbol: StackSymbolV2::rule_at(0, 0, 0, None),
+            },
             lex(1.0, 0, 0),
         );
         let alt_b = g.fork(
             root,
-            WpdaGssNode { pos: 1, symbol: StackSymbolV2::rule_at(0, 1, 0, None) },
+            WpdaGssNode {
+                pos: 1,
+                symbol: StackSymbolV2::rule_at(0, 1, 0, None),
+            },
             lex(1.0, 0, 1),
         );
         assert_eq!(g.node_count(), 3);
@@ -1333,12 +1284,8 @@ mod tests {
             pos: 0,
             symbol: StackSymbolV2::category_entry(0),
         });
-        let _ = g.push_symbol(
-            n,
-            StackSymbolV2::rule_at(0, 0, 0, None),
-            1,
-            TropicalWeight::new(0.5),
-        );
+        let _ =
+            g.push_symbol(n, StackSymbolV2::rule_at(0, 0, 0, None), 1, TropicalWeight::new(0.5));
         assert_eq!(g.node_count(), 2);
     }
 
@@ -1350,12 +1297,7 @@ mod tests {
             symbol: StackSymbolV2::category_entry(0),
         });
         let mid = g.push_symbol(root, StackSymbolV2::rule_at(0, 0, 0, None), 1, lex(1.0, 0, 0));
-        let replaced = g.replace_top(
-            mid,
-            StackSymbolV2::rule_at(0, 0, 1, None),
-            2,
-            lex(0.5, 2, 3),
-        );
+        let replaced = g.replace_top(mid, StackSymbolV2::rule_at(0, 0, 1, None), 2, lex(0.5, 2, 3));
         // The replacement edge should carry the times-composition of replace weight
         // and the inherited edge weight.
         let edges = g.edges_from(replaced);

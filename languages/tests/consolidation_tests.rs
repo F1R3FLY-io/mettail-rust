@@ -30,14 +30,22 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
 
     leaf.prop_recursive(max_depth, 64, 4, |inner| {
         prop_oneof![
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::AddInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::SubInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::MulInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::DivInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::ModInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::AddInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::SubInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::MulInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::DivInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::ModInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
             inner.clone().prop_map(|a| Int::Neg(std::sync::Arc::new(a))),
-            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::PowInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
-            inner.clone().prop_map(|a| Int::Fact(std::sync::Arc::new(a))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::PowInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
+            inner
+                .clone()
+                .prop_map(|a| Int::Fact(std::sync::Arc::new(a))),
             (inner.clone(), inner.clone(), inner.clone()).prop_map(|(c, t, e)| Int::Tern(
                 std::sync::Arc::new(c),
                 std::sync::Arc::new(t),
@@ -47,7 +55,9 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
                 .prop_map(|(a, b)| Int::BitAndInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
             (inner.clone(), inner.clone())
                 .prop_map(|(a, b)| Int::BitOrInt(std::sync::Arc::new(a), std::sync::Arc::new(b))),
-            inner.clone().prop_map(|a| Int::BitNotInt(std::sync::Arc::new(a))),
+            inner
+                .clone()
+                .prop_map(|a| Int::BitNotInt(std::sync::Arc::new(a))),
         ]
     })
 }
@@ -219,9 +229,15 @@ fn vi_rebuild(t: &Int, vi: usize, new_val: Int) -> Int {
         (Int::PowInt(_, x1), 11) => Int::PowInt(std::sync::Arc::new(new_val), x1.clone()),
         (Int::PowInt(x0, _), 12) => Int::PowInt(x0.clone(), std::sync::Arc::new(new_val)),
         (Int::Fact(_), 13) => Int::Fact(std::sync::Arc::new(new_val)),
-        (Int::Tern(_, x1, x2), 14) => Int::Tern(std::sync::Arc::new(new_val), x1.clone(), x2.clone()),
-        (Int::Tern(x0, _, x2), 15) => Int::Tern(x0.clone(), std::sync::Arc::new(new_val), x2.clone()),
-        (Int::Tern(x0, x1, _), 16) => Int::Tern(x0.clone(), x1.clone(), std::sync::Arc::new(new_val)),
+        (Int::Tern(_, x1, x2), 14) => {
+            Int::Tern(std::sync::Arc::new(new_val), x1.clone(), x2.clone())
+        },
+        (Int::Tern(x0, _, x2), 15) => {
+            Int::Tern(x0.clone(), std::sync::Arc::new(new_val), x2.clone())
+        },
+        (Int::Tern(x0, x1, _), 16) => {
+            Int::Tern(x0.clone(), x1.clone(), std::sync::Arc::new(new_val))
+        },
         (Int::BitAndInt(_, x1), 17) => Int::BitAndInt(std::sync::Arc::new(new_val), x1.clone()),
         (Int::BitAndInt(x0, _), 18) => Int::BitAndInt(x0.clone(), std::sync::Arc::new(new_val)),
         (Int::BitOrInt(_, x1), 19) => Int::BitOrInt(std::sync::Arc::new(new_val), x1.clone()),
@@ -519,7 +535,11 @@ fn test_variant_index_injectivity() {
         Int::Neg(std::sync::Arc::new(Int::NumLit(0))),
         Int::PowInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
         Int::Fact(std::sync::Arc::new(Int::NumLit(0))),
-        Int::Tern(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1)), std::sync::Arc::new(Int::NumLit(2))),
+        Int::Tern(
+            std::sync::Arc::new(Int::NumLit(0)),
+            std::sync::Arc::new(Int::NumLit(1)),
+            std::sync::Arc::new(Int::NumLit(2)),
+        ),
         Int::BitAndInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
         Int::BitOrInt(std::sync::Arc::new(Int::NumLit(0)), std::sync::Arc::new(Int::NumLit(1))),
         Int::BitNotInt(std::sync::Arc::new(Int::NumLit(0))),

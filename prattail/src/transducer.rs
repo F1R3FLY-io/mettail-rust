@@ -53,10 +53,7 @@ pub struct PassResult {
 impl PassResult {
     /// Create a result indicating no changes were made.
     pub fn unchanged() -> Self {
-        PassResult {
-            changes: 0,
-            summary: String::new(),
-        }
+        PassResult { changes: 0, summary: String::new() }
     }
 
     /// Create a result with the given number of changes and summary.
@@ -137,10 +134,7 @@ impl OptimizationPass for DeadStateElimination {
         if reachable < total {
             let removed = total - reachable;
             wfst.remove_unreachable_states();
-            PassResult::changed(
-                removed,
-                format!("removed {} unreachable state(s)", removed),
-            )
+            PassResult::changed(removed, format!("removed {} unreachable state(s)", removed))
         } else {
             PassResult::unchanged()
         }
@@ -307,10 +301,7 @@ pub struct TransducerCascade {
 impl TransducerCascade {
     /// Create an empty cascade.
     pub fn new() -> Self {
-        TransducerCascade {
-            passes: Vec::new(),
-            max_iterations: 100,
-        }
+        TransducerCascade { passes: Vec::new(), max_iterations: 100 }
     }
 
     /// Create a cascade with the default optimization passes.
@@ -366,10 +357,7 @@ impl TransducerCascade {
                     iter_changes += result.changes;
                     pass_results.push((pass.name().to_string(), result));
                 } else {
-                    pass_results.push((
-                        pass.name().to_string(),
-                        PassResult::unchanged(),
-                    ));
+                    pass_results.push((pass.name().to_string(), PassResult::unchanged()));
                 }
             }
 
@@ -381,20 +369,13 @@ impl TransducerCascade {
             }
         }
 
-        CascadeResult {
-            iterations,
-            total_changes,
-            pass_results,
-        }
+        CascadeResult { iterations, total_changes, pass_results }
     }
 
     /// Run the cascade on all PredictionWfsts in a map.
     ///
     /// Returns a summary string suitable for diagnostic output.
-    pub fn run_all(
-        &self,
-        wfsts: &mut std::collections::HashMap<String, PredictionWfst>,
-    ) -> String {
+    pub fn run_all(&self, wfsts: &mut std::collections::HashMap<String, PredictionWfst>) -> String {
         let mut total_changes = 0;
         let mut total_iterations = 0;
         let mut categories_optimized = 0;
@@ -433,10 +414,7 @@ impl Default for TransducerCascade {
 impl std::fmt::Debug for TransducerCascade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TransducerCascade")
-            .field(
-                "passes",
-                &self.passes.iter().map(|p| p.name()).collect::<Vec<_>>(),
-            )
+            .field("passes", &self.passes.iter().map(|p| p.name()).collect::<Vec<_>>())
             .field("max_iterations", &self.max_iterations)
             .finish()
     }
@@ -507,12 +485,8 @@ mod tests {
 
     #[test]
     fn test_beam_pruning_pass() {
-        let mut wfst = build_test_wfst(&[
-            ("Ident", 0.0),
-            ("Int", 1.0),
-            ("Bool", 5.0),
-            ("Str", 10.0),
-        ]);
+        let mut wfst =
+            build_test_wfst(&[("Ident", 0.0), ("Int", 1.0), ("Bool", 5.0), ("Str", 10.0)]);
         let pass = BeamPruning::new(2.0);
         assert!(pass.is_applicable(&wfst));
         let result = pass.apply(&mut wfst);
@@ -577,10 +551,7 @@ mod tests {
         let w1b = build_test_wfst(&[("Bool", 3.0)]);
         w1.union(&w1b);
         wfsts.insert("Cat1".to_string(), w1);
-        wfsts.insert(
-            "Cat2".to_string(),
-            build_test_wfst(&[("X", 0.0)]),
-        );
+        wfsts.insert("Cat2".to_string(), build_test_wfst(&[("X", 0.0)]));
 
         let cascade = TransducerCascade::default_pipeline();
         let summary = cascade.run_all(&mut wfsts);
