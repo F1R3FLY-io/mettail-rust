@@ -92,7 +92,8 @@ pub(crate) fn build_per_category_rules(
         // Does this category have a from_literals TokenDef?
         let _has_literal_block = language.token_defs.iter().any(|td| {
             td.from_literals
-                && td.category
+                && td
+                    .category
                     .as_ref()
                     .map(|c| c.to_string() == cat_name)
                     .unwrap_or(false)
@@ -152,13 +153,9 @@ pub(crate) fn build_per_category_rules(
             continue;
         };
         let (open, close, sep, kind, label_str) = match coll_kind {
-            CollectionCategory::List(d) => (
-                d.open.clone(),
-                d.close.clone(),
-                d.sep.clone(),
-                CollectionType::Vec,
-                "ListLit",
-            ),
+            CollectionCategory::List(d) => {
+                (d.open.clone(), d.close.clone(), d.sep.clone(), CollectionType::Vec, "ListLit")
+            },
             CollectionCategory::Bag(d) => (
                 d.open.clone(),
                 d.close.clone(),
@@ -179,21 +176,10 @@ pub(crate) fn build_per_category_rules(
             .collection_element_type_for_category(&type_def.name)
             .map(|i| i.to_string())
             .unwrap_or_else(|| type_def.name.to_string());
-        // Trim trailing `(` from open delimiter (default form `list(` → `list`).
-        //
-        // **Known bug (tracked as B7)**: this 4-element split (`[Literal("list"),
-        // Literal("("), Op(Sep), Literal(")")]`) is rejected by
-        // `classify_collection` (collection.rs:58) which requires exactly 3
-        // syntax_pattern elements. The synthetic rule therefore never
-        // registers a collection prefix arm, breaking 211 tests in
-        // `gen_calculator_op` that round-trip cross-cat collection terms.
-        // The proper fix needs a coordinated change across (a) lexer
-        // tokenization of multi-char fixed strings like `"list("`,
-        // (b) synthetic.rs to emit a 3-element pattern, and (c)
-        // semantic_actions.rs HashMap codegen which currently builds
-        // `HashMap<K,V>` (not the wrapper `HashMapLit<K,V>` that
-        // `Map::MapLit` accepts) and ignores the drained elements.
-        // See `wpds-fork-action-items-2026-04-27.md` task B7.
+        // Trim trailing `(` from open delimiter (default form `list(` -> `list`).
+        // `classify_collection` accepts both compact three-element patterns and
+        // split-open four-element patterns; the split form keeps the generated
+        // collection rule aligned with lexer tokens.
         let trimmed_open = open.trim_end_matches('(').to_string();
         let needs_synth_paren = open != trimmed_open;
         let cat_ident = Ident::new(&cat_name, Span::call_site());
@@ -205,13 +191,11 @@ pub(crate) fn build_per_category_rules(
         if needs_synth_paren {
             sp.push(mettail_ast::grammar::SyntaxExpr::Literal("(".to_string()));
         }
-        sp.push(mettail_ast::grammar::SyntaxExpr::Op(
-            mettail_ast::grammar::PatternOp::Sep {
-                collection: elems_ident.clone(),
-                separator: sep,
-                source: None,
-            },
-        ));
+        sp.push(mettail_ast::grammar::SyntaxExpr::Op(mettail_ast::grammar::PatternOp::Sep {
+            collection: elems_ident.clone(),
+            separator: sep,
+            source: None,
+        }));
         sp.push(mettail_ast::grammar::SyntaxExpr::Literal(close));
         let synthetic = GrammarRule {
             label: label_ident,
@@ -273,7 +257,9 @@ pub(crate) fn build_per_category_rules(
         let has_user_var_rule = per_cat[i].iter().any(|r| {
             r.items
                 .first()
-                .map(|item| matches!(item, GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. }))
+                .map(|item| {
+                    matches!(item, GrammarItem::NonTerminal { kind: NonTerminalKind::Var, .. })
+                })
                 .unwrap_or(false)
         });
         if has_user_var_rule {
@@ -340,11 +326,13 @@ pub(crate) fn build_per_category_rules(
         rule.term_context
             .as_ref()
             .map(|tc| {
-                tc.iter().any(|p| matches!(
-                    p,
-                    mettail_ast::grammar::TermParam::Abstraction { .. }
-                        | mettail_ast::grammar::TermParam::MultiAbstraction { .. }
-                ))
+                tc.iter().any(|p| {
+                    matches!(
+                        p,
+                        mettail_ast::grammar::TermParam::Abstraction { .. }
+                            | mettail_ast::grammar::TermParam::MultiAbstraction { .. }
+                    )
+                })
             })
             .unwrap_or_else(|| {
                 rule.items
@@ -353,14 +341,13 @@ pub(crate) fn build_per_category_rules(
             })
     });
     if has_binders {
-        let category_names: Vec<String> = language
-            .types
-            .iter()
-            .map(|t| t.name.to_string())
-            .collect();
+        let category_names: Vec<String> =
+            language.types.iter().map(|t| t.name.to_string()).collect();
         // For each (home, dom) pair: synthesize Apply{Dom} and MApply{Dom}.
         for home in &category_names {
-            let Some(&home_i) = cat_idx.get(home.as_str()) else { continue };
+            let Some(&home_i) = cat_idx.get(home.as_str()) else {
+                continue;
+            };
             for dom in &category_names {
                 let dom_lower = dom.to_lowercase();
                 let dollar_token = format!("${}", dom_lower);
@@ -425,9 +412,7 @@ pub(crate) fn build_per_category_rules(
                             name: xs_ident.clone(),
                             ty: mettail_ast::types::TypeExpr::Collection {
                                 coll_type: mettail_ast::types::CollectionType::Vec,
-                                element: Box::new(
-                                    mettail_ast::types::TypeExpr::Base(dom_ident),
-                                ),
+                                element: Box::new(mettail_ast::types::TypeExpr::Base(dom_ident)),
                             },
                         },
                     ]),
@@ -470,7 +455,9 @@ pub(crate) fn build_per_category_rules(
         //    suffix in `Lam{BinderCat}` names the BINDER type; the body
         //    type is always the home category (`Box<Cat>`).
         for home in &category_names {
-            let Some(&home_i) = cat_idx.get(home.as_str()) else { continue };
+            let Some(&home_i) = cat_idx.get(home.as_str()) else {
+                continue;
+            };
             for binder_cat in &category_names {
                 let binder_ident = Ident::new(binder_cat, Span::call_site());
                 let home_ident = Ident::new(home, Span::call_site());
@@ -485,20 +472,14 @@ pub(crate) fn build_per_category_rules(
                     category: home_ident.clone(),
                     items: Vec::new(),
                     bindings: Vec::new(),
-                    term_context: Some(vec![
-                        mettail_ast::grammar::TermParam::Abstraction {
-                            binder: x_ident.clone(),
-                            body: p_ident.clone(),
-                            ty: mettail_ast::types::TypeExpr::Arrow {
-                                domain: Box::new(
-                                    mettail_ast::types::TypeExpr::Base(binder_ident),
-                                ),
-                                codomain: Box::new(
-                                    mettail_ast::types::TypeExpr::Base(home_ident),
-                                ),
-                            },
+                    term_context: Some(vec![mettail_ast::grammar::TermParam::Abstraction {
+                        binder: x_ident.clone(),
+                        body: p_ident.clone(),
+                        ty: mettail_ast::types::TypeExpr::Arrow {
+                            domain: Box::new(mettail_ast::types::TypeExpr::Base(binder_ident)),
+                            codomain: Box::new(mettail_ast::types::TypeExpr::Base(home_ident)),
                         },
-                    ]),
+                    }]),
                     syntax_pattern: Some(vec![
                         mettail_ast::grammar::SyntaxExpr::Literal("^".to_string()),
                         mettail_ast::grammar::SyntaxExpr::Param(x_ident),
@@ -633,16 +614,8 @@ mod tests {
         // Both Int and Bool have native_type so each gets a synthetic
         // literal-patterned rule even after removing token_defs PLUS a
         // synthetic Var rule.
-        assert_eq!(
-            per_cat[0].len(),
-            2,
-            "Int should have 2 synthetic rules (NumLit + IVar)"
-        );
-        assert_eq!(
-            per_cat[1].len(),
-            2,
-            "Bool should have 2 synthetic rules (BoolLit + BVar)"
-        );
+        assert_eq!(per_cat[0].len(), 2, "Int should have 2 synthetic rules (NumLit + IVar)");
+        assert_eq!(per_cat[1].len(), 2, "Bool should have 2 synthetic rules (BoolLit + BVar)");
         assert_eq!(per_cat[0][0].label.to_string(), "NumLit");
         assert_eq!(per_cat[1][0].label.to_string(), "BoolLit");
         assert_eq!(per_cat[0][1].label.to_string(), "IVar");

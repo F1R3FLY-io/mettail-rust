@@ -4,8 +4,8 @@
 //! per atomic/binder/cross-cat rule, InfixLoop with Pratt BP, CollectionLoop
 //! for sep/close, BinderRule per-position dispatch, CrossCatDelegate for
 //! cross-cat projections, Unwinding for Pop chains, terminal Accepted/Error.
-//! AmbiguityFanout is `unreachable!` — the walker drives it via `step_fanout`,
-//! never `engine.step`.
+//! AmbiguityFanout is owned by the walker; if routed to `engine.step`, the
+//! generated engine reports a structured error rather than panicking.
 
 use mettail_ast::grammar::GrammarRule;
 use mettail_ast::language::LanguageDef;
@@ -94,21 +94,18 @@ pub(crate) fn emit_engine_impl_full(
     let binder_list_loop_body = super::binder::emit_binder_list_loop_body(categories, per_cat);
     // B8 / Path P1 (2026-05-08): per-rule predicate for routing
     // OptionalGroupAt symbols to BinderListLoop when the rule is Class 3.
-    let is_binderlist_inner_lookup =
-        super::binder::emit_binderlist_inner_lookup(per_cat);
+    let is_binderlist_inner_lookup = super::binder::emit_binderlist_inner_lookup(per_cat);
     // B8 / Issue A' (2026-05-09): per-rule lookup for outer-slot
     // coordinates (marker_pos, next_pos, body_src_idx) used at
     // Unwinding-OptionalGroupAt routing for Class 3 rules.
-    let binderlist_inner_metadata =
-        super::binder::emit_binderlist_inner_metadata(per_cat);
+    let binderlist_inner_metadata = super::binder::emit_binderlist_inner_metadata(per_cat);
     // B8 / Issue D (2026-05-09); Phase 4 #2 (2026-05-12): per-(src, rule,
     // slot_idx) predicate for Class 3 CollectionMarker pushes that should
     // also open a BinderScope. Per-slot variant is required for rules
     // with a Class-3 BinderListLoop AND a Class-2 SimpleCollection
     // sibling (e.g. PInputsTagged) — the per-rule predicate (pre-Phase-4-#2)
     // incorrectly opened a BinderScope for the Class-2 sibling too.
-    let is_class3_collection_lookup =
-        super::binder::emit_is_class3_collection_per_slot(per_cat);
+    let is_class3_collection_lookup = super::binder::emit_is_class3_collection_per_slot(per_cat);
     // B8 / Issue 2 (2026-05-10): per-(src, rule, sub_pos) lookup
     // distinguishing Class 3 inner-walk OptionalGroupAt from genuine
     // *opt(...) OptionalGroup. Replaces the prior alias to
@@ -124,8 +121,7 @@ pub(crate) fn emit_engine_impl_full(
         super::binder::emit_binderlist_inner_post_splice_lookup(per_cat);
     // Opt-Group (2026-04-29): per-rule per-group OptionalGroup state
     // dispatch — FIRST-set peek + inner-position walk + finalize.
-    let optional_group_body =
-        super::binder::emit_optional_group_body(categories, per_cat, &prefix_bp_map);
+    let optional_group_body = super::binder::emit_optional_group_body(categories, per_cat);
     // B7 Pattern 2: paren-grouping arms in PrefixDispatch — backend
     // emission of `(`-grouping for every parseable category, satisfying
     // the user mandate "no per-grammar order; backend change". Emitted
@@ -139,9 +135,7 @@ pub(crate) fn emit_engine_impl_full(
     // `feedback_use_wpds_disambiguation_not_heuristics.md`. For grammars
     // without a `(`-triggered binder rule (all shipped except Lambda),
     // the output is byte-identical to `emit_grouping_arms`.
-    let grouping_arms = super::prefix::emit_paren_dispatch_arms(
-        categories, language, per_cat,
-    );
+    let grouping_arms = super::prefix::emit_paren_dispatch_arms(categories, language, per_cat);
 
     let action_for_body =
         semantic_actions::emit_action_for_body(language, categories, &per_cat_indexed);
@@ -156,6 +150,8 @@ pub(crate) fn emit_engine_impl_full(
     // (category compatibility) + §2.4c (interpose the coercion Symbol).
     let single_hop_coercion_body =
         semantic_actions::emit_single_hop_coercion_body(categories, &per_cat_indexed, language);
+    let (structural_open_body, structural_close_body) =
+        emit_structural_delimiter_predicates(language, per_cat);
 
     // Phase 3: InfixLoop dispatch arm. Per-category match on
     // `state_cat_src_idx` calling the emitted `infix_bp_<cat>` lookup
@@ -172,17 +168,15 @@ pub(crate) fn emit_engine_impl_full(
     // Plan A (paren+postfix redesign, 2026-05-11): per-category
     // recognize-token lookup for the Unwinding-CategoryEntry's
     // lookahead-conditional GroupingClosePreservingInner branch.
-    let category_recognizes_token_dispatch =
-        emit_category_recognizes_token_dispatch(categories);
+    let category_recognizes_token_dispatch = emit_category_recognizes_token_dispatch(categories);
     // D8 fix (2026-05-13): per-language `type_name → cat_src_idx`
     // lookup body, consumed by the walker's
     // `GroupingClosePreservingInner` sentinel resolution.
-    let cat_of_type_name_body =
-        emit_cat_of_type_name(language, categories);
+    let cat_of_type_name_body = emit_cat_of_type_name(language, categories);
     // L-substrate Piece #6 (2026-05-13): lex-fork dispatch block,
     // emitted at the top of the WpdaState::PrefixDispatch arm.
-    let lex_fork_dispatch =
-        super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
+    let lex_fork_dispatch = super::forks::emit_lex_fork_at_prefix_dispatch(primary_src_idx);
+    let lex_fork_infix_dispatch = super::forks::emit_lex_fork_at_infix_loop(primary_src_idx);
 
     // M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for` free fn.
     // Used by the lex-Fork emitter (M6c.3) to bind alts to atomic-
@@ -195,6 +189,7 @@ pub(crate) fn emit_engine_impl_full(
     quote! {
         #lex_alt_rule_for_fn
 
+        #[allow(unused_variables, unused_braces)]
         impl mettail_prattail::wpda_walker::WpdaEngine<
             mettail_prattail::automata::lex_weight::LexicographicWeight,
         > for #engine_ident
@@ -256,7 +251,7 @@ pub(crate) fn emit_engine_impl_full(
                         // #3/#7 facade glue gates the source
                         // selection).
                         #lex_fork_dispatch
-                        // Stage 3.16 / Hack #7 (Cluster 1, Mechanism γ,
+                        // Stage 3.16 invariant (Cluster 1, Mechanism γ,
                         // 2026-05-05): Fork over close + cross-cat-redirect
                         // branches. For shipped grammars the conditions
                         // are mutually-exclusive on token (the Fork
@@ -271,8 +266,8 @@ pub(crate) fn emit_engine_impl_full(
                         // (wpda_walker.rs:2188) transfers the live builder's
                         // open collection_stack to the parent cursor on
                         // Lazy→Strict promotion, fixing the LIFO invariant
-                        // for empty cross-cat collections (Hack #7's hot
-                        // path). See `feedback_use_wpds_disambiguation_not_heuristics.md`.
+                        // for empty cross-cat collections. See
+                        // `feedback_use_wpds_disambiguation_not_heuristics.md`.
                         if let Some(node) = frontier_top {
                             if node.symbol.kind
                                 == mettail_prattail::wpda_runtime::SymbolKind::CollectionMarker
@@ -299,10 +294,9 @@ pub(crate) fn emit_engine_impl_full(
                                     let slot_idx = slot_idx;
                                     #collection_element_src_lookup
                                 };
-                                let needs_redirect = element_src_lookup
-                                    .map(|esi| esi != result_src_idx)
-                                    .unwrap_or(false);
-                                if token_is_close || needs_redirect {
+                                let redirect_src_idx =
+                                    element_src_lookup.filter(|&esi| esi != result_src_idx);
+                                if token_is_close || redirect_src_idx.is_some() {
                                     let mut __branches: Vec<
                                         mettail_prattail::wpda_walker::ForkBranch<
                                             __DwW,
@@ -321,9 +315,7 @@ pub(crate) fn emit_engine_impl_full(
                                             },
                                         );
                                     }
-                                    if needs_redirect {
-                                        let element_src_idx =
-                                            element_src_lookup.unwrap();
+                                    if let Some(element_src_idx) = redirect_src_idx {
                                         __branches.push(
                                             mettail_prattail::wpda_walker::ForkBranch {
                                                 symbol: StackSymbolV2::category_entry(
@@ -401,6 +393,13 @@ pub(crate) fn emit_engine_impl_full(
                                 // mid-stream loops.
                                 match recovery_infra_for(state_cat_src_idx) {
                                     Some(infra) => {
+                                        let active_recovery_config =
+                                            mettail_prattail::recovery_cohort::with_active_recovery_config(
+                                                |config| config.clone(),
+                                            );
+                                        let recovery_config = active_recovery_config
+                                            .as_ref()
+                                            .unwrap_or(&infra.config);
                                         // Phase F.13 Task #117 (2026-05-23):
                                         // try cohort-cached path first via
                                         // the walker's pinned TLS pointer.
@@ -418,10 +417,11 @@ pub(crate) fn emit_engine_impl_full(
                                                         state_cat_src_idx,
                                                         *cur_bp,
                                                     );
-                                                    mettail_prattail::recovery_dispatch::emit_recovery_fork_cached::<__DwW>(
+                                                    mettail_prattail::recovery_dispatch::emit_recovery_fork_cached_with_config::<__DwW>(
                                                         view,
                                                         tokens,
                                                         infra,
+                                                        recovery_config,
                                                         cache,
                                                     )
                                                 },
@@ -436,10 +436,11 @@ pub(crate) fn emit_engine_impl_full(
                                                     state_cat_src_idx,
                                                     *cur_bp,
                                                 );
-                                                mettail_prattail::recovery_dispatch::emit_recovery_fork::<__DwW>(
+                                                mettail_prattail::recovery_dispatch::emit_recovery_fork_with_config::<__DwW>(
                                                     view,
                                                     tokens,
                                                     infra,
+                                                    recovery_config,
                                                 )
                                             }
                                         }
@@ -462,15 +463,14 @@ pub(crate) fn emit_engine_impl_full(
                                     // symbol. The Return's bp was set at
                                     // ConsumeAndPush time to the outer cur_bp.
                                     //
-                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // Stage 3.16 invariant (Cluster 4, Mechanism γ,
                                     // 2026-05-06): Return symbols ALWAYS carry
                                     // `bp = Some(outer_bp)` per codegen invariant
                                     // (constructed via with_kind_return on a
                                     // RuleAt that itself had Some(*cur_bp) at the
                                     // ConsumeAndPush site). Use expect() to surface
                                     // any codegen-invariant violation instead of
-                                    // silently substituting 0 — a `feedback_no_stubs_timebombs`
-                                    // safeguard.
+                                    // silently substituting 0.
                                     let outer_bp = node.symbol.bp.expect(
                                         "Return symbol invariant: bp must be Some(outer_bp) \
                                          set at the originating ConsumeAndPush site"
@@ -630,7 +630,7 @@ pub(crate) fn emit_engine_impl_full(
                                             new_state: WpdaState::Unwinding,
                                         };
                                     }
-                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // Stage 3.16 invariant (Cluster 4, Mechanism γ,
                                     // 2026-05-06): CollectionMarker symbols ALWAYS
                                     // carry `bp = Some(accumulator_id)` per the
                                     // codegen invariant in
@@ -694,7 +694,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // the first sub-parse and the closing
                                     // delimiters would remain in the input.
                                     //
-                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // Stage 3.16 invariant (Cluster 4, Mechanism γ,
                                     // 2026-05-06): RuleAt's `bp: Option<u8>` is
                                     // genuinely Optional per
                                     // `StackSymbolV2::rule_at(.., bp: Option<u8>)`.
@@ -703,10 +703,9 @@ pub(crate) fn emit_engine_impl_full(
                                     // others pass `None` (top-level RuleAt where
                                     // no outer_bp is tracked). The `unwrap_or(0)`
                                     // fallback is the legitimate Optional
-                                    // handling — `0` is the canonical "top-level
+                                    // handling: `0` is the canonical "top-level
                                     // cur_bp" sentinel used everywhere a Pratt
-                                    // dispatch starts fresh. This is NOT a stub;
-                                    // it's the documented Optional-default.
+                                    // dispatch starts fresh.
                                     let outer_bp = node.symbol.bp.unwrap_or(0);
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
@@ -739,7 +738,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // the inner Term remains on the builder
                                     // as the result.
                                     //
-                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // Stage 3.16 invariant (Cluster 4, Mechanism γ,
                                     // 2026-05-06): GroupingMarker symbols ALWAYS
                                     // carry `bp = Some(outer_bp)` per the codegen
                                     // invariant in StackSymbolV2::grouping_marker.
@@ -770,7 +769,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // the last operand).
                                     let result_src_idx = node.symbol.category_src_idx;
                                     let rule_idx = node.symbol.rule_index_in_category;
-                                    // Stage 3.16 / Hack #18 (Cluster 4, Mechanism γ,
+                                    // Stage 3.16 invariant (Cluster 4, Mechanism γ,
                                     // 2026-05-06): MixfixMarker symbols ALWAYS
                                     // carry `bp = Some(operands_completed)` per
                                     // the codegen invariant in
@@ -780,7 +779,7 @@ pub(crate) fn emit_engine_impl_full(
                                         "MixfixMarker invariant: bp must be \
                                          Some(operands_completed) set at construction"
                                     );
-                                    // Stage 3.16 / Hack #19 (Cluster 4, Mechanism γ,
+                                    // Stage 3.16 invariant (Cluster 4, Mechanism γ,
                                     // 2026-05-06): mixfix_parts_len returning None
                                     // means the (result_src_idx, rule_idx) pair
                                     // is missing from the codegen-time mixfix-parts
@@ -788,8 +787,7 @@ pub(crate) fn emit_engine_impl_full(
                                     // not a parse-time choice. Surface as Error
                                     // with a precise message instead of silently
                                     // substituting 0 (which would skip the mixfix
-                                    // dispatch entirely). Per
-                                    // `feedback_no_stubs_timebombs.md`.
+                                    // dispatch entirely).
                                     let parts_len = match mixfix_parts_len(
                                         result_src_idx, rule_idx,
                                     ) {
@@ -1006,7 +1004,7 @@ pub(crate) fn emit_engine_impl_full(
                                 _ => {}
                             }
                         }
-                        // Stage 3.18 / Hacks #17+#20 (Cluster 3, Mechanism γ,
+                        // Stage 3.18 / Fixes #17+#20 (Cluster 3, Mechanism γ,
                         // 2026-05-05): collect ALL tier candidates whose
                         // l_bp >= cur_bp, then emit a Fork over them with
                         // BP_TIER_INFIX < BP_TIER_POSTFIX < BP_TIER_MIXFIX
@@ -1019,6 +1017,7 @@ pub(crate) fn emit_engine_impl_full(
                         let state_cat_src_idx: u16 = frontier_top
                             .map(|n| n.symbol.category_src_idx)
                             .unwrap_or(#primary_src_idx);
+                        #lex_fork_infix_dispatch
                         let token_text = tokens.peek_text(_pos).unwrap_or("");
                         let _ = token_text;
 
@@ -1608,6 +1607,7 @@ pub(crate) fn emit_engine_impl_full(
                         body_src_idx: _body_src_idx,
                         outer_bp,
                     } => {
+                        let _ = (result_src_idx, rule_idx, outer_bp);
                         // Phase 5: per-position dispatch for binder rules.
                         #binder_rule_body
                     }
@@ -1620,6 +1620,15 @@ pub(crate) fn emit_engine_impl_full(
                         next_pos,
                         sub_pos,
                     } => {
+                        let _ = (
+                            result_src_idx,
+                            rule_idx,
+                            body_src_idx,
+                            outer_bp,
+                            marker_pos,
+                            next_pos,
+                            sub_pos,
+                        );
                         // Phase 5b: ^[xs] binder list loop.
                         // B8 (2026-05-08): sub_pos indexes per-iteration
                         // inner walk for Class 3 ZIP-MAP-SEP. PNew-style
@@ -1662,10 +1671,10 @@ pub(crate) fn emit_engine_impl_full(
                             },
                         }
                     }
-                    WpdaState::AmbiguityFanout { .. } => unreachable!(
-                        "engine.step called with AmbiguityFanout — walker drives \
-                         this state via step_fanout, not the engine. Reaching \
-                         this arm signals a routing bug in WpdaWalker::run_to_*."
+                    WpdaState::AmbiguityFanout { .. } => WpdaStepAction::Error(
+                        "engine.step called with AmbiguityFanout; walker should \
+                         drive this state via step_fanout"
+                            .to_string(),
                     ),
                     WpdaState::OptionalGroup {
                         result_src_idx,
@@ -1744,6 +1753,7 @@ pub(crate) fn emit_engine_impl_full(
                 result_src_idx: u16,
                 rule_idx: u16,
             ) -> bool {
+                let _ = (result_src_idx, rule_idx);
                 #is_binder_internal_collection_lookup
             }
 
@@ -1753,6 +1763,7 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
                 slot_idx: u8,
             ) -> bool {
+                let _ = (src_idx, rule_idx, slot_idx);
                 #is_class3_collection_lookup
             }
 
@@ -1762,6 +1773,7 @@ pub(crate) fn emit_engine_impl_full(
                 rule_idx: u16,
                 sub_pos: u8,
             ) -> bool {
+                let _ = (src_idx, rule_idx, sub_pos);
                 // B8 / Issue 2 (2026-05-10): per-(src, rule, sub_pos)
                 // lookup. Returns true ONLY when the OptionalGroupAt
                 // belongs to a Class 3 inner walk (not a genuine
@@ -1822,8 +1834,56 @@ pub(crate) fn emit_engine_impl_full(
                 // fires (§2.4c).
                 #single_hop_coercion_body
             }
+
+            fn is_structural_open_delimiter(
+                &self,
+                kind: &mettail_prattail::automata::TokenKind,
+                text: Option<&str>,
+            ) -> bool {
+                #structural_open_body
+            }
+
+            fn is_structural_close_delimiter(
+                &self,
+                kind: &mettail_prattail::automata::TokenKind,
+                text: Option<&str>,
+            ) -> bool {
+                #structural_close_body
+            }
         }
     }
+}
+
+fn emit_structural_delimiter_predicate_body(delimiters: &[String]) -> TokenStream {
+    let delimiter_lits: Vec<&str> = delimiters.iter().map(String::as_str).collect();
+    quote! {
+        match kind {
+            mettail_prattail::automata::TokenKind::Fixed(__s) => {
+                match __s.as_str() {
+                    #( #delimiter_lits => return true, )*
+                    _ => {},
+                }
+            },
+            _ => {},
+        }
+        match text {
+            #( Some(#delimiter_lits) => true, )*
+            _ => false,
+        }
+    }
+}
+
+fn emit_structural_delimiter_predicates(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> (TokenStream, TokenStream) {
+    let (opens, closes) = super::collection::collect_structural_delimiters(language, per_cat);
+    let open_delimiters: Vec<String> = opens.into_iter().collect();
+    let close_delimiters: Vec<String> = closes.into_iter().collect();
+    (
+        emit_structural_delimiter_predicate_body(&open_delimiters),
+        emit_structural_delimiter_predicate_body(&close_delimiters),
+    )
 }
 
 /// D8 fix (2026-05-13): emit the body of
@@ -1840,15 +1900,12 @@ pub(crate) fn emit_engine_impl_full(
 /// `cursor.builder.top_term_type_name()` (the type_name of the
 /// last-pushed `ActionArg::Term`) and calls this method to derive
 /// the RESULT category of the inner expression.
-fn emit_cat_of_type_name(
-    language: &LanguageDef,
-    categories: &[String],
-) -> TokenStream {
+fn emit_cat_of_type_name(language: &LanguageDef, categories: &[String]) -> TokenStream {
     let mut arms: Vec<TokenStream> = Vec::with_capacity(categories.len() * 2);
     for (i, cat_name) in categories.iter().enumerate() {
         let i_u16 = i as u16;
-        let cat_ident: Ident = syn::parse_str(cat_name)
-            .expect("category name is a valid Rust identifier");
+        let cat_ident: Ident =
+            syn::parse_str(cat_name).expect("category name is a valid Rust identifier");
         arms.push(quote! {
             if name == std::any::type_name::<#cat_ident>() {
                 return Some(#i_u16);
@@ -1989,4 +2046,3 @@ fn emit_mixfix_dispatch(categories: &[String]) -> TokenStream {
         }
     }
 }
-

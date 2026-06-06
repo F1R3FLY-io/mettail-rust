@@ -64,17 +64,13 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use term_gen::{generate_random_generation, generate_term_generation};
     use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
-    use term_ops::parse_alt_filter::generate_parse_alt_filter_methods;
-    // ARC refactor (2026-05-28): iterative_clone disabled — `Clone` is now
-    // derived (Arc children make derived clone O(1) + non-recursive). See
-    // gen/types/enums.rs derive list. Import kept commented for provenance.
-    // use term_ops::iterative_clone::generate_iterative_clone;
     use term_ops::iterative_cmp::generate_iterative_cmp;
     use term_ops::iterative_drop::generate_iterative_drop;
     use term_ops::iterative_hash::generate_iterative_hash;
     use term_ops::match_pattern::generate_match_pattern;
-    use term_ops::semantic_hash::generate_semantic_hash;
     use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
+    use term_ops::parse_alt_filter::generate_parse_alt_filter_methods;
+    use term_ops::semantic_hash::generate_semantic_hash;
     use term_ops::subst::{generate_env_substitution, generate_substitution};
     use types::enums::generate_ast_enums;
 
@@ -85,7 +81,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         mettail_ast::pattern::detect_cancellation_pairs(language);
 
     // Spill each emitter's output to its own file in `target/generated/<lang>/`
-    // and replace with an `include!` stub. Each emitter's TokenStream is dropped
+    // and replace it with an `include!` wrapper. Each emitter's TokenStream is dropped
     // as soon as it is serialized — reducing the peak TokenStream memory held
     // simultaneously inside this proc-macro from "sum of all emitters" to
     // "largest single emitter". The on-disk per-concern files are also
@@ -105,22 +101,13 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     );
     let subst_impl = spill_and_include(&lang_name, "subst", generate_substitution(language));
     let env_types = spill_and_include(&lang_name, "env_types", generate_environments(language));
-    let env_subst_impl = spill_and_include(
-        &lang_name,
-        "env_subst",
-        generate_env_substitution(language),
-    );
+    let env_subst_impl =
+        spill_and_include(&lang_name, "env_subst", generate_env_substitution(language));
     let display_impl = spill_and_include(&lang_name, "display", generate_display(language));
-    let generation_impl = spill_and_include(
-        &lang_name,
-        "term_generation",
-        generate_term_generation(language),
-    );
-    let random_gen_impl = spill_and_include(
-        &lang_name,
-        "random_generation",
-        generate_random_generation(language),
-    );
+    let generation_impl =
+        spill_and_include(&lang_name, "term_generation", generate_term_generation(language));
+    let random_gen_impl =
+        spill_and_include(&lang_name, "random_generation", generate_random_generation(language));
     let eval_impl = spill_and_include(&lang_name, "eval", generate_eval_method(language));
     let is_ground_impl =
         spill_and_include(&lang_name, "is_ground", generate_is_ground_methods(language));
@@ -129,53 +116,25 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         "parse_alt_filter",
         generate_parse_alt_filter_methods(language),
     );
-    let term_depth_impl = spill_and_include(
-        &lang_name,
-        "term_depth",
-        generate_term_depth_methods(language),
-    );
-    let match_pattern_impl = spill_and_include(
-        &lang_name,
-        "match_pattern",
-        generate_match_pattern(language),
-    );
-    // ARC refactor (2026-05-28): `Clone` is now derived on the AST enums
-    // (gen/types/enums.rs) because recursive children are `Arc<Cat>` →
-    // `Arc::clone` is O(1) and non-recursive. The former iterative work-stack
-    // clone (generate_iterative_clone) existed only to avoid stack overflow on
-    // deep `Box` chains and would now DUPLICATE the derived impl, so it is
-    // disabled here. Emit nothing for this slot.
-    let iterative_clone_impl = proc_macro2::TokenStream::new();
-    let iterative_cmp_impl = spill_and_include(
-        &lang_name,
-        "iterative_cmp",
-        generate_iterative_cmp(language),
-    );
-    let iterative_drop_impl = spill_and_include(
-        &lang_name,
-        "iterative_drop",
-        generate_iterative_drop(language),
-    );
-    let iterative_hash_impl = spill_and_include(
-        &lang_name,
-        "iterative_hash",
-        generate_iterative_hash(language),
-    );
-    let semantic_hash_impl = spill_and_include(
-        &lang_name,
-        "semantic_hash",
-        generate_semantic_hash(language),
-    );
+    let term_depth_impl =
+        spill_and_include(&lang_name, "term_depth", generate_term_depth_methods(language));
+    let match_pattern_impl =
+        spill_and_include(&lang_name, "match_pattern", generate_match_pattern(language));
+    let iterative_cmp_impl =
+        spill_and_include(&lang_name, "iterative_cmp", generate_iterative_cmp(language));
+    let iterative_drop_impl =
+        spill_and_include(&lang_name, "iterative_drop", generate_iterative_drop(language));
+    let iterative_hash_impl =
+        spill_and_include(&lang_name, "iterative_hash", generate_iterative_hash(language));
+    let semantic_hash_impl =
+        spill_and_include(&lang_name, "semantic_hash", generate_semantic_hash(language));
     let guard_codegen_impl = spill_and_include(
         &lang_name,
         "guard_codegen",
         runtime::guard_codegen::generate_guard_codegen(language),
     );
-    let var_inference_impl = spill_and_include(
-        &lang_name,
-        "var_inference",
-        generate_var_category_inference(language),
-    );
+    let var_inference_impl =
+        spill_and_include(&lang_name, "var_inference", generate_var_category_inference(language));
 
     // Parser code: PraTTaIL (inline) — also captures pipeline analysis.
     // The parser output is large (DFA tables, parse fns per category); spill it.
@@ -220,8 +179,6 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
 
         #match_pattern_impl
 
-        #iterative_clone_impl
-
         #iterative_cmp_impl
 
         #iterative_drop_impl
@@ -262,15 +219,12 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
     //  - collection_kind → synthetic ListLit / BagLit / MapLit rule
     //  - reference-only (e.g. Ambient's `Name`) → synthetic Var rule
     //
-    // Per `feedback_no_stubs_timebombs.md`, the only `parse_structured`
-    // body that uses `compile_error!` is the truly-impossible case — a
-    // category not in `language.types` at all (which can't happen because
-    // we iterate `language.types` to build the impl).
-    let wpda_categories: std::collections::BTreeSet<String> = language
-        .types
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect();
+    // The only `parse_structured` body that uses `compile_error!` is the
+    // truly-impossible case: a category not in `language.types` at all
+    // (which can't happen because we iterate `language.types` to build
+    // the impl).
+    let wpda_categories: std::collections::BTreeSet<String> =
+        language.types.iter().map(|t| t.name.to_string()).collect();
 
     // `wpda_categories` is the entire `language.types` set — every type
     // gets a WPDS facade emitted by `wpda_codegen` (synthetic.rs ensures
@@ -418,20 +372,96 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
 
             let parse_via_wpda_fn = format_ident!("parse_{}_via_wpda", cat);
             let parse_via_wpda_recovering_fn = format_ident!("parse_{}_via_wpda_recovering", cat);
+            let parse_via_wpda_with_source_fn = format_ident!("parse_{}_via_wpda_with_source", cat);
             let parse_via_wpda_all_fn = format_ident!("parse_{}_via_wpda_all", cat);
             let parse_via_wpda_all_with_source_fn =
                 format_ident!("parse_{}_via_wpda_all_with_source", cat);
             let parse_via_wpda_method = quote! {
                 /// WPDS-driven parser entry point.
                 ///
-                /// Lexes via `lex(input)`, converts each `Token` to
-                /// `(TokenKind, &str)` via the per-grammar `token_to_kind` +
-                /// `token_text` adapter, then dispatches to the WPDS facade
-                /// `parse_<Cat>_via_wpda`. Identical to `Cat::parse_structured`
-                /// — kept as a stable internal name during the migration.
+                /// Uses a `LatticeTokenSource` when `lex_dag(input)` reports
+                /// lexical ambiguity, so the WPDS backend can rule alternatives
+                /// out by parser evidence. Non-ambiguous input keeps the
+                /// existing token-slice path.
                 pub fn parse_via_wpda(input: &str) -> Result<#cat, ParseError> {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     let tokens = lex(input)?;
+                    let dag = lex_dag(input).map_err(|msg| ParseError::UnexpectedEof {
+                        expected: Cow::Owned(msg),
+                        range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                        hint: None,
+                    })?;
+                    if dag.has_ambiguity() {
+                        let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
+                        use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
+                        let dag_range = |position: usize| -> Range {
+                            if let Some(node) = source.dag.nodes.get(position) {
+                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
+                                    range.start.byte_offset <= node.byte_start
+                                        && node.byte_start <= range.end.byte_offset
+                                }) {
+                                    return *range;
+                                }
+                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
+                                    range.start.byte_offset >= node.byte_start
+                                }) {
+                                    return *range;
+                                }
+                            }
+                            tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                        };
+                        let dag_found = |position: usize| -> String {
+                            source
+                                .peek_kind(position)
+                                .map(|kind| format!("{:?}", kind))
+                                .unwrap_or_else(|| "end of input".to_string())
+                        };
+                        let mut pos = 0usize;
+                        return match #parse_via_wpda_with_source_fn(&source, &mut pos, 0) {
+                            Ok((v, _weight)) => {
+                                let eof_node = source.eof_node();
+                                if pos < eof_node {
+                                    return Err(ParseError::TrailingTokens {
+                                        found: dag_found(pos),
+                                        range: dag_range(pos),
+                                        hint: Some(Cow::Borrowed(
+                                            "the WPDS parser finished but input remains; check for missing operators or extra tokens",
+                                        )),
+                                    });
+                                }
+                                Ok(v)
+                            }
+                            Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
+                                expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
+                                range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
+                                hint: None,
+                            }),
+                            Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Owned(message),
+                                    found: dag_found(position),
+                                    range: dag_range(position),
+                                    hint: None,
+                                })
+                            }
+                            Err(WpdaParseError::Incomplete { position }) => {
+                                Err(ParseError::UnexpectedToken {
+                                    expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
+                                    found: dag_found(position),
+                                    range: dag_range(position),
+                                    hint: None,
+                                })
+                            }
+                            Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
+                                Err(ParseError::AmbiguityBudget {
+                                    budget, actual, range: dag_range(position),
+                                    hint: Some(Cow::Borrowed(
+                                        "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
+                                    )),
+                                })
+                            }
+                        };
+                    }
                     let kinds: Vec<mettail_prattail::automata::TokenKind> =
                         tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
                     let texts: Vec<&str> = tokens
@@ -540,6 +570,29 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     })?;
                     if dag.has_ambiguity() {
                         let source = mettail_prattail::wpda_runtime::LatticeTokenSource::new(dag);
+                        use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
+                        let dag_range = |position: usize| -> Range {
+                            if let Some(node) = source.dag.nodes.get(position) {
+                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
+                                    range.start.byte_offset <= node.byte_start
+                                        && node.byte_start <= range.end.byte_offset
+                                }) {
+                                    return *range;
+                                }
+                                if let Some((_, range)) = tokens.iter().find(|(_, range)| {
+                                    range.start.byte_offset >= node.byte_start
+                                }) {
+                                    return *range;
+                                }
+                            }
+                            tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
+                        };
+                        let dag_found = |position: usize| -> String {
+                            source
+                                .peek_kind(position)
+                                .map(|kind| format!("{:?}", kind))
+                                .unwrap_or_else(|| "end of input".to_string())
+                        };
                         let mut pos = 0usize;
                         return match #parse_via_wpda_all_with_source_fn(&source, &mut pos, 0) {
                             Ok((terms, _weights)) => {
@@ -554,20 +607,11 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 // (at the real EOF sentinel index)
                                 // would be misreported as
                                 // `TrailingTokens`.
-                                use mettail_prattail::wpda_runtime::WpdaTokenSource as _;
                                 let eof_node = source.eof_node();
                                 if pos < eof_node {
                                     return Err(ParseError::TrailingTokens {
-                                        found: tokens
-                                            .get(pos)
-                                            .map(|(t, _)| format_token_friendly(t))
-                                            .unwrap_or_else(|| "<dag-node>".to_string()),
-                                        range: tokens
-                                            .get(pos)
-                                            .map(|(_, r)| *r)
-                                            .unwrap_or_else(|| {
-                                                tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
-                                            }),
+                                        found: dag_found(pos),
+                                        range: dag_range(pos),
                                         hint: Some(Cow::Borrowed(
                                             "the WPDS parser finished but input remains; check for missing operators or extra tokens",
                                         )),
@@ -588,48 +632,24 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                 hint: None,
                             }),
                             Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
-                                let range = tokens
-                                    .get(position)
-                                    .map(|(_, r)| *r)
-                                    .unwrap_or_else(|| {
-                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
-                                    });
                                 Err(ParseError::UnexpectedToken {
                                     expected: Cow::Owned(message),
-                                    found: tokens
-                                        .get(position)
-                                        .map(|(t, _)| format_token_friendly(t))
-                                        .unwrap_or_else(|| "end of input".to_string()),
-                                    range,
+                                    found: dag_found(position),
+                                    range: dag_range(position),
                                     hint: None,
                                 })
                             }
                             Err(WpdaParseError::Incomplete { position }) => {
-                                let range = tokens
-                                    .get(position)
-                                    .map(|(_, r)| *r)
-                                    .unwrap_or_else(|| {
-                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
-                                    });
                                 Err(ParseError::UnexpectedToken {
                                     expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
-                                    found: tokens
-                                        .get(position)
-                                        .map(|(t, _)| format_token_friendly(t))
-                                        .unwrap_or_else(|| "end of input".to_string()),
-                                    range,
+                                    found: dag_found(position),
+                                    range: dag_range(position),
                                     hint: None,
                                 })
                             }
                             Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
-                                let range = tokens
-                                    .get(position)
-                                    .map(|(_, r)| *r)
-                                    .unwrap_or_else(|| {
-                                        tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
-                                    });
                                 Err(ParseError::AmbiguityBudget {
-                                    budget, actual, range,
+                                    budget, actual, range: dag_range(position),
                                     hint: Some(Cow::Borrowed(
                                         "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
                                     )),
@@ -725,92 +745,11 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 }
             };
             let _ = parse_fn;
-            // `Cat::parse_structured` routes through the WPDS facade
-            // unconditionally — every category in `language.types` has a
-            // facade emitted by `wpda_codegen` (with synthetic.rs filling
-            // in literal / collection / Var rules where the user grammar
-            // doesn't supply explicit ones). No runtime stubs.
+            // `Cat::parse_structured` shares the explicit WPDS string entry
+            // point so lexical-DAG ambiguity handling cannot diverge between
+            // `parse()`, `parse_structured()`, and `parse_via_wpda()`.
             let parse_structured_body = quote! {
-                // T4 SIGUSR1 hang-dump (2026-05-11): one-time install of
-                // the hang-dump handler + watcher daemon. Idempotent
-                // (Once-guarded). No-op when `PRATTAIL_HANG_DUMP` env var
-                // is unset (zero-cost on the happy path).
-                mettail_prattail::hang_dump::install_hang_dump_handler();
-                let tokens = lex(input)?;
-                let kinds: Vec<mettail_prattail::automata::TokenKind> =
-                    tokens.iter().map(|(t, _)| token_to_kind(t)).collect();
-                let texts: Vec<&str> = tokens
-                    .iter()
-                    .map(|(t, r)| token_text(t, input, *r))
-                    .collect();
-                let mut pos = 0usize;
-                match #parse_via_wpda_fn(&kinds, &texts, &mut pos, 0) {
-                    Ok(v) => {
-                        if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
-                            return Err(ParseError::TrailingTokens {
-                                found: format_token_friendly(&tokens[pos].0),
-                                range: tokens[pos].1,
-                                hint: Some(Cow::Borrowed(
-                                    "the parser finished but input remains; check for missing operators or extra tokens",
-                                )),
-                            });
-                        }
-                        Ok(v)
-                    }
-                    Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
-                        expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
-                        range: tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()),
-                        hint: None,
-                    }),
-                    Err(WpdaParseError::ParseFailed { message, position, attempts: _ }) => {
-                        let range = tokens
-                            .get(position)
-                            .map(|(_, r)| *r)
-                            .unwrap_or_else(|| {
-                                tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
-                            });
-                        Err(ParseError::UnexpectedToken {
-                            expected: Cow::Owned(message),
-                            found: tokens
-                                .get(position)
-                                .map(|(t, _)| format_token_friendly(t))
-                                .unwrap_or_else(|| "end of input".to_string()),
-                            range,
-                            hint: None,
-                        })
-                    }
-                    Err(WpdaParseError::Incomplete { position }) => {
-                        let range = tokens
-                            .get(position)
-                            .map(|(_, r)| *r)
-                            .unwrap_or_else(|| {
-                                tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
-                            });
-                        Err(ParseError::UnexpectedToken {
-                            expected: Cow::Borrowed("WPDS engine did not consume all tokens"),
-                            found: tokens
-                                .get(position)
-                                .map(|(t, _)| format_token_friendly(t))
-                                .unwrap_or_else(|| "end of input".to_string()),
-                            range,
-                            hint: None,
-                        })
-                    }
-                    Err(WpdaParseError::AmbiguityBudget { budget, actual, position }) => {
-                        let range = tokens
-                            .get(position)
-                            .map(|(_, r)| *r)
-                            .unwrap_or_else(|| {
-                                tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero())
-                            });
-                        Err(ParseError::AmbiguityBudget {
-                            budget, actual, range,
-                            hint: Some(Cow::Borrowed(
-                                "input too ambiguous; relax CursorBoundingMode::AmbiguityBudget or simplify grammar"
-                            )),
-                        })
-                    }
-                }
+                Self::parse_via_wpda(input)
             };
             quote! {
                 impl #cat {
@@ -1134,10 +1073,7 @@ pub fn is_literal_rule(rule: &GrammarRule) -> bool {
 /// Single source of truth: every test-gen path that emits Var must
 /// derive from the `language!` spec via this predicate, not from a
 /// runtime AST inspection or an unconditional fallback.
-pub fn category_emits_parseable_auto_var(
-    category: &Ident,
-    language: &LanguageDef,
-) -> bool {
+pub fn category_emits_parseable_auto_var(category: &Ident, language: &LanguageDef) -> bool {
     let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
         return false;
     };
@@ -1163,10 +1099,7 @@ pub fn category_emits_parseable_auto_var(
 ///
 /// Symmetric to `category_emits_parseable_auto_var`. Test generators
 /// must consult this before emitting an auto-Literal leaf.
-pub fn category_emits_parseable_auto_literal(
-    category: &Ident,
-    language: &LanguageDef,
-) -> bool {
+pub fn category_emits_parseable_auto_literal(category: &Ident, language: &LanguageDef) -> bool {
     let Some(type_def) = language.types.iter().find(|t| t.name == *category) else {
         return false;
     };
@@ -1184,24 +1117,12 @@ pub fn category_emits_parseable_auto_literal(
 /// describe which slice of the spec-admitted domain the caller wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SamplePurpose {
-    /// Single zero-or-smallest sample (e.g., for default leaf
-    /// construction in unit_tests::construct_leaf_for_category).
-    Zero,
     /// Small finite set of representative samples (used by ground-term
     /// enumeration and exhaustive operational tests).
     GroundEnum,
-    /// "Boundary minimum" sample — usually `i32::MIN` for SignedInt
-    /// patterns, smallest single-digit for Integer, etc. Used by
-    /// edge_case_gen.
-    BoundaryMin,
-    /// "Boundary maximum" sample — usually `i32::MAX`. Used by
-    /// edge_case_gen.
-    BoundaryMax,
     /// "Safe arithmetic" sample — small magnitude, won't overflow when
     /// composed under arithmetic. Used by edge_case_gen.
     Safe,
-    /// Random / wide-range sample for property-based testing.
-    Random,
 }
 
 /// Spec-derived: emit a single integer literal value in source-text
@@ -1235,7 +1156,7 @@ pub fn spec_admitted_integer_default(language: &LanguageDef) -> String {
             // gets a parse-error which is the correct loud failure
             // per the user's "no fabrication" directive.
             "0".to_string()
-        }
+        },
         // Floats classified as integer? Shouldn't happen but
         // defensively return "0".
         _ => "0".to_string(),
@@ -1257,95 +1178,25 @@ pub fn spec_admitted_integer_samples(
     let signed = matches!(kind, CanonicalKind::SignedInt)
         || (matches!(kind, CanonicalKind::Unclassified)
             && language_equivalent(&pattern, "-?[0-9]+"));
-    let excludes_zero = matches!(kind, CanonicalKind::Unclassified)
-        && language_equivalent(&pattern, "[1-9][0-9]*");
+    let excludes_zero =
+        matches!(kind, CanonicalKind::Unclassified) && language_equivalent(&pattern, "[1-9][0-9]*");
     let zero = if excludes_zero { "1" } else { "0" };
     match purpose {
-        SamplePurpose::Zero => vec![zero.to_string()],
         SamplePurpose::GroundEnum => {
             // Five representative samples covering small magnitudes.
             // For signed patterns include one negative; for unsigned
             // patterns include only non-negatives.
-            let mut samples = vec![zero.to_string(), "1".to_string(), "2".to_string(), "3".to_string()];
+            let mut samples =
+                vec![zero.to_string(), "1".to_string(), "2".to_string(), "3".to_string()];
             if signed {
                 samples.push("-1".to_string());
             } else {
                 samples.push("5".to_string());
             }
             samples
-        }
+        },
         SamplePurpose::Safe => vec!["1".to_string(), "2".to_string()],
-        SamplePurpose::BoundaryMin => {
-            if signed {
-                vec!["-2147483648".to_string()] // i32::MIN
-            } else {
-                vec![zero.to_string()]
-            }
-        }
-        SamplePurpose::BoundaryMax => vec!["2147483647".to_string()], // i32::MAX
-        SamplePurpose::Random => {
-            // Wider spread for prop tests. Caller may further
-            // sample from this.
-            let mut samples = vec![
-                zero.to_string(),
-                "1".to_string(),
-                "42".to_string(),
-                "1000".to_string(),
-            ];
-            if signed {
-                samples.push("-1".to_string());
-                samples.push("-1000".to_string());
-            }
-            samples
-        }
     }
-}
-
-/// Spec-derived: emit a default literal value in source-text form for
-/// any literal-typed category. Routes by the category's `native_type`
-/// to the appropriate spec-derived emitter (Integer / Float / Bool /
-/// String).
-///
-/// Returns `None` if the category has no `native_type` (caller treats
-/// as "no parseable literal" and skips the leaf).
-pub fn spec_admitted_literal_default(
-    language: &LanguageDef,
-    category: &Ident,
-) -> Option<String> {
-    let type_def = language.types.iter().find(|t| t.name == *category)?;
-    let native_type = type_def.native_type.as_ref()?;
-    let native_str = format_native_type(native_type);
-    Some(match native_str.as_str() {
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize" => {
-            format!("{}{}", spec_admitted_integer_default(language), native_str)
-        }
-        "f32" => "0.0f32".to_string(),
-        "f64" => "0.0f64".to_string(),
-        "bool" => "false".to_string(),
-        "str" | "String" | "&str" => "\"\"".to_string(),
-        // CanonicalBigInt / CanonicalBigRat / CanonicalFixedPoint
-        // and other arbitrary-precision wrappers — use Default.
-        _ => "Default::default()".to_string(),
-    })
-}
-
-/// Helper: format a native syn::Type as its primitive string name
-/// (e.g., `i32`, `bool`, `String`). Returns the path's last segment.
-fn format_native_type(ty: &syn::Type) -> String {
-    if let syn::Type::Path(tp) = ty {
-        if let Some(seg) = tp.path.segments.last() {
-            return seg.ident.to_string();
-        }
-    }
-    if let syn::Type::Reference(r) = ty {
-        if let syn::Type::Path(tp) = &*r.elem {
-            if let Some(seg) = tp.path.segments.last() {
-                return seg.ident.to_string();
-            }
-        }
-    }
-    "Default".to_string()
 }
 
 /// Spec-derived: emit a single deterministic identifier name admitted
@@ -1382,70 +1233,6 @@ pub fn spec_admitted_var_name(language: &LanguageDef) -> String {
     // exists.
     let _ = pattern;
     "a".to_string()
-}
-
-/// Spec-derived: for a guard slot in a rule (`?guard:Guard` syntax),
-/// emit a TokenStream constructing a witness predicate that comes
-/// from the spec's `RefinementTypeDef::predicate` if the guard's
-/// referenced type is a refinement type. Otherwise emits
-/// `BehavioralPred::Top` as the spec-declared default for unbounded
-/// guards.
-///
-/// Returns the source-text form to embed in generated test code.
-pub fn spec_witness_predicate_for_guard(
-    rule: &GrammarRule,
-    language: &LanguageDef,
-) -> String {
-    // Look at the rule's term_context for a GuardBody referring to a
-    // refinement type. If found and the refinement spec carries a
-    // non-trivial predicate, emit a Rust expression that constructs
-    // that predicate. Otherwise, emit Top as the spec's declared
-    // default (RefinementTypeDef.predicate is None or absent).
-    if let Some(ctx) = &rule.term_context {
-        for tp in ctx {
-            if let mettail_ast::grammar::TermParam::GuardBody { name } = tp {
-                let _ = name;
-                // Search the language's refinement_types for one whose
-                // base type matches a referenced category. The
-                // predicate AST exists in `language.refinement_types`
-                // (Vec<RefinementTypeDef>).
-                for rt in &language.refinement_types {
-                    let _ = rt;
-                    // For the first cut, emit Top — refinement
-                    // predicate lowering is a separate complex codegen
-                    // path (B8 in the comprehensive plan). Once B8
-                    // lands, this helper will wire to the lowered form.
-                    // Until then, Top is the spec-declared default
-                    // for unspecified predicates (NOT a fabrication —
-                    // the spec genuinely admits any term in this
-                    // slot).
-                    return "mettail_runtime::BehavioralPred::Top".to_string();
-                }
-                return "mettail_runtime::BehavioralPred::Top".to_string();
-            }
-        }
-    }
-    "mettail_runtime::BehavioralPred::Top".to_string()
-}
-
-/// Spec-derived: every collection rule must specify its `coll_type`
-/// in the language! spec. Returns it; emits a loud `compile_error!`
-/// payload if missing (a missing `coll_type` indicates a generator
-/// inserted the field without the spec's authority).
-///
-/// Callers should use this instead of
-/// `field.coll_type.as_ref().unwrap_or(&CollectionType::Vec)`.
-pub fn spec_required_coll_type<'a>(
-    coll_type: Option<&'a mettail_ast::types::CollectionType>,
-    field_name: &str,
-) -> Result<&'a mettail_ast::types::CollectionType, String> {
-    coll_type.ok_or_else(|| {
-        format!(
-            "field `{}` is a collection but has no `coll_type` in the language! spec — \
-             this indicates a synthetic insertion bug; do NOT silently default to Vec",
-            field_name
-        )
-    })
 }
 
 /// Spec-derived (Phase F.12 fix, 2026-05-20): detect whether a unary-prefix
@@ -1486,10 +1273,7 @@ pub fn spec_required_coll_type<'a>(
 /// (prefix is `"bitnot"`, not `"-"`), `Not` over Bool (Bool pattern doesn't
 /// admit leading dash), `Fact` (postfix, no leading terminal), `AddInt`
 /// (two-arg, not unary).
-pub fn constructor_admits_atomic_lex_collision(
-    rule: &GrammarRule,
-    language: &LanguageDef,
-) -> bool {
+pub fn constructor_admits_atomic_lex_collision(rule: &GrammarRule, language: &LanguageDef) -> bool {
     // Step 1: Extract (prefix_terminal, leaf_category) shape.
     let (prefix_str, leaf_cat) = match extract_unary_prefix_shape(rule) {
         Some(p) => p,
@@ -1543,7 +1327,7 @@ fn extract_unary_prefix_shape(rule: &GrammarRule) -> Option<(String, Ident)> {
                 } else {
                     return None;
                 }
-            }
+            },
             _ => return None,
         };
         // Syntax pattern must start with a Literal followed by a single Param.
@@ -1556,7 +1340,7 @@ fn extract_unary_prefix_shape(rule: &GrammarRule) -> Option<(String, Ident)> {
             _ => return None,
         };
         match &pattern[1] {
-            mettail_ast::grammar::SyntaxExpr::Param(_) => {}
+            mettail_ast::grammar::SyntaxExpr::Param(_) => {},
             _ => return None,
         }
         return Some((prefix, leaf_cat));
@@ -1580,9 +1364,7 @@ fn extract_unary_prefix_shape(rule: &GrammarRule) -> Option<(String, Ident)> {
 /// Used for payload-type selection (clone vs copy) and for signed-numeric logic (unary minus).
 pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<NonTerminalKind> {
     match rule.items.first()? {
-        GrammarItem::NonTerminal { kind, .. } if kind.is_literal() => {
-            Some(*kind)
-        },
+        GrammarItem::NonTerminal { kind, .. } if kind.is_literal() => Some(*kind),
         _ => None,
     }
 }
@@ -1634,10 +1416,10 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         NativeType::VecCollection => quote::format_ident!("ListLit"),
         NativeType::HashBagCollection | NativeType::HashSetCollection => {
             quote::format_ident!("BagLit")
-        }
+        },
         NativeType::HashMapLitCollection | NativeType::HashMapCollection => {
             quote::format_ident!("MapLit")
-        }
+        },
         NativeType::Other(_) => quote::format_ident!("Lit"), // Generic fallback
         // Unreachable: `is_integer()` above already returned for these.
         NativeType::Int8

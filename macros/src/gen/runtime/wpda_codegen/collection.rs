@@ -7,8 +7,8 @@
 //! - `term_context = [Simple { name: ps, ty: Collection { coll_type: HashBag, element: Proc } }]`
 //! - `syntax_pattern = [Literal("{"), Op(Sep { collection: ps, separator: "|", ... }), Literal("}")]`
 //!
-//! Classification yields `CollectionShape { open, close, separator,
-//! element_cat, coll_kind, label }`. Engine integration emits a
+//! Classification yields `CollectionShape { open_token, has_synth_paren,
+//! close, separator, element_cat, coll_kind, label }`. Engine integration emits a
 //! collection-loop state machine: open → element-loop → close →
 //! arity-1 action that pushes the constructed collection.
 
@@ -17,18 +17,16 @@ use mettail_ast::language::{CollectionCategory, LanguageDef};
 use mettail_ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::quote;
+use std::collections::BTreeSet;
 
-use super::binder::{classify_binder, BinderPosition};
+use super::binder::{classify_binder, BinderPosition, BinderShape, CollectionSepInfo};
 
 /// Classification of a collection-literal rule.
 #[derive(Debug, Clone)]
 pub struct CollectionShape {
-    /// Open delimiter as a single string (e.g., `"{"` for HashBag, `"list("` for default Vec).
-    /// When `has_synth_paren` is true, this is the concatenation of `open_token + "("`.
-    pub open: String,
     /// First-token slice of the open delimiter — what the lexer emits as a
-    /// single `Fixed` token. Equal to `open` when `has_synth_paren` is false;
-    /// when true, equal to `open_token == open.trim_end_matches('(')`.
+    /// single `Fixed` token. When `has_synth_paren` is true, the full logical
+    /// open delimiter is this token followed by a separate `"("` token.
     pub open_token: String,
     /// True when the synthetic-rule emitter (`synthetic.rs`) split a default
     /// open delimiter like `"list("` into the 4-element pattern
@@ -46,10 +44,92 @@ pub struct CollectionShape {
     pub element_cat: String,
     /// Container kind (Vec, HashBag, HashSet, HashMap).
     pub coll_kind: CollectionType,
-    /// Result category (where the collection lives, e.g., `"Proc"`).
-    pub result_cat: String,
     /// Constructor label (e.g., `"PPar"`).
     pub label: String,
+}
+
+fn collect_binder_collection_infos<'a>(
+    positions: &'a [BinderPosition],
+    out: &mut Vec<&'a CollectionSepInfo>,
+) {
+    for position in positions {
+        match position {
+            BinderPosition::ParamParse { collection: Some(info), .. } => out.push(info),
+            BinderPosition::OptionalGroup { positions: inner, .. } => {
+                collect_binder_collection_infos(inner, out);
+            },
+            _ => {},
+        }
+    }
+}
+
+fn binder_collection_infos(shape: &BinderShape) -> Vec<&CollectionSepInfo> {
+    let mut infos = Vec::new();
+    collect_binder_collection_infos(&shape.positions, &mut infos);
+    infos
+}
+
+fn collect_binder_close_delimiters(positions: &[BinderPosition], closes: &mut BTreeSet<String>) {
+    for position in positions {
+        match position {
+            BinderPosition::BinderListLoop { close, inner_positions, .. } => {
+                if !close.is_empty() {
+                    closes.insert(close.clone());
+                }
+                collect_binder_close_delimiters(inner_positions, closes);
+            },
+            BinderPosition::ParamParse { collection: Some(info), .. } => {
+                if !info.close.is_empty() {
+                    closes.insert(info.close.clone());
+                }
+            },
+            BinderPosition::OptionalGroup { positions: inner, .. } => {
+                collect_binder_close_delimiters(inner, closes);
+            },
+            _ => {},
+        }
+    }
+}
+
+pub(crate) fn collect_structural_delimiters(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut opens = BTreeSet::new();
+    let mut closes = BTreeSet::new();
+
+    // Grouping is emitted by the backend for every parseable category.
+    opens.insert("(".to_string());
+    closes.insert(")".to_string());
+
+    for rules in per_cat {
+        for rule in rules {
+            if let Some(shape) = classify_collection(rule, language) {
+                opens.insert(shape.open_token);
+                if shape.has_synth_paren {
+                    opens.insert("(".to_string());
+                }
+                closes.insert(shape.close);
+                continue;
+            }
+            if let Some(shape) = classify_binder(rule) {
+                collect_binder_close_delimiters(&shape.positions, &mut closes);
+            }
+        }
+    }
+
+    (opens, closes)
+}
+
+fn has_binder_internal_collection_slot(positions: &[BinderPosition]) -> bool {
+    positions.iter().any(|position| match position {
+        BinderPosition::ParamParse { collection: Some(_), .. } => true,
+        BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. } => true,
+        BinderPosition::OptionalGroup { positions: inner, .. } => {
+            has_binder_internal_collection_slot(inner)
+        },
+        _ => false,
+    })
 }
 
 /// Try to classify a `GrammarRule` as a collection-literal rule.
@@ -95,7 +175,7 @@ pub(crate) fn classify_collection(
                 _ => return None,
             };
             (open_kw, false, 1usize, 2usize)
-        }
+        },
         4 => {
             let open_kw = match &sp[0] {
                 SyntaxExpr::Literal(s) => s.clone(),
@@ -104,11 +184,11 @@ pub(crate) fn classify_collection(
             // Second element must be the literal `(` synthesized by synthetic.rs
             // (which splits default open delimiters of the form `kw(`).
             match &sp[1] {
-                SyntaxExpr::Literal(s) if s == "(" => {}
+                SyntaxExpr::Literal(s) if s == "(" => {},
                 _ => return None,
             }
             (open_kw, true, 2usize, 3usize)
-        }
+        },
         _ => return None,
     };
     let close = match &sp[close_idx] {
@@ -116,11 +196,11 @@ pub(crate) fn classify_collection(
         _ => return None,
     };
     let separator = match &sp[sep_idx] {
-        SyntaxExpr::Op(PatternOp::Sep {
-            collection,
-            separator,
-            source: None,
-        }) if collection == param_name => separator.clone(),
+        SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None })
+            if collection == param_name =>
+        {
+            separator.clone()
+        },
         _ => return None,
     };
     // Look up the pair_separator from the LangType's collection_kind for Maps.
@@ -135,13 +215,7 @@ pub(crate) fn classify_collection(
             CollectionCategory::Map(d) => d.key_val_sep.clone(),
             _ => None,
         });
-    let open = if has_synth_paren {
-        format!("{}(", open_token)
-    } else {
-        open_token.clone()
-    };
     Some(CollectionShape {
-        open,
         open_token,
         has_synth_paren,
         close,
@@ -149,7 +223,6 @@ pub(crate) fn classify_collection(
         pair_separator,
         element_cat: element_ident,
         coll_kind: coll_type,
-        result_cat: rule.category.to_string(),
         label: rule.label.to_string(),
     })
 }
@@ -270,24 +343,19 @@ pub(crate) fn emit_collection_loop_arm(
                 // B9 / Class 2 (2026-05-08): iterate ALL Class-2 binder
                 // rule SimpleCollection slots; emit per-slot arm.
                 if let Some(shape) = classify_binder(rule) {
-                    for position in shape.positions.iter() {
-                        if let BinderPosition::ParamParse {
-                            collection: Some(info),
-                            ..
-                        } = position {
-                            let result_src_idx = cat_i as u16;
-                            let rule_idx = rule_i as u16;
-                            let close = &info.close;
-                            let sep = &info.separator;
-                            let slot_idx = info.slot_idx;
-                            let kv_sep_expr = match &info.key_val_separator {
-                                Some(k) => quote! { Some(#k) },
-                                None => quote! { None },
-                            };
-                            lookup_arms.push(quote! {
-                                (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep, #kv_sep_expr)),
-                            });
-                        }
+                    for info in binder_collection_infos(&shape) {
+                        let result_src_idx = cat_i as u16;
+                        let rule_idx = rule_i as u16;
+                        let close = &info.close;
+                        let sep = &info.separator;
+                        let slot_idx = info.slot_idx;
+                        let kv_sep_expr = match &info.key_val_separator {
+                            Some(k) => quote! { Some(#k) },
+                            None => quote! { None },
+                        };
+                        lookup_arms.push(quote! {
+                            (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep, #kv_sep_expr)),
+                        });
                     }
                 }
                 continue;
@@ -331,7 +399,7 @@ pub(crate) fn emit_collection_loop_arm(
                     let element_src_idx = *_element_src_idx;
                     match *kv_phase {
                         0u8 => {
-                            // Stage 3.16 / Hack #11 (Cluster 1, Mechanism γ,
+                            // Stage 3.16 invariant (Cluster 1, Mechanism γ,
                             // 2026-05-05): three-branch Fork over close / sep /
                             // bare-element. Lex-min over the three branches'
                             // weights picks the surviving cursor:
@@ -506,21 +574,16 @@ pub(crate) fn emit_collection_element_src_lookup(
                 // between sibling slots (e.g., one slot of Vec(Proc)
                 // and another of Vec(Name)).
                 if let Some(shape) = classify_binder(rule) {
-                    for position in shape.positions.iter() {
-                        if let BinderPosition::ParamParse {
-                            collection: Some(info),
-                            ..
-                        } = position {
-                            if let Some(element_src_idx) =
-                                lookup_element_src_idx(&info.elem_cat, categories)
-                            {
-                                let result_src_idx = cat_i as u16;
-                                let rule_idx = rule_i as u16;
-                                let slot_idx = info.slot_idx;
-                                arms.push(quote! {
-                                    (#result_src_idx, #rule_idx, #slot_idx) => Some(#element_src_idx),
-                                });
-                            }
+                    for info in binder_collection_infos(&shape) {
+                        if let Some(element_src_idx) =
+                            lookup_element_src_idx(&info.elem_cat, categories)
+                        {
+                            let result_src_idx = cat_i as u16;
+                            let rule_idx = rule_i as u16;
+                            let slot_idx = info.slot_idx;
+                            arms.push(quote! {
+                                (#result_src_idx, #rule_idx, #slot_idx) => Some(#element_src_idx),
+                            });
                         }
                     }
                 }
@@ -573,19 +636,14 @@ pub(crate) fn emit_collection_close_lookup(
                 // accumulator_id == slot_idx, so the codegen-stamped
                 // value matches the walker's post-overwrite `bp`.
                 if let Some(shape) = classify_binder(rule) {
-                    for position in shape.positions.iter() {
-                        if let BinderPosition::ParamParse {
-                            collection: Some(info),
-                            ..
-                        } = position {
-                            let result_src_idx = cat_i as u16;
-                            let rule_idx = rule_i as u16;
-                            let close = &info.close;
-                            let slot_idx = info.slot_idx;
-                            arms.push(quote! {
-                                (#result_src_idx, #rule_idx, #slot_idx) => Some(#close),
-                            });
-                        }
+                    for info in binder_collection_infos(&shape) {
+                        let result_src_idx = cat_i as u16;
+                        let rule_idx = rule_i as u16;
+                        let close = &info.close;
+                        let slot_idx = info.slot_idx;
+                        arms.push(quote! {
+                            (#result_src_idx, #rule_idx, #slot_idx) => Some(#close),
+                        });
                     }
                 }
                 continue;
@@ -632,20 +690,15 @@ pub(crate) fn emit_collection_close_sep_lookup(
                 // (src, rule, slot_idx). Mirrors
                 // emit_collection_close_lookup's slot extension.
                 if let Some(shape) = classify_binder(rule) {
-                    for position in shape.positions.iter() {
-                        if let BinderPosition::ParamParse {
-                            collection: Some(info),
-                            ..
-                        } = position {
-                            let result_src_idx = cat_i as u16;
-                            let rule_idx = rule_i as u16;
-                            let close = &info.close;
-                            let sep = &info.separator;
-                            let slot_idx = info.slot_idx;
-                            arms.push(quote! {
-                                (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep)),
-                            });
-                        }
+                    for info in binder_collection_infos(&shape) {
+                        let result_src_idx = cat_i as u16;
+                        let rule_idx = rule_i as u16;
+                        let close = &info.close;
+                        let sep = &info.separator;
+                        let slot_idx = info.slot_idx;
+                        arms.push(quote! {
+                            (#result_src_idx, #rule_idx, #slot_idx) => Some((#close, #sep)),
+                        });
                     }
                 }
                 continue;
@@ -700,19 +753,14 @@ pub(crate) fn emit_kv_separator_for_collection(
                 // hardcoded `":"` separator (per binder.rs::605-625's
                 // Phase 4 #5 pilot wiring).
                 if let Some(shape) = classify_binder(rule) {
-                    for position in shape.positions.iter() {
-                        if let BinderPosition::ParamParse {
-                            collection: Some(info),
-                            ..
-                        } = position {
-                            if let Some(kv) = &info.key_val_separator {
-                                let result_src_idx = cat_i as u16;
-                                let rule_idx = rule_i as u16;
-                                let slot_idx = info.slot_idx;
-                                arms.push(quote! {
-                                    (#result_src_idx, #rule_idx, #slot_idx) => Some(#kv),
-                                });
-                            }
+                    for info in binder_collection_infos(&shape) {
+                        if let Some(kv) = &info.key_val_separator {
+                            let result_src_idx = cat_i as u16;
+                            let rule_idx = rule_i as u16;
+                            let slot_idx = info.slot_idx;
+                            arms.push(quote! {
+                                (#result_src_idx, #rule_idx, #slot_idx) => Some(#kv),
+                            });
                         }
                     }
                 }
@@ -769,19 +817,7 @@ pub(crate) fn emit_is_binder_internal_collection_lookup(
             // were missing from the suppression table, causing spurious
             // PInputs action fire when `apply_pop_body_to_cursor`
             // popped the Class 3 CollectionMarker.
-            let has_collection_slot = shape.positions.iter().any(|p| {
-                matches!(
-                    p,
-                    BinderPosition::ParamParse {
-                        collection: Some(_),
-                        ..
-                    }
-                    | BinderPosition::BinderListLoop {
-                        collection_param_cat: Some(_),
-                        ..
-                    }
-                )
-            });
+            let has_collection_slot = has_binder_internal_collection_slot(&shape.positions);
             if !has_collection_slot {
                 continue;
             }
@@ -802,7 +838,6 @@ pub(crate) fn emit_is_binder_internal_collection_lookup(
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -868,7 +903,6 @@ mod tests {
         };
         let lang = empty_lang();
         let shape = classify_collection(&rule, &lang).expect("collection");
-        assert_eq!(shape.open, "{");
         assert_eq!(shape.open_token, "{");
         assert!(!shape.has_synth_paren);
         assert_eq!(shape.close, "}");
@@ -876,7 +910,6 @@ mod tests {
         assert_eq!(shape.pair_separator, None);
         assert_eq!(shape.element_cat, "Proc");
         assert_eq!(shape.label, "PPar");
-        assert_eq!(shape.result_cat, "Proc");
         assert!(matches!(shape.coll_kind, CollectionType::HashBag));
     }
 
@@ -916,7 +949,6 @@ mod tests {
         };
         let lang = empty_lang();
         let shape = classify_collection(&rule, &lang).expect("4-element collection");
-        assert_eq!(shape.open, "list(");
         assert_eq!(shape.open_token, "list");
         assert!(shape.has_synth_paren);
         assert_eq!(shape.close, ")");
@@ -925,5 +957,133 @@ mod tests {
         assert_eq!(shape.element_cat, "Proc");
         assert_eq!(shape.label, "ListLit");
         assert!(matches!(shape.coll_kind, CollectionType::Vec));
+    }
+
+    fn optional_inner_collection_rule() -> GrammarRule {
+        GrammarRule {
+            label: Ident::new("ChooseMaybe", Span::call_site()),
+            category: Ident::new("Proc", Span::call_site()),
+            items: Vec::new(),
+            bindings: Vec::new(),
+            term_context: Some(vec![
+                TermParam::Simple {
+                    name: Ident::new("a", Span::call_site()),
+                    ty: TypeExpr::Base(Ident::new("Proc", Span::call_site())),
+                },
+                TermParam::Optional {
+                    params: vec![TermParam::Simple {
+                        name: Ident::new("qs", Span::call_site()),
+                        ty: TypeExpr::Collection {
+                            coll_type: CollectionType::Vec,
+                            element: Box::new(TypeExpr::Base(Ident::new(
+                                "Proc",
+                                Span::call_site(),
+                            ))),
+                        },
+                    }],
+                },
+            ]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("choose".into()),
+                SyntaxExpr::Param(Ident::new("a", Span::call_site())),
+                SyntaxExpr::Op(PatternOp::Opt {
+                    inner: vec![
+                        SyntaxExpr::Literal("with".into()),
+                        SyntaxExpr::Literal("(".into()),
+                        SyntaxExpr::Op(PatternOp::Sep {
+                            collection: Ident::new("qs", Span::call_site()),
+                            separator: "|".into(),
+                            source: None,
+                        }),
+                        SyntaxExpr::Literal(")".into()),
+                    ],
+                }),
+            ]),
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
+        }
+    }
+
+    #[test]
+    fn binder_collection_infos_recurse_into_optional_groups() {
+        let rule = optional_inner_collection_rule();
+        let shape = classify_binder(&rule).expect("optional binder shape");
+        let infos = binder_collection_infos(&shape);
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].slot_idx, 0);
+        assert_eq!(infos[0].elem_cat, "Proc");
+        assert_eq!(infos[0].separator, "|");
+        assert_eq!(infos[0].close, ")");
+        assert!(has_binder_internal_collection_slot(&shape.positions));
+    }
+
+    #[test]
+    fn optional_inner_collection_codegen_tables_include_slot() {
+        let lang = empty_lang();
+        let categories = vec!["Proc".to_string()];
+        let per_cat = vec![vec![optional_inner_collection_rule()]];
+
+        let close = emit_collection_close_lookup(&lang, &per_cat).to_string();
+        let close_sep = emit_collection_close_sep_lookup(&lang, &per_cat).to_string();
+        let element = emit_collection_element_src_lookup(&lang, &categories, &per_cat).to_string();
+        let loop_body = emit_collection_loop_arm(&lang, &categories, &per_cat).to_string();
+
+        for emitted in [close, close_sep, element, loop_body] {
+            assert!(
+                emitted.contains("0u16 , 0u16 , 0u8") || emitted.contains("0u16, 0u16, 0u8"),
+                "optional inner collection slot missing from emitted lookup: {emitted}"
+            );
+        }
+    }
+
+    #[test]
+    fn structural_delimiter_collector_includes_grouping_collections_and_binder_closes() {
+        let collection_rule = GrammarRule {
+            label: Ident::new("PPar", Span::call_site()),
+            category: Ident::new("Proc", Span::call_site()),
+            items: Vec::new(),
+            bindings: Vec::new(),
+            term_context: Some(vec![TermParam::Simple {
+                name: Ident::new("ps", Span::call_site()),
+                ty: TypeExpr::Collection {
+                    coll_type: CollectionType::HashBag,
+                    element: Box::new(TypeExpr::Base(Ident::new("Proc", Span::call_site()))),
+                },
+            }]),
+            syntax_pattern: Some(vec![
+                SyntaxExpr::Literal("{".into()),
+                SyntaxExpr::Op(PatternOp::Sep {
+                    collection: Ident::new("ps", Span::call_site()),
+                    separator: "|".into(),
+                    source: None,
+                }),
+                SyntaxExpr::Literal("}".into()),
+            ]),
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
+        };
+        let lang = empty_lang();
+        let per_cat = vec![vec![collection_rule, optional_inner_collection_rule()]];
+
+        let (opens, closes) = collect_structural_delimiters(&lang, &per_cat);
+
+        assert!(opens.contains("("), "backend grouping open must be structural");
+        assert!(opens.contains("{"), "collection open delimiter must be structural");
+        assert!(closes.contains(")"), "grouping/binder close delimiter must be structural");
+        assert!(closes.contains("}"), "collection close delimiter must be structural");
+        assert!(
+            !opens.contains("choose"),
+            "binder keywords are trigger terminals, not delimiters"
+        );
     }
 }

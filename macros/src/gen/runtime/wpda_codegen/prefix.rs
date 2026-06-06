@@ -40,10 +40,9 @@ pub enum LiteralFamily {
 /// emission. The Integer family's bare-polymorphic `TokenKind::Integer` arm
 /// is gated on this — present in `HomeCategory` (so a bare unsuffixed integer
 /// in BigInt's own PrefixDispatch resolves directly to BigInt's NumLit),
-/// suppressed in `CrossCatProjection` and `FirstSet` (so primitive-integer
-/// cross-cat projections like `ProcInt`/`ProcUInt32` aren't shadowed when
-/// the FIRST set of `BigInt` is consumed by other categories' cross-cat
-/// dispatch). Generalizes uniformly across all NativeKinds via
+/// suppressed in `FirstSet` (so primitive-integer cross-cat projections like
+/// `ProcInt`/`ProcUInt32` aren't shadowed when the FIRST set of `BigInt` is
+/// consumed by other categories' cross-cat dispatch). Generalizes uniformly via
 /// `home_polymorphic_token_arm(family)` — adding a new kind to an existing
 /// family auto-inherits the correct behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,14 +52,9 @@ pub enum EmissionContext {
     /// non-primitive integer kinds (`CanonicalBigInt`); without it, bare
     /// unsuffixed integers route through cross-cat to Int via heuristics.
     HomeCategory,
-    /// Emitting arms in another category's PrefixDispatch via cross-cat
-    /// projection (e.g., Proc's `ProcBigInt` arm derived from FIRST(BigInt)).
-    /// The bare-polymorphic arm is SUPPRESSED so primitive-integer cross-cat
-    /// projections are not shadowed.
-    CrossCatProjection,
     /// Computing a FIRST set that will be consumed by cross-cat-projection
-    /// emission. Same suppression as `CrossCatProjection` to keep the FIRST
-    /// set free of home-only arms.
+    /// emission. The bare-polymorphic arm is suppressed to keep the FIRST set
+    /// free of home-only arms.
     FirstSet,
 }
 
@@ -244,8 +238,7 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
                 mettail_ast::grammar::SyntaxExpr::Param(syn_name),
             ) = (&sp[0], &sp[1])
             {
-                if let mettail_ast::grammar::TermParam::Simple { name: param_name, ty } = &tc[0]
-                {
+                if let mettail_ast::grammar::TermParam::Simple { name: param_name, ty } = &tc[0] {
                     if syn_name == param_name {
                         if let mettail_ast::types::TypeExpr::Base(source_ident) = ty {
                             let source_cat = source_ident.to_string();
@@ -293,13 +286,11 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
                 // `rule.category == ident`. Label is the Var-variant label
                 // (TVar / PVar / etc.) — use rule.label directly.
                 if rule.category == *ident {
-                    AtomicShape::VarRule {
-                        wrapper_variant: rule.label.clone(),
-                    }
+                    AtomicShape::VarRule { wrapper_variant: rule.label.clone() }
                 } else {
                     AtomicShape::NonAtomic
                 }
-            }
+            },
             NonTerminalKind::Category => {
                 // LiteralPatterned detection: rule body is a single category
                 // reference AND that category has a `from_literals` TokenDef
@@ -310,7 +301,7 @@ pub fn classify_atomic(rule: &GrammarRule, language: &LanguageDef) -> AtomicShap
                     return AtomicShape::NonAtomic;
                 }
                 classify_literal_patterned(ident, language).unwrap_or(AtomicShape::NonAtomic)
-            }
+            },
         },
         GrammarItem::Terminal(text) => AtomicShape::TerminalKeyword {
             terminal_text: text.clone(),
@@ -343,7 +334,12 @@ fn classify_literal_patterned(cat_ident: &Ident, language: &LanguageDef) -> Opti
 
     // Case (a): explicit literals block.
     let token_def = language.token_defs.iter().find(|td| {
-        td.from_literals && td.category.as_ref().map(|c| c == cat_ident).unwrap_or(false)
+        td.from_literals
+            && td
+                .category
+                .as_ref()
+                .map(|c| c == cat_ident)
+                .unwrap_or(false)
     });
     if let Some(td) = token_def {
         if let Some(rust_code) = td.rust_code.clone() {
@@ -454,10 +450,7 @@ pub struct FirstToken {
 /// sources. Used by cross-cat projection codegen to emit specific
 /// dispatch arms in the *result* category's PrefixDispatch when the
 /// peek'd token belongs to the *source* category.
-pub fn first_set_of_category(
-    cat_name: &str,
-    language: &LanguageDef,
-) -> Vec<FirstToken> {
+pub fn first_set_of_category(cat_name: &str, language: &LanguageDef) -> Vec<FirstToken> {
     let mut acc = Vec::new();
     let mut visited = std::collections::HashSet::new();
     // FIRST sets are consumed by cross-cat projection emission and other
@@ -473,8 +466,7 @@ pub fn first_set_of_category(
     // byte-identical Push branches, multiplying cursor count without changing
     // outcomes. The dedup key matches the `(pat_str, guard_str)` shape used
     // by `unified_buckets` so consumer bucket-fill stays deduplication-safe.
-    let mut seen: std::collections::BTreeSet<(String, String)> =
-        std::collections::BTreeSet::new();
+    let mut seen: std::collections::BTreeSet<(String, String)> = std::collections::BTreeSet::new();
     acc.retain(|ft| {
         let key = (
             ft.pattern.to_string(),
@@ -510,7 +502,11 @@ fn collect_first_set(
     //       category was native-only didn't dispatch on bare Integer
     //       tokens (e.g., LedTest's `CastNum . a:Num |- a : Expr` failed
     //       to fire on input `0`).
-    if let Some(lang_type) = language.types.iter().find(|t| t.name.to_string() == cat_name) {
+    if let Some(lang_type) = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == cat_name)
+    {
         if let Some(nt) = lang_type.native_type.as_ref() {
             let kind = NativeKind::from_syn_type(nt);
             if let Some(family) = literal_family_for(&kind) {
@@ -531,16 +527,27 @@ fn collect_first_set(
     // caused FIRST(Int) etc. to omit Ident even though `gen/types/enums.rs`
     // unconditionally emits `Int::IVar(...)` AST variants. Now the FIRST
     // set mirrors the AST surface for every category.
-    if let Some(_lang_type) = language.types.iter().find(|t| t.name.to_string() == cat_name) {
+    if let Some(_lang_type) = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == cat_name)
+    {
         // Has-user-var-rule check: if any user rule for this cat matches
         // NonTerminal(Var), don't add (the user rule covers it).
         let has_user_var = language.terms.iter().any(|r| {
             r.category.to_string() == cat_name
-                && r.items.first().map(|item| {
-                    matches!(item, mettail_ast::grammar::GrammarItem::NonTerminal {
-                        kind: mettail_ast::grammar::NonTerminalKind::Var, ..
+                && r.items
+                    .first()
+                    .map(|item| {
+                        matches!(
+                            item,
+                            mettail_ast::grammar::GrammarItem::NonTerminal {
+                                kind: mettail_ast::grammar::NonTerminalKind::Var,
+                                ..
+                            }
+                        )
                     })
-                }).unwrap_or(false)
+                    .unwrap_or(false)
         });
         if !has_user_var {
             acc.push(FirstToken {
@@ -562,7 +569,11 @@ fn collect_first_set(
     // reading `LangType::collection_kind` directly. The first-token of
     // the open delim (after trimming a trailing `(` to match the lexer's
     // 2-token tokenization of `list(`) is the FIRST element.
-    if let Some(lang_type) = language.types.iter().find(|t| t.name.to_string() == cat_name) {
+    if let Some(lang_type) = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == cat_name)
+    {
         if let Some(coll_kind) = lang_type.collection_kind.as_ref() {
             let open = match coll_kind {
                 mettail_ast::language::CollectionCategory::List(d) => d.open.clone(),
@@ -594,7 +605,7 @@ fn collect_first_set(
                 {
                     acc.push(FirstToken { pattern, extra_guard });
                 }
-            }
+            },
             AtomicShape::TerminalKeyword { terminal_text, .. } => {
                 acc.push(FirstToken {
                     pattern: quote! {
@@ -602,7 +613,7 @@ fn collect_first_set(
                     },
                     extra_guard: Some(quote! { __kw == #terminal_text }),
                 });
-            }
+            },
             AtomicShape::VarRule { .. } => {
                 acc.push(FirstToken {
                     pattern: quote! {
@@ -610,7 +621,7 @@ fn collect_first_set(
                     },
                     extra_guard: None,
                 });
-            }
+            },
             AtomicShape::LiteralInteger => {
                 acc.push(FirstToken {
                     pattern: quote! {
@@ -618,7 +629,7 @@ fn collect_first_set(
                     },
                     extra_guard: None,
                 });
-            }
+            },
             AtomicShape::LiteralBoolean => {
                 acc.push(FirstToken {
                     pattern: quote! {
@@ -628,7 +639,7 @@ fn collect_first_set(
                     },
                     extra_guard: None,
                 });
-            }
+            },
             AtomicShape::LiteralString => {
                 acc.push(FirstToken {
                     pattern: quote! {
@@ -636,7 +647,7 @@ fn collect_first_set(
                     },
                     extra_guard: None,
                 });
-            }
+            },
             AtomicShape::LiteralFloat => {
                 acc.push(FirstToken {
                     pattern: quote! {
@@ -644,7 +655,7 @@ fn collect_first_set(
                     },
                     extra_guard: None,
                 });
-            }
+            },
             AtomicShape::CrossCatProjection { source_cat_name, .. } => {
                 // Recurse into the source category's FIRST set. Option A
                 // (per-cursor collection support in fanout) makes this
@@ -652,7 +663,7 @@ fn collect_first_set(
                 // emission can now drive cursors through any FIRST token,
                 // including transitive cross-cat tokens.
                 collect_first_set(&source_cat_name, language, acc, visited);
-            }
+            },
             AtomicShape::CrossCatPrefixUnary { trigger, .. } => {
                 acc.push(FirstToken {
                     pattern: quote! {
@@ -660,7 +671,7 @@ fn collect_first_set(
                     },
                     extra_guard: Some(quote! { __kw == #trigger }),
                 });
-            }
+            },
             AtomicShape::PrefixOperator { trigger, .. } => {
                 // M6c.6.4.b (2026-05-14): same-cat unary prefix uses
                 // the trigger literal as its FIRST token, matching
@@ -671,7 +682,7 @@ fn collect_first_set(
                     },
                     extra_guard: Some(quote! { __kw == #trigger }),
                 });
-            }
+            },
             AtomicShape::NonAtomic => {
                 // Pratt prefix / collection / binder rules: their FIRST
                 // typically starts with a literal trigger from
@@ -700,7 +711,7 @@ fn collect_first_set(
                                 },
                                 extra_guard: Some(quote! { __kw == #text }),
                             });
-                        }
+                        },
                         Some(mettail_ast::grammar::SyntaxExpr::Param(_)) => {
                             // First syntactic item is a param ref.
                             // Look up the corresponding NonTerminal in
@@ -716,80 +727,28 @@ fn collect_first_set(
                                     collect_first_set(&nt_cat, language, acc, visited);
                                 }
                             }
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
-            }
+            },
         }
     }
-}
-
-/// B7 Pattern 2: emit auto-grouping `(` arms in PrefixDispatch.
-///
-/// For every parseable category, emit:
-/// ```text
-/// Some(TokenKind::Fixed(__open)) if __open == "(" && state_cat_src_idx == #c_src => {
-///     return WpdaStepAction::ConsumeAndPush {
-///         symbol: StackSymbolV2::grouping_marker(#c_src, *cur_bp),
-///         weight: lex_one(),
-///         new_state: WpdaState::PrefixDispatch { pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1), cur_bp: 0 },
-///         capture_token: false,
-///     };
-/// }
-/// ```
-///
-/// Grouping is transparent: no AST node, no action, just a precedence
-/// reset. The `GroupingMarker` (wpda_runtime.rs `SymbolKind::GroupingMarker`)
-/// carries the saved outer `cur_bp` in its `bp` field; on `)` consumption
-/// in the Unwinding-GroupingMarker arm, the engine resumes
-/// `InfixLoop { cur_bp: marker.bp }`.
-///
-/// **Backend-uniform fix** per the user's no-per-grammar-order mandate:
-/// every shipped grammar gains paren grouping without per-grammar work.
-/// Conflict-safe: `(` only enters PrefixDispatch as a standalone token
-/// when no in-flight collection consumes it (collection rules consume
-/// their open delim's `(` via `WpdaState::CollectionOpenParen`, not
-/// PrefixDispatch).
-pub fn emit_grouping_arms(categories: &[String]) -> TokenStream {
-    let mut arms = Vec::new();
-    for (cat_i, _cat_name) in categories.iter().enumerate() {
-        let result_src_idx = cat_i as u16;
-        arms.push(quote! {
-            Some(mettail_prattail::automata::TokenKind::Fixed(__open))
-                if __open == "(" && state_cat_src_idx == #result_src_idx => {
-                return WpdaStepAction::ConsumeAndPush {
-                    symbol: StackSymbolV2::grouping_marker(
-                        #result_src_idx, *cur_bp,
-                    ),
-                    weight: lex_one(),
-                    new_state: WpdaState::PrefixDispatch {
-                        pos: tokens.next_pos(*pos, 0).unwrap_or(*pos + 1),
-                        cur_bp: 0,
-                    },
-                    // Phase F.8: `(` grouping discards the trigger token.
-                    trigger_mode: mettail_prattail::wpda_walker::TriggerMode::Discard,
-                };
-            }
-        });
-    }
-    quote! { #(#arms)* }
 }
 
 /// Stage 3.20 / Commit 4 part 2 (Plan agent Fix, 2026-05-06): emit `(`-trigger
 /// dispatch arms that handle BOTH the B7 paren-grouping AND any binder
 /// rule whose first trigger is `"("`. For categories with no `(`-binder,
-/// this degenerates to the simple grouping arm (byte-identical to
-/// `emit_grouping_arms`). For categories like Lambda's `Term` that have
-/// a paren-triggered App rule, this emits a `WpdaStepAction::Fork` over
+/// this degenerates to the simple grouping arm. For categories like Lambda's
+/// `Term` that have a paren-triggered App rule, this emits a `WpdaStepAction::Fork` over
 /// {grouping_branch, binder_rule_branches...} so lex-min disambiguates
 /// per `feedback_use_wpds_disambiguation_not_heuristics.md`. The grouping
 /// branch uses `lex_one()` (max src/rule indices) so
 /// any concrete binder rule beats it on lex-min ties.
 ///
 /// Verified empirically across `target/generated/*/wpds.rs`: only Lambda
-/// has a `(`-triggered binder rule; for all other shipped grammars the
-/// emitted output is byte-identical to `emit_grouping_arms`.
+/// has a `(`-triggered binder rule; for all other shipped grammars this emits
+/// the direct grouping arm.
 pub fn emit_paren_dispatch_arms(
     categories: &[String],
     _language: &mettail_ast::language::LanguageDef,
@@ -808,14 +767,13 @@ pub fn emit_paren_dispatch_arms(
                 match first_trigger {
                     mettail_ast::grammar::SyntaxExpr::Literal(text) if text == "(" => {
                         Some((rule_i as u16, shape))
-                    }
+                    },
                     _ => None,
                 }
             })
             .collect();
         if paren_binder_rules.is_empty() {
-            // No conflict: emit the simple grouping arm (byte-identical
-            // to emit_grouping_arms).
+            // No conflict: emit the simple grouping arm.
             arms.push(quote! {
                 Some(mettail_prattail::automata::TokenKind::Fixed(__open))
                     if __open == "(" && state_cat_src_idx == #result_src_idx => {
@@ -856,8 +814,9 @@ pub fn emit_paren_dispatch_arms(
         // Branches 1..N: each binder rule with `(` trigger.
         for (rule_idx, shape) in &paren_binder_rules {
             let body_src_idx = match &shape.body_cat {
-                Some(name) => super::binder::lookup_src_idx(name, categories)
-                    .unwrap_or(result_src_idx),
+                Some(name) => {
+                    super::binder::lookup_src_idx(name, categories).unwrap_or(result_src_idx)
+                },
                 None => result_src_idx,
             };
             let rule_idx_lit = *rule_idx;
@@ -986,10 +945,8 @@ pub fn emit_prefix_arms_for_category(
     // shared by POutput's Name LHS delegation and PVar's atomic arm).
     let mut sorted_sources: Vec<&String> = cross_cat_infix_sources.iter().collect();
     sorted_sources.sort();
-    let mut unified_buckets: std::collections::BTreeMap<
-        (String, String),
-        UnifiedBucket,
-    > = std::collections::BTreeMap::new();
+    let mut unified_buckets: std::collections::BTreeMap<(String, String), UnifiedBucket> =
+        std::collections::BTreeMap::new();
     let mut unified_order: Vec<(String, String)> = Vec::new();
     for source_cat_name in &sorted_sources {
         let source_src_idx = categories
@@ -1014,9 +971,9 @@ pub fn emit_prefix_arms_for_category(
                 extra_guard: ft.extra_guard.clone(),
                 descs: Vec::new(),
             });
-            entry.descs.push(UnifiedDescriptor::CrossCatLhs {
-                source_src_idx,
-            });
+            entry
+                .descs
+                .push(UnifiedDescriptor::CrossCatLhs { source_src_idx });
         }
     }
     // B11 fix (2026-04-28): two-pass emission. Pass 1 emits ALL atomic-shape
@@ -1051,9 +1008,7 @@ pub fn emit_prefix_arms_for_category(
     let mut atomic_descriptors: Vec<PrefixArmDescriptor> = Vec::new();
     for &(rule_idx, rule) in rules_in_category {
         let shape = classify_atomic(rule, language);
-        atomic_descriptors.extend(atomic_arm_descriptors(
-            category_src_idx, rule_idx, &shape,
-        ));
+        atomic_descriptors.extend(atomic_arm_descriptors(category_src_idx, rule_idx, &shape));
     }
     for desc in atomic_descriptors {
         let pat_str = desc.pattern.to_string();
@@ -1083,9 +1038,8 @@ pub fn emit_prefix_arms_for_category(
     // was already taken by a Pass-1 atomic arm. Same SHAPE class as the
     // Pass-0/1 silent-shadow bug B7 closed.
     for &(rule_idx, rule) in rules_in_category {
-        if let AtomicShape::CrossCatProjection {
-            source_cat_name, ..
-        } = classify_atomic(rule, language)
+        if let AtomicShape::CrossCatProjection { source_cat_name, .. } =
+            classify_atomic(rule, language)
         {
             let source_src_idx = categories
                 .iter()
@@ -1103,17 +1057,14 @@ pub fn emit_prefix_arms_for_category(
                 if !unified_buckets.contains_key(&key) {
                     unified_order.push(key.clone());
                 }
-                let entry = unified_buckets.entry(key).or_insert_with(|| {
-                    UnifiedBucket {
-                        pat: ft.pattern.clone(),
-                        extra_guard: ft.extra_guard.clone(),
-                        descs: Vec::new(),
-                    }
+                let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
+                    pat: ft.pattern.clone(),
+                    extra_guard: ft.extra_guard.clone(),
+                    descs: Vec::new(),
                 });
-                entry.descs.push(UnifiedDescriptor::CrossCatProjection {
-                    rule_idx,
-                    source_src_idx,
-                });
+                entry
+                    .descs
+                    .push(UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx });
             }
         }
     }
@@ -1150,14 +1101,28 @@ pub fn emit_prefix_arms_for_category(
         }
         // Cross-cat unary detection: single Simple foreign-cat param,
         // sp.len() >= 3 (cast wrappers have trigger + "(" + param + ")" or similar).
-        let Some(tc) = rule.term_context.as_ref() else { continue; };
-        if tc.len() != 1 { continue; }
-        let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else { continue; };
-        let mettail_ast::types::TypeExpr::Base(source_ident) = ty else { continue; };
+        let Some(tc) = rule.term_context.as_ref() else {
+            continue;
+        };
+        if tc.len() != 1 {
+            continue;
+        }
+        let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else {
+            continue;
+        };
+        let mettail_ast::types::TypeExpr::Base(source_ident) = ty else {
+            continue;
+        };
         let source_cat_name = source_ident.to_string();
-        if source_cat_name == rule.category.to_string() { continue; }
-        let Some(sp) = rule.syntax_pattern.as_ref() else { continue; };
-        if sp.len() < 3 { continue; }
+        if source_cat_name == rule.category.to_string() {
+            continue;
+        }
+        let Some(sp) = rule.syntax_pattern.as_ref() else {
+            continue;
+        };
+        if sp.len() < 3 {
+            continue;
+        }
 
         let source_src_idx = categories
             .iter()
@@ -1175,25 +1140,24 @@ pub fn emit_prefix_arms_for_category(
             if !unified_buckets.contains_key(&key) {
                 unified_order.push(key.clone());
             }
-            let entry = unified_buckets.entry(key).or_insert_with(|| {
-                UnifiedBucket {
-                    pat: ft.pattern.clone(),
-                    extra_guard: ft.extra_guard.clone(),
-                    descs: Vec::new(),
-                }
+            let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
+                pat: ft.pattern.clone(),
+                extra_guard: ft.extra_guard.clone(),
+                descs: Vec::new(),
             });
             // WPDS-architectural redesign (2026-05-13): Pass 2c emits
             // ImplicitCast (NOT CrossCatProjection) so emit_unified_arm
             // uses BP_TIER_PASS2C_SYNTHESIZED weight, ensuring direct
             // user-declared casts win lex-min over Pass 2c chains.
-            entry.descs.push(UnifiedDescriptor::ImplicitCast {
-                rule_idx,
-                source_src_idx,
-            });
+            entry
+                .descs
+                .push(UnifiedDescriptor::ImplicitCast { rule_idx, source_src_idx });
         }
     }
     for key in unified_order {
-        let entry = unified_buckets.remove(&key).expect("bucket present in order");
+        let entry = unified_buckets
+            .remove(&key)
+            .expect("bucket present in order");
         arms.push(emit_unified_arm(category_src_idx, &entry));
     }
     // Pass 2b: cross-cat-prefix-unary arms (trigger-literal + delegation).
@@ -1279,7 +1243,7 @@ fn emit_cross_cat_prefix_unary_arm(
 /// `state_cat_src_idx == #category_src_idx` check is always appended so
 /// shared token variants dispatch to different categories depending on
 /// current frame.
-/// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — descriptor
+/// Stage 3.16 invariant (Cluster 2, Mechanism γ, 2026-05-05) — descriptor
 /// for a single atomic prefix arm. Used by `emit_prefix_arms_for_category`'s
 /// bucket-then-Fork emission to detect atomic arms sharing a `(pat, guard)`
 /// key and emit a multi-branch Fork instead of first-match-wins.
@@ -1297,7 +1261,7 @@ struct PrefixArmDescriptor {
     category_src_idx: u16,
 }
 
-/// Stage 3.16 / Hack #8 (Cluster 2, Mechanism γ, 2026-05-05) — extracted
+/// Stage 3.16 invariant (Cluster 2, Mechanism γ, 2026-05-05) — extracted
 /// pattern/guard pairs for an atomic shape. Replaces the eager TokenStream
 /// emission in `emit_atomic_arms` so the caller can bucket by (pat, guard)
 /// before emitting either a singleton arm or a Fork.
@@ -1307,10 +1271,9 @@ fn atomic_arm_descriptors(
     shape: &AtomicShape,
 ) -> Vec<PrefixArmDescriptor> {
     let pattern_guards: Vec<(TokenStream, Option<TokenStream>)> = match shape {
-        AtomicShape::LiteralInteger => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Integer) },
-            None,
-        )],
+        AtomicShape::LiteralInteger => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Integer) }, None)]
+        },
         AtomicShape::LiteralBoolean => vec![(
             quote! {
                 Some(mettail_prattail::automata::TokenKind::True)
@@ -1319,14 +1282,12 @@ fn atomic_arm_descriptors(
             },
             None,
         )],
-        AtomicShape::LiteralString => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::StringLit) },
-            None,
-        )],
-        AtomicShape::LiteralFloat => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Float) },
-            None,
-        )],
+        AtomicShape::LiteralString => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)]
+        },
+        AtomicShape::LiteralFloat => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)]
+        },
         AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
             let nk = NativeKind::from_syn_type(native_type);
             literal_patterned_pattern_and_guard_for_kind(
@@ -1335,18 +1296,17 @@ fn atomic_arm_descriptors(
                 Some(&nk),
                 EmissionContext::HomeCategory,
             )
-        }
+        },
         AtomicShape::TerminalKeyword { terminal_text, .. } => vec![(
             quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
             Some(quote! { __kw == #terminal_text }),
         )],
-        AtomicShape::VarRule { .. } => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Ident) },
-            None,
-        )],
+        AtomicShape::VarRule { .. } => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Ident) }, None)]
+        },
         AtomicShape::CrossCatProjection { .. } | AtomicShape::CrossCatPrefixUnary { .. } => {
             return Vec::new()
-        }
+        },
         // M6c.6.4.b (2026-05-14): PrefixOperator does not emit an
         // atomic-arm descriptor — same-cat unary prefix rules are
         // handled by the standard prefix-trigger arm (BinderRule
@@ -1451,12 +1411,9 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         };
                     }
                 }
-            }
+            },
             UnifiedDescriptor::Atomic(desc) => emit_atomic_arm_singleton(desc),
-            UnifiedDescriptor::CrossCatProjection {
-                rule_idx,
-                source_src_idx,
-            } => {
+            UnifiedDescriptor::CrossCatProjection { rule_idx, source_src_idx } => {
                 let rule_idx = *rule_idx;
                 let source_src_idx = *source_src_idx;
                 quote! {
@@ -1484,11 +1441,8 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         };
                     }
                 }
-            }
-            UnifiedDescriptor::ImplicitCast {
-                rule_idx,
-                source_src_idx,
-            } => {
+            },
+            UnifiedDescriptor::ImplicitCast { rule_idx, source_src_idx } => {
                 // Pass 2c implicit-cast synthesized arm — same emission shape
                 // as CrossCatProjection (delegate to source via
                 // CrossCatDelegate, fire the cast action on the Return pop).
@@ -1530,7 +1484,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         };
                     }
                 }
-            }
+            },
         }
     } else {
         let branches: Vec<TokenStream> = bucket
@@ -1647,7 +1601,7 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
     }
 }
 
-/// Emit a singleton atomic arm — byte-identical to the pre-Hack-#8 emission.
+/// Emit a singleton atomic arm with the legacy single-arm token stream shape.
 fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
     let pat = &desc.pattern;
     let category_src_idx = desc.category_src_idx;
@@ -1673,53 +1627,12 @@ fn emit_atomic_arm_singleton(desc: &PrefixArmDescriptor) -> TokenStream {
     }
 }
 
-/// Emit a multi-arm bucket as a Fork over the per-rule branches. Triggers
-/// only when ≥2 rules share the same `(pat, guard)` key — for shipped
-/// grammars this branch is unreachable; for G5 future grammars it emits
-/// principled lex-min disambiguation.
-fn emit_atomic_arm_fork(descs: &[PrefixArmDescriptor]) -> TokenStream {
-    debug_assert!(descs.len() >= 2);
-    let category_src_idx = descs[0].category_src_idx;
-    let pat = &descs[0].pattern;
-    let guard = match &descs[0].extra_guard {
-        Some(eg) => quote! { #eg && state_cat_src_idx == #category_src_idx },
-        None => quote! { state_cat_src_idx == #category_src_idx },
-    };
-    let branches: Vec<TokenStream> = descs.iter().map(|d| {
-        let rule_idx = d.rule_idx;
-        let csi = d.category_src_idx;
-        quote! {
-            mettail_prattail::wpda_walker::ForkBranch {
-                symbol: StackSymbolV2::rule_at(
-                    #csi, #rule_idx, 0, Some(_outer_bp),
-                ).with_kind_return(),
-                weight: lex_w(0.0, #csi, #rule_idx),
-                new_state: WpdaState::Unwinding,
-                action_kind: mettail_prattail::wpda_walker::ForkActionKind::ConsumeAndCaptureAndPush,
-            }
-        }
-    }).collect();
-    quote! {
-        #pat if #guard => {
-            return WpdaStepAction::Fork {
-                branches: vec![ #( #branches ),* ],
-                consume_trigger: false,
-            };
-        }
-    }
-}
-
 #[allow(dead_code)]
-fn emit_atomic_arms(
-    category_src_idx: u16,
-    rule_idx: u16,
-    shape: &AtomicShape,
-) -> Vec<TokenStream> {
+fn emit_atomic_arms(category_src_idx: u16, rule_idx: u16, shape: &AtomicShape) -> Vec<TokenStream> {
     let pattern_guards: Vec<(TokenStream, Option<TokenStream>)> = match shape {
-        AtomicShape::LiteralInteger => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Integer) },
-            None,
-        )],
+        AtomicShape::LiteralInteger => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Integer) }, None)]
+        },
         AtomicShape::LiteralBoolean => vec![(
             quote! {
                 Some(mettail_prattail::automata::TokenKind::True)
@@ -1728,14 +1641,12 @@ fn emit_atomic_arms(
             },
             None,
         )],
-        AtomicShape::LiteralString => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::StringLit) },
-            None,
-        )],
-        AtomicShape::LiteralFloat => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Float) },
-            None,
-        )],
+        AtomicShape::LiteralString => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)]
+        },
+        AtomicShape::LiteralFloat => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)]
+        },
         AtomicShape::LiteralPatterned { cat_name, family, native_type, .. } => {
             let nk = NativeKind::from_syn_type(native_type);
             // emit_atomic_arms is invoked exclusively from
@@ -1749,20 +1660,19 @@ fn emit_atomic_arms(
                 Some(&nk),
                 EmissionContext::HomeCategory,
             )
-        }
+        },
         AtomicShape::TerminalKeyword { terminal_text, .. } => vec![(
             quote! { Some(mettail_prattail::automata::TokenKind::Fixed(__kw)) },
             Some(quote! { __kw == #terminal_text }),
         )],
-        AtomicShape::VarRule { .. } => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Ident) },
-            None,
-        )],
+        AtomicShape::VarRule { .. } => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Ident) }, None)]
+        },
         // Stage 1.1: cross-cat shapes emit their own arms via
         // emit_cross_cat_projection_arms / emit_cross_cat_prefix_unary_arm.
         AtomicShape::CrossCatProjection { .. } | AtomicShape::CrossCatPrefixUnary { .. } => {
             return Vec::new()
-        }
+        },
         // M6c.6.4.b (2026-05-14): PrefixOperator does not emit an
         // atomic-arm descriptor — same-cat unary prefix rules are
         // handled by the standard prefix-trigger arm (BinderRule
@@ -1854,18 +1764,14 @@ fn literal_patterned_pattern_and_guard_for_kind(
                 ),
             ];
             // Bare polymorphic `TokenKind::Integer` arm. Always emitted in
-            // HomeCategory context; in CrossCatProjection / FirstSet
-            // contexts emitted only for primitive-integer widths so
-            // `CanonicalBigInt` doesn't shadow primitive-integer cross-cat
-            // projections (see fn doc above).
+            // HomeCategory context; in FirstSet context emitted only for
+            // primitive-integer widths so `CanonicalBigInt` doesn't shadow
+            // primitive-integer cross-cat projections (see fn doc above).
             let emit_bare_arm = match ctx {
-                EmissionContext::HomeCategory => {
-                    home_polymorphic_token_arm(family).is_some()
-                }
-                EmissionContext::CrossCatProjection | EmissionContext::FirstSet => {
-                    matches!(
-                        kind,
-                        None | Some(NativeKind::Int8)
+                EmissionContext::HomeCategory => home_polymorphic_token_arm(family).is_some(),
+                EmissionContext::FirstSet => matches!(
+                    kind,
+                    None | Some(NativeKind::Int8)
                         | Some(NativeKind::Int16)
                         | Some(NativeKind::Int32)
                         | Some(NativeKind::Int64)
@@ -1877,8 +1783,7 @@ fn literal_patterned_pattern_and_guard_for_kind(
                         | Some(NativeKind::UInt64)
                         | Some(NativeKind::UInt128)
                         | Some(NativeKind::Usize)
-                    )
-                }
+                ),
             };
             if emit_bare_arm {
                 if let Some(pat) = home_polymorphic_token_arm(family) {
@@ -1886,7 +1791,7 @@ fn literal_patterned_pattern_and_guard_for_kind(
                 }
             }
             arms
-        }
+        },
         LiteralFamily::Rational => vec![
             (
                 quote! { Some(mettail_prattail::automata::TokenKind::RationalLit(__cat)) },
@@ -1918,10 +1823,9 @@ fn literal_patterned_pattern_and_guard_for_kind(
                 Some(quote! { __cat == #cat_name }),
             ),
         ],
-        LiteralFamily::Float => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::Float) },
-            None,
-        )],
+        LiteralFamily::Float => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::Float) }, None)]
+        },
         LiteralFamily::Boolean => vec![(
             quote! {
                 Some(mettail_prattail::automata::TokenKind::True)
@@ -1930,10 +1834,9 @@ fn literal_patterned_pattern_and_guard_for_kind(
             },
             None,
         )],
-        LiteralFamily::String => vec![(
-            quote! { Some(mettail_prattail::automata::TokenKind::StringLit) },
-            None,
-        )],
+        LiteralFamily::String => {
+            vec![(quote! { Some(mettail_prattail::automata::TokenKind::StringLit) }, None)]
+        },
     }
 }
 
@@ -2072,40 +1975,28 @@ mod tests {
     fn classifies_integer_literal_as_atomic() {
         let lang = empty_lang();
         let rule = atomic_rule("IntLit", "Int", NonTerminalKind::Integer);
-        assert!(matches!(
-            classify_atomic(&rule, &lang),
-            AtomicShape::LiteralInteger
-        ));
+        assert!(matches!(classify_atomic(&rule, &lang), AtomicShape::LiteralInteger));
     }
 
     #[test]
     fn classifies_boolean_as_atomic() {
         let lang = empty_lang();
         let rule = atomic_rule("BoolLit", "Bool", NonTerminalKind::Boolean);
-        assert!(matches!(
-            classify_atomic(&rule, &lang),
-            AtomicShape::LiteralBoolean
-        ));
+        assert!(matches!(classify_atomic(&rule, &lang), AtomicShape::LiteralBoolean));
     }
 
     #[test]
     fn classifies_string_as_atomic() {
         let lang = empty_lang();
         let rule = atomic_rule("StrLit", "Str", NonTerminalKind::StringLiteral);
-        assert!(matches!(
-            classify_atomic(&rule, &lang),
-            AtomicShape::LiteralString
-        ));
+        assert!(matches!(classify_atomic(&rule, &lang), AtomicShape::LiteralString));
     }
 
     #[test]
     fn classifies_float_as_atomic() {
         let lang = empty_lang();
         let rule = atomic_rule("FloatLit", "Float", NonTerminalKind::FloatLiteral);
-        assert!(matches!(
-            classify_atomic(&rule, &lang),
-            AtomicShape::LiteralFloat
-        ));
+        assert!(matches!(classify_atomic(&rule, &lang), AtomicShape::LiteralFloat));
     }
 
     #[test]
@@ -2133,9 +2024,7 @@ mod tests {
             items: Vec::new(),
             bindings: Vec::new(),
             term_context: Some(Vec::new()),
-            syntax_pattern: Some(vec![mettail_ast::grammar::SyntaxExpr::Literal(
-                "error".into(),
-            )]),
+            syntax_pattern: Some(vec![mettail_ast::grammar::SyntaxExpr::Literal("error".into())]),
             rust_code: None,
             eval_mode: None,
             is_right_assoc: false,
@@ -2148,7 +2037,7 @@ mod tests {
             AtomicShape::TerminalKeyword { terminal_text, wrapper_variant } => {
                 assert_eq!(terminal_text, "error");
                 assert_eq!(wrapper_variant.to_string(), "Err");
-            }
+            },
             other => panic!("expected TerminalKeyword, got {:?}", other),
         }
     }
@@ -2194,7 +2083,7 @@ mod tests {
                 assert_eq!(cat_name, "Int");
                 assert_eq!(family, LiteralFamily::Integer);
                 assert_eq!(wrapper_variant.to_string(), "NumLit");
-            }
+            },
             other => panic!("expected LiteralPatterned, got {:?}", other),
         }
     }
@@ -2206,10 +2095,7 @@ mod tests {
         // NonAtomic (Phase 3 cross-cat territory).
         let lang = lang_with_int_literal();
         let rule = category_rule("ProcInt", "Proc", "Int");
-        assert!(matches!(
-            classify_atomic(&rule, &lang),
-            AtomicShape::NonAtomic
-        ));
+        assert!(matches!(classify_atomic(&rule, &lang), AtomicShape::NonAtomic));
     }
 
     #[test]
@@ -2220,7 +2106,7 @@ mod tests {
             AtomicShape::LiteralPatterned { family, wrapper_variant, .. } => {
                 assert_eq!(family, LiteralFamily::Boolean);
                 assert_eq!(wrapper_variant.to_string(), "BoolLit");
-            }
+            },
             other => panic!("expected LiteralPatterned(Boolean), got {:?}", other),
         }
     }
@@ -2233,7 +2119,7 @@ mod tests {
             AtomicShape::TerminalKeyword { terminal_text, wrapper_variant } => {
                 assert_eq!(terminal_text, "error");
                 assert_eq!(wrapper_variant.to_string(), "Err");
-            }
+            },
             other => panic!("expected TerminalKeyword, got {:?}", other),
         }
     }

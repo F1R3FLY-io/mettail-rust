@@ -229,7 +229,7 @@ fn classify_postfix_mixfix(
                         .push(t.clone());
                 }
                 idx += 1;
-            }
+            },
             SyntaxExpr::Param(p) => {
                 let (sname, sty) = simples.get(simple_idx)?;
                 if sname != &p {
@@ -244,7 +244,7 @@ fn classify_postfix_mixfix(
                 });
                 simple_idx += 1;
                 idx += 1;
-            }
+            },
             _ => return None,
         }
     }
@@ -323,7 +323,7 @@ fn classify_mixfix(
                             following_terminals: following,
                         });
                     }
-                }
+                },
                 _ => return None,
             }
         } else {
@@ -332,7 +332,7 @@ fn classify_mixfix(
                     if i == 1 {
                         trigger = Some(t.clone());
                     }
-                }
+                },
                 _ => return None,
             }
         }
@@ -457,10 +457,7 @@ fn build_label_index(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let cat_name = &categories[cat_i];
         for (rule_i, rule) in rules.iter().enumerate() {
-            idx.insert(
-                (cat_name.clone(), rule.label.to_string()),
-                (cat_i as u16, rule_i as u16),
-            );
+            idx.insert((cat_name.clone(), rule.label.to_string()), (cat_i as u16, rule_i as u16));
         }
     }
     idx
@@ -479,8 +476,8 @@ fn emit_infix_bp_fn(
         .filter_map(|op| {
             // Look up the operator's (result_src_idx, rule_idx) using its
             // result_category + label. Skip if not found (defensive).
-            let (result_src_idx, rule_idx) = *label_index
-                .get(&(op.result_category.clone(), op.label.clone()))?;
+            let (result_src_idx, rule_idx) =
+                *label_index.get(&(op.result_category.clone(), op.label.clone()))?;
             let term = &op.terminal;
             let l = op.left_bp;
             let r = op.right_bp;
@@ -625,8 +622,8 @@ fn emit_postfix_bp_fn(
         .iter()
         .filter(|op| op.category == category && op.is_postfix)
         .filter_map(|op| {
-            let (result_src_idx, rule_idx) = *label_index
-                .get(&(op.result_category.clone(), op.label.clone()))?;
+            let (result_src_idx, rule_idx) =
+                *label_index.get(&(op.result_category.clone(), op.label.clone()))?;
             let term = &op.terminal;
             let l = op.left_bp;
             Some(quote! {
@@ -663,8 +660,8 @@ fn emit_mixfix_bp_fn(
         .iter()
         .filter(|op| op.category == category && op.is_mixfix)
         .filter_map(|op| {
-            let (result_src_idx, rule_idx) = *label_index
-                .get(&(op.result_category.clone(), op.label.clone()))?;
+            let (result_src_idx, rule_idx) =
+                *label_index.get(&(op.result_category.clone(), op.label.clone()))?;
             let term = &op.terminal;
             let l = op.left_bp;
             Some(quote! {

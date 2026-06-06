@@ -11,10 +11,12 @@
 //! Replaces the wrapper-level skip-to-sync retry loop in `facade.rs`
 //! (deleted in Commit E).
 
-use mettail_ast::language::LanguageDef;
 use mettail_ast::grammar::{GrammarItem, GrammarRule};
+use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+
+use super::prefix::{classify_atomic, AtomicShape};
 
 /// Emit Walker-side recovery infrastructure: per-category
 /// `recovery_infra_<cat>()` accessors + a top-level `recovery_infra_for`
@@ -23,6 +25,7 @@ use quote::{format_ident, quote};
 pub(crate) fn emit_recovery_module(
     language: &LanguageDef,
     categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
 ) -> TokenStream {
     let mut per_cat_emissions: Vec<TokenStream> = Vec::new();
     let mut dispatch_arms: Vec<TokenStream> = Vec::new();
@@ -33,11 +36,14 @@ pub(crate) fn emit_recovery_module(
         let infra_fn = format_ident!("recovery_infra_{}", cat_lower);
         let cat_lit = cat_name.as_str();
 
-        // Collect grammar terminals for this category. Walk all rules
-        // whose category matches and extract every literal text.
-        let grammar_terminals = collect_terminals_for_category(language, cat_name);
-        let term_lits: Vec<TokenStream> =
-            grammar_terminals.iter().map(|s| quote! { #s }).collect();
+        // Collect grammar terminals for this category from the same combined
+        // user+synthetic rule surface used by prefix dispatch. Synthetic
+        // literal rules matter here: suffixed BigRat/Fixed literals arrive as
+        // `TokenKind::Custom("<category>")`, so recovery's token map must
+        // include those category payload names.
+        let rules = per_cat.get(cat_idx).map(Vec::as_slice).unwrap_or(&[]);
+        let grammar_terminals = collect_terminals_for_category(language, rules);
+        let term_lits: Vec<TokenStream> = grammar_terminals.iter().map(|s| quote! { #s }).collect();
 
         // FOLLOW set tokens: structural delimiters + grammar terminals.
         // Structural delimiters are the universal sync points: closing
@@ -106,23 +112,30 @@ pub(crate) fn emit_recovery_module(
     }
 }
 
-/// Collect literal terminals from rules in the given category. Walks all
-/// `GrammarItem::Fixed` values (literal-text terminals) across the
-/// category's rules and dedups. Unsorted by design — order matches
-/// declaration order (deterministic).
-fn collect_terminals_for_category(
-    language: &LanguageDef,
-    cat_name: &str,
-) -> Vec<String> {
+/// Collect token-map names from the combined rules for one category. Walks
+/// literal-text terminals, collection separators/delimiters, and
+/// literal-pattern category payload names. Unsorted by design: order follows
+/// rule traversal and remains deterministic.
+fn collect_terminals_for_category(language: &LanguageDef, rules: &[GrammarRule]) -> Vec<String> {
     let mut terminals: Vec<String> = Vec::new();
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for rule in &language.terms {
-        if rule.category.to_string() != cat_name {
-            continue;
-        }
+    for rule in rules {
         collect_terminals_in_rule(rule, &mut terminals, &mut seen);
+        if let AtomicShape::LiteralPatterned { cat_name, .. } = classify_atomic(rule, language) {
+            push_terminal(cat_name, &mut terminals, &mut seen);
+        }
     }
     terminals
+}
+
+fn push_terminal(
+    text: String,
+    terminals: &mut Vec<String>,
+    seen: &mut std::collections::BTreeSet<String>,
+) {
+    if seen.insert(text.clone()) {
+        terminals.push(text);
+    }
 }
 
 fn collect_terminals_in_rule(
@@ -131,10 +144,107 @@ fn collect_terminals_in_rule(
     seen: &mut std::collections::BTreeSet<String>,
 ) {
     for item in &rule.items {
-        if let GrammarItem::Terminal(text) = item {
-            if seen.insert(text.clone()) {
-                terminals.push(text.clone());
-            }
+        match item {
+            GrammarItem::Terminal(text) => {
+                push_terminal(text.clone(), terminals, seen);
+            },
+            GrammarItem::Collection { separator, delimiters, .. } => {
+                push_terminal(separator.clone(), terminals, seen);
+                if let Some((open, close)) = delimiters {
+                    push_terminal(open.clone(), terminals, seen);
+                    push_terminal(close.clone(), terminals, seen);
+                }
+            },
+            GrammarItem::NonTerminal { .. } | GrammarItem::Binder { .. } => {},
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mettail_ast::language::{LangType, TokenDef};
+    use proc_macro2::Span;
+    use quote::quote;
+    use syn::{parse_quote, Ident};
+
+    fn empty_language(name: &str) -> LanguageDef {
+        LanguageDef {
+            name: Ident::new(name, Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: Vec::new(),
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
+    #[test]
+    fn recovery_terminals_include_synthetic_literal_payload_names() {
+        let mut language = empty_language("LiteralRecovery");
+        language.types.push(LangType {
+            name: Ident::new("BigRat", Span::call_site()),
+            native_type: Some(parse_quote! { mettail_runtime::CanonicalBigRat }),
+            collection_kind: None,
+        });
+        language.token_defs.push(TokenDef {
+            name: Ident::new("BigRat", Span::call_site()),
+            pattern: "[0-9]+r".to_string(),
+            category: Some(Ident::new("BigRat", Span::call_site())),
+            rust_code: Some(quote! { parse_rational_lit(text) }),
+            priority: None,
+            push_mode: None,
+            is_pop: false,
+            stream: None,
+            from_literals: true,
+        });
+
+        let categories = vec!["BigRat".to_string()];
+        let per_cat = super::super::synthetic::build_per_category_rules(&language, &categories);
+        let terminals = collect_terminals_for_category(&language, &per_cat[0]);
+
+        assert!(
+            terminals.iter().any(|terminal| terminal == "BigRat"),
+            "recovery token map must include TokenKind::Custom(\"BigRat\") \
+             payloads emitted by literal-patterned rules",
+        );
+    }
+
+    #[test]
+    fn recovery_terminals_include_collection_separators_and_delimiters() {
+        let rule = GrammarRule {
+            label: Ident::new("ListLit", Span::call_site()),
+            category: Ident::new("List", Span::call_site()),
+            items: vec![GrammarItem::Collection {
+                coll_type: mettail_ast::types::CollectionType::Vec,
+                element_type: Ident::new("Expr", Span::call_site()),
+                separator: ",".to_string(),
+                delimiters: Some(("[".to_string(), "]".to_string())),
+            }],
+            bindings: Vec::new(),
+            term_context: None,
+            syntax_pattern: None,
+            rust_code: None,
+            eval_mode: None,
+            is_right_assoc: false,
+            prefix_bp: None,
+            tier_directive: None,
+            is_auto_injected: false,
+            doc_comment: None,
+        };
+        let language = empty_language("CollectionRecovery");
+        let terminals = collect_terminals_for_category(&language, &[rule]);
+
+        assert_eq!(terminals, vec![",".to_string(), "[".to_string(), "]".to_string()]);
     }
 }

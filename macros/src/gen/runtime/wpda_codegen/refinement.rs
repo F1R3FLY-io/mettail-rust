@@ -79,7 +79,7 @@ pub(crate) fn emit_refinement_registrations(language: &LanguageDef) -> TokenStre
                 );
                 calls.push(quote! { compile_error!(#msg); });
                 continue;
-            }
+            },
         };
         let body = lower_refinement_predicate(&ref_ty.predicate, &ref_ty.var, &native_ty);
         calls.push(quote! {
@@ -150,42 +150,42 @@ fn bound_local_ident(var: &Ident) -> Ident {
 /// caller has already opened a scope in which `bound` is bound to a
 /// `&NativeTy` reference; references to the user's `var` lower to `*bound`
 /// (deref to the underlying value) wherever a value is needed.
-fn lower_refinement_body(
-    pred: &RefinementPredicate,
-    var: &Ident,
-    bound: &Ident,
-) -> TokenStream {
+fn lower_refinement_body(pred: &RefinementPredicate, var: &Ident, bound: &Ident) -> TokenStream {
     match pred {
         RefinementPredicate::Linear { terms, relation, rhs } => {
             lower_linear(terms, relation, *rhs, var, bound)
-        }
+        },
         RefinementPredicate::And(a, b) => {
             let ae = lower_refinement_body(a, var, bound);
             let be = lower_refinement_body(b, var, bound);
             quote! { ((#ae) && (#be)) }
-        }
+        },
         RefinementPredicate::Or(a, b) => {
             let ae = lower_refinement_body(a, var, bound);
             let be = lower_refinement_body(b, var, bound);
             quote! { ((#ae) || (#be)) }
-        }
+        },
         RefinementPredicate::Not(inner) => {
             let ie = lower_refinement_body(inner, var, bound);
             quote! { (!(#ie)) }
-        }
+        },
         RefinementPredicate::Implies(a, b) => {
             let ae = lower_refinement_body(a, var, bound);
             let be = lower_refinement_body(b, var, bound);
             quote! { ((!(#ae)) || (#be)) }
-        }
+        },
         RefinementPredicate::TermEq(a, b) => lower_term_cmp(a, b, var, bound, true),
         RefinementPredicate::TermNeq(a, b) => lower_term_cmp(a, b, var, bound, false),
         RefinementPredicate::Relation { name, args, negated } => {
             lower_relation(name, args, *negated, var, bound)
-        }
-        RefinementPredicate::Quantified { quantifier, var: qvar, domain, bound: k, body } => {
-            lower_quantified(quantifier.clone(), qvar, domain.as_ref(), *k, body, var, bound)
-        }
+        },
+        RefinementPredicate::Quantified {
+            quantifier,
+            var: qvar,
+            domain,
+            bound: k,
+            body,
+        } => lower_quantified(quantifier.clone(), qvar, domain.as_ref(), *k, body, var, bound),
     }
 }
 
@@ -227,7 +227,7 @@ fn lower_linear(
         LinearRelation::Eq => quote! { == },
         LinearRelation::Neq => quote! { != },
     };
-    quote! { (#lhs #cmp (#rhs_lit as i128)) }
+    quote! { #lhs #cmp (#rhs_lit as i128) }
 }
 
 /// Lower `TermEq` / `TermNeq`. Only `var op constant` and `constant op var`
@@ -239,7 +239,11 @@ fn lower_term_cmp(
     bound: &Ident,
     is_eq: bool,
 ) -> TokenStream {
-    let cmp = if is_eq { quote! { == } } else { quote! { != } };
+    let cmp = if is_eq {
+        quote! { == }
+    } else {
+        quote! { != }
+    };
     match (a, b) {
         (PredArg::Var(v), PredArg::Constant(c)) | (PredArg::Constant(c), PredArg::Var(v)) => {
             if v != var {
@@ -256,7 +260,7 @@ fn lower_term_cmp(
                     ((*#bound as i128) #cmp __rhs)
                 }
             }
-        }
+        },
         (PredArg::Constant(a), PredArg::Constant(b)) => {
             // Constant-vs-constant: evaluate at compile time. Both args are
             // identifiers (the parser uses `Ident` for numeric constants
@@ -270,11 +274,11 @@ fn lower_term_cmp(
                     (__l #cmp __r)
                 }
             }
-        }
+        },
         (PredArg::Var(_), PredArg::Var(_)) => {
             let msg = "refinement TermEq/Neq with two variables not supported (only the bound variable is in scope)";
             quote! { { compile_error!(#msg); false } }
-        }
+        },
     }
 }
 
@@ -311,7 +315,7 @@ fn lower_relation(
                 quote! {
                     mettail_runtime::PredArg::Var(#var_string.to_string())
                 }
-            }
+            },
             PredArg::Constant(c) => {
                 let c_str = c.to_string();
                 // The runtime PredArg distinguishes IntLit vs StringLit;
@@ -325,7 +329,7 @@ fn lower_relation(
                         }
                     }
                 }
-            }
+            },
         })
         .collect();
     let pred_expr = quote! {
@@ -437,13 +441,13 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                         quote! {
                             mettail_prattail::logict::QuantifiedArg::Var(#v_str.to_string())
                         }
-                    }
+                    },
                     PredArg::Constant(c) => {
                         let c_str = c.to_string();
                         quote! {
                             mettail_prattail::logict::QuantifiedArg::Constant(#c_str.to_string())
                         }
-                    }
+                    },
                 })
                 .collect();
             let atom = quote! {
@@ -457,7 +461,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
             } else {
                 atom
             }
-        }
+        },
         RefinementPredicate::Quantified { quantifier, var, domain, bound, body } => {
             let body_expr = refinement_pred_to_quantified_formula(body);
             let var_str = var.to_string();
@@ -481,8 +485,12 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                 },
             };
             let ctor = match quantifier {
-                Quantifier::ForAll => quote! { mettail_prattail::logict::QuantifiedFormula::forall },
-                Quantifier::Exists => quote! { mettail_prattail::logict::QuantifiedFormula::exists },
+                Quantifier::ForAll => {
+                    quote! { mettail_prattail::logict::QuantifiedFormula::forall }
+                },
+                Quantifier::Exists => {
+                    quote! { mettail_prattail::logict::QuantifiedFormula::exists }
+                },
             };
             quote! {
                 #ctor(
@@ -491,26 +499,26 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     #body_expr,
                 )
             }
-        }
+        },
         RefinementPredicate::And(a, b) => {
             let ae = refinement_pred_to_quantified_formula(a);
             let be = refinement_pred_to_quantified_formula(b);
             quote! { mettail_prattail::logict::QuantifiedFormula::and(#ae, #be) }
-        }
+        },
         RefinementPredicate::Or(a, b) => {
             let ae = refinement_pred_to_quantified_formula(a);
             let be = refinement_pred_to_quantified_formula(b);
             quote! { mettail_prattail::logict::QuantifiedFormula::or(#ae, #be) }
-        }
+        },
         RefinementPredicate::Not(inner) => {
             let ie = refinement_pred_to_quantified_formula(inner);
             quote! { mettail_prattail::logict::QuantifiedFormula::not(#ie) }
-        }
+        },
         RefinementPredicate::Implies(a, b) => {
             let ae = refinement_pred_to_quantified_formula(a);
             let be = refinement_pred_to_quantified_formula(b);
             quote! { mettail_prattail::logict::QuantifiedFormula::implies(#ae, #be) }
-        }
+        },
         RefinementPredicate::Linear { terms, relation, rhs } => {
             // Linear inside a quantifier body: encode as a named atom whose
             // relation_query callback decides truth. Quantified refinements
@@ -532,7 +540,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     vec![],
                 )
             }
-        }
+        },
         RefinementPredicate::TermEq(a, b) | RefinementPredicate::TermNeq(a, b) => {
             let a_str = match a {
                 PredArg::Var(v) => v.to_string(),
@@ -554,7 +562,7 @@ fn refinement_pred_to_quantified_formula(pred: &RefinementPredicate) -> TokenStr
                     vec![],
                 )
             }
-        }
+        },
     }
 }
 
@@ -696,13 +704,14 @@ mod tests {
         // Numeric literal RHS like `x == 0` is parsed as `Linear { Eq, 0 }`,
         // not TermEq, so this test exercises the named-constant path.
         let max = Ident::new("MAX", Span::call_site());
-        let pred = RefinementPredicate::TermEq(
-            PredArg::Var(var.clone()),
-            PredArg::Constant(max),
-        );
+        let pred = RefinementPredicate::TermEq(PredArg::Var(var.clone()), PredArg::Constant(max));
         let ts = lower_refinement_body(&pred, &var, &bound);
         let s = ts.to_string();
-        assert!(s.contains("__refinement_x") && s.contains("=="), "TermEq should emit comparison: {}", s);
+        assert!(
+            s.contains("__refinement_x") && s.contains("=="),
+            "TermEq should emit comparison: {}",
+            s
+        );
     }
 
     #[test]
@@ -744,11 +753,7 @@ mod tests {
         let ts = emit_refinement_registrations(&lang);
         let s = ts.to_string();
         assert!(s.contains("register_refinements"), "should emit fn name: {}", s);
-        assert!(
-            s.contains("register_refinement_predicate"),
-            "should call registry: {}",
-            s,
-        );
+        assert!(s.contains("register_refinement_predicate"), "should call registry: {}", s,);
         assert!(s.contains("PosInt"), "should pass refinement name: {}", s);
         assert!(s.contains("i32"), "should downcast to i32: {}", s);
     }

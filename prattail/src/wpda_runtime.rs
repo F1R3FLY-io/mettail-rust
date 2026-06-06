@@ -4,23 +4,13 @@
 //! semantic-action machinery (`SemanticBuilder`, `ActionArg`, `ActionEntry`,
 //! `WpdaTokenSource`, `BinderHandle`) that the codegen and walker share.
 //!
-//! ## 📌 Long-term recovery note (visible here, in survey, and in Stage 10 audit)
+//! ## Recovery note
 //!
-//! Recovery is currently wired at the **wrapper level** (see
-//! `parse_<Cat>_via_wpda`): when the walker terminates in `WpdaState::Error`,
-//! the wrapper invokes `mettail_prattail::recovery::find_best_recovery` (the
-//! existing WFST-based min-cost repair) and retries. This is pragmatic but
-//! not ideal.
-//!
-//! **Long-term ideal:** recovery should be encoded as alternate WPDS edges
-//! — Skip/Delete/Substitute/Insert rules that fan out from every
-//! prefix-dispatch state, weighted so `LexicographicWeight` lex-min selects
-//! them only when no primary rule matches. When that lands, the wrapper
-//! plumbing is deleted.
-//!
-//! The note is also in `prattail/docs/design/wpds-migration-survey.md` §4
-//! and `prattail/docs/design/wpds-stage-10-audit.md` as "post-Stage-10
-//! follow-up work."
+//! Recovery is walker-level: generated engines can emit weighted
+//! Skip/Delete/Substitute/Insert Fork branches at PrefixDispatch dead-ends.
+//! Strict parse facades disable those branches with
+//! `RecoveryConfig.max_recovery_depth = 0`; explicit recovering facades keep
+//! the default recovery budget and surface the committed recovery trail.
 //!
 //! ## Reactive contract
 //!
@@ -163,11 +153,7 @@ impl StackSymbolV2 {
     }
 
     /// Construct an infix-continuation symbol (RHS of an infix operator pending).
-    pub fn infix_continuation(
-        category_src_idx: u16,
-        rule_index_in_category: u16,
-        bp: u8,
-    ) -> Self {
+    pub fn infix_continuation(category_src_idx: u16, rule_index_in_category: u16, bp: u8) -> Self {
         StackSymbolV2 {
             category_src_idx,
             rule_index_in_category,
@@ -179,11 +165,7 @@ impl StackSymbolV2 {
     /// Phase 4: construct a collection-marker symbol. `accumulator_id`
     /// is packed into the 8-bit `bp` field (collections never nest more
     /// than 256 deep in practice).
-    pub fn collection_marker(
-        result_src_idx: u16,
-        rule_idx: u16,
-        accumulator_id: u8,
-    ) -> Self {
+    pub fn collection_marker(result_src_idx: u16, rule_idx: u16, accumulator_id: u8) -> Self {
         StackSymbolV2 {
             category_src_idx: result_src_idx,
             rule_index_in_category: rule_idx,
@@ -212,11 +194,7 @@ impl StackSymbolV2 {
     /// Replace, and pushes the next operand's CategoryEntry. When `bp`
     /// equals `parts.len`, the marker is ConsumeAndPop'd (firing the
     /// mixfix rule's action with arity = 1 + parts.len).
-    pub fn mixfix_marker(
-        result_src_idx: u16,
-        rule_idx: u16,
-        operands_completed: u8,
-    ) -> Self {
+    pub fn mixfix_marker(result_src_idx: u16, rule_idx: u16, operands_completed: u8) -> Self {
         StackSymbolV2 {
             category_src_idx: result_src_idx,
             rule_index_in_category: rule_idx,
@@ -257,10 +235,7 @@ impl StackSymbolV2 {
     /// (preserving `category_src_idx`, `rule_index_in_category`, and `bp`).
     /// Used by Phase A.2 atomic-rule emission.
     pub fn with_kind_return(self) -> Self {
-        StackSymbolV2 {
-            kind: SymbolKind::Return,
-            ..self
-        }
+        StackSymbolV2 { kind: SymbolKind::Return, ..self }
     }
 }
 
@@ -273,7 +248,7 @@ impl fmt::Display for StackSymbolV2 {
         match self.kind {
             SymbolKind::CategoryEntry => {
                 write!(f, "⟨cat#{}⟩{}", self.category_src_idx, bp_suffix)
-            }
+            },
             SymbolKind::RuleAt(pos) => write!(
                 f,
                 "⟨cat#{}.rule#{}@{}⟩{}",
@@ -296,7 +271,7 @@ impl fmt::Display for StackSymbolV2 {
             ),
             SymbolKind::GroupingMarker => {
                 write!(f, "⟨cat#{}.group⟩{}", self.category_src_idx, bp_suffix)
-            }
+            },
             SymbolKind::MixfixMarker => write!(
                 f,
                 "⟨cat#{}.rule#{}.mixfix⟩{}",
@@ -305,10 +280,7 @@ impl fmt::Display for StackSymbolV2 {
             SymbolKind::OptionalGroupAt(sub_pos) => write!(
                 f,
                 "⟨cat#{}.rule#{}.opt@{}⟩{}",
-                self.category_src_idx,
-                self.rule_index_in_category,
-                sub_pos,
-                bp_suffix
+                self.category_src_idx, self.rule_index_in_category, sub_pos, bp_suffix
             ),
         }
     }
@@ -348,10 +320,8 @@ pub enum WpdaState {
     /// `prattail/docs/design/plans/chain-10000-experiments-ledger.md`
     /// row 6 and the Plan A design doc.
     ///
-    /// Substage 6a scope: enum variant + walker action variant +
-    /// walker arm shipped. Engine codegen does NOT yet emit this
-    /// state (Substage 6b). Unreachable at this commit; gauntlet
-    /// invariant: never observed during a parse.
+    /// Engine codegen emits this state for iterative-eligible same-category
+    /// operators when the chain recognizer elects the iterative path.
     InfixChainIterative {
         /// Result category index — same as the original `InfixLoop`'s
         /// `state_cat_src_idx` since iterative-eligible operators are
@@ -442,7 +412,6 @@ pub enum WpdaState {
     // for restoration. When Unwinding sees a GroupingMarker on top, the
     // engine demands `)`, ConsumeAndPops, and resumes
     // InfixLoop{cur_bp: marker.bp}.)
-
     /// B7 Pattern 1 mixfix continuation. After Unwinding-MixfixMarker
     /// consumes the per-operand following separator, the engine transitions
     /// here to ReplaceAndPush the next operand's CategoryEntry. The state
@@ -728,16 +697,13 @@ pub enum WpdaResolveResult<W: SemiringRef> {
     /// Driver hit `max_steps` budget before reaching EOI. Caller may
     /// resume by extending the budget.
     MaxStepsExceeded { position: usize },
-    /// M11.7 (2026-05-14): the walker was configured with
-    /// `CursorBoundingMode::AmbiguityBudget(budget)` and the live frontier
-    /// exceeded that budget during a `step_fanout` iteration.
+    /// The walker was configured with a cursor-count bound and the live
+    /// frontier exceeded that bound during a `step_fanout` iteration.
     ///
-    /// **Mandate-compliant alternative to `BeamSize`**: unlike beam pruning
-    /// (which silently drops cursors via lex-min), the ambiguity budget
-    /// fails LOUDLY when the parse's cursor count would exceed the budget.
-    /// Callers can react: relax the budget, switch to a less-ambiguous
-    /// grammar variant, surface a structured "input too ambiguous" error
-    /// to the user, etc.
+    /// The walker fails loudly instead of dropping cursors by weight. Callers
+    /// can react: relax the budget, switch to a less-ambiguous grammar
+    /// variant, surface a structured "input too ambiguous" error to the user,
+    /// etc.
     ///
     /// `budget` is the configured limit; `actual` is the frontier size
     /// that triggered the overflow; `position` is the input position when
@@ -752,41 +718,34 @@ pub enum WpdaResolveResult<W: SemiringRef> {
 /// M11.7 (2026-05-14): cursor-count bounding policy for the walker.
 ///
 /// Replaces the M11.4-era `WpdaWalker::beam_size: Option<usize>` field
-/// with an explicit enum that makes the THREE possible bounding modes
-/// (unbounded / beam pruning / ambiguity budget) mutually exclusive at
-/// the type level — impossible to set both `BeamSize` and
-/// `AmbiguityBudget` simultaneously.
+/// with an explicit enum that makes the possible bounding modes mutually
+/// exclusive at the type level.
 ///
 /// **Default**: `Unbounded` — pure ambiguity preservation, no cursor
 /// dropping. This is the M11 mandate-compliant baseline.
 ///
-/// **Escape hatches** (opt-in):
-/// - `BeamSize(k)`: legacy beam pruning. Drops cursors beyond the top-K
-///   by lex-min weight at every step_fanout iteration. **MANDATE
-///   VIOLATION**: silently discards derivations via weight-based pick-one
-///   without evidence. Retained as an escape hatch for adversarial inputs
-///   that exhaust memory budget; prefer `AmbiguityBudget` for
-///   mandate-compliant cursor-count bounding.
-/// - `AmbiguityBudget(n)`: hard-cap the frontier size at `n` cursors. If
+/// **Bounded modes** (opt-in):
+/// - `BeamSize(k)`: compatibility name for the older beam-size API. It now
+///   has the same structured-overflow semantics as `AmbiguityBudget(k)`:
+///   when the frontier would exceed `k`, the walker emits an
+///   `AmbiguityBudget` error instead of pruning the frontier.
+/// - `AmbiguityBudget(n)`: check the frontier size against `n` cursors. If
 ///   the frontier would exceed `n`, the walker emits a structured
 ///   `WpdaResolveResult::AmbiguityBudget` error rather than silently
 ///   dropping cursors. Caller can detect the overflow and react (relax
-///   budget, switch strategy, surface to user). Mandate-compliant: no
-///   weight-based pick-one; the error is the evidence.
+///   budget, switch strategy, surface to user).
 ///
 /// **Mutual exclusion**: the enum constructor enforces that exactly one
 /// mode is active at a time. `WpdaWalker::with_bounding_mode(mode)`
 /// replaces the prior `with_beam_size(k)` API; the legacy methods are
-/// retained as thin shims (`with_beam_size(k)` →
-/// `with_bounding_mode(CursorBoundingMode::BeamSize(k))`).
+/// retained as compatibility shims.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CursorBoundingMode {
     /// Default — pure ambiguity preservation; no cursor dropping.
     Unbounded,
-    /// Legacy beam pruning. **MANDATE VIOLATION**: drops cursors by
-    /// lex-min weight at every step_fanout iteration. Use only as an
-    /// escape hatch for adversarial inputs; prefer
-    /// `AmbiguityBudget` for principled bounding.
+    /// Compatibility name for the older beam-size API. This does not prune:
+    /// it reports structured `AmbiguityBudget` overflow when the frontier
+    /// exceeds the configured size.
     BeamSize(usize),
     /// Mandate-compliant cursor-count bounding. When the live frontier
     /// would exceed the budget, emit a structured `AmbiguityBudget`
@@ -838,17 +797,11 @@ pub enum WpdaEvent<W: SemiringRef> {
         children: Vec<GssNodeId>,
     },
     /// Ambiguity resolved to a single winning branch with given weight.
-    BranchResolved {
-        winner: GssNodeId,
-        weight: W,
-    },
+    BranchResolved { winner: GssNodeId, weight: W },
     /// A semantic action fired during AST assembly.
     /// `action_id` is the codegen-assigned identifier; `args` are token positions
     /// captured by the action.
-    SemanticActionFired {
-        action_id: u32,
-        args: Vec<usize>,
-    },
+    SemanticActionFired { action_id: u32, args: Vec<usize> },
     /// Request the walker to record a checkpoint at the current configuration.
     Checkpoint { reason: CheckpointReason },
     /// Inspect the current state without mutating it.
@@ -1010,6 +963,17 @@ pub trait WpdaTokenSource {
         }
     }
 
+    /// Whether token positions form a linear token-index space where every
+    /// consumed token advances from `pos` to `pos + 1`.
+    ///
+    /// Linear sources can soundly interpret a range `[start, finish)` as a
+    /// contiguous token window. DAG/lattice sources use node ids instead of
+    /// token indices, so callers must not scan numeric ranges as token
+    /// windows unless this returns `true`.
+    fn positions_are_linear_tokens(&self) -> bool {
+        true
+    }
+
     /// M6c.8.2 (2026-05-14): index of the canonical EOF position the
     /// walker must reach for a parse to be Accepted.
     ///
@@ -1041,12 +1005,14 @@ pub trait WpdaTokenSource {
 ///
 /// The lex-Fork (`emit_lex_fork_at_prefix_dispatch` /
 /// `emit_lex_fork_at_infix_loop`) consults the per-grammar
-/// `lex_alt_rule_for_prefix` / `lex_alt_rule_for_infix` functions
+/// `lex_alt_rule_for_prefix` / `lex_alt_rules_for_infix` functions
 /// against each alternative kind in the lex DAG at the current
 /// position. A `None` result drops the alt branch (rule-out by
 /// evidence — no rule in this cat consumes this kind at this site).
-/// A `Some(LexAltRuleInfo { rule_idx, kind })` emits a Fork branch
-/// whose shape is determined by `kind`:
+/// Prefix dispatch returns at most one rule, while infix dispatch
+/// may return multiple same-token operator candidates. Each
+/// `LexAltRuleInfo { rule_idx, kind }` emits a Fork branch whose
+/// shape is determined by `kind`:
 ///
 /// - `Atomic`: atomic-literal consumption via `LexAlt` + `with_kind_return`
 ///   + `Unwinding` (M6c.3).
@@ -1091,15 +1057,11 @@ pub enum LexAltRuleKind {
     /// or cross-cat `EqInt . a, b:Int |- a "==" b : Bool`).
     /// `l_bp`/`r_bp` are the Pratt binding powers. `result_src_idx`
     /// differs from `state_cat` for cross-cat infix.
-    InfixOp {
-        l_bp: u8,
-        r_bp: u8,
-        result_src_idx: u16,
-    },
+    InfixOp { l_bp: u8, r_bp: u8, result_src_idx: u16 },
     /// Mixfix rule's first trigger only (e.g., `Tern . c, t, e:Int |-
     /// c "?" t ":" e : Int` — only the `?` trigger goes through
     /// InfixLoop dispatch; subsequent triggers are handled by
-    /// `MixfixLiteralRun` state machine, out of scope for M6c.6.4).
+    /// `MixfixLiteralRun` state machine).
     MixfixFirstTrigger { l_bp: u8, result_src_idx: u16 },
 }
 
@@ -1188,9 +1150,9 @@ pub trait WpdaMutableTokenSource: WpdaTokenSource {
         text: std::string::String,
     ) -> Result<(usize, usize), std::string::String> {
         let _ = kind; // recorded by walker; lexer determines actual kind
-        let (start, end) = self.byte_span_of(pos).ok_or_else(|| {
-            format!("substitute_token: no byte span at pos {}", pos)
-        })?;
+        let (start, end) = self
+            .byte_span_of(pos)
+            .ok_or_else(|| format!("substitute_token: no byte span at pos {}", pos))?;
         self.replace_range(start, end, &text)
     }
 
@@ -1205,11 +1167,55 @@ pub trait WpdaMutableTokenSource: WpdaTokenSource {
         text: std::string::String,
     ) -> Result<(usize, usize), std::string::String> {
         let _ = kind;
-        let (start, _) = self.byte_span_of(pos).ok_or_else(|| {
-            format!("insert_token: no byte span at pos {}", pos)
-        })?;
+        let (start, _) = self
+            .byte_span_of(pos)
+            .ok_or_else(|| format!("insert_token: no byte span at pos {}", pos))?;
         let with_sep = format!("{} ", text);
         self.replace_range(start, start, &with_sep)
+    }
+
+    /// Swap two adjacent tokens in the underlying source text and re-lex
+    /// the affected range. The default implementation uses token byte
+    /// spans, preserves the original separator bytes between the tokens,
+    /// and rejects non-adjacent or overlapping positions.
+    fn swap_tokens(
+        &mut self,
+        pos_a: usize,
+        pos_b: usize,
+    ) -> Result<(usize, usize), std::string::String> {
+        let (lo, hi) = if pos_a <= pos_b {
+            (pos_a, pos_b)
+        } else {
+            (pos_b, pos_a)
+        };
+        if hi != lo + 1 {
+            return Err(
+                format!("swap_tokens: positions {} and {} are not adjacent", pos_a, pos_b,),
+            );
+        }
+        let (start_a, end_a) = self
+            .byte_span_of(lo)
+            .ok_or_else(|| format!("swap_tokens: no byte span at pos {}", lo))?;
+        let (start_b, end_b) = self
+            .byte_span_of(hi)
+            .ok_or_else(|| format!("swap_tokens: no byte span at pos {}", hi))?;
+        if start_a > end_a || end_a > start_b || start_b > end_b {
+            return Err(format!(
+                "swap_tokens: positions {} and {} have non-adjacent byte spans [{:?}..{:?}) and [{:?}..{:?})",
+                lo, hi, start_a, end_a, start_b, end_b,
+            ));
+        }
+        let text_a = self.source_slice(start_a, end_a).ok_or_else(|| {
+            format!("swap_tokens: no source slice for token at byte {}..{}", start_a, end_a,)
+        })?;
+        let text_b = self.source_slice(start_b, end_b).ok_or_else(|| {
+            format!("swap_tokens: no source slice for token at byte {}..{}", start_b, end_b,)
+        })?;
+        let separator = self.source_slice(end_a, start_b).ok_or_else(|| {
+            format!("swap_tokens: no source slice between byte {} and {}", end_a, start_b,)
+        })?;
+        let replacement = format!("{}{}{}", text_b, separator, text_a);
+        self.replace_range(start_a, end_b, &replacement)
     }
 
     /// Stage 3.20 / L12 (Commit A, 2026-05-06): lookup byte span for the
@@ -1220,6 +1226,15 @@ pub trait WpdaMutableTokenSource: WpdaTokenSource {
     /// surfaces a clean `Err`.
     fn byte_span_of(&self, pos: usize) -> Option<(usize, usize)> {
         let _ = pos;
+        None
+    }
+
+    /// Borrow a source-text byte slice. Required by the default
+    /// `swap_tokens` implementation to preserve the separator between two
+    /// adjacent tokens. Sources without source-text tracking can override
+    /// `swap_tokens` directly instead.
+    fn source_slice(&self, byte_start: usize, byte_end: usize) -> Option<&str> {
+        let _ = (byte_start, byte_end);
         None
     }
 }
@@ -1254,11 +1269,7 @@ where
     pub fn new(source: std::string::String, lex_fn: L) -> Result<Self, std::string::String> {
         let stream = lex_fn(&source)?;
         let inner = MultiTokenSource::new(stream);
-        Ok(Self {
-            inner,
-            source_text: source,
-            lex_fn,
-        })
+        Ok(Self { inner, source_text: source, lex_fn })
     }
 
     /// Borrow the underlying source text.
@@ -1328,7 +1339,8 @@ where
             .position(|e| e.byte_start >= byte_end)
             .unwrap_or(self.inner.stream.entries.len());
         // Mutate source.
-        self.source_text.replace_range(byte_start..byte_end, new_bytes);
+        self.source_text
+            .replace_range(byte_start..byte_end, new_bytes);
         // Re-lex.
         let new_stream = (self.lex_fn)(&self.source_text)?;
         let new_inner = MultiTokenSource::new(new_stream);
@@ -1360,10 +1372,7 @@ where
             .alternatives
             .get(alt_idx as usize)
             .ok_or_else(|| {
-                format!(
-                    "commit_alternative: alt_idx {} out of bounds at pos {}",
-                    alt_idx, pos,
-                )
+                format!("commit_alternative: alt_idx {} out of bounds at pos {}", alt_idx, pos,)
             })?
             .clone();
         let prev_end = entry.alternatives[0].end_byte;
@@ -1380,8 +1389,7 @@ where
             // `new_end` to end of source. We model this as a no-op
             // replace_range that triggers a full re-lex of the tail.
             let tail_start = new_end.min(self.source_text.len());
-            let original_tail: std::string::String =
-                self.source_text[tail_start..].to_string();
+            let original_tail: std::string::String = self.source_text[tail_start..].to_string();
             let (tail_s, tail_e) =
                 self.replace_range(tail_start, self.source_text.len(), &original_tail)?;
             // Union with (pos, pos+1) — the primary at `pos` was always
@@ -1402,6 +1410,10 @@ where
         let entry = self.inner.stream.entries.get(pos)?;
         let primary = entry.alternatives.first()?;
         Some((entry.byte_start, primary.end_byte))
+    }
+
+    fn source_slice(&self, byte_start: usize, byte_end: usize) -> Option<&str> {
+        self.source_text.get(byte_start..byte_end)
     }
 }
 
@@ -1434,6 +1446,135 @@ impl<'a> WpdaTokenSource for SliceTokenSource<'a> {
     }
     fn len(&self) -> usize {
         self.kinds.len()
+    }
+}
+
+/// A vector-backed mutable token source for generated recovering facades.
+///
+/// The public WPDA parse wrappers receive already-tokenized `kinds` and
+/// `texts`, not the original source bytes or a lexer callback. Recovery replay
+/// still needs a mutable source for insert/substitute/swap repairs, so this
+/// adapter applies those repairs directly to the token vectors.
+pub struct MutableSliceTokenSource {
+    kinds: Vec<TokenKind>,
+    texts: Vec<String>,
+}
+
+impl MutableSliceTokenSource {
+    pub fn with_texts(kinds: &[TokenKind], texts: &[&str]) -> Self {
+        assert_eq!(kinds.len(), texts.len(), "kinds/texts length mismatch");
+        Self {
+            kinds: kinds.to_vec(),
+            texts: texts.iter().map(|text| (*text).to_string()).collect(),
+        }
+    }
+}
+
+impl WpdaTokenSource for MutableSliceTokenSource {
+    fn peek_kind(&self, pos: usize) -> Option<TokenKind> {
+        self.kinds.get(pos).cloned()
+    }
+
+    fn peek_text(&self, pos: usize) -> Option<&str> {
+        self.texts.get(pos).map(String::as_str)
+    }
+
+    fn len(&self) -> usize {
+        self.kinds.len()
+    }
+}
+
+impl WpdaMutableTokenSource for MutableSliceTokenSource {
+    fn replace_range(
+        &mut self,
+        byte_start: usize,
+        byte_end: usize,
+        _new_bytes: &str,
+    ) -> Result<(usize, usize), std::string::String> {
+        Err(format!(
+            "MutableSliceTokenSource is token-addressed, not byte-addressed: \
+             replace_range({}..{}) requires MutableMultiTokenSource",
+            byte_start, byte_end,
+        ))
+    }
+
+    fn commit_alternative(
+        &mut self,
+        pos: usize,
+        alt_idx: u16,
+    ) -> Result<(usize, usize), std::string::String> {
+        if pos >= self.kinds.len() {
+            return Err(format!("commit_alternative: pos {} out of bounds", pos));
+        }
+        if alt_idx != 0 {
+            return Err(format!(
+                "commit_alternative: MutableSliceTokenSource has no alternate \
+                 lex interpretations at pos {}",
+                pos,
+            ));
+        }
+        Ok((pos, pos + 1))
+    }
+
+    fn substitute_token(
+        &mut self,
+        pos: usize,
+        kind: TokenKind,
+        text: std::string::String,
+    ) -> Result<(usize, usize), std::string::String> {
+        let slot_kind = self
+            .kinds
+            .get_mut(pos)
+            .ok_or_else(|| format!("substitute_token: pos {} out of bounds", pos))?;
+        let slot_text = self
+            .texts
+            .get_mut(pos)
+            .ok_or_else(|| format!("substitute_token: pos {} out of bounds", pos))?;
+        *slot_kind = kind;
+        *slot_text = text;
+        Ok((pos, pos + 1))
+    }
+
+    fn insert_token(
+        &mut self,
+        pos: usize,
+        kind: TokenKind,
+        text: std::string::String,
+    ) -> Result<(usize, usize), std::string::String> {
+        if pos > self.kinds.len() {
+            return Err(format!("insert_token: pos {} out of bounds", pos));
+        }
+        self.kinds.insert(pos, kind);
+        self.texts.insert(pos, text);
+        Ok((pos, pos + 1))
+    }
+
+    fn swap_tokens(
+        &mut self,
+        pos_a: usize,
+        pos_b: usize,
+    ) -> Result<(usize, usize), std::string::String> {
+        let (lo, hi) = if pos_a <= pos_b {
+            (pos_a, pos_b)
+        } else {
+            (pos_b, pos_a)
+        };
+        if hi != lo + 1 {
+            return Err(
+                format!("swap_tokens: positions {} and {} are not adjacent", pos_a, pos_b,),
+            );
+        }
+        if hi >= self.kinds.len() {
+            return Err(format!(
+                "swap_tokens: positions {} and {} out of bounds for len {}",
+                pos_a,
+                pos_b,
+                self.kinds.len(),
+            ));
+        }
+        self.kinds.swap(lo, hi);
+        self.texts.swap(lo, hi);
+        Ok((lo, hi + 1))
     }
 }
 
@@ -1560,12 +1701,12 @@ impl LatticeTokenSource {
                 Some(primary) => {
                     primary_kinds.push(primary.kind.clone());
                     primary_texts.push(primary.text.clone());
-                }
+                },
                 None => {
                     // EOF sentinel: emit Eof so callers can detect end.
                     primary_kinds.push(TokenKind::Eof);
                     primary_texts.push(String::new());
-                }
+                },
             }
             // Secondaries: edges[1..] converted to LexAlternative.
             let secs: Vec<crate::lexer_types::LexAlternative> = node
@@ -1652,6 +1793,10 @@ impl WpdaTokenSource for LatticeTokenSource {
             .map(|e| e.target_node)
     }
 
+    fn positions_are_linear_tokens(&self) -> bool {
+        false
+    }
+
     /// M6c.8.2 (2026-05-14): the canonical EOF sentinel index from the
     /// DAG. Orphan nodes (allocated by `lex_dag_core`'s soft-fail
     /// mechanism for secondary-alt dead-ends) may sit at indices
@@ -1734,7 +1879,11 @@ pub const fn unpack_action_id(id: ActionId) -> (u16, u16) {
 #[derive(Clone)]
 pub enum ActionArg {
     /// A raw token kind + its text + position.
-    Token { kind: TokenKind, text: String, pos: usize },
+    Token {
+        kind: TokenKind,
+        text: String,
+        pos: usize,
+    },
     /// An identifier captured from the token stream.
     Ident { name: String, pos: usize },
     /// A fully-constructed sub-term (downcast via `Any`).
@@ -1808,10 +1957,9 @@ impl fmt::Debug for ActionArg {
                 .field("present", &true)
                 .field("len", &args.len())
                 .finish(),
-            ActionArg::Optional(None) => f
-                .debug_struct("Optional")
-                .field("present", &false)
-                .finish(),
+            ActionArg::Optional(None) => {
+                f.debug_struct("Optional").field("present", &false).finish()
+            },
         }
     }
 }
@@ -2224,10 +2372,7 @@ impl SemanticBuilder {
     /// `action_fn`. The `type_name` is preserved as a debug tag only
     /// (downcasting at the facade keys on the concrete `Cat` type).
     pub fn push_term_arc(&mut self, value: Arc<dyn Any + Send + Sync>) {
-        self.push_arg_internal(ActionArg::Term {
-            value,
-            type_name: "RealizedTerm",
-        });
+        self.push_arg_internal(ActionArg::Term { value, type_name: "RealizedTerm" });
     }
 
     /// Option C / C7: push a raw `ActionArg` directly. Used during
@@ -2306,7 +2451,8 @@ impl SemanticBuilder {
     /// Phase 5.1 (2026-05-12): `push_back` against `im::Vector<BinderHandle>`.
     pub fn start_binder_scope(&mut self, names: Vec<String>) {
         let depth = self.binder_scopes.len() as u16;
-        self.binder_scopes.push_back(BinderHandle::new(names, depth));
+        self.binder_scopes
+            .push_back(BinderHandle::new(names, depth));
     }
 
     /// B8 / Issue C followup (2026-05-09): append a binder name to the
@@ -2459,7 +2605,8 @@ impl SemanticBuilder {
         debug_assert!(
             id_usize < self.collection_stack.len(),
             "drain_collection: id {} out of range (collection_stack.len() = {})",
-            id, self.collection_stack.len(),
+            id,
+            self.collection_stack.len(),
         );
         debug_assert_eq!(
             id_usize + 1,
@@ -2467,7 +2614,8 @@ impl SemanticBuilder {
             "drain_collection: LIFO violation — id {} is not the top of \
              collection_stack (len = {}). Collections must finalize in \
              reverse open order.",
-            id, self.collection_stack.len(),
+            id,
+            self.collection_stack.len(),
         );
         if id_usize + 1 == self.collection_stack.len() {
             self.collection_stack
@@ -2530,10 +2678,14 @@ impl SemanticBuilder {
     /// range (defensive — should not happen under correct push/pop
     /// pairing).
     pub fn collection_slot_len(&self, acc_id: usize) -> usize {
-        self.collection_stack.get(acc_id).map(|s| s.len()).unwrap_or(0)
+        self.collection_stack
+            .get(acc_id)
+            .map(|s| s.len())
+            .unwrap_or(0)
     }
 
-    /// Stage 3.16 / Hack #7 walker fix (Mechanism γ closure, 2026-05-05) —
+    /// Stage 3.16 collection-slot transfer helper (Mechanism γ closure,
+    /// 2026-05-05) —
     /// remove the live builder's collection_stack and return ownership.
     /// Pre-tail this was used at the deterministic→nondeterministic
     /// promotion in `apply_action::Fork` to transfer slots allocated
@@ -2640,7 +2792,10 @@ pub fn lex_w_alt(
     lex_alt_idx: u16,
 ) -> crate::automata::lex_weight::LexicographicWeight {
     crate::automata::lex_weight::LexicographicWeight::from_cost_with_lex(
-        cost, src_idx, rule_idx, lex_alt_idx,
+        cost,
+        src_idx,
+        rule_idx,
+        lex_alt_idx,
     )
 }
 
@@ -2716,8 +2871,8 @@ mod tests {
 
     #[test]
     fn mutable_token_source_initial_lex() {
-        let m = MutableMultiTokenSource::new("foo bar baz".to_string(), fake_lex)
-            .expect("construct");
+        let m =
+            MutableMultiTokenSource::new("foo bar baz".to_string(), fake_lex).expect("construct");
         assert_eq!(m.len(), 3);
         assert_eq!(m.peek_text(0), Some("foo"));
         assert_eq!(m.peek_text(1), Some("bar"));
@@ -2726,11 +2881,9 @@ mod tests {
 
     #[test]
     fn mutable_token_source_replace_range_relexes() {
-        let mut m = MutableMultiTokenSource::new("foo bar".to_string(), fake_lex)
-            .expect("construct");
-        let (start, end) = m
-            .replace_range(4, 7, "qux qux2")
-            .expect("replace_range");
+        let mut m =
+            MutableMultiTokenSource::new("foo bar".to_string(), fake_lex).expect("construct");
+        let (start, end) = m.replace_range(4, 7, "qux qux2").expect("replace_range");
         // Replacement of "bar" with "qux qux2" — old token start=1, end=2;
         // new tokens cover 1..=2 (qux, qux2).
         assert!(start <= 1);
@@ -2748,10 +2901,7 @@ mod tests {
         let stream = LexStream {
             entries: vec![LexEntry {
                 byte_start: 0,
-                alternatives: vec![
-                    ascii_alt("foo", 3, 1.0),
-                    ascii_alt("foobar", 6, 2.0),
-                ],
+                alternatives: vec![ascii_alt("foo", 3, 1.0), ascii_alt("foobar", 6, 2.0)],
             }],
         };
         let inner = MultiTokenSource::new(stream);
@@ -2767,6 +2917,27 @@ mod tests {
         assert!(e >= 1);
         // After commit, primary is the 6-byte form.
         assert_eq!(m.peek_text(0), Some("foobar"));
+    }
+
+    #[test]
+    fn mutable_token_source_swap_tokens_preserves_separator_and_relexes() {
+        let mut m =
+            MutableMultiTokenSource::new("foo   bar baz".to_string(), fake_lex).expect("construct");
+        let (start, end) = m.swap_tokens(0, 1).expect("swap tokens");
+        assert_eq!(start, 0);
+        assert!(end >= 2);
+        assert_eq!(m.source(), "bar   foo baz");
+        assert_eq!(m.peek_text(0), Some("bar"));
+        assert_eq!(m.peek_text(1), Some("foo"));
+        assert_eq!(m.peek_text(2), Some("baz"));
+    }
+
+    #[test]
+    fn mutable_token_source_swap_tokens_rejects_non_adjacent_positions() {
+        let mut m =
+            MutableMultiTokenSource::new("foo bar baz".to_string(), fake_lex).expect("construct");
+        let err = m.swap_tokens(0, 2).expect_err("non-adjacent swap");
+        assert!(err.contains("not adjacent"), "unexpected swap_tokens error: {}", err,);
     }
 
     #[test]
@@ -2824,24 +2995,49 @@ mod tests {
     }
 
     #[test]
+    fn mutable_slice_token_source_applies_token_edits() {
+        let kinds = [TokenKind::Ident, TokenKind::Fixed("+".into()), TokenKind::Ident];
+        let texts = ["lhs", "+", "rhs"];
+        let mut src = MutableSliceTokenSource::with_texts(&kinds, &texts);
+
+        src.substitute_token(1, TokenKind::Fixed("-".into()), "-".into())
+            .expect("substitute");
+        assert_eq!(src.peek_kind(1), Some(TokenKind::Fixed("-".into())));
+        assert_eq!(src.peek_text(1), Some("-"));
+
+        src.insert_token(3, TokenKind::Fixed(";".into()), ";".into())
+            .expect("insert at eof boundary");
+        assert_eq!(src.len(), 4);
+        assert_eq!(src.peek_text(3), Some(";"));
+
+        src.swap_tokens(0, 1).expect("adjacent swap");
+        assert_eq!(src.peek_text(0), Some("-"));
+        assert_eq!(src.peek_text(1), Some("lhs"));
+    }
+
+    #[test]
+    fn mutable_slice_token_source_rejects_unavailable_byte_edits() {
+        let kinds = [TokenKind::Ident];
+        let texts = ["x"];
+        let mut src = MutableSliceTokenSource::with_texts(&kinds, &texts);
+
+        let err = src
+            .replace_range(0, 1, "y")
+            .expect_err("slice source has no byte-addressed backing text");
+        assert!(err.contains("token-addressed"), "unexpected error: {}", err);
+    }
+
+    #[test]
     fn wpds_event_constructible_with_tropical_weight() {
         let _step: WpdaEvent<TropicalWeight> = WpdaEvent::Step;
-        let _tok: WpdaEvent<TropicalWeight> = WpdaEvent::TokenConsumed {
-            pos: 0,
-            token: TokenKind::Ident,
-        };
-        let _fork: WpdaEvent<TropicalWeight> = WpdaEvent::BranchForked {
-            parent: 0,
-            children: vec![1, 2],
-        };
-        let _resolved: WpdaEvent<TropicalWeight> = WpdaEvent::BranchResolved {
-            winner: 1,
-            weight: TropicalWeight::one(),
-        };
-        let _action: WpdaEvent<TropicalWeight> = WpdaEvent::SemanticActionFired {
-            action_id: 7,
-            args: vec![0, 1],
-        };
+        let _tok: WpdaEvent<TropicalWeight> =
+            WpdaEvent::TokenConsumed { pos: 0, token: TokenKind::Ident };
+        let _fork: WpdaEvent<TropicalWeight> =
+            WpdaEvent::BranchForked { parent: 0, children: vec![1, 2] };
+        let _resolved: WpdaEvent<TropicalWeight> =
+            WpdaEvent::BranchResolved { winner: 1, weight: TropicalWeight::one() };
+        let _action: WpdaEvent<TropicalWeight> =
+            WpdaEvent::SemanticActionFired { action_id: 7, args: vec![0, 1] };
         let _cp: WpdaEvent<TropicalWeight> = WpdaEvent::Checkpoint {
             reason: CheckpointReason::NaturalBoundary,
         };
@@ -2863,9 +3059,8 @@ mod tests {
                 weight: TropicalWeight::one(),
             },
         };
-        let _done: WpdaTransition<TropicalWeight> = WpdaTransition::Done {
-            state: WpdaState::Accepted,
-        };
+        let _done: WpdaTransition<TropicalWeight> =
+            WpdaTransition::Done { state: WpdaState::Accepted };
     }
 
     #[test]
@@ -2901,10 +3096,7 @@ mod tests {
         let cfg: WpdaConfiguration<TropicalWeight> = WpdaConfiguration {
             pos: 42,
             state: WpdaState::InfixLoop { cur_bp: 7 },
-            stack: vec![
-                StackSymbolV2::category_entry(0),
-                StackSymbolV2::rule_at(0, 3, 1, Some(7)),
-            ],
+            stack: vec![StackSymbolV2::category_entry(0), StackSymbolV2::rule_at(0, 3, 1, Some(7))],
             weight: TropicalWeight::one(),
         };
         let cloned = cfg.clone();
@@ -2913,13 +3105,11 @@ mod tests {
 
     #[test]
     fn wpds_state_ambiguity_fanout_holds_branches() {
-        let s = WpdaState::AmbiguityFanout {
-            branches: vec![10, 20, 30],
-        };
+        let s = WpdaState::AmbiguityFanout { branches: vec![10, 20, 30] };
         match s {
             WpdaState::AmbiguityFanout { branches } => {
                 assert_eq!(branches, vec![10u32, 20u32, 30u32]);
-            }
+            },
             _ => panic!("expected AmbiguityFanout"),
         }
     }
@@ -3055,10 +3245,7 @@ mod tests {
     fn action_arg_debug_is_type_safe() {
         // Ensures Debug doesn't try to print the dyn Any internals.
         // Stage 3.6 / ι Phase 1 (2026-05-01): Box → Arc.
-        let a = ActionArg::Term {
-            value: Arc::new(42i32),
-            type_name: "i32",
-        };
+        let a = ActionArg::Term { value: Arc::new(42i32), type_name: "i32" };
         let s = format!("{:?}", a);
         assert!(s.contains("Term"));
         assert!(s.contains("i32"));
@@ -3097,7 +3284,12 @@ mod tests {
         let v: Vec<i32> = vec![1, 2, 3];
         b.push_collection(v);
         let args = b.pop_args(1);
-        let collected: Vec<i32> = args.into_iter().next().unwrap().into_collection().expect("Vec<i32>");
+        let collected: Vec<i32> = args
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_collection()
+            .expect("Vec<i32>");
         assert_eq!(collected, vec![1, 2, 3]);
     }
 
@@ -3131,9 +3323,8 @@ mod tests {
                 _ => Vec::new(),
             }
         };
-        let token_to_kind = |t: &crate::automata::TokenKind| -> crate::automata::TokenKind {
-            t.clone()
-        };
+        let token_to_kind =
+            |t: &crate::automata::TokenKind| -> crate::automata::TokenKind { t.clone() };
         crate::runtime_types::lex_dag_core(
             "-3",
             None,

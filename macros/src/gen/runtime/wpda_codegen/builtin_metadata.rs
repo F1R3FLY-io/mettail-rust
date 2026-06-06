@@ -9,11 +9,6 @@
 //!    (G-INTEGER-OVERFLOW-FORK) plus Stage 3.13 (auto-injection codegen).
 //!    No dependency on `BuiltinTypeLattice`.
 //!
-//! 2. **Lattice queries** — derive promotion chains from
-//!    `BuiltinTypeLattice` (Stage 3.13). Used only by Stage 3.27f.
-//!    These functions are stubbed at module-creation time and filled in
-//!    when Stage 3.13 lands.
-//!
 //! ## Why a shared module?
 //!
 //! The shape recognizer for unary-prefix rules and the shape recognizer
@@ -33,12 +28,9 @@
 //! 4. Update `standard_token_variant`.
 //!
 //! No code change in `binder.rs`, `prefix.rs`, `infix.rs`, or
-//! `semantic_actions.rs` is needed — the shape-driven recognizers and
-//! lattice-driven promotion-Fork emission both pick up the new type
-//! automatically.
+//! `semantic_actions.rs` is needed for the shared shape recognizers.
 
 use mettail_ast::grammar::{GrammarRule, SyntaxExpr, TermParam};
-use mettail_ast::language::{LanguageDef, NativeKind};
 use mettail_ast::types::TypeExpr;
 
 /// Recognized shape of a unary-prefix rule.
@@ -50,8 +42,6 @@ use mettail_ast::types::TypeExpr;
 pub struct UnaryPrefixShape {
     /// The trigger literal (e.g., `"-"`, `"bitnot"`, `"not"`).
     pub trigger: String,
-    /// The operand parameter name (e.g., `"a"`).
-    pub param_name: String,
     /// The operand category (== `rule.category`).
     pub operand_category: String,
 }
@@ -65,14 +55,10 @@ pub struct UnaryPrefixShape {
 /// Examples: `IntToBigInt . i:Int |- i : BigInt`,
 /// `ProcInt . i:Int |- i : Proc`.
 ///
-/// **Used by:** Stage 3.13 auto-injection (detection of user-defined
-/// projections to skip duplicating), Stage 3.27f (BFS over
-/// `BuiltinTypeLattice` lossless edges to find emittable promotion
-/// targets).
+/// **Used by:** Stage 3.13 auto-injection, which detects user-defined
+/// projections and skips synthesizing duplicates.
 #[derive(Debug, Clone)]
 pub struct SimpleProjectionShape {
-    /// The parameter name (e.g., `"i"`).
-    pub param_name: String,
     /// The source category (the operand's type).
     pub source_category: String,
     /// The target category (== `rule.category`).
@@ -125,15 +111,11 @@ pub fn classify_unary_prefix_shape(rule: &GrammarRule) -> Option<UnaryPrefixShap
     };
 
     match &sp[1] {
-        SyntaxExpr::Param(p) if p.to_string() == param_name => {}
+        SyntaxExpr::Param(p) if p.to_string() == param_name => {},
         _ => return None,
     }
 
-    Some(UnaryPrefixShape {
-        trigger,
-        param_name,
-        operand_category,
-    })
+    Some(UnaryPrefixShape { trigger, operand_category })
 }
 
 /// Classify a `GrammarRule` as a simple cross-cat projection rule, if
@@ -173,75 +155,11 @@ pub fn classify_simple_projection_shape(rule: &GrammarRule) -> Option<SimpleProj
     }
 
     match &sp[0] {
-        SyntaxExpr::Param(p) if p.to_string() == param_name => {}
+        SyntaxExpr::Param(p) if p.to_string() == param_name => {},
         _ => return None,
     }
 
-    Some(SimpleProjectionShape {
-        param_name,
-        source_category,
-        target_category,
-    })
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Stage 3.13 lattice queries (BuiltinTypeLattice consumers)
-// ─────────────────────────────────────────────────────────────────────
-
-/// A promotion-target descriptor for use in Stage 3.27f's
-/// G-INTEGER-OVERFLOW-FORK Fork emission.
-///
-/// Each tuple represents a category in the user's language whose
-/// `NativeKind` is reachable from a literal-family source kind via the
-/// `BuiltinTypeLattice::lossless_targets` graph.
-#[derive(Debug, Clone)]
-pub struct PromotionTarget {
-    /// User-facing category name (e.g., `"BigInt"`, `"BigRat"`).
-    pub target_category: String,
-    /// The lattice kind that the target category resolves to.
-    pub target_kind: NativeKind,
-    /// BFS distance from source to target (1 = direct, 2 = composes
-    /// through one intermediate kind, etc.). Used as the cost-tier
-    /// weight in Stage 3.27f.
-    pub distance: u8,
-}
-
-/// Find all `PromotionTarget`s for a source `NativeKind` in a given
-/// language.
-///
-/// **Algorithm:**
-/// 1. Walk `source.lossless_promotion_chain()` to enumerate all
-///    `(NativeKind, distance)` pairs reachable via lossless edges.
-/// 2. For each reachable kind, scan `language.types` for any LangType
-///    whose `native_type` resolves to that kind via `NativeKind::from_syn_type`.
-/// 3. Return the matched categories with their kinds and distances.
-///
-/// **Used by:** Stage 3.27f's bucketed-Fork emitter — for each
-/// `LiteralFamily::Integer` bucket (or Float/FixedPoint/etc.), append
-/// promotion-Fork branches per `PromotionTarget` with weight
-/// `from_cost(0.1 * distance, ...)`.
-pub fn auto_promotion_targets_for_lang(
-    source: NativeKind,
-    language: &LanguageDef,
-) -> Vec<PromotionTarget> {
-    let chain = source.lossless_promotion_chain();
-    let mut out: Vec<PromotionTarget> = Vec::new();
-    for (target_kind, distance) in chain {
-        for ty in &language.types {
-            let Some(native_ty) = ty.native_type.as_ref() else {
-                continue;
-            };
-            let kind = NativeKind::from_syn_type(native_ty);
-            if kind == target_kind {
-                out.push(PromotionTarget {
-                    target_category: ty.name.to_string(),
-                    target_kind,
-                    distance,
-                });
-            }
-        }
-    }
-    out
+    Some(SimpleProjectionShape { source_category, target_category })
 }
 
 #[cfg(test)]
@@ -294,14 +212,10 @@ mod tests {
             "Neg",
             "Int",
             vec![simple_param("a", "Int")],
-            vec![
-                SyntaxExpr::Literal("-".to_string()),
-                SyntaxExpr::Param(ident("a")),
-            ],
+            vec![SyntaxExpr::Literal("-".to_string()), SyntaxExpr::Param(ident("a"))],
         );
         let shape = classify_unary_prefix_shape(&rule).expect("should classify");
         assert_eq!(shape.trigger, "-");
-        assert_eq!(shape.param_name, "a");
         assert_eq!(shape.operand_category, "Int");
     }
 
@@ -312,10 +226,7 @@ mod tests {
             "BitNotInt",
             "Int",
             vec![simple_param("a", "Int")],
-            vec![
-                SyntaxExpr::Literal("bitnot".to_string()),
-                SyntaxExpr::Param(ident("a")),
-            ],
+            vec![SyntaxExpr::Literal("bitnot".to_string()), SyntaxExpr::Param(ident("a"))],
         );
         let shape = classify_unary_prefix_shape(&rule).expect("should classify");
         assert_eq!(shape.trigger, "bitnot");
@@ -396,10 +307,7 @@ mod tests {
             "BadNeg",
             "Int",
             vec![simple_param("a", "Int")],
-            vec![
-                SyntaxExpr::Literal("-".to_string()),
-                SyntaxExpr::Param(ident("b")),
-            ],
+            vec![SyntaxExpr::Literal("-".to_string()), SyntaxExpr::Param(ident("b"))],
         );
         assert!(classify_unary_prefix_shape(&rule).is_none());
     }

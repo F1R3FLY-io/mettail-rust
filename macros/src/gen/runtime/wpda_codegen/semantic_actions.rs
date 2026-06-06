@@ -40,26 +40,34 @@ pub fn emit_action_for_body(
             // Phase 5: try classifying as a binder rule first; takes
             // precedence over collection / atomic / infix classification.
             if let Some(shape) = classify_binder(rule) {
-                if let Some(entry) =
-                    emit_binder_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident, categories)
-                {
+                if let Some(entry) = emit_binder_action_entry(
+                    cat_i as u16,
+                    *rule_idx,
+                    &shape,
+                    &cat_ident,
+                    categories,
+                ) {
                     arms.push(entry);
                 }
                 continue;
             }
             // Phase 4: try classifying as a collection rule next.
             if let Some(shape) = classify_collection(rule, language) {
-                if let Some(entry) =
-                    emit_collection_action_entry(cat_i as u16, *rule_idx, &shape, &cat_ident, categories)
-                {
+                if let Some(entry) = emit_collection_action_entry(
+                    cat_i as u16,
+                    *rule_idx,
+                    &shape,
+                    &cat_ident,
+                    categories,
+                ) {
                     arms.push(entry);
                 }
                 continue;
             }
             let shape = classify_atomic(rule, language);
             if !matches!(shape, AtomicShape::NonAtomic) {
-                let refinement_name = lookup_refinement_type(language, cat_name)
-                    .map(|r| r.name.to_string());
+                let refinement_name =
+                    lookup_refinement_type(language, cat_name).map(|r| r.name.to_string());
                 if let Some(entry) = emit_action_entry_arm(
                     cat_i as u16,
                     *rule_idx,
@@ -122,7 +130,9 @@ pub fn emit_min_terminal_span_body(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         let cat_u16 = cat_i as u16;
         for (rule_idx, rule) in rules {
-            let Some(sp) = rule.syntax_pattern.as_ref() else { continue; };
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
             // Skip patterns containing meta-syntax Op (collections): their
             // span is not a fixed literal count.
             if sp.iter().any(|e| matches!(e, SyntaxExpr::Op(_))) {
@@ -144,9 +154,8 @@ pub fn emit_min_terminal_span_body(
                 .term_context
                 .as_ref()
                 .map(|tc| {
-                    tc.iter().all(|p| {
-                        matches!(p, mettail_ast::grammar::TermParam::Simple { .. })
-                    })
+                    tc.iter()
+                        .all(|p| matches!(p, mettail_ast::grammar::TermParam::Simple { .. }))
                 })
                 .unwrap_or(true);
             if !all_simple_params {
@@ -159,7 +168,7 @@ pub fn emit_min_terminal_span_body(
                 match e {
                     SyntaxExpr::Param(_) => seen_param = true,
                     SyntaxExpr::Literal(_) if seen_param => post_param_literals += 1,
-                    _ => {}
+                    _ => {},
                 }
             }
             if post_param_literals > 0 {
@@ -219,17 +228,25 @@ pub fn emit_single_hop_coercion_body(
         for (rule_idx, rule) in rules {
             // Both shapes require a single Simple param of a foreign Base
             // category. Read the operand (`a:Y`) category name.
-            let Some(tc) = rule.term_context.as_ref() else { continue; };
+            let Some(tc) = rule.term_context.as_ref() else {
+                continue;
+            };
             if tc.len() != 1 {
                 continue;
             }
-            let TermParam::Simple { name: param_name, ty } = &tc[0] else { continue; };
-            let TypeExpr::Base(source_ident) = ty else { continue; };
+            let TermParam::Simple { name: param_name, ty } = &tc[0] else {
+                continue;
+            };
+            let TypeExpr::Base(source_ident) = ty else {
+                continue;
+            };
             let source_cat_name = source_ident.to_string();
             if source_cat_name == rule.category.to_string() {
                 continue;
             }
-            let Some(sp) = rule.syntax_pattern.as_ref() else { continue; };
+            let Some(sp) = rule.syntax_pattern.as_ref() else {
+                continue;
+            };
             // Pass-2a CrossCatProjection: sp.len()==1, the lone element is
             // `Param(name)` matching the param (transparent projection
             // `ProcFloat . f:Float |- f : Proc`, span-0, min_terminal_span 0).
@@ -242,11 +259,8 @@ pub fn emit_single_hop_coercion_body(
             // sp.len()>=3 (`<Y>To<X> . a:Y |- "t" "(" a ")" : X`). Mirror the
             // `classify_atomic(rule) == NonAtomic` gate the Pass-2c emission
             // uses so we never double-count a Pass-2a/CrossCatPrefixUnary rule.
-            let is_pass2c = sp.len() >= 3
-                && matches!(
-                    classify_atomic(rule, language),
-                    AtomicShape::NonAtomic
-                );
+            let is_pass2c =
+                sp.len() >= 3 && matches!(classify_atomic(rule, language), AtomicShape::NonAtomic);
             if !(is_pass2a || is_pass2c) {
                 continue;
             }
@@ -336,26 +350,10 @@ fn emit_action_entry_arm(
     //    of source_cat (the source category's index).
     let any_cat = quote! { mettail_prattail::wpda_runtime::ANY_CAT };
     let (action_fn, arity, expected_input_cats) = match shape {
-        AtomicShape::LiteralInteger => (
-            emit_integer_literal_action(),
-            1u8,
-            quote! { &[#any_cat] },
-        ),
-        AtomicShape::LiteralBoolean => (
-            emit_boolean_literal_action(),
-            1u8,
-            quote! { &[#any_cat] },
-        ),
-        AtomicShape::LiteralString => (
-            emit_string_literal_action(),
-            1u8,
-            quote! { &[#any_cat] },
-        ),
-        AtomicShape::LiteralFloat => (
-            emit_float_literal_action(),
-            1u8,
-            quote! { &[#any_cat] },
-        ),
+        AtomicShape::LiteralInteger => (emit_integer_literal_action(), 1u8, quote! { &[#any_cat] }),
+        AtomicShape::LiteralBoolean => (emit_boolean_literal_action(), 1u8, quote! { &[#any_cat] }),
+        AtomicShape::LiteralString => (emit_string_literal_action(), 1u8, quote! { &[#any_cat] }),
+        AtomicShape::LiteralFloat => (emit_float_literal_action(), 1u8, quote! { &[#any_cat] }),
         AtomicShape::LiteralPatterned {
             native_type,
             family,
@@ -401,22 +399,13 @@ fn emit_action_entry_arm(
             1u8,
             quote! { &[#any_cat] },
         ),
-        AtomicShape::VarRule { wrapper_variant } => (
-            emit_var_rule_action(cat_ident, wrapper_variant),
-            1u8,
-            quote! { &[#any_cat] },
-        ),
+        AtomicShape::VarRule { wrapper_variant } => {
+            (emit_var_rule_action(cat_ident, wrapper_variant), 1u8, quote! { &[#any_cat] })
+        },
         // Stage 1.1: cross-cat wrap-action — pop 1 source-cat Term arg,
         // wrap as Cat::wrapper_variant(Box::new(arg)).
-        AtomicShape::CrossCatProjection {
-            source_cat_name,
-            wrapper_variant,
-        }
-        | AtomicShape::CrossCatPrefixUnary {
-            source_cat_name,
-            wrapper_variant,
-            ..
-        } => {
+        AtomicShape::CrossCatProjection { source_cat_name, wrapper_variant }
+        | AtomicShape::CrossCatPrefixUnary { source_cat_name, wrapper_variant, .. } => {
             let source_src_idx = categories
                 .iter()
                 .position(|c| c == source_cat_name)
@@ -427,7 +416,7 @@ fn emit_action_entry_arm(
                 1u8,
                 quote! { &[#source_src_idx] },
             )
-        }
+        },
         // M6c.6.4.b (2026-05-14): same-cat unary prefix has no atomic-
         // literal semantic action — the rule's action body emits its
         // own AST term wrapping the operand's sub-parse result. Phase
@@ -1197,10 +1186,8 @@ mod tests {
             },
         ];
         let lang = lang_with_rules(rules.clone());
-        let per_cat: Vec<Vec<GrammarRule>> = vec![
-            vec![rules[0].clone(), rules[2].clone()],
-            vec![rules[1].clone()],
-        ];
+        let per_cat: Vec<Vec<GrammarRule>> =
+            vec![vec![rules[0].clone(), rules[2].clone()], vec![rules[1].clone()]];
         let idx = indexed(&per_cat);
         let ts = emit_action_for_body(&lang, &["Int".to_string(), "Bool".to_string()], &idx);
         let s = ts.to_string();
@@ -1248,9 +1235,7 @@ mod tests {
             name: Ident::new(cat, Span::call_site()),
             pattern: r"[0-9]+".to_string(),
             category: Some(Ident::new(cat, Span::call_site())),
-            rust_code: Some(
-                quote! { mettail_prattail::parse_int_lit(text, None).map_err(|_| ()) },
-            ),
+            rust_code: Some(quote! { mettail_prattail::parse_int_lit(text, None).map_err(|_| ()) }),
             priority: None,
             push_mode: None,
             is_pop: false,

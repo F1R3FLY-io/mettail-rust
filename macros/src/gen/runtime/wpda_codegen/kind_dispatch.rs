@@ -2,8 +2,8 @@
 //! codegen helper.
 //!
 //! Generates a function that maps a `(category, TokenKind)` pair to the
-//! `rule_idx` of an atomic-literal rule in that category that consumes the
-//! kind. Returns `None` if no such rule exists.
+//! `rule_idx` of a prefix-site token-consuming rule in that category that
+//! consumes the kind. Returns `None` if no such rule exists.
 //!
 //! The lex-Fork emission path (M6c.3) uses this lookup to bind each lex
 //! alternative to a concrete grammar rule before forking. A `None` result
@@ -21,6 +21,7 @@ use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
+use super::infix::build_bp_table;
 use super::prefix::{classify_atomic, AtomicShape, LiteralFamily};
 
 /// Emit the `lex_alt_rule_for` free function for a grammar.
@@ -51,10 +52,10 @@ pub fn emit_lex_alt_rule_for_fn(
 ) -> TokenStream {
     // M6c.6.4.b (2026-05-14): split into two per-site tables —
     // `lex_alt_rule_for_prefix` for PrefixDispatch site (Atomic +
-    // PrefixOp arms) and `lex_alt_rule_for_infix` for InfixLoop site
-    // (PostfixOp + InfixOp + MixfixFirstTrigger arms; populated by
-    // M6c.6.4.c/c2/c3). Same-token-kind ambiguity (e.g., `Fixed("-")`
-    // for both unary `Neg` and binary `SubInt`) is resolved by site:
+    // PrefixOp arms) and `lex_alt_rules_for_infix` for InfixLoop site
+    // (PostfixOp + InfixOp + MixfixFirstTrigger arms). Same-token-kind
+    // ambiguity (e.g., `Fixed("-")` for both unary `Neg` and binary `SubInt`)
+    // is resolved by site:
     // the lex-Fork at PrefixDispatch queries `_prefix`, the lex-Fork
     // at InfixLoop queries `_infix`. Each per-site table has no cross-
     // shape arms — clean rule-out by site discriminator.
@@ -63,7 +64,6 @@ pub fn emit_lex_alt_rule_for_fn(
     // src_idx lookup (used by PrefixOp's `body_src_idx` resolution
     // and later by InfixOp's `result_src_idx` etc.).
     let mut prefix_arms: Vec<TokenStream> = Vec::new();
-    let mut infix_arms: Vec<TokenStream> = Vec::new();
     for (cat_src_idx, rules) in per_cat.iter().enumerate() {
         let cat_src_idx_u16 = cat_src_idx as u16;
         for (rule_idx, rule) in rules.iter().enumerate() {
@@ -75,10 +75,11 @@ pub fn emit_lex_alt_rule_for_fn(
                 rule_idx_u16,
                 categories,
                 &mut prefix_arms,
-                &mut infix_arms,
             );
         }
     }
+    let prefix_primary_dispatch_arms = emit_prefix_primary_dispatch_arms(_language, per_cat);
+    let infix_arms = emit_infix_lex_alt_rule_arms(_language, per_cat, categories);
     quote! {
         /// M6c.6.4.b (2026-05-14): map `(cat_src_idx, kind)` at
         /// `LexForkSite::PrefixDispatch` to a `LexAltRuleInfo` carrying
@@ -103,6 +104,21 @@ pub fn emit_lex_alt_rule_for_fn(
             }
         }
 
+        /// Returns true when normal PrefixDispatch has a primary-token arm
+        /// for `(cat_src_idx, kind)` outside the lex-alt table. The lex fork
+        /// uses this to avoid replacing a valid primary keyword/binder arm
+        /// with a lone secondary `Ident -> Var` branch.
+        #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
+        fn prefix_primary_has_dispatch_rule(
+            cat_src_idx: u16,
+            kind: &mettail_prattail::automata::TokenKind,
+        ) -> bool {
+            match (cat_src_idx, kind) {
+                #( #prefix_primary_dispatch_arms )*
+                _ => false,
+            }
+        }
+
         /// M6c.6.4.b (2026-05-14): InfixLoop-site counterpart.
         /// Possible `kind` variants:
         /// - `PostfixOp { l_bp, result_src_idx }`: unary postfix.
@@ -110,19 +126,59 @@ pub fn emit_lex_alt_rule_for_fn(
         /// - `MixfixFirstTrigger { l_bp, result_src_idx }`: mixfix's
         ///   first trigger (e.g., `?` of Tern).
         ///
-        /// M6c.6.4.c/c2/c3 populate the arms; until then this fn
-        /// returns `None` for all inputs.
         #[allow(dead_code, unused_variables, non_snake_case, clippy::match_same_arms)]
-        fn lex_alt_rule_for_infix(
+        fn lex_alt_rules_for_infix(
             cat_src_idx: u16,
             kind: &mettail_prattail::automata::TokenKind,
-        ) -> Option<mettail_prattail::wpda_runtime::LexAltRuleInfo> {
+        ) -> Vec<mettail_prattail::wpda_runtime::LexAltRuleInfo> {
             match (cat_src_idx, kind) {
                 #( #infix_arms )*
-                _ => None,
+                _ => Vec::new(),
             }
         }
     }
+}
+
+fn emit_prefix_primary_dispatch_arms(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+) -> Vec<TokenStream> {
+    let mut fixed_triggers = std::collections::BTreeSet::<(u16, String)>::new();
+    for (cat_src_idx, rules) in per_cat.iter().enumerate() {
+        let cat_src_idx = cat_src_idx as u16;
+        for rule in rules {
+            match classify_atomic(rule, language) {
+                AtomicShape::TerminalKeyword { terminal_text, .. }
+                | AtomicShape::PrefixOperator {
+                    trigger: terminal_text, ..
+                }
+                | AtomicShape::CrossCatPrefixUnary {
+                    trigger: terminal_text, ..
+                } => {
+                    fixed_triggers.insert((cat_src_idx, terminal_text));
+                }
+                AtomicShape::NonAtomic => {
+                    if let Some(sp) = rule.syntax_pattern.as_ref() {
+                        if let Some(mettail_ast::grammar::SyntaxExpr::Literal(text)) = sp.first()
+                        {
+                            fixed_triggers.insert((cat_src_idx, text.clone()));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fixed_triggers
+        .into_iter()
+        .map(|(cat_src_idx, terminal)| {
+            quote! {
+                (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                    if __t == #terminal => true,
+            }
+        })
+        .collect()
 }
 
 /// M6c.6.4.b: Emit `(cat, kind) => Some(LexAltRuleInfo { rule_idx, kind: ... })`
@@ -140,9 +196,10 @@ fn emit_arms_for_shape(
     rule_idx: u16,
     categories: &[String],
     prefix_arms: &mut Vec<TokenStream>,
-    infix_arms: &mut Vec<TokenStream>,
 ) {
-    // `push_simple_atomic` emits an Atomic-kind arm to prefix_arms.
+    // `push_simple_atomic` emits an Atomic-kind arm to prefix_arms. The
+    // generated LexAlt action captures token text and routes it through the
+    // rule's return marker, which is the right shape for literals and Vars.
     let push_simple_atomic = |k: TokenStream, arms: &mut Vec<TokenStream>| {
         arms.push(quote! {
             (#cat_src_idx, #k) => Some(
@@ -292,47 +349,20 @@ fn emit_arms_for_shape(
                 }
             }
         }
-        // M6c.5 / P3 (2026-05-14): Var rules are NOT bound by the
-        // lex-Fork. Var (Ident → categorical variable) is a
-        // name-resolution concern; it's handled by standard
-        // PrefixDispatch's per-cat Ident dispatch arms — which emit
-        // their own Forks over `Ident → {Var, cross-cat-projection-1,
-        // ...}` when in cats with cross-cat injection. The lex-Fork's
-        // proper domain is multi-LITERAL ambiguity (Integer-vs-BigInt
-        // for `"0"`), NOT Ident multiplicity.
-        //
-        // Concretely: at a position where the lex DAG has both
-        // `Fixed("merge")` (keyword) AND `Ident "merge"` (var-name
-        // interpretation), the canonical PARSE is the keyword. The
-        // pre-P3 code mapped `Ident → MVar_rule` so the lex-Fork
-        // emitted a phantom Var branch alongside the Fixed-keyword
-        // primary; the phantom would `emit_push_token(Ident, "merge")`
-        // and `cursor_gss_push(MVar_rule_idx.with_kind_return())`,
-        // producing a downstream cursor with an AST term shaped like
-        // `MVar("merge")` that polluted the cursor graph and crowded
-        // out the canonical MergeMap dispatch.
-        //
-        // P3 fix: drop the `Ident → VarRule` mapping entirely. At
-        // keyword positions, both Fixed (no rule in table — terminals
-        // dispatch via standard PrefixDispatch trigger arms) AND Ident
-        // (no rule after P3) yield None → `__branches.len() == 0` →
-        // fall-through to standard PrefixDispatch which dispatches
-        // `Fixed("merge")` → MergeMap canonically. At bare-variable
-        // positions (Ident-only, no Fixed), `is_ambiguous_at` is false
-        // so lex-Fork is inert; standard PrefixDispatch's Ident →
-        // Var arm fires directly.
-        //
-        // Mandate compliance: pure rule-out by domain ("Var is not a
-        // literal lex alternative"). No weight-based pre-filter. The
-        // multiplicity for Var/cross-cat-from-Ident is still preserved
-        // by standard PrefixDispatch's own Fork emission.
-        //
-        // Out of scope (M6c.6 / M6d): prefix-operator rules like
-        // `Neg . - n:Int |- ... : Int`. To handle `-3!` →
-        // BOTH `(-3)!` and `-(3!)`, `lex_alt_rule_for` needs to be
-        // extended to map `Fixed("-")` to the unary prefix rule.
-        // That requires a different walker action shape (binder-rule
-        // entry, not atomic-literal with_kind_return).
+        AtomicShape::VarRule { .. } => {
+            // Var rules are prefix-site token-consuming rules. When a lex DAG
+            // position has both a keyword primary (`Fixed("merge")`) and an
+            // identifier alternative (`Ident "merge"`), an identifier-only
+            // category such as `Name` must be able to keep the Ident branch.
+            // The generated LexAlt action has the same shape as atomic
+            // literals: capture text, push the rule return marker, and let the
+            // semantic action construct the Var node.
+            push_simple_atomic(
+                quote! { mettail_prattail::automata::TokenKind::Ident },
+                prefix_arms,
+            );
+        }
+
         // M6c.6.4.b (2026-05-14): same-cat unary prefix operator.
         // Emits a PrefixDispatch-site arm binding `Fixed(trigger)` to
         // this rule's `LexAltRuleKind::PrefixOp { body_src_idx }`.
@@ -365,7 +395,6 @@ fn emit_arms_for_shape(
                     ),
             });
         }
-        AtomicShape::VarRule { .. }
         // The remaining shapes don't directly consume a single TokenKind
         // via the lex-Fork code path. TerminalKeyword's `Fixed(text)` is
         // never a lex-DAG ambiguity producer (terminals are exact byte
@@ -376,10 +405,93 @@ fn emit_arms_for_shape(
         | AtomicShape::CrossCatProjection { .. }
         | AtomicShape::CrossCatPrefixUnary { .. }
         | AtomicShape::NonAtomic => {
-            // M6c.6.4.c/c2/c3 will route PostfixOperator/InfixOperator/
-            // MixfixFirstTriggerOperator shapes to `infix_arms`.
-            // Silence unused-var warning until then.
-            let _ = infix_arms;
+            // InfixLoop-site lex-alt arms are generated from the binding-power
+            // table, not from AtomicShape.
         }
     }
+}
+
+fn build_label_index(
+    categories: &[String],
+    per_cat: &[Vec<GrammarRule>],
+) -> std::collections::HashMap<(String, String), (u16, u16)> {
+    let mut idx = std::collections::HashMap::new();
+    for (cat_i, rules) in per_cat.iter().enumerate() {
+        let cat_name = &categories[cat_i];
+        for (rule_i, rule) in rules.iter().enumerate() {
+            idx.insert((cat_name.clone(), rule.label.to_string()), (cat_i as u16, rule_i as u16));
+        }
+    }
+    idx
+}
+
+fn emit_infix_lex_alt_rule_arms(
+    language: &LanguageDef,
+    per_cat: &[Vec<GrammarRule>],
+    categories: &[String],
+) -> Vec<TokenStream> {
+    let bp_table = build_bp_table(language);
+    let label_index = build_label_index(categories, per_cat);
+    let mut grouped: std::collections::BTreeMap<(u16, String), Vec<TokenStream>> =
+        std::collections::BTreeMap::new();
+
+    for op in &bp_table.operators {
+        let Some(cat_src_idx) = categories
+            .iter()
+            .position(|cat| cat == &op.category)
+            .map(|idx| idx as u16)
+        else {
+            continue;
+        };
+        let Some((result_src_idx, rule_idx)) = label_index
+            .get(&(op.result_category.clone(), op.label.clone()))
+            .copied()
+        else {
+            continue;
+        };
+        let l_bp = op.left_bp;
+        let r_bp = op.right_bp;
+        let kind = if op.is_postfix {
+            quote! {
+                mettail_prattail::wpda_runtime::LexAltRuleKind::PostfixOp {
+                    l_bp: #l_bp,
+                    result_src_idx: #result_src_idx,
+                }
+            }
+        } else if op.is_mixfix {
+            quote! {
+                mettail_prattail::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
+                    l_bp: #l_bp,
+                    result_src_idx: #result_src_idx,
+                }
+            }
+        } else {
+            quote! {
+                mettail_prattail::wpda_runtime::LexAltRuleKind::InfixOp {
+                    l_bp: #l_bp,
+                    r_bp: #r_bp,
+                    result_src_idx: #result_src_idx,
+                }
+            }
+        };
+        grouped
+            .entry((cat_src_idx, op.terminal.clone()))
+            .or_default()
+            .push(quote! {
+                mettail_prattail::wpda_runtime::LexAltRuleInfo {
+                    rule_idx: #rule_idx,
+                    kind: #kind,
+                }
+            });
+    }
+
+    grouped
+        .into_iter()
+        .map(|((cat_src_idx, terminal), infos)| {
+            quote! {
+                (#cat_src_idx, mettail_prattail::automata::TokenKind::Fixed(__t))
+                    if __t == #terminal => vec![ #( #infos ),* ],
+            }
+        })
+        .collect()
 }

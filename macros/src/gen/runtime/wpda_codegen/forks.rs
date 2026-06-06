@@ -4,16 +4,17 @@
 //! Replaces deterministic peek-and-decide patterns in WPDS codegen with
 //! `WpdaStepAction::Fork` over multiple branches, letting lex-min disambiguate
 //! per `feedback_use_wpds_disambiguation_not_heuristics.md`. Branches are
-//! emitted unconditionally; the walker prunes branches whose subsequent steps
-//! fail (matching the existing F7 multi-rule binder, F8 cross-cat projection,
-//! and A.i Opt-Group Fork patterns already shipped).
+//! emitted unconditionally; branches whose per-branch guards or subsequent
+//! steps fail naturally transition to Error/Idle and are discarded as failed
+//! derivations. The walker never drops a live cursor solely to satisfy a
+//! cursor-count bound.
 //!
 //! Three already-shipped Forks prove the pattern works:
 //! - F7 multi-rule binder (`binder.rs:556-596`)
 //! - F8 cross-cat projection (`prefix.rs:932-971`)
 //! - A.i Opt-Group sub_pos:0 (`binder.rs:992-1046`)
 //!
-//! This module unifies the 11 remaining hacks (Cluster 1: 5 sites; Cluster 2:
+//! This module unifies the 11 remaining fork sites (Cluster 1: 5 sites; Cluster 2:
 //! 2 sites; Cluster 3: 3 sites — Cluster 4 #18/#19 is Commit 3, Cluster 5 is
 //! Commit 4) under a small helper API.
 //!
@@ -26,9 +27,10 @@
 //!   constructor for new Fork branches; per-tier bias offsets enforce
 //!   inter-tier ordering on weight ties.
 //! - **Cursor explosion mitigation.** Each Fork emission grows the cursor
-//!   count by N; nested call sites multiply. The walker's
-//!   `beam_size: Option<usize>` (already shipped at `wpda_walker.rs:289`)
-//!   defaults to `Some(64)` when Cluster 3 lands.
+//!   count by N; nested call sites multiply. Cursor-count bounds are explicit
+//!   opt-in overflow checks (`CursorBoundingMode::BeamSize` compatibility
+//!   mode or `AmbiguityBudget`) that report structured ambiguity-budget
+//!   overflow instead of silently truncating the frontier.
 //! - **Unconditional branch emission.** Following the F7/F8/A.i pattern,
 //!   branches are pushed into the Fork unconditionally; per-branch runtime
 //!   correctness is enforced when the cursor's subsequent step against the
@@ -85,7 +87,7 @@ pub(crate) struct FirstSetBranch {
 /// Cluster 1 helper. Emits a `WpdaStepAction::Fork` over the given branches
 /// with `consume_trigger` semantics specified by the caller. Following the
 /// F7/F8/A.i pattern, branches are emitted unconditionally — the walker
-/// prunes branches whose subsequent steps fail.
+/// discards only branches whose own guard/subsequent step fails.
 ///
 /// Source-order tiebreak: branches are emitted in the same order as
 /// `branches` parameter; per-branch `rule_idx` weight component gives
@@ -93,9 +95,10 @@ pub(crate) struct FirstSetBranch {
 /// `wpda_walker.rs::ForkBranch.weight`).
 ///
 /// **Cursor-explosion mitigation.** When `branches.len() >= 2`, the emit
-/// site grows the cursor count by N; nested call sites multiply. The
-/// walker's `beam_size: Option<usize>` (default `Some(64)`) caps the live
-/// cursor population.
+/// site grows the cursor count by N; nested call sites multiply. If a caller
+/// installs a cursor-count bound, the walker reports structured
+/// ambiguity-budget overflow when the live frontier exceeds it; it does not
+/// silently prune by branch weight.
 pub(crate) fn emit_first_set_fork(
     branches: &[FirstSetBranch],
     consume_trigger: bool,
@@ -333,6 +336,272 @@ pub(crate) fn emit_lex_fork_at_prefix_dispatch(primary_src_idx: u16) -> TokenStr
             // the primary survived (standard PrefixDispatch dispatches
             // on `peek_kind = primary` — byte-identical to non-
             // ambiguous lex, optimization preserved).
+            let mut __primary_has_fallthrough_rule: bool = false;
+            if let Some(primary_kind) = tokens.peek_kind(*pos) {
+                __primary_has_fallthrough_rule =
+                    prefix_primary_has_dispatch_rule(primary_src, &primary_kind);
+            }
+            let __only_secondary_survived =
+                !__branches.is_empty() && !__primary_survived;
+            let __fall_through =
+                __branches.is_empty()
+                    || (__branches.len() == 1 && __primary_survived)
+                    || (__only_secondary_survived && __primary_has_fallthrough_rule);
+            if !__fall_through {
+                return WpdaStepAction::Fork {
+                    branches: __branches,
+                    consume_trigger: false,
+                };
+            }
+        }
+    }
+}
+
+/// Emit a lex-Fork at InfixLoop top.
+///
+/// This mirrors the normal InfixLoop candidate construction, but runs it for
+/// every surviving lexical alternative at the current token position. Each
+/// branch carries the alternative-specific `next_pos`, so lattice token
+/// sources advance along the chosen DAG edge.
+pub(crate) fn emit_lex_fork_at_infix_loop(_primary_src_idx: u16) -> TokenStream {
+    quote! {
+        if tokens.is_ambiguous_at(_pos) {
+            let alts = tokens.peek_alternatives(_pos);
+            let primary_src = state_cat_src_idx;
+            let mut __branches: Vec<mettail_prattail::wpda_walker::ForkBranch<
+                __DwW,
+            >> = Vec::with_capacity(alts.len() + 1);
+            let mut __primary_survived: bool = false;
+
+            if let Some(primary_kind) = tokens.peek_kind(_pos) {
+                let primary_text = tokens.peek_text(_pos).unwrap_or("").to_string();
+                let primary_next_pos = tokens.next_pos(_pos, 0).unwrap_or(_pos + 1);
+                for info in lex_alt_rules_for_infix(primary_src, &primary_kind) {
+                    match info.kind {
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::PostfixOp {
+                            l_bp,
+                            result_src_idx,
+                        } => {
+                            if l_bp >= *cur_bp {
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::rule_at(
+                                        result_src_idx, info.rule_idx, 0, Some(*cur_bp),
+                                    ).with_kind_return(),
+                                    weight: lex_w_alt(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
+                                        result_src_idx,
+                                        info.rule_idx,
+                                        0u16,
+                                    ),
+                                    new_state: WpdaState::Unwinding,
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::LexAltPostfixOp {
+                                            alt_idx: 0u16,
+                                            trigger: primary_text.clone(),
+                                            rule_idx: info.rule_idx,
+                                            next_pos: primary_next_pos,
+                                            l_bp,
+                                            result_src_idx,
+                                        },
+                                });
+                                __primary_survived = true;
+                            }
+                        },
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::InfixOp {
+                            l_bp,
+                            r_bp,
+                            result_src_idx,
+                        } => {
+                            if l_bp >= *cur_bp {
+                                let new_state =
+                                    if result_src_idx != primary_src {
+                                        WpdaState::CrossCatDelegate {
+                                            source_src_idx: primary_src,
+                                            inner_cur_bp: r_bp,
+                                        }
+                                    } else {
+                                        WpdaState::PrefixDispatch {
+                                            pos: primary_next_pos,
+                                            cur_bp: r_bp,
+                                        }
+                                    };
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::rule_at(
+                                        result_src_idx, info.rule_idx, 0, Some(*cur_bp),
+                                    ).with_kind_return(),
+                                    weight: lex_w_alt(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
+                                        result_src_idx,
+                                        info.rule_idx,
+                                        0u16,
+                                    ),
+                                    new_state,
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::LexAltInfixOp {
+                                            alt_idx: 0u16,
+                                            trigger: primary_text.clone(),
+                                            rule_idx: info.rule_idx,
+                                            next_pos: primary_next_pos,
+                                            l_bp,
+                                            r_bp,
+                                            result_src_idx,
+                                            source_cat_src_idx: primary_src,
+                                        },
+                                });
+                                __primary_survived = true;
+                            }
+                        },
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
+                            l_bp,
+                            result_src_idx,
+                        } => {
+                            if l_bp >= *cur_bp {
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::mixfix_marker(
+                                        result_src_idx, info.rule_idx, 0,
+                                    ),
+                                    weight: lex_w_alt(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
+                                        result_src_idx,
+                                        info.rule_idx,
+                                        0u16,
+                                    ),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: primary_next_pos,
+                                        cur_bp: 0,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {
+                                            alt_idx: 0u16,
+                                            trigger: primary_text.clone(),
+                                            rule_idx: info.rule_idx,
+                                            next_pos: primary_next_pos,
+                                            l_bp,
+                                            result_src_idx,
+                                        },
+                                });
+                                __primary_survived = true;
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+            }
+
+            for (sec_idx, alt) in alts.iter().enumerate() {
+                let alt_idx = (sec_idx + 1) as u16;
+                let alt_next_pos = tokens
+                    .next_pos(_pos, sec_idx + 1)
+                    .unwrap_or(_pos + 1);
+                for info in lex_alt_rules_for_infix(primary_src, &alt.kind) {
+                    match info.kind {
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::PostfixOp {
+                            l_bp,
+                            result_src_idx,
+                        } => {
+                            if l_bp >= *cur_bp {
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::rule_at(
+                                        result_src_idx, info.rule_idx, 0, Some(*cur_bp),
+                                    ).with_kind_return(),
+                                    weight: lex_w_alt(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_POSTFIX,
+                                        result_src_idx,
+                                        info.rule_idx,
+                                        alt_idx,
+                                    ),
+                                    new_state: WpdaState::Unwinding,
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::LexAltPostfixOp {
+                                            alt_idx,
+                                            trigger: alt.text.to_string(),
+                                            rule_idx: info.rule_idx,
+                                            next_pos: alt_next_pos,
+                                            l_bp,
+                                            result_src_idx,
+                                        },
+                                });
+                            }
+                        },
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::InfixOp {
+                            l_bp,
+                            r_bp,
+                            result_src_idx,
+                        } => {
+                            if l_bp >= *cur_bp {
+                                let new_state =
+                                    if result_src_idx != primary_src {
+                                        WpdaState::CrossCatDelegate {
+                                            source_src_idx: primary_src,
+                                            inner_cur_bp: r_bp,
+                                        }
+                                    } else {
+                                        WpdaState::PrefixDispatch {
+                                            pos: alt_next_pos,
+                                            cur_bp: r_bp,
+                                        }
+                                    };
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::rule_at(
+                                        result_src_idx, info.rule_idx, 0, Some(*cur_bp),
+                                    ).with_kind_return(),
+                                    weight: lex_w_alt(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_INFIX,
+                                        result_src_idx,
+                                        info.rule_idx,
+                                        alt_idx,
+                                    ),
+                                    new_state,
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::LexAltInfixOp {
+                                            alt_idx,
+                                            trigger: alt.text.to_string(),
+                                            rule_idx: info.rule_idx,
+                                            next_pos: alt_next_pos,
+                                            l_bp,
+                                            r_bp,
+                                            result_src_idx,
+                                            source_cat_src_idx: primary_src,
+                                        },
+                                });
+                            }
+                        },
+                        mettail_prattail::wpda_runtime::LexAltRuleKind::MixfixFirstTrigger {
+                            l_bp,
+                            result_src_idx,
+                        } => {
+                            if l_bp >= *cur_bp {
+                                __branches.push(mettail_prattail::wpda_walker::ForkBranch {
+                                    symbol: StackSymbolV2::mixfix_marker(
+                                        result_src_idx, info.rule_idx, 0,
+                                    ),
+                                    weight: lex_w_alt(
+                                        mettail_prattail::automata::lex_weight::BP_TIER_MIXFIX,
+                                        result_src_idx,
+                                        info.rule_idx,
+                                        alt_idx,
+                                    ),
+                                    new_state: WpdaState::PrefixDispatch {
+                                        pos: alt_next_pos,
+                                        cur_bp: 0,
+                                    },
+                                    action_kind:
+                                        mettail_prattail::wpda_walker::ForkActionKind::LexAltMixfixOp {
+                                            alt_idx,
+                                            trigger: alt.text.to_string(),
+                                            rule_idx: info.rule_idx,
+                                            next_pos: alt_next_pos,
+                                            l_bp,
+                                            result_src_idx,
+                                        },
+                                });
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+            }
+
             let __fall_through =
                 __branches.is_empty()
                     || (__branches.len() == 1 && __primary_survived);
@@ -426,6 +695,21 @@ mod tests {
         assert!(s.contains("is_ambiguous_at"), "missing is_ambiguous_at: {}", s);
         assert!(s.contains("LexAlt"), "missing LexAlt action_kind: {}", s);
         assert!(s.contains("peek_alternatives"), "missing peek_alternatives: {}", s);
+    }
+
+    #[test]
+    fn emit_infix_lex_fork_emits_operator_action_variants() {
+        let ts = emit_lex_fork_at_infix_loop(0);
+        let s = ts.to_string();
+        assert!(s.contains("lex_alt_rules_for_infix"), "missing infix lookup: {}", s);
+        assert!(s.contains("LexAltPostfixOp"), "missing postfix action: {}", s);
+        assert!(s.contains("LexAltInfixOp"), "missing infix action: {}", s);
+        assert!(s.contains("LexAltMixfixOp"), "missing mixfix action: {}", s);
+        assert!(
+            s.contains("consume_trigger : false"),
+            "lex-alt operator actions consume intrinsically: {}",
+            s
+        );
     }
 
     #[test]

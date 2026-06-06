@@ -53,11 +53,7 @@ pub(crate) fn build_prefix_bp_map(
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
             if classify_unary_prefix_shape(rule).is_some() {
-                let bp = compute_prefix_bp(
-                    &rule.category.to_string(),
-                    rule.prefix_bp,
-                    &bp_table,
-                );
+                let bp = compute_prefix_bp(&rule.category.to_string(), rule.prefix_bp, &bp_table);
                 map.insert((cat_i as u16, rule_i as u16), bp);
             }
         }
@@ -112,9 +108,7 @@ pub enum BinderPosition {
     /// chained `Sep{source: Some(Map{source: Zip})}` pattern (e.g.
     /// rhocalc PInputs `*zip(ns,xs).*map(|n,x| n "?" x).*sep(",")`).
     /// `inner_positions` is the per-iteration inner walk; for PNew-style
-    /// rules it's `[BinderIdent]`. `binder_param_idx` is the index into
-    /// `inner_positions` of the binder slot (the BinderIdent for PNew,
-    /// or the binder slot inside the map body for Class 3).
+    /// rules it's `[BinderIdent]`.
     /// `collection_param_cat` is `Some(elem_cat)` for Class 3 (the
     /// synthesized Names accumulator's element category) and None for
     /// PNew-style rules (no synthesized accumulator).
@@ -125,10 +119,6 @@ pub enum BinderPosition {
         /// the body of the Map closure (e.g. `[ParamParse{Name,
         /// collection:Some(...)}, Literal("?"), BinderIdent]`).
         inner_positions: Vec<BinderPosition>,
-        /// Action-arg layout for the inner walk; mirrors inner_positions.
-        inner_action_args: Vec<ActionArgKind>,
-        /// Index into inner_positions of the binder ident slot. PNew → 0.
-        binder_param_idx: u8,
         /// For Class 3 rules: the element category of the synthesized
         /// names accumulator. None for PNew-style rules.
         collection_param_cat: Option<String>,
@@ -198,7 +188,6 @@ pub enum BinderPosition {
     /// inner positions' types).
     OptionalGroup {
         positions: Vec<BinderPosition>,
-        action_args: Vec<ActionArgKind>,
         /// Sequence index of THIS group within its parent rule's
         /// positions list (used to disambiguate FIRST-set tables when
         /// a rule has multiple groups).
@@ -220,16 +209,12 @@ pub enum BinderPosition {
 pub struct CollectionSepInfo {
     pub separator: String,
     pub close: String,
-    pub coll_kind: CollectionType,
     pub elem_cat: String,
-    /// Phase 4 #5 (2026-05-11): inter-pair separator for HashMap
+    /// Phase 4 #5b (2026-05-12): inter-pair separator for HashMap
     /// collections (e.g., `":"` for `k: v`). `None` for Vec/HashBag/
-    /// HashSet. The walker's `CollectionLoop` dispatch is NOT yet
-    /// extended to consume `:` between key and value — Phase 4 #5b
-    /// will add a 4th Fork branch in `emit_collection_loop_arm`. For
-    /// now, the field is populated but unused at runtime (empty-only
-    /// HashMap pilot — drain length 0 satisfies the
-    /// `[k0, v0, k1, v1, ...]` invariant trivially).
+    /// HashSet. The walker's `CollectionLoop` uses this to dispatch
+    /// key/value parsing phases while preserving the drained
+    /// `[k0, v0, k1, v1, ...]` invariant.
     pub key_val_separator: Option<String>,
     /// Phase 4 #1 (2026-05-11): rule-global slot index. 0-based dense
     /// index over collection slots in `shape.positions` order. Encoded
@@ -299,25 +284,15 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
     // ParamKind::SimpleCollection) would emit binder prefix arms +
     // action entries that conflict with the existing Class-5 emission.
     if tc.len() == 1 {
-        if let TermParam::Simple {
-            ty: TypeExpr::Collection { .. },
-            ..
-        } = &tc[0]
-        {
+        if let TermParam::Simple { ty: TypeExpr::Collection { .. }, .. } = &tc[0] {
             let class5_shape_3 = sp.len() == 3
                 && matches!(&sp[0], SyntaxExpr::Literal(_))
-                && matches!(
-                    &sp[1],
-                    SyntaxExpr::Op(PatternOp::Sep { source: None, .. })
-                )
+                && matches!(&sp[1], SyntaxExpr::Op(PatternOp::Sep { source: None, .. }))
                 && matches!(&sp[2], SyntaxExpr::Literal(_));
             let class5_shape_4 = sp.len() == 4
                 && matches!(&sp[0], SyntaxExpr::Literal(_))
                 && matches!(&sp[1], SyntaxExpr::Literal(s) if s == "(")
-                && matches!(
-                    &sp[2],
-                    SyntaxExpr::Op(PatternOp::Sep { source: None, .. })
-                )
+                && matches!(&sp[2], SyntaxExpr::Op(PatternOp::Sep { source: None, .. }))
                 && matches!(&sp[3], SyntaxExpr::Literal(_));
             if class5_shape_3 || class5_shape_4 {
                 return None;
@@ -327,10 +302,14 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
 
     // Build a map: param name → (kind, type_info).
     enum ParamKind {
-        Simple { cat: String },
+        Simple {
+            cat: String,
+        },
         Binder,
         BinderList,
-        Body { cat: String },
+        Body {
+            cat: String,
+        },
         Guard,
         /// B9 / Class 2 (2026-05-08): a `Simple` param whose type is
         /// `Collection { coll_type: Vec/HashBag/HashSet, element: Base(elem) }`.
@@ -354,8 +333,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
     // so action emission knows to wrap them as `Option<T>`. Inner params
     // are registered in param_map identically to top-level params; the
     // `optional_params` set lets later code distinguish the two.
-    let mut optional_params: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut optional_params: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     fn walk_params(
         params: &[TermParam],
@@ -376,7 +354,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     | TermParam::GuardBody { name } => {
                         optional_params.insert(name.to_string());
                     },
-                    TermParam::Optional { .. } => {}
+                    TermParam::Optional { .. } => {},
                 }
             }
             match p {
@@ -385,30 +363,30 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         let cat = ident.to_string();
                         param_cats.push(cat.clone());
                         param_map.insert(name.to_string(), ParamKind::Simple { cat });
-                    }
-                    // B9 / Class 2 (2026-05-08): SimpleCollection. The
-                    // pilot supports Vec / HashBag / HashSet over a Base
-                    // element type. Phase 4 #5 (2026-05-11): HashMap is
-                    // now accepted in empty-only pilot mode (key_val
-                    // separator parsing in the walker is deferred to
-                    // Phase 4 #5b). Same-element-cat for both key and
-                    // value mirrors Class-5's existing assumption.
-                    TypeExpr::Collection { coll_type, element } => match (coll_type, element.as_ref()) {
-                        (CollectionType::Vec, TypeExpr::Base(elem))
-                        | (CollectionType::HashBag, TypeExpr::Base(elem))
-                        | (CollectionType::HashSet, TypeExpr::Base(elem))
-                        | (CollectionType::HashMap, TypeExpr::Base(elem)) => {
-                            let elem_cat = elem.to_string();
-                            param_cats.push(elem_cat.clone());
-                            param_map.insert(
-                                name.to_string(),
-                                ParamKind::SimpleCollection {
-                                    elem_cat,
-                                    coll_kind: coll_type.clone(),
-                                },
-                            );
+                    },
+                    // B9 / Class 2 (2026-05-08): SimpleCollection. Supports
+                    // Vec / HashBag / HashSet / HashMap over a Base element
+                    // type. HashMap uses the grammar's key/value separator
+                    // while preserving the drained `[k0, v0, k1, v1, ...]`
+                    // invariant.
+                    TypeExpr::Collection { coll_type, element } => {
+                        match (coll_type, element.as_ref()) {
+                            (CollectionType::Vec, TypeExpr::Base(elem))
+                            | (CollectionType::HashBag, TypeExpr::Base(elem))
+                            | (CollectionType::HashSet, TypeExpr::Base(elem))
+                            | (CollectionType::HashMap, TypeExpr::Base(elem)) => {
+                                let elem_cat = elem.to_string();
+                                param_cats.push(elem_cat.clone());
+                                param_map.insert(
+                                    name.to_string(),
+                                    ParamKind::SimpleCollection {
+                                        elem_cat,
+                                        coll_kind: coll_type.clone(),
+                                    },
+                                );
+                            },
+                            _ => return None,
                         }
-                        _ => return None,
                     },
                     // Phase 4 #5b (2026-05-12): HashMap(K, V) — the
                     // parser produces `TypeExpr::Map { key, value }`
@@ -418,24 +396,22 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     // Class-5's same-element-cat assumption for the
                     // empty-drain materialization invariant `[k0, v0,
                     // k1, v1, ...]`).
-                    TypeExpr::Map { key, value } => {
-                        match (key.as_ref(), value.as_ref()) {
-                            (TypeExpr::Base(k_ident), TypeExpr::Base(v_ident))
-                                if k_ident == v_ident =>
-                            {
-                                let elem_cat = k_ident.to_string();
-                                param_cats.push(elem_cat.clone());
-                                param_map.insert(
-                                    name.to_string(),
-                                    ParamKind::SimpleCollection {
-                                        elem_cat,
-                                        coll_kind: CollectionType::HashMap,
-                                    },
-                                );
-                            }
-                            _ => return None,
-                        }
-                    }
+                    TypeExpr::Map { key, value } => match (key.as_ref(), value.as_ref()) {
+                        (TypeExpr::Base(k_ident), TypeExpr::Base(v_ident))
+                            if k_ident == v_ident =>
+                        {
+                            let elem_cat = k_ident.to_string();
+                            param_cats.push(elem_cat.clone());
+                            param_map.insert(
+                                name.to_string(),
+                                ParamKind::SimpleCollection {
+                                    elem_cat,
+                                    coll_kind: CollectionType::HashMap,
+                                },
+                            );
+                        },
+                        _ => return None,
+                    },
                     _ => return None,
                 },
                 TermParam::Abstraction { binder, body, ty } => {
@@ -443,27 +419,25 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     *body_cat = Some(bcat.clone());
                     *has_binder = true;
                     param_map.insert(binder.to_string(), ParamKind::Binder);
-                    param_map
-                        .insert(body.to_string(), ParamKind::Body { cat: bcat });
+                    param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
                     if in_optional {
                         optional_params.insert(body.to_string());
                     }
-                }
+                },
                 TermParam::MultiAbstraction { binder, body, ty } => {
                     let bcat = arrow_codomain_name(ty)?;
                     *body_cat = Some(bcat.clone());
                     *has_binder = true;
                     *is_multi = true;
                     param_map.insert(binder.to_string(), ParamKind::BinderList);
-                    param_map
-                        .insert(body.to_string(), ParamKind::Body { cat: bcat });
+                    param_map.insert(body.to_string(), ParamKind::Body { cat: bcat });
                     if in_optional {
                         optional_params.insert(body.to_string());
                     }
-                }
+                },
                 TermParam::GuardBody { name } => {
                     param_map.insert(name.to_string(), ParamKind::Guard);
-                }
+                },
                 TermParam::Optional { params: inner } => {
                     walk_params(
                         inner,
@@ -475,7 +449,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         body_cat,
                         param_cats,
                     )?;
-                }
+                },
             }
         }
         Some(())
@@ -524,7 +498,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
         match item {
             SyntaxExpr::Literal(text) => {
                 positions.push(BinderPosition::Literal(text.clone()));
-            }
+            },
             SyntaxExpr::Param(name) => {
                 let n = name.to_string();
                 let kind = param_map.get(&n)?;
@@ -549,8 +523,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             separator: String::new(),
                             close: String::new(),
                             inner_positions: vec![BinderPosition::BinderIdent],
-                            inner_action_args: vec![ActionArgKind::BinderName],
-                            binder_param_idx: 0,
                             collection_param_cat: None,
                             allow_empty: false,
                             allow_multi: false,
@@ -559,36 +531,32 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             slot_idx: 0,
                         });
                         action_args.push(ActionArgKind::BinderName);
-                    }
+                    },
                     ParamKind::Body { cat } | ParamKind::Simple { cat } => {
                         positions.push(BinderPosition::ParamParse {
                             cat: cat.clone(),
                             collection: None,
                         });
                         action_args.push(ActionArgKind::Term(cat.clone()));
-                    }
+                    },
                     ParamKind::Guard => {
                         positions.push(BinderPosition::GuardSlot);
                         action_args.push(ActionArgKind::Predicate);
-                    }
+                    },
                     ParamKind::BinderList => {
                         // BinderList shouldn't appear as a bare Param —
                         // it's expressed as Op(Sep) below. Defensive.
                         return None;
-                    }
+                    },
                     ParamKind::SimpleCollection { .. } => {
                         // SimpleCollection appears only as Op(Sep) below.
                         // Bare Param reference is invalid — the collection
                         // requires a separator + close delim.
                         return None;
-                    }
+                    },
                 }
-            }
-            SyntaxExpr::Op(PatternOp::Sep {
-                collection,
-                separator,
-                source: None,
-            }) => {
+            },
+            SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
                 let n = collection.to_string();
                 let kind = param_map.get(&n)?;
                 match kind {
@@ -603,12 +571,9 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             separator: separator.clone(),
                             close,
                             // B8 (2026-05-08): PNew-style — inner_positions
-                            // is `[BinderIdent]`; binder_param_idx=0;
-                            // collection_param_cat=None (no synthesized
-                            // accumulator).
+                            // is `[BinderIdent]` and collection_param_cat=None
+                            // (no synthesized accumulator).
                             inner_positions: vec![BinderPosition::BinderIdent],
-                            inner_action_args: vec![ActionArgKind::BinderName],
-                            binder_param_idx: 0,
                             collection_param_cat: None,
                             // Phase 3 Redesign B sub-commit 3.B.1
                             // (2026-05-11): multi-binder PNew-style — both
@@ -627,7 +592,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         // would be double-consumed (once by BinderListLoop,
                         // once by the spurious pos+1 Literal arm).
                         skip_next = true;
-                    }
+                    },
                     ParamKind::SimpleCollection { elem_cat, coll_kind } => {
                         // B9 / Class 2 (2026-05-08): Sep-driven collection
                         // slot in a multi-position binder rule. Lower to
@@ -642,10 +607,8 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         };
                         // Phase 4 #5 (2026-05-11): populate
                         // key_val_separator only for HashMap; None for
-                        // Vec/HashBag/HashSet. Pilot-hardcode `":"`
-                        // (the default per ast/src/language.rs::map_defaults);
-                        // a follow-up will thread language to look up
-                        // user-overridden separators.
+                        // Vec/HashBag/HashSet. HashMap syntax uses `":"`,
+                        // matching ast/src/language.rs::map_defaults.
                         let key_val_separator = match coll_kind {
                             CollectionType::HashMap => Some(":".to_string()),
                             _ => None,
@@ -664,7 +627,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                             collection: Some(CollectionSepInfo {
                                 separator: separator.clone(),
                                 close,
-                                coll_kind: coll_kind.clone(),
                                 elem_cat: elem_cat.clone(),
                                 key_val_separator,
                                 slot_idx: slot_idx_here,
@@ -677,10 +639,10 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                         // Skip the close Literal at i+1 — absorbed into
                         // CollectionLoop's close-branch dispatch.
                         skip_next = true;
-                    }
+                    },
                     _ => return None, // bare Simple, Body, Guard, Binder are not Sep-eligible.
                 }
-            }
+            },
             // B8 / Class 3 ZIP-MAP-SEP (2026-05-08): chained-Sep pattern
             // `*zip(left,right).*map(|p1,p2| body).*sep(",")`. Used by
             // rhocalc PInputs:
@@ -725,16 +687,15 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     Some(SyntaxExpr::Literal(text)) => text.clone(),
                     _ => return None,
                 };
-                // Walk the map body; build inner_positions and
-                // inner_action_args per the Class 3 dispatch.
+                // Walk the map body and build the per-iteration positions
+                // used by the Class 3 dispatch.
                 let mut inner_positions: Vec<BinderPosition> = Vec::new();
                 let mut inner_action_args: Vec<ActionArgKind> = Vec::new();
-                let mut binder_param_idx_opt: Option<u8> = None;
                 for inner_item in map_body {
                     match inner_item {
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
-                        }
+                        },
                         SyntaxExpr::Param(p_name) => {
                             let pn = p_name.to_string();
                             if pn == map_param_n {
@@ -744,7 +705,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                     collection: Some(CollectionSepInfo {
                                         separator: separator.clone(),
                                         close: close.clone(),
-                                        coll_kind: CollectionType::Vec,
                                         elem_cat: collection_elem_cat.clone(),
                                         // Phase 4 #5 (2026-05-11):
                                         // Class-3 ZIP-MAP-SEP names
@@ -761,24 +721,25 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                         slot_idx: 0,
                                     }),
                                 });
-                                inner_action_args.push(ActionArgKind::Term(
-                                    collection_elem_cat.clone(),
-                                ));
+                                inner_action_args
+                                    .push(ActionArgKind::Term(collection_elem_cat.clone()));
                             } else if pn == map_param_x {
                                 // Binder-ident slot.
-                                if binder_param_idx_opt.is_none() {
-                                    binder_param_idx_opt = Some(inner_positions.len() as u8);
-                                }
                                 inner_positions.push(BinderPosition::BinderIdent);
                                 inner_action_args.push(ActionArgKind::BinderName);
                             } else {
                                 return None; // unrecognized inner Param.
                             }
-                        }
+                        },
                         SyntaxExpr::Op(_) => return None, // nested Op out of pilot.
                     }
                 }
-                let binder_param_idx = binder_param_idx_opt?;
+                if !inner_positions
+                    .iter()
+                    .any(|position| matches!(position, BinderPosition::BinderIdent))
+                {
+                    return None;
+                }
                 // Phase 4 #2 (2026-05-12): Class-3 ZIP-MAP-SEP allocates a
                 // synthesized names accumulator — it occupies a collection
                 // slot in the rule. Stamp `collection_slots_so_far` as the
@@ -791,8 +752,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     separator: separator.clone(),
                     close,
                     inner_positions,
-                    inner_action_args,
-                    binder_param_idx,
                     collection_param_cat: Some(collection_elem_cat.clone()),
                     // Phase 3 Redesign B sub-commit 3.B.1 (2026-05-11):
                     // Class 3 — both empty (zero iterations) and multi
@@ -814,7 +773,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                 is_multi = true;
                 has_binder = true;
                 skip_next = true;
-            }
+            },
             SyntaxExpr::Op(PatternOp::Opt { inner }) => {
                 // Opt-Group: recursively classify inner SyntaxExprs.
                 // Reuses param_map (inner Param references resolve against
@@ -823,9 +782,10 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                 // inner positions support Literal, ParamParse (Simple/Body),
                 // BinderIdent, GuardSlot. Nested Optional and Sep are out
                 // of pilot scope.
-                let group_idx = positions.iter().filter(|p| {
-                    matches!(p, BinderPosition::OptionalGroup { .. })
-                }).count() as u8;
+                let group_idx = positions
+                    .iter()
+                    .filter(|p| matches!(p, BinderPosition::OptionalGroup { .. }))
+                    .count() as u8;
 
                 let mut inner_positions: Vec<BinderPosition> = Vec::new();
                 let mut inner_action_args: Vec<ActionArgKind> = Vec::new();
@@ -839,7 +799,7 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                     match inner_item {
                         SyntaxExpr::Literal(text) => {
                             inner_positions.push(BinderPosition::Literal(text.clone()));
-                        }
+                        },
                         SyntaxExpr::Param(name) => {
                             let n = name.to_string();
                             let kind = param_map.get(&n)?;
@@ -847,21 +807,21 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                 ParamKind::Binder => {
                                     inner_positions.push(BinderPosition::BinderIdent);
                                     inner_action_args.push(ActionArgKind::BinderName);
-                                }
+                                },
                                 ParamKind::Body { cat } | ParamKind::Simple { cat } => {
                                     inner_positions.push(BinderPosition::ParamParse {
                                         cat: cat.clone(),
                                         collection: None,
                                     });
                                     inner_action_args.push(ActionArgKind::Term(cat.clone()));
-                                }
+                                },
                                 ParamKind::Guard => {
                                     inner_positions.push(BinderPosition::GuardSlot);
                                     inner_action_args.push(ActionArgKind::Predicate);
-                                }
+                                },
                                 ParamKind::BinderList => {
                                     return None;
-                                }
+                                },
                                 // Bare Param ref to SimpleCollection is
                                 // syntactically invalid (a collection
                                 // requires Sep syntax with separator +
@@ -869,19 +829,15 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                 // below via SyntaxExpr::Op(PatternOp::Sep).
                                 ParamKind::SimpleCollection { .. } => {
                                     return None;
-                                }
+                                },
                             }
-                        }
+                        },
                         // Phase 4 #3 (2026-05-12): Class-2 SimpleCollection
                         // inside `*opt(...)`. Mirrors the top-level Sep arm
                         // at binder.rs:584-633 but operates over the
                         // optional inner walk's positions list. The close
                         // literal is at `inner[inner_idx + 1]`.
-                        SyntaxExpr::Op(PatternOp::Sep {
-                            collection,
-                            separator,
-                            source: None,
-                        }) => {
+                        SyntaxExpr::Op(PatternOp::Sep { collection, separator, source: None }) => {
                             let n = collection.to_string();
                             let kind = param_map.get(&n)?;
                             match kind {
@@ -901,7 +857,6 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                         collection: Some(CollectionSepInfo {
                                             separator: separator.clone(),
                                             close,
-                                            coll_kind: coll_kind.clone(),
                                             elem_cat: elem_cat.clone(),
                                             key_val_separator,
                                             slot_idx: slot_idx_here,
@@ -914,13 +869,13 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
                                     // Skip the close Literal — absorbed
                                     // into CollectionLoop close-branch.
                                     inner_skip_next = true;
-                                }
+                                },
                                 _ => return None,
                             }
-                        }
+                        },
                         SyntaxExpr::Op(_) => {
                             return None;
-                        }
+                        },
                     }
                 }
 
@@ -941,12 +896,11 @@ pub(crate) fn classify_binder(rule: &GrammarRule) -> Option<BinderShape> {
 
                 positions.push(BinderPosition::OptionalGroup {
                     positions: inner_positions,
-                    action_args: inner_action_args.clone(),
                     group_idx,
                     first_token_set,
                 });
                 action_args.push(ActionArgKind::Optional(inner_action_args));
-            }
+            },
             // Op(Map/Zip) or chained ops — Phase 5c territory; skip for now.
             SyntaxExpr::Op(_) => return None,
         }
@@ -1043,14 +997,12 @@ pub(crate) fn emit_binder_prefix_arms(
     struct RuleEntry {
         rule_i: usize,
         shape: BinderShape,
-        /// Phase F.8 (2026-05-18): true iff this rule matches the unary-prefix
-        /// shape (same-cat single operand: `"trigger" operand` where operand
-        /// is the same category as the rule). When set, the ConsumeAndPush
-        /// emitted for this rule carries `is_prefix_trigger: true` so the
-        /// walker mirrors the consumed trigger token as a TriggerTerminal on
-        /// the SPPF stack — distinguishing the parent rule's Symbol from the
-        /// operand's Symbol via differing `lo_pos`.
-        is_unary_prefix: bool,
+        /// True when the leading literal is structural syntax rather than an
+        /// action argument. The consumed trigger must still be mirrored as a
+        /// span-only SPPF child; otherwise a wrapper rule with a discarded
+        /// trigger and the same semantic span as its operand dedups to the
+        /// operand's Symbol.
+        structural_trigger: bool,
     }
 
     // Group entries by (trigger, result_src_idx). BTreeMap gives
@@ -1062,11 +1014,7 @@ pub(crate) fn emit_binder_prefix_arms(
             let Some(shape) = classify_binder(rule) else {
                 continue;
             };
-            let trigger = match rule
-                .syntax_pattern
-                .as_ref()
-                .and_then(|sp| sp.first())
-            {
+            let trigger = match rule.syntax_pattern.as_ref().and_then(|sp| sp.first()) {
                 Some(SyntaxExpr::Literal(text)) => text.clone(),
                 _ => continue,
             };
@@ -1079,13 +1027,11 @@ pub(crate) fn emit_binder_prefix_arms(
             if trigger == "(" {
                 continue;
             }
-            let is_unary_prefix =
-                super::builtin_metadata::classify_unary_prefix_shape(rule).is_some();
             let key = (trigger, cat_i as u16);
             groups.entry(key).or_default().push(RuleEntry {
                 rule_i,
                 shape,
-                is_unary_prefix,
+                structural_trigger: true,
             });
         }
     }
@@ -1101,13 +1047,14 @@ pub(crate) fn emit_binder_prefix_arms(
                 Some(name) => lookup_src_idx(name, categories).unwrap_or(result_src_idx),
                 None => result_src_idx,
             };
-            // Phase F.8 (2026-05-18): unary-prefix rules get
-            // ConsumeAsTriggerOnly so the consumed trigger is mirrored to
-            // sppf_stack as a TriggerTerminal — distinguishing the parent
-            // rule's Symbol from its operand's. Multi-step binder rules
-            // (PNew, PInputs, etc.) get Discard so their `new`/`for`
-            // trigger doesn't pollute the SPPF.
-            let trigger_mode = if entry.is_unary_prefix {
+            // Phase F.8 generalized (2026-06-04): binder-rule leading
+            // literals are structural syntax. They do not become semantic
+            // action args, but they must be present as span-only SPPF
+            // TriggerTerminals. Otherwise a rule like
+            // `"choose" a #opt(...)` with the optional group absent has the
+            // same `(cat, lo, hi)` as its operand `a` and Symbol-dedups onto
+            // that operand, realizing `PZero` instead of `ChooseMaybe`.
+            let trigger_mode = if entry.structural_trigger {
                 quote!(mettail_prattail::wpda_walker::TriggerMode::ConsumeAsTriggerOnly)
             } else {
                 quote!(mettail_prattail::wpda_walker::TriggerMode::Discard)
@@ -1225,7 +1172,7 @@ pub(crate) fn emit_binder_rule_body(
                     BinderPosition::Literal(text) => quote! {
                         (#result_src_idx, #rule_idx, #pos) => {
                             // Stage 3.20 / L12 Commit F (2026-05-06):
-                            // Cluster 1 hack #5 closure. Single-branch
+                            // Cluster 1 compatibility closure #5. Single-branch
                             // GuardedConsumeAndReplace Fork — peek_text
                             // == #text guard runs inside the walker,
                             // failure produces no child (cursor dies via
@@ -1440,101 +1387,101 @@ pub(crate) fn emit_binder_rule_body(
                                 }
                             }
                         } else {
-                        quote! {
-                            (#result_src_idx, #rule_idx, #pos) => {
-                                // L12 follow-up B2 (2026-05-07): two-branch
-                                // GuardedFork over empty (close-delim) and
-                                // non-empty (first-ident) bootstrap paths.
-                                // Each branch carries a runtime guard so at
-                                // most one fires per dispatch.
-                                //
-                                //   - BRANCH 1 (empty): GuardedConsumeAndReplaceWithEffect
-                                //     fires only when peek_text == close.
-                                //     Logs StartBinderScope { names: vec![] }.
-                                //   - BRANCH 2 (first ident): GuardedConsumeIdentAndReplace
-                                //     fires only when peek_kind == Ident.
-                                //
-                                // Pre-fix: BRANCH 1 (ConsumeAndReplaceWithEffect)
-                                // and BRANCH 2 (ConsumeIdentAndReplace) BOTH
-                                // fired unconditionally on every dispatch,
-                                // contributing to BinderListLoop's exponential
-                                // cursor explosion on multi-binder grammars.
-                                let _ = tokens.peek_text(_pos);
-                                return WpdaStepAction::Fork {
-                                    branches: vec![
-                                        // BRANCH 1: empty close — GuardedConsumeAndReplaceWithEffect
-                                        mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: StackSymbolV2::rule_at(
-                                                #result_src_idx, #rule_idx,
-                                                #next_pos, Some(*outer_bp),
-                                            ),
-                                            weight: lex_w(
-                                                0.0, #result_src_idx, #rule_idx,
-                                            ),
-                                            new_state: WpdaState::BinderRule {
-                                                result_src_idx: #result_src_idx,
-                                                rule_idx: #rule_idx,
-                                                body_src_idx: *_body_src_idx,
-                                                outer_bp: *outer_bp,
-                                            },
-                                            action_kind:
-                                                // B8 / Issue C followup
-                                                // (2026-05-09): empty-list
-                                                // bootstrap MUST also close
-                                                // the scope so the action's
-                                                // BinderScope arg is pushed.
-                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
-                                                    expected_text: #close.to_string(),
-                                                    effects: vec![
-                                                        mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
-                                                            names: Vec::new(),
-                                                        },
-                                                        mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
-                                                    ],
+                            quote! {
+                                (#result_src_idx, #rule_idx, #pos) => {
+                                    // L12 follow-up B2 (2026-05-07): two-branch
+                                    // GuardedFork over empty (close-delim) and
+                                    // non-empty (first-ident) bootstrap paths.
+                                    // Each branch carries a runtime guard so at
+                                    // most one fires per dispatch.
+                                    //
+                                    //   - BRANCH 1 (empty): GuardedConsumeAndReplaceWithEffect
+                                    //     fires only when peek_text == close.
+                                    //     Logs StartBinderScope { names: vec![] }.
+                                    //   - BRANCH 2 (first ident): GuardedConsumeIdentAndReplace
+                                    //     fires only when peek_kind == Ident.
+                                    //
+                                    // Pre-fix: BRANCH 1 (ConsumeAndReplaceWithEffect)
+                                    // and BRANCH 2 (ConsumeIdentAndReplace) BOTH
+                                    // fired unconditionally on every dispatch,
+                                    // contributing to BinderListLoop's exponential
+                                    // cursor explosion on multi-binder grammars.
+                                    let _ = tokens.peek_text(_pos);
+                                    return WpdaStepAction::Fork {
+                                        branches: vec![
+                                            // BRANCH 1: empty close — GuardedConsumeAndReplaceWithEffect
+                                            mettail_prattail::wpda_walker::ForkBranch {
+                                                symbol: StackSymbolV2::rule_at(
+                                                    #result_src_idx, #rule_idx,
+                                                    #next_pos, Some(*outer_bp),
+                                                ),
+                                                weight: lex_w(
+                                                    0.0, #result_src_idx, #rule_idx,
+                                                ),
+                                                new_state: WpdaState::BinderRule {
+                                                    result_src_idx: #result_src_idx,
+                                                    rule_idx: #rule_idx,
+                                                    body_src_idx: *_body_src_idx,
+                                                    outer_bp: *outer_bp,
                                                 },
-                                        },
-                                        // BRANCH 2: first ident —
-                                        // GuardedConsumeBinderIdentAndReplace.
-                                        // B8 / Issue 3 (2026-05-10): use the
-                                        // binder-aware variant which opens
-                                        // a binder scope with [text] but
-                                        // does NOT push an Ident arg
-                                        // (the multi-binder rule's action
-                                        // expects BinderScope arg, not
-                                        // Ident). Lambda Lam-style single-
-                                        // binder rules continue to use the
-                                        // legacy GuardedConsumeIdentAndReplace
-                                        // at their direct BinderIdent arm.
-                                        mettail_prattail::wpda_walker::ForkBranch {
-                                            symbol: StackSymbolV2::rule_at(
-                                                #result_src_idx, #rule_idx,
-                                                #pos, Some(*outer_bp),
-                                            ),
-                                            weight: lex_w(
-                                                mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
-                                                #result_src_idx, #rule_idx,
-                                            ),
-                                            new_state: WpdaState::BinderListLoop {
-                                                result_src_idx: #result_src_idx,
-                                                rule_idx: #rule_idx,
-                                                body_src_idx: *_body_src_idx,
-                                                outer_bp: *outer_bp,
-                                                marker_pos: #pos,
-                                                next_pos: #next_pos,
-                                                sub_pos: 0u8,
+                                                action_kind:
+                                                    // B8 / Issue C followup
+                                                    // (2026-05-09): empty-list
+                                                    // bootstrap MUST also close
+                                                    // the scope so the action's
+                                                    // BinderScope arg is pushed.
+                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeAndReplaceWithMultipleEffects {
+                                                        expected_text: #close.to_string(),
+                                                        effects: vec![
+                                                            mettail_prattail::wpda_walker::BuilderDelta::StartBinderScope {
+                                                                names: Vec::new(),
+                                                            },
+                                                            mettail_prattail::wpda_walker::BuilderDelta::EndBinderScope,
+                                                        ],
+                                                    },
                                             },
-                                            action_kind:
-                                                mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
-                                                    start_scope: true,
+                                            // BRANCH 2: first ident —
+                                            // GuardedConsumeBinderIdentAndReplace.
+                                            // B8 / Issue 3 (2026-05-10): use the
+                                            // binder-aware variant which opens
+                                            // a binder scope with [text] but
+                                            // does NOT push an Ident arg
+                                            // (the multi-binder rule's action
+                                            // expects BinderScope arg, not
+                                            // Ident). Lambda Lam-style single-
+                                            // binder rules continue to use the
+                                            // legacy GuardedConsumeIdentAndReplace
+                                            // at their direct BinderIdent arm.
+                                            mettail_prattail::wpda_walker::ForkBranch {
+                                                symbol: StackSymbolV2::rule_at(
+                                                    #result_src_idx, #rule_idx,
+                                                    #pos, Some(*outer_bp),
+                                                ),
+                                                weight: lex_w(
+                                                    mettail_prattail::automata::lex_weight::EPSILON_OPT_SKIP,
+                                                    #result_src_idx, #rule_idx,
+                                                ),
+                                                new_state: WpdaState::BinderListLoop {
+                                                    result_src_idx: #result_src_idx,
+                                                    rule_idx: #rule_idx,
+                                                    body_src_idx: *_body_src_idx,
+                                                    outer_bp: *outer_bp,
+                                                    marker_pos: #pos,
+                                                    next_pos: #next_pos,
+                                                    sub_pos: 0u8,
                                                 },
-                                        },
-                                    ],
-                                    consume_trigger: false,
-                                };
+                                                action_kind:
+                                                    mettail_prattail::wpda_walker::ForkActionKind::GuardedConsumeBinderIdentAndReplace {
+                                                        start_scope: true,
+                                                    },
+                                            },
+                                        ],
+                                        consume_trigger: false,
+                                    };
+                                }
                             }
                         }
-                        }
-                    }
+                    },
                     BinderPosition::ParamParse { cat, collection } => {
                         let cat_src_idx = lookup_src_idx(cat, categories).unwrap_or(0);
                         // Stage 3.27d (G-PREFIX-BP, 2026-04-30): for unary-prefix
@@ -1614,9 +1561,9 @@ pub(crate) fn emit_binder_rule_body(
                                         };
                                     }
                                 }
-                            }
+                            },
                         }
-                    }
+                    },
                     BinderPosition::GuardSlot => quote! {
                         (#result_src_idx, #rule_idx, #pos) => {
                             // Phase 6: parse predicate inline. Walker
@@ -1659,7 +1606,7 @@ pub(crate) fn emit_binder_rule_body(
                                 );
                             }
                         }
-                    }
+                    },
                 };
                 arms.push(arm);
             }
@@ -1699,13 +1646,7 @@ pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> Toke
                 continue;
             };
             let is_class3 = shape.positions.iter().any(|p| {
-                matches!(
-                    p,
-                    BinderPosition::BinderListLoop {
-                        collection_param_cat: Some(_),
-                        ..
-                    }
-                )
+                matches!(p, BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. })
             });
             if is_class3 {
                 let cat = cat_i as u16;
@@ -1741,7 +1682,9 @@ pub(crate) fn emit_binderlist_inner_lookup(per_cat: &[Vec<GrammarRule>]) -> Toke
 /// BinderIdent], this emits `(rule=PInputs, sub_pos=2) -> Some(0)`
 /// — at sub_pos=2 the prior step (inner_positions[0]) was the Name
 /// parse, so splice into accumulator 0.
-pub(crate) fn emit_binderlist_inner_post_splice_lookup(per_cat: &[Vec<GrammarRule>]) -> TokenStream {
+pub(crate) fn emit_binderlist_inner_post_splice_lookup(
+    per_cat: &[Vec<GrammarRule>],
+) -> TokenStream {
     let mut arms = Vec::new();
     for (cat_i, rules) in per_cat.iter().enumerate() {
         for (rule_i, rule) in rules.iter().enumerate() {
@@ -1754,12 +1697,10 @@ pub(crate) fn emit_binderlist_inner_post_splice_lookup(per_cat: &[Vec<GrammarRul
                     collection_param_cat: Some(_),
                     slot_idx,
                     ..
-                } = position {
+                } = position
+                {
                     for (i, inner) in inner_positions.iter().enumerate() {
-                        if let BinderPosition::ParamParse {
-                            collection: Some(_),
-                            ..
-                        } = inner {
+                        if let BinderPosition::ParamParse { collection: Some(_), .. } = inner {
                             // Inner index i (0-based) → splice on landing
                             // at sub_pos = i + 2. (sub_pos = 1 dispatches
                             // inner_positions[0]; landing at sub_pos = 2
@@ -1827,7 +1768,8 @@ pub(crate) fn emit_is_class3_inner_marker_per_subpos(per_cat: &[Vec<GrammarRule>
                     inner_positions,
                     collection_param_cat: Some(_),
                     ..
-                } = position {
+                } = position
+                {
                     let cat = cat_i as u16;
                     let rule_idx = rule_i as u16;
                     // Inner-walk sub_pos values: 1..=inner_positions.len()
@@ -1885,7 +1827,8 @@ pub(crate) fn emit_is_class3_collection_per_slot(per_cat: &[Vec<GrammarRule>]) -
                     collection_param_cat: Some(_),
                     slot_idx,
                     ..
-                } = position {
+                } = position
+                {
                     let cat = cat_i as u16;
                     let rule_idx = rule_i as u16;
                     let slot_idx = *slot_idx;
@@ -1925,10 +1868,9 @@ pub(crate) fn emit_binderlist_inner_metadata(per_cat: &[Vec<GrammarRule>]) -> To
                 continue;
             };
             for (idx, position) in shape.positions.iter().enumerate() {
-                if let BinderPosition::BinderListLoop {
-                    collection_param_cat: Some(_),
-                    ..
-                } = position {
+                if let BinderPosition::BinderListLoop { collection_param_cat: Some(_), .. } =
+                    position
+                {
                     let cat = cat_i as u16;
                     let rule_idx = rule_i as u16;
                     let marker_pos = (idx + 1) as u8;
@@ -1984,20 +1926,19 @@ pub(crate) fn emit_binder_list_loop_body(
                     separator,
                     close,
                     inner_positions,
-                    inner_action_args: _,
-                    binder_param_idx: _,
                     collection_param_cat,
                     allow_empty: _,
                     allow_multi: _,
                     slot_idx: _,
-                } = position {
+                } = position
+                {
                     let pos = (idx + 1) as u8;
                     let next_pos = pos + 1;
                     let result_src_idx = cat_i as u16;
                     let rule_idx = rule_i as u16;
                     let is_class3 = collection_param_cat.is_some();
                     if !is_class3 {
-                    arms.push(quote! {
+                        arms.push(quote! {
                         (#result_src_idx, #rule_idx, 0u8) => {
                             // L12 follow-up B2 (2026-05-07): three-branch
                             // GuardedFork over close / sep / ident. Each
@@ -2208,7 +2149,11 @@ pub(crate) fn emit_binder_list_loop_body(
                         // inner_positions[N-1].
                         for (i, inner_pos) in inner_positions.iter().enumerate() {
                             let cur_sp = (i + 1) as u8;
-                            let next_sp = if i + 1 == inner_positions.len() { 0u8 } else { (i + 2) as u8 };
+                            let next_sp = if i + 1 == inner_positions.len() {
+                                0u8
+                            } else {
+                                (i + 2) as u8
+                            };
                             let arm = match inner_pos {
                                 BinderPosition::Literal(text) => {
                                     let txt = text.clone();
@@ -2243,7 +2188,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             };
                                         }
                                     }
-                                }
+                                },
                                 BinderPosition::BinderIdent => {
                                     // Capture ident as binder name. On the
                                     // last inner step, transition back to
@@ -2324,7 +2269,7 @@ pub(crate) fn emit_binder_list_loop_body(
                                             }
                                         }
                                     }
-                                }
+                                },
                                 BinderPosition::ParamParse { cat, collection: _ } => {
                                     // Push CategoryEntry, transition to
                                     // PrefixDispatch. The current top is
@@ -2362,13 +2307,13 @@ pub(crate) fn emit_binder_list_loop_body(
                                             };
                                         }
                                     }
-                                }
+                                },
                                 _ => {
                                     // Other inner positions (GuardSlot,
                                     // OptionalGroup, BinderListLoop) out of
                                     // pilot scope.
                                     quote! {}
-                                }
+                                },
                             };
                             arms.push(arm);
                         }
@@ -2407,7 +2352,6 @@ pub(crate) fn emit_binder_list_loop_body(
 pub(crate) fn emit_optional_group_body(
     categories: &[String],
     per_cat: &[Vec<GrammarRule>],
-    prefix_bp_map: &HashMap<(u16, u16), u8>,
 ) -> TokenStream {
     let mut arms: Vec<TokenStream> = Vec::new();
 
@@ -2453,10 +2397,8 @@ pub(crate) fn emit_optional_group_body(
                 //
                 // The unused `first_token_set` variable below silences the
                 // dead-code warning while documenting the source of intent.
-                let _first_set_for_diagnostics_only: Vec<&str> = first_token_set
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect();
+                let _first_set_for_diagnostics_only: Vec<&str> =
+                    first_token_set.iter().map(|s| s.as_str()).collect();
                 arms.push(quote! {
                     (#result_src_idx, #rule_idx, #group_idx_byte, 0u8) => {
                         // Stage 3.12 / Class A.i (2026-05-01): Opt-Group Fork.
@@ -2522,7 +2464,7 @@ pub(crate) fn emit_optional_group_body(
                         BinderPosition::Literal(text) => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
-                                // Cluster 1 hack #4 closure (opt-group
+                                // Cluster 1 compatibility closure #4 (opt-group
                                 // inner mirror of site #5).
                                 return WpdaStepAction::Fork {
                                     branches: vec![mettail_prattail::wpda_walker::ForkBranch {
@@ -2559,14 +2501,10 @@ pub(crate) fn emit_optional_group_body(
                                             weight: lex_one(),
                                             new_state: WpdaState::PrefixDispatch {
                                                 pos: _pos,
-                                                // Stage 3.27d (G-PREFIX-BP, 2026-04-30):
-                                                // opt-group inner ParamParse always uses
-                                                // cur_bp:0 because the outer rule's shape
-                                                // (`[Literal, Optional, ...]`) cannot match
-                                                // the unary-prefix predicate (which requires
-                                                // `[Literal, Param]` positions.len()==2).
-                                                // `prefix_bp_map` is plumbed through for
-                                                // symmetry; lookup will always miss here.
+                                                // Optional-group inner ParamParse starts a
+                                                // nested category parse at ordinary precedence;
+                                                // prefix binding power belongs to the outer
+                                                // binder dispatch path.
                                                 cur_bp: 0u8,
                                             },
                                         };
@@ -2603,13 +2541,13 @@ pub(crate) fn emit_optional_group_body(
                                             };
                                         }
                                     }
-                                }
+                                },
                             }
-                        }
+                        },
                         BinderPosition::BinderIdent => quote! {
                             (#result_src_idx, #rule_idx, #group_idx_byte, #sp) => {
                                 // Stage 3.20 / L12 Commit F (2026-05-06):
-                                // Cluster 1 4th hack closure (opt-group
+                                // Cluster 1 compatibility closure #6 (opt-group
                                 // inner mirror of site #6).
                                 return WpdaStepAction::Fork {
                                     branches: vec![mettail_prattail::wpda_walker::ForkBranch {
@@ -2657,7 +2595,7 @@ pub(crate) fn emit_optional_group_body(
                             // catch-all `_` returns Idle, which causes the
                             // walker's saturation loop to surface the bug.
                             quote! {}
-                        }
+                        },
                     };
                     arms.push(inner_arm);
                 }
@@ -2787,7 +2725,7 @@ pub(crate) fn emit_binder_action_entry(
                     };
                 });
                 binder_name_holders.push(var.clone());
-            }
+            },
             ActionArgKind::Term(cat) => {
                 let cat_id = format_ident!("{}", cat);
                 extracts.push(quote! {
@@ -2804,7 +2742,7 @@ pub(crate) fn emit_binder_action_entry(
                 } else {
                     field_names.push(quote! { std::sync::Arc::new(#var) });
                 }
-            }
+            },
             ActionArgKind::Predicate => {
                 extracts.push(quote! {
                     let #var = match iter.next().and_then(|a| a.into_predicate::<mettail_runtime::BehavioralPred>()) {
@@ -2813,7 +2751,7 @@ pub(crate) fn emit_binder_action_entry(
                     };
                 });
                 field_names.push(quote! { #var });
-            }
+            },
             ActionArgKind::BinderList => {
                 extracts.push(quote! {
                     let #var = match iter.next() {
@@ -2822,7 +2760,7 @@ pub(crate) fn emit_binder_action_entry(
                     };
                 });
                 binder_list_holder = Some(var.clone());
-            }
+            },
             ActionArgKind::CollectionDrain { elem_cat, coll_kind } => {
                 // B9 / Class 2 (2026-05-08): drain the cursor's collection
                 // accumulator. The CollectionMarker push at the binder rule's
@@ -2868,7 +2806,7 @@ pub(crate) fn emit_binder_action_entry(
                 // bare Vec<T> / HashBag<T> / HashSet<T> per language! macro
                 // convention).
                 field_names.push(quote! { #var });
-            }
+            },
             ActionArgKind::Optional(inner_kinds) => {
                 // Opt-Group: extract the Optional arg, exposing each inner
                 // field as `Option<Box<T>>` (or Option<...> per inner kind).
@@ -2894,7 +2832,7 @@ pub(crate) fn emit_binder_action_entry(
                                         None => None,
                                     };
                             }
-                        }
+                        },
                         ActionArgKind::BinderName => quote! {
                             let #inner_var: Option<String> =
                                 match #opt_var.as_mut() {
@@ -3055,7 +2993,7 @@ pub(crate) fn emit_binder_action_entry(
                 for ident in inner_idents {
                     field_names.push(quote! { #ident });
                 }
-            }
+            },
         }
     }
 

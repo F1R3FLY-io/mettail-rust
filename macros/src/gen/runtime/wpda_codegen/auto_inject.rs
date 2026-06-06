@@ -102,10 +102,7 @@ fn is_auto_inject_enabled(language: &LanguageDef) -> bool {
 ///    unless the pair is already in the user skip-list.
 pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput {
     if !is_auto_inject_enabled(language) {
-        return AutoInjectionOutput {
-            terms: Vec::new(),
-            rewrites: Vec::new(),
-        };
+        return AutoInjectionOutput { terms: Vec::new(), rewrites: Vec::new() };
     }
 
     // Step 1: kind → category name(s).
@@ -137,11 +134,7 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
     // projections but happen to share our synthesized label name). Without
     // this, auto-injection would emit a duplicate `BoolToInt` rule and
     // codegen would fail at G04 + E0428 duplicate-name.
-    let user_labels: HashSet<String> = language
-        .terms
-        .iter()
-        .map(|r| r.label.to_string())
-        .collect();
+    let user_labels: HashSet<String> = language.terms.iter().map(|r| r.label.to_string()).collect();
 
     // Stage 3.13e (2026-05-01): user-defined congruence-rule skip set.
     // Two layers:
@@ -182,10 +175,7 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
     let mut absorbers: std::collections::BTreeMap<String, Vec<String>> =
         std::collections::BTreeMap::new();
     for (src, tgt) in &user_injections {
-        absorbers
-            .entry(tgt.clone())
-            .or_default()
-            .push(src.clone());
+        absorbers.entry(tgt.clone()).or_default().push(src.clone());
     }
 
     // Step 3: enumerate lossless edges, emit synthetic rules.
@@ -244,11 +234,8 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
                         if sources.iter().any(|s| s == source_cat)
                             && sources.iter().any(|s| s == target_cat)
                         {
-                            let canon_key = (
-                                result_cat.clone(),
-                                source_cat.clone(),
-                                target_cat.clone(),
-                            );
+                            let canon_key =
+                                (result_cat.clone(), source_cat.clone(), target_cat.clone());
                             if emitted_cast_canon.contains(&canon_key) {
                                 continue;
                             }
@@ -345,8 +332,7 @@ pub fn emit_auto_injection_rules(language: &LanguageDef) -> AutoInjectionOutput 
         //   [phase-a.5] NormCastIntToBigRatInProc: excluding from Int:
         //     [BoolToInt, UInt32ToInt]
         if std::env::var("WPDA_CODEGEN_DIAG").is_ok() {
-            let variants_str: Vec<String> =
-                variants.iter().map(|v| v.to_string()).collect();
+            let variants_str: Vec<String> = variants.iter().map(|v| v.to_string()).collect();
             eprintln!(
                 "[phase-a.5] {}: excluding from {}: [{}]",
                 name,
@@ -459,10 +445,7 @@ fn make_injection_cong_rule(source_cat: &str, target_cat: &str) -> RewriteRule {
     RewriteRule {
         name,
         type_context: Vec::new(),
-        premises: vec![Premise::Congruence {
-            source: s,
-            target: t,
-        }],
+        premises: vec![Premise::Congruence { source: s, target: t }],
         left: lhs,
         right: rhs,
         is_auto_injected: true,
@@ -589,7 +572,8 @@ mod tests {
     fn emits_int_to_bigint_when_both_declared() {
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
 
         let output = emit_auto_injection_rules(&lang);
         let rules = &output.terms;
@@ -603,8 +587,10 @@ mod tests {
     fn emits_full_int_to_bigrat_chain_when_all_declared() {
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
-        lang.types.push(lang_type("BigRat", parse_quote!(CanonicalBigRat)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigRat", parse_quote!(CanonicalBigRat)));
 
         let output = emit_auto_injection_rules(&lang);
         let rules = &output.terms;
@@ -618,7 +604,8 @@ mod tests {
     fn skips_user_defined_injection() {
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
 
         // User-defined rule for the IntToBigInt pair.
         let user_rule = GrammarRule {
@@ -662,12 +649,20 @@ mod tests {
         assert!(
             output.terms.is_empty(),
             "got terms: {:?}",
-            output.terms.iter().map(|r| r.label.to_string()).collect::<Vec<_>>()
+            output
+                .terms
+                .iter()
+                .map(|r| r.label.to_string())
+                .collect::<Vec<_>>()
         );
         assert!(
             output.rewrites.is_empty(),
             "got rewrites: {:?}",
-            output.rewrites.iter().map(|r| r.name.to_string()).collect::<Vec<_>>()
+            output
+                .rewrites
+                .iter()
+                .map(|r| r.name.to_string())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -677,7 +672,8 @@ mod tests {
         // exactly so downstream passes treat it byte-identically.
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
 
         let output = emit_auto_injection_rules(&lang);
         let int_to_big = output
@@ -695,7 +691,8 @@ mod tests {
     #[test]
     fn deterministic_emission_order() {
         let mut lang = empty_language();
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
         lang.types.push(lang_type("Int", parse_quote!(i32)));
 
         let output1 = emit_auto_injection_rules(&lang);
@@ -705,8 +702,16 @@ mod tests {
         let labels2: Vec<String> = output2.terms.iter().map(|r| r.label.to_string()).collect();
         assert_eq!(labels1, labels2, "term emission order must be deterministic");
 
-        let cong1: Vec<String> = output1.rewrites.iter().map(|r| r.name.to_string()).collect();
-        let cong2: Vec<String> = output2.rewrites.iter().map(|r| r.name.to_string()).collect();
+        let cong1: Vec<String> = output1
+            .rewrites
+            .iter()
+            .map(|r| r.name.to_string())
+            .collect();
+        let cong2: Vec<String> = output2
+            .rewrites
+            .iter()
+            .map(|r| r.name.to_string())
+            .collect();
         assert_eq!(cong1, cong2, "cong emission order must be deterministic");
     }
 
@@ -714,7 +719,8 @@ mod tests {
     fn float_to_bigrat_emitted() {
         let mut lang = empty_language();
         lang.types.push(lang_type("Float", parse_quote!(f64)));
-        lang.types.push(lang_type("BigRat", parse_quote!(CanonicalBigRat)));
+        lang.types
+            .push(lang_type("BigRat", parse_quote!(CanonicalBigRat)));
 
         let output = emit_auto_injection_rules(&lang);
         let rules = &output.terms;
@@ -728,13 +734,13 @@ mod tests {
     fn emits_cong_rule_alongside_term() {
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
 
         let output = emit_auto_injection_rules(&lang);
 
         // Must emit IntToBigInt term constructor.
-        let term_labels: Vec<String> =
-            output.terms.iter().map(|r| r.label.to_string()).collect();
+        let term_labels: Vec<String> = output.terms.iter().map(|r| r.label.to_string()).collect();
         assert!(
             term_labels.contains(&"IntToBigInt".to_string()),
             "expected IntToBigInt term; got: {:?}",
@@ -742,8 +748,7 @@ mod tests {
         );
 
         // Must emit IntToBigIntCong rewrite alongside.
-        let cong_labels: Vec<String> =
-            output.rewrites.iter().map(|r| r.name.to_string()).collect();
+        let cong_labels: Vec<String> = output.rewrites.iter().map(|r| r.name.to_string()).collect();
         assert!(
             cong_labels.contains(&"IntToBigIntCong".to_string()),
             "expected IntToBigIntCong rewrite; got: {:?}",
@@ -756,17 +761,15 @@ mod tests {
             .iter()
             .find(|r| r.name.to_string() == "IntToBigIntCong")
             .expect("cong rule");
-        assert!(
-            cong.is_congruence_rule(),
-            "synthetic cong must satisfy is_congruence_rule()",
-        );
+        assert!(cong.is_congruence_rule(), "synthetic cong must satisfy is_congruence_rule()",);
     }
 
     #[test]
     fn synthetic_cong_marked_auto_injected() {
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
 
         let output = emit_auto_injection_rules(&lang);
         let cong = output
@@ -774,10 +777,7 @@ mod tests {
             .iter()
             .find(|r| r.name.to_string() == "IntToBigIntCong")
             .expect("cong rule");
-        assert!(
-            cong.is_auto_injected,
-            "synthetic cong must have is_auto_injected = true"
-        );
+        assert!(cong.is_auto_injected, "synthetic cong must have is_auto_injected = true");
     }
 
     #[test]
@@ -787,7 +787,8 @@ mod tests {
         // is still emitted (Stage 3.13's existing behavior).
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
 
         // Build a user cong rewrite: `MyIntToBigIntCong . | S ~> T |- (IntToBigInt S) ~> (IntToBigInt T)`.
         let s = ident("S");
@@ -796,10 +797,7 @@ mod tests {
         let user_cong = RewriteRule {
             name: ident("MyIntToBigIntCong"),
             type_context: Vec::new(),
-            premises: vec![Premise::Congruence {
-                source: s.clone(),
-                target: t.clone(),
-            }],
+            premises: vec![Premise::Congruence { source: s.clone(), target: t.clone() }],
             left: Pattern::Term(PatternTerm::Apply {
                 constructor: ctor.clone(),
                 args: vec![Pattern::Term(PatternTerm::Var(s))],
@@ -813,8 +811,7 @@ mod tests {
         lang.rewrites.push(user_cong);
 
         let output = emit_auto_injection_rules(&lang);
-        let cong_labels: Vec<String> =
-            output.rewrites.iter().map(|r| r.name.to_string()).collect();
+        let cong_labels: Vec<String> = output.rewrites.iter().map(|r| r.name.to_string()).collect();
         assert!(
             !cong_labels.contains(&"IntToBigIntCong".to_string()),
             "should skip synthetic cong when user has one for the constructor; got: {:?}",
@@ -829,7 +826,8 @@ mod tests {
         // skipped to avoid duplicate-name codegen errors.
         let mut lang = empty_language();
         lang.types.push(lang_type("Int", parse_quote!(i32)));
-        lang.types.push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
+        lang.types
+            .push(lang_type("BigInt", parse_quote!(CanonicalBigInt)));
 
         // Build a degenerate cong on a different constructor but same label.
         let s = ident("S");
@@ -838,10 +836,7 @@ mod tests {
         let user_cong = RewriteRule {
             name: ident("IntToBigIntCong"),
             type_context: Vec::new(),
-            premises: vec![Premise::Congruence {
-                source: s.clone(),
-                target: t.clone(),
-            }],
+            premises: vec![Premise::Congruence { source: s.clone(), target: t.clone() }],
             left: Pattern::Term(PatternTerm::Apply {
                 constructor: ctor.clone(),
                 args: vec![Pattern::Term(PatternTerm::Var(s))],

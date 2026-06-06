@@ -20,16 +20,10 @@
 //!
 //! ## Recovery
 //!
-//! TODAY: an outer skip-to-sync retry loop (lines 78-145 below) wraps the
-//! walker. On `WpdaState::Error`, the loop advances `pos` past the offending
-//! token until a sync delimiter (`)`, `}`, `]`, `;`, `,`) is found, re-seeds
-//! the walker, and retries up to MAX_RECOVERY_ROUNDS times.
-//!
-//! LONG-TERM (tracked as #64 / L12): encode recovery as alternate WPDS
-//! edges — Skip / Delete / Substitute / Insert branches fanning out from
-//! every PrefixDispatch dead-end, selected by `LexicographicWeight` lex-min.
-//! When that lands, this wrapper loop is DELETED and recovery becomes
-//! first-class WPDS semantics surfaced via `walker.recovery_trace()`.
+//! Strict parse entry points disable recovery by setting
+//! `RecoveryConfig.max_recovery_depth = 0`. The explicit
+//! `parse_<Cat>_via_wpda_recovering` entry point keeps the walker's default
+//! recovery config and returns the committed recovery trail.
 
 use mettail_ast::language::LanguageDef;
 use proc_macro2::TokenStream;
@@ -48,6 +42,7 @@ pub(crate) fn emit_parse_fns(
         let fn_name = format_ident!("parse_{}_via_wpda", cat_name);
         let recovering_fn_name = format_ident!("parse_{}_via_wpda_recovering", cat_name);
         let with_weight_fn_name = format_ident!("parse_{}_via_wpda_with_weight", cat_name);
+        let with_source_fn_name = format_ident!("parse_{}_via_wpda_with_source", cat_name);
         // M8 (2026-05-14): multi-result entry points. `_all_with_source`
         // takes `&dyn WpdaTokenSource` (slice OR lattice) and returns
         // every accepted term from the walker's `WpdaResolveResult::Accepted`
@@ -59,38 +54,30 @@ pub(crate) fn emit_parse_fns(
             /// WPDS-runtime parser for the `#cat_ident` category.
             ///
             /// Runs the walker to saturation and extracts the resulting AST
-            /// term via `SemanticBuilder::take_result`. On error, the outer
-            /// retry loop attempts up to MAX_RECOVERY_ROUNDS sync-token
-            /// skips (see #64 / L12 for the principled WPDS-edge replacement).
-            ///
-            /// On `ParseFailed`, the returned error carries every recovery
-            /// attempt (including the final failure) in `attempts`. For
-            /// successful parses where recovery rounds were applied, use
-            /// `parse_<Cat>_via_wpda_recovering` to inspect the trail.
+            /// term with recovery disabled. Use
+            /// `parse_<Cat>_via_wpda_recovering` when repair attempts should
+            /// be part of the result surface.
+            #[allow(non_snake_case)]
             pub fn #fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
                 texts: &[&str],
                 pos: &mut usize,
                 min_bp: u8,
             ) -> Result<#cat_ident, WpdaParseError> {
-                let (result, _attempts) = #recovering_fn_name(kinds, texts, pos, min_bp);
-                result
+                #with_weight_fn_name(kinds, texts, pos, min_bp).map(|(term, _)| term)
             }
 
-            /// L8 (2026-04-28): WPDS parser variant that returns the walker's
-            /// terminal weight alongside the parse result. The weight's
-            /// `primary` field carries the path's accumulated tropical cost;
-            /// `parse_with_confidence` exposes this as a confidence score
-            /// `exp(-cost)` ∈ (0, 1].
+            /// Source-generic WPDS parser variant that returns the walker's
+            /// terminal weight alongside the parse result.
             ///
             /// Does NOT apply recovery — a clean accept yields
             /// `Ok((term, weight))`; any non-Accepted termination yields
             /// `Err(WpdaParseError)` without retries. Use
             /// `parse_<Cat>_via_wpda_recovering` when sync-token skip
             /// recovery is desired.
-            pub fn #with_weight_fn_name(
-                kinds: &[mettail_prattail::automata::TokenKind],
-                texts: &[&str],
+            #[allow(non_snake_case)]
+            pub fn #with_source_fn_name(
+                source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
                 pos: &mut usize,
                 min_bp: u8,
             ) -> Result<
@@ -121,11 +108,11 @@ pub(crate) fn emit_parse_fns(
                     #cat_src_idx_u16,
                     min_bp,
                 );
-                let src = mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
-                    kinds, texts,
-                );
-                match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
-                    Ok(()) => match walker.resolve_at_end_of_input(&src) {
+                let mut recovery_config = mettail_prattail::recovery::RecoveryConfig::default();
+                recovery_config.max_recovery_depth = 0;
+                walker.set_recovery_config(recovery_config);
+                match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
+                    Ok(()) => match walker.resolve_at_end_of_input(source) {
                         WpdaResolveResult::Accepted { weights, roots, .. } => {
                             *pos = walker.position();
                             // C7b (Phase 3.1.6, 2026-05-15): realize the
@@ -201,6 +188,34 @@ pub(crate) fn emit_parse_fns(
                 }
             }
 
+            /// L8 (2026-04-28): WPDS parser variant that returns the walker's
+            /// terminal weight alongside the parse result. The weight's
+            /// `primary` field carries the path's accumulated tropical cost;
+            /// `parse_with_confidence` exposes this as a confidence score
+            /// `exp(-cost)` ∈ (0, 1].
+            ///
+            /// This slice wrapper preserves the existing public ABI; callers
+            /// that need lexical alternatives use `parse_<Cat>_via_wpda_with_source`
+            /// with a `LatticeTokenSource`.
+            #[allow(non_snake_case)]
+            pub fn #with_weight_fn_name(
+                kinds: &[mettail_prattail::automata::TokenKind],
+                texts: &[&str],
+                pos: &mut usize,
+                min_bp: u8,
+            ) -> Result<
+                (
+                    #cat_ident,
+                    mettail_prattail::automata::lex_weight::LexicographicWeight,
+                ),
+                WpdaParseError,
+            > {
+                let src = mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
+                    kinds, texts,
+                );
+                #with_source_fn_name(&src, pos, min_bp)
+            }
+
             /// M8 (2026-05-14): multi-result WPDS parser that takes any
             /// `WpdaTokenSource` impl (slice OR lattice). Returns every
             /// term the walker's `WpdaResolveResult::Accepted` carries —
@@ -216,6 +231,7 @@ pub(crate) fn emit_parse_fns(
             /// Does NOT apply recovery — a clean accept yields
             /// `Ok((terms, weights))`; non-Accepted termination yields
             /// `Err(WpdaParseError)`.
+            #[allow(non_snake_case)]
             pub fn #all_with_source_fn_name(
                 source: &dyn mettail_prattail::wpda_runtime::WpdaTokenSource,
                 pos: &mut usize,
@@ -239,6 +255,9 @@ pub(crate) fn emit_parse_fns(
                     #cat_src_idx_u16,
                     min_bp,
                 );
+                let mut recovery_config = mettail_prattail::recovery::RecoveryConfig::default();
+                recovery_config.max_recovery_depth = 0;
+                walker.set_recovery_config(recovery_config);
                 match walker.run_to_end_of_input_env_aware(MAX_STEPS, source) {
                     Ok(()) => match walker.resolve_at_end_of_input(source) {
                         WpdaResolveResult::Accepted { weights, roots, .. } => {
@@ -326,6 +345,7 @@ pub(crate) fn emit_parse_fns(
             /// already have `kinds` + `texts` Vecs. Routes through
             /// `parse_<Cat>_via_wpda_all_with_source` with a
             /// `SliceTokenSource`.
+            #[allow(non_snake_case)]
             pub fn #all_fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
                 texts: &[&str],
@@ -365,6 +385,7 @@ pub(crate) fn emit_parse_fns(
             /// per-cursor `visited_recovery` cycle defense. Each
             /// `RecoveryEvent` the walker logs becomes one
             /// `RecoveryAttempt` in the returned trail.
+            #[allow(non_snake_case)]
             pub fn #recovering_fn_name(
                 kinds: &[mettail_prattail::automata::TokenKind],
                 texts: &[&str],
@@ -385,12 +406,14 @@ pub(crate) fn emit_parse_fns(
                     #cat_src_idx_u16,
                     min_bp,
                 );
-                let src = mettail_prattail::wpda_runtime::SliceTokenSource::with_texts(
+                let mut src = mettail_prattail::wpda_runtime::MutableSliceTokenSource::with_texts(
                     kinds, texts,
                 );
+                walker.set_mutable_token_source(&mut src);
                 let resolve = match walker.run_to_end_of_input_env_aware(MAX_STEPS, &src) {
                     Ok(()) => walker.resolve_at_end_of_input(&src),
                     Err(exceeded) => {
+                        walker.clear_mutable_token_source();
                         return (
                             Err(WpdaParseError::Incomplete {
                                 position: exceeded.position,
@@ -399,6 +422,7 @@ pub(crate) fn emit_parse_fns(
                         );
                     }
                 };
+                walker.clear_mutable_token_source();
                 // Stage 3.20 / L12 (Commit E, 2026-05-06): map walker's
                 // recovery_trace into RecoveryAttempt for the public API.
                 // Each RecoveryEvent the lex-min winner committed appears

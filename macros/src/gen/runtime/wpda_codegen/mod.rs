@@ -25,17 +25,13 @@
 //!   Classic Pratt-style ternaries (`a ? b : c`) are handled by `infix.rs`
 //!   BP analysis.
 //!
-//! ## 📌 Long-term recovery note
+//! ## Recovery note
 //!
-//! TODAY: recovery is wrapper-level. `parse_<Cat>_via_wpda` (`facade.rs`)
-//! wraps the walker in a skip-to-sync retry loop. On `WpdaState::Error`,
-//! the loop advances `pos` past the offending token until a sync delimiter
-//! is found, then re-seeds the walker and retries up to MAX_RECOVERY_ROUNDS.
-//!
-//! LONG-TERM (tracked as #64 / L12): recovery becomes alternate WPDS edges
-//! (Skip / Delete / Substitute / Insert Fork branches at every PrefixDispatch
-//! dead-end, selected by `LexicographicWeight` lex-min). When L12 lands,
-//! the wrapper loop is deleted and recovery becomes first-class WPDS semantics.
+//! Recovery is walker-level: generated engines can emit recovery Fork branches
+//! at PrefixDispatch dead-ends, selected by `LexicographicWeight` lex-min.
+//! Strict parse facades disable those branches by setting
+//! `RecoveryConfig.max_recovery_depth = 0`; the explicit recovering facades
+//! keep the default config and return the walker's recovery trace.
 //!
 //! Cross-references:
 //! - `prattail/src/wpda_runtime.rs` module doc
@@ -61,8 +57,8 @@ pub mod facade;
 pub mod forks;
 pub mod infix;
 /// M6c.2 (2026-05-14): per-grammar `lex_alt_rule_for(cat, kind)` codegen.
-/// Used by the lex-Fork emitter to bind alternative tokens to atomic-
-/// literal rules before forking.
+/// Used by the lex-Fork emitter to bind alternative tokens to prefix-site
+/// token-consuming rules before forking.
 pub mod kind_dispatch;
 pub mod prefix;
 pub mod recovery;
@@ -112,7 +108,7 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
     // PARENT_WEIGHT_<CAT>, frame_kind_of_<cat>, running_weight_<cat>).
     // Identifier surface preserved from the legacy trampoline emitter so
     // existing codegen-string tests continue to assert the same substrings.
-    let recovery_module = recovery::emit_recovery_module(language, &categories);
+    let recovery_module = recovery::emit_recovery_module(language, &categories, &per_cat);
 
     // Refinement-type predicate registrations. Empty if the language declares
     // no `refinement_types`. Tests / language-init code call the emitted
@@ -199,10 +195,8 @@ pub fn generate_wpda_engine_module(language: &LanguageDef) -> TokenStream {
 /// empty (single default mode is implicit).
 fn emit_lexer_config(language: &LanguageDef) -> TokenStream {
     use mettail_ast::language::AttributeValue;
-    let case_insensitive = matches!(
-        language.options.get("case_insensitive"),
-        Some(AttributeValue::Bool(true))
-    );
+    let case_insensitive =
+        matches!(language.options.get("case_insensitive"), Some(AttributeValue::Bool(true)));
     let normalization_expr = match language.options.get("unicode_normalization") {
         Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
             "NFC" => quote! {
@@ -266,7 +260,8 @@ pub(crate) fn collect_category_names_with_literals(language: &LanguageDef) -> Ve
         }
         let has_literal_block = language.token_defs.iter().any(|td| {
             td.from_literals
-                && td.category
+                && td
+                    .category
                     .as_ref()
                     .map(|c| c.to_string() == cat)
                     .unwrap_or(false)
@@ -418,6 +413,31 @@ mod tests {
         }
     }
 
+    fn var_only_language() -> LanguageDef {
+        LanguageDef {
+            name: Ident::new("VarLang", Span::call_site()),
+            options: Default::default(),
+            extends_names: Vec::new(),
+            include_names: Vec::new(),
+            mixin_names: Vec::new(),
+            types: vec![mettail_ast::language::LangType {
+                name: Ident::new("Name", Span::call_site()),
+                native_type: None,
+                collection_kind: None,
+            }],
+            refinement_types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
+            terms: Vec::new(),
+            equations: Vec::new(),
+            rewrites: Vec::new(),
+            logic: None,
+            guard_config: None,
+        }
+    }
+
     #[test]
     fn collect_categories_in_source_order() {
         let lang = synthetic_language();
@@ -489,11 +509,7 @@ mod tests {
         let parsed: Result<syn::File, _> = syn::parse2(quote! {
             #ts
         });
-        assert!(
-            parsed.is_ok(),
-            "emitted code should parse as a Rust file: {:?}",
-            parsed.err()
-        );
+        assert!(parsed.is_ok(), "emitted code should parse as a Rust file: {:?}", parsed.err());
     }
 
     #[test]
@@ -503,8 +519,7 @@ mod tests {
 
     #[test]
     fn sub_tree_modules_declared() {
-        // Compile-time check that all planned sub-modules exist (empty stubs
-        // are fine; they fill in during A.2–A.10).
+        // Compile-time check that all planned sub-modules exist.
         let _ = ();
     }
 
@@ -524,6 +539,26 @@ mod tests {
         let ts = generate_wpda_engine_module(&lang).to_string();
         assert!(ts.contains("parse_Expr_via_wpda"), "Walker should emit parse_Expr_via_wpda");
         assert!(ts.contains("parse_Bool_via_wpda"), "Walker should emit parse_Bool_via_wpda");
+    }
+
+    #[test]
+    fn walker_emits_source_generic_single_parse_facade() {
+        let lang = synthetic_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(ts.contains("parse_Expr_via_wpda_with_source"));
+        assert!(ts.contains("parse_Bool_via_wpda_with_source"));
+        assert!(ts.contains("dyn mettail_prattail :: wpda_runtime :: WpdaTokenSource"));
+    }
+
+    #[test]
+    fn walker_routes_identifier_lex_alternatives_to_var_rules() {
+        let lang = var_only_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(ts.contains("parse_Name_via_wpda_with_source"));
+        assert!(ts.contains("TokenKind :: Ident"));
+        assert!(ts.contains("LexAltRuleKind :: Atomic"));
+        assert!(ts.contains("prefix_primary_has_dispatch_rule"));
+        assert!(ts.contains("__only_secondary_survived"));
     }
 
     /// Walker emits `parse_<Cat>_via_wpda_recovering` (recovering variant).
@@ -548,6 +583,18 @@ mod tests {
         assert!(ts.contains("WpdaParseError"), "Walker recovery uses WpdaParseError");
     }
 
+    /// Walker recovering parser threads a mutable token source so recovery
+    /// branches that insert/substitute/swap tokens can replay without
+    /// panicking at commit time.
+    #[test]
+    fn walker_recovering_parser_threads_mutable_slice_source() {
+        let lang = synthetic_language();
+        let ts = generate_wpda_engine_module(&lang).to_string();
+        assert!(ts.contains("MutableSliceTokenSource"));
+        assert!(ts.contains("set_mutable_token_source"));
+        assert!(ts.contains("clear_mutable_token_source"));
+    }
+
     // Stage 10.5r-d (2026-05-05): the following tests DELETED. They asserted
     // recovery shim emissions (BRACKET_STATE_<cat>, LAST_ERROR_POS_<cat>,
     // RUNNING_WEIGHT_<CAT>, PARENT_WEIGHT_<CAT>, frame_kind_of_<cat>,
@@ -560,10 +607,9 @@ mod tests {
     //   * walker_running_weight_inherits_from_parent
     //   * walker_emits_frame_kind_helper_per_category
     //   * walker_recovery_emits_one_thread_local_set_per_category
-    // Per Plan agent ac1ca5956a3783d6c: the entire identifier surface was
-    // dead-code stubbing. When future Walker-state-aware recovery is wired,
-    // it'll read directly from `walker.gss().frontier()` / `walker.weight()`
-    // and won't reintroduce these synthesized thread-locals.
+    // Per Plan agent ac1ca5956a3783d6c: the deleted identifier surface was
+    // obsolete recovery scaffolding. Walker-state-aware recovery now reads
+    // from runtime walker/GSS state and does not use synthesized thread-locals.
 
     /// Walker emits a top-level `parse_<Cat>_via_wpda` smoke check —
     /// confirms a calculator-shaped grammar produces a compilable module.
