@@ -335,6 +335,30 @@ pub trait WpdaEngine<W: SemiringRef> {
         let _ = (from_cat, to_cat);
         &[]
     }
+
+    /// Grammar-level classification of structural open delimiters.
+    ///
+    /// This is used only at end-of-input acceptance time to validate an
+    /// otherwise shorter semantic root span against the input window it did
+    /// not claim. Per-language codegen overrides this with the exact
+    /// grammar delimiter set; the default covers the standard grouping and
+    /// collection delimiters used by test engines.
+    fn is_structural_open_delimiter(&self, kind: &TokenKind, text: Option<&str>) -> bool {
+        match kind {
+            TokenKind::Fixed(s) if matches!(s.as_str(), "(" | "[" | "{") => true,
+            _ => matches!(text, Some("(" | "[" | "{")),
+        }
+    }
+
+    /// Grammar-level classification of structural close delimiters.
+    ///
+    /// See [`WpdaEngine::is_structural_open_delimiter`].
+    fn is_structural_close_delimiter(&self, kind: &TokenKind, text: Option<&str>) -> bool {
+        match kind {
+            TokenKind::Fixed(s) if matches!(s.as_str(), ")" | "]" | "}") => true,
+            _ => matches!(text, Some(")" | "]" | "}")),
+        }
+    }
 }
 
 /// Phase F.8 (2026-05-18): three-state classification of a token that
@@ -3898,6 +3922,15 @@ where
                 WpdaTransition::Checkpoint { config }
             }
         }
+    }
+
+    /// Replace this walker's bounded-recovery configuration.
+    ///
+    /// The value is owned by the walker and is pinned as the active recovery
+    /// config during each [`process_event`] call so generated recovery
+    /// dispatch code observes the same settings as the runtime depth checks.
+    pub fn set_recovery_config(&mut self, recovery_config: RecoveryConfig) {
+        self.recovery_config = recovery_config;
     }
 
     /// Drive `process_event(Step)` repeatedly until a terminal state is
