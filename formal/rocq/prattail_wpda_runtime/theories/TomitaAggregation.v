@@ -12,18 +12,27 @@ Import ListNotations.
 Record frontier_key : Type := {
   fk_control : control;
   fk_pos : nat;
-  fk_node : nat
+  fk_node : nat;
+  fk_incoming_edge_top : option nat
 }.
 
 Lemma frontier_key_eq_dec :
   forall x y : frontier_key, {x = y} + {x <> y}.
 Proof.
-  decide equality; try apply Nat.eq_dec; try apply control_eq_dec.
+  decide equality;
+    try apply Nat.eq_dec;
+    try apply control_eq_dec;
+    try (decide equality; apply Nat.eq_dec).
 Defined.
 
 Record arc : Type := {
   arc_key : frontier_key;
+  (* SPPF derivation stack. *)
   arc_stack : nat;
+  (* Full incoming GSS-edge stack. The shell key may use only the top edge
+     for action classification, but arc aggregation must preserve this full
+     continuation history. *)
+  arc_incoming_edge_stack : nat;
   arc_origin : option nat;
   arc_lex_alt : nat;
   arc_weight_src : nat;
@@ -34,6 +43,7 @@ Record arc : Type := {
 
 Record arc_merge_disambiguator : Type := {
   amd_stack : nat;
+  amd_incoming_edge_stack : nat;
   amd_origin : option nat;
   amd_lex_alt : nat;
   amd_weight_src : nat;
@@ -43,6 +53,7 @@ Record arc_merge_disambiguator : Type := {
 
 Definition arc_disambiguator (a : arc) : arc_merge_disambiguator :=
   {| amd_stack := arc_stack a;
+     amd_incoming_edge_stack := arc_incoming_edge_stack a;
      amd_origin := arc_origin a;
      amd_lex_alt := arc_lex_alt a;
      amd_weight_src := arc_weight_src a;
@@ -68,6 +79,25 @@ Lemma arc_disambiguator_eq_preserves_lex_stamp :
 Proof.
   intros a b Heq.
   now inversion Heq.
+Qed.
+
+Lemma arc_disambiguator_eq_preserves_incoming_edge_stack :
+  forall a b,
+    arc_disambiguator a = arc_disambiguator b ->
+    arc_incoming_edge_stack a = arc_incoming_edge_stack b.
+Proof.
+  intros a b Heq.
+  now inversion Heq.
+Qed.
+
+Theorem distinct_incoming_edge_stacks_prevent_arc_aggregation :
+  forall a b,
+    arc_incoming_edge_stack a <> arc_incoming_edge_stack b ->
+    arc_disambiguator a <> arc_disambiguator b.
+Proof.
+  intros a b Hdiff Heq.
+  apply Hdiff.
+  now apply arc_disambiguator_eq_preserves_incoming_edge_stack.
 Qed.
 
 Theorem distinct_lex_stamps_prevent_arc_aggregation :

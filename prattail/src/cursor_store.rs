@@ -39,9 +39,9 @@
 use std::sync::Arc;
 
 use crate::automata::semiring::SemiringRef;
-use crate::cursor_id::{CursorId, CursorIdAllocator};
 #[cfg(test)]
 use crate::cursor_id::CURSOR_ID_NONE;
+use crate::cursor_id::{CursorId, CursorIdAllocator};
 use crate::dispatch_cohort::DispatchKey;
 use crate::edge_stack_arena::{EdgeStackId, EDGE_STACK_ID_ROOT};
 use crate::gss::{GssNodeId, GSS_NODE_NONE};
@@ -133,8 +133,7 @@ pub struct CursorStore<W: SemiringRef> {
     pub optional_scope_marks: im::HashMap<CursorId, im::Vector<usize>>,
     /// binder_scope_marks: per-cursor `im::Vector<(u16,
     /// im::Vector<String>)>`; sparse.
-    pub binder_scope_marks:
-        im::HashMap<CursorId, im::Vector<(u16, im::Vector<String>)>>,
+    pub binder_scope_marks: im::HashMap<CursorId, im::Vector<(u16, im::Vector<String>)>>,
     /// lex_fork_path: per-cursor `im::Vector<LexForkStamp>`; sparse.
     pub lex_fork_path: im::HashMap<CursorId, im::Vector<LexForkStamp>>,
 
@@ -191,11 +190,7 @@ impl<W: SemiringRef> CursorStore<W> {
     /// Allocate a child cursor inheriting from `parent` via the lineage
     /// chain. The caller is expected to follow up with `set_minimal`
     /// after applying any per-child branch-specific mutation.
-    pub fn alloc_child(
-        &mut self,
-        parent: CursorId,
-        minimal: MinimalCursorState<W>,
-    ) -> CursorId {
+    pub fn alloc_child(&mut self, parent: CursorId, minimal: MinimalCursorState<W>) -> CursorId {
         let id = self.allocator.alloc();
         self.set_minimal(id, minimal);
         if !parent.is_none() {
@@ -256,10 +251,7 @@ impl<W: SemiringRef> CursorStore<W> {
     }
 
     /// Mutable companion of `get_minimal`.
-    pub fn get_minimal_mut(
-        &mut self,
-        id: CursorId,
-    ) -> Option<&mut MinimalCursorState<W>> {
+    pub fn get_minimal_mut(&mut self, id: CursorId) -> Option<&mut MinimalCursorState<W>> {
         if id.is_none() {
             return None;
         }
@@ -271,11 +263,7 @@ impl<W: SemiringRef> CursorStore<W> {
     // ── visited_dispatch operations (with lineage-chain semantics) ───
 
     /// Insert `(id, config)` into visited_dispatch.
-    pub fn visited_dispatch_insert(
-        &mut self,
-        id: CursorId,
-        config: PackedDispatchConfig,
-    ) {
+    pub fn visited_dispatch_insert(&mut self, id: CursorId, config: PackedDispatchConfig) {
         if id.is_none() {
             return;
         }
@@ -286,11 +274,7 @@ impl<W: SemiringRef> CursorStore<W> {
     /// `parent_of_inheritance` so an ancestor's prior insert is visible
     /// to the child. Per plan §3.5, the chain depth is bounded by
     /// nested Fork-depth.
-    pub fn visited_dispatch_contains(
-        &self,
-        id: CursorId,
-        config: PackedDispatchConfig,
-    ) -> bool {
+    pub fn visited_dispatch_contains(&self, id: CursorId, config: PackedDispatchConfig) -> bool {
         let mut cur = id;
         while !cur.is_none() {
             if self.visited_dispatch.contains(&(cur, config)) {
@@ -305,11 +289,7 @@ impl<W: SemiringRef> CursorStore<W> {
     }
 
     /// Insert `(id, config)` into visited_recovery.
-    pub fn visited_recovery_insert(
-        &mut self,
-        id: CursorId,
-        config: PackedDispatchConfig,
-    ) {
+    pub fn visited_recovery_insert(&mut self, id: CursorId, config: PackedDispatchConfig) {
         if id.is_none() {
             return;
         }
@@ -318,11 +298,7 @@ impl<W: SemiringRef> CursorStore<W> {
 
     /// Test membership of `(id, config)` in visited_recovery with
     /// lineage-chain semantics.
-    pub fn visited_recovery_contains(
-        &self,
-        id: CursorId,
-        config: PackedDispatchConfig,
-    ) -> bool {
+    pub fn visited_recovery_contains(&self, id: CursorId, config: PackedDispatchConfig) -> bool {
         let mut cur = id;
         while !cur.is_none() {
             if self.visited_recovery.contains(&(cur, config)) {
@@ -371,8 +347,7 @@ impl<W: SemiringRef> CursorStore<W> {
     /// Number of distinct cursor ids that have at least one
     /// visited_dispatch entry.
     pub fn visited_dispatch_distinct_cursors(&self) -> usize {
-        let mut ids: std::collections::HashSet<CursorId> =
-            std::collections::HashSet::new();
+        let mut ids: std::collections::HashSet<CursorId> = std::collections::HashSet::new();
         for (id, _) in self.visited_dispatch.iter() {
             ids.insert(*id);
         }

@@ -2748,12 +2748,7 @@ fn collect_binding_sort_categories(item: &SyntaxItemSpec, out: &mut HashSet<Stri
                 collect_binding_sort_categories(item, out);
             }
         },
-        SyntaxItemSpec::Zip {
-            left_category,
-            right_category,
-            body,
-            ..
-        } => {
+        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             out.insert(left_category.clone());
             out.insert(right_category.clone());
             collect_binding_sort_categories(body, out);
@@ -3343,7 +3338,10 @@ fn add_g08_syntax_value_edges<'a>(
 ) {
     match item {
         SyntaxItemSpec::NonTerminal { category, .. } => {
-            adjacency.entry(category.as_str()).or_default().insert(target_category);
+            adjacency
+                .entry(category.as_str())
+                .or_default()
+                .insert(target_category);
         },
         SyntaxItemSpec::Collection { element_category, .. } => {
             adjacency
@@ -3359,12 +3357,7 @@ fn add_g08_syntax_value_edges<'a>(
                 add_g08_syntax_value_edges(item, target_category, adjacency);
             }
         },
-        SyntaxItemSpec::Zip {
-            left_category,
-            right_category,
-            body,
-            ..
-        } => {
+        SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
             adjacency
                 .entry(left_category.as_str())
                 .or_default()
@@ -12243,7 +12236,9 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, DiagnosticId::G08);
         assert!(
-            result[0].message.contains("3 categories have no value-flow path"),
+            result[0]
+                .message
+                .contains("3 categories have no value-flow path"),
             "message: {}",
             result[0].message
         );

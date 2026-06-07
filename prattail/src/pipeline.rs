@@ -2244,11 +2244,15 @@ fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
     // category and report only an independent base-category collision.
     let mut category_name_counts: HashMap<String, usize> = HashMap::new();
     for category in &bundle.categories {
-        *category_name_counts.entry(category.name.to_ascii_lowercase()).or_default() += 1;
+        *category_name_counts
+            .entry(category.name.to_ascii_lowercase())
+            .or_default() += 1;
     }
     let mut refinement_name_counts: HashMap<String, usize> = HashMap::new();
     for rt in spec {
-        *refinement_name_counts.entry(rt.name.to_ascii_lowercase()).or_default() += 1;
+        *refinement_name_counts
+            .entry(rt.name.to_ascii_lowercase())
+            .or_default() += 1;
     }
 
     for rt in spec {
@@ -2264,8 +2268,14 @@ fn analyze_refinement_types(bundle: &ParserBundle) -> RefinementAnalysisResult {
         // RT06: Check if the refinement name shadows a base category name.
         let refinement_key = rt.name.to_ascii_lowercase();
         let base_key = rt.base_category.to_ascii_lowercase();
-        let category_count = category_name_counts.get(&refinement_key).copied().unwrap_or(0);
-        let refinement_count = refinement_name_counts.get(&refinement_key).copied().unwrap_or(0);
+        let category_count = category_name_counts
+            .get(&refinement_key)
+            .copied()
+            .unwrap_or(0);
+        let refinement_count = refinement_name_counts
+            .get(&refinement_key)
+            .copied()
+            .unwrap_or(0);
         if refinement_key == base_key || category_count > refinement_count {
             let shadowed_name = if refinement_key == base_key {
                 rt.base_category.clone()
@@ -6009,10 +6019,7 @@ mod tests {
     fn test_refinement_analysis_ignores_own_refinement_category_for_rt06() {
         let mut spec = LanguageSpec::new(
             "RefinementSmoke".to_string(),
-            vec![
-                category_spec("Int", Some("i32"), true),
-                category_spec("PosInt", None, false),
-            ],
+            vec![category_spec("Int", Some("i32"), true), category_spec("PosInt", None, false)],
             Vec::new(),
         );
         spec.refinement_types.push(refinement_spec("PosInt", "Int"));
@@ -6031,10 +6038,7 @@ mod tests {
     fn test_refinement_analysis_reports_self_shadowing_rt06() {
         let mut spec = LanguageSpec::new(
             "ShadowSmoke".to_string(),
-            vec![
-                category_spec("Int", Some("i32"), true),
-                category_spec("Int", None, false),
-            ],
+            vec![category_spec("Int", Some("i32"), true), category_spec("Int", None, false)],
             Vec::new(),
         );
         spec.refinement_types.push(refinement_spec("Int", "Int"));

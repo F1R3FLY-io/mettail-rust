@@ -813,12 +813,9 @@ pub fn emit_paren_dispatch_arms(
         });
         // Branches 1..N: each binder rule with `(` trigger.
         for (rule_idx, shape) in &paren_binder_rules {
-            let body_src_idx = match &shape.body_cat {
-                Some(name) => {
-                    super::binder::lookup_src_idx(name, categories).unwrap_or(result_src_idx)
-                },
-                None => result_src_idx,
-            };
+            let body_src_idx = super::binder::binder_initial_body_cat(shape)
+                .and_then(|name| super::binder::lookup_src_idx(name, categories))
+                .unwrap_or(result_src_idx);
             let rule_idx_lit = *rule_idx;
             branches.push(quote! {
                 mettail_prattail::wpda_walker::ForkBranch {
@@ -834,7 +831,8 @@ pub fn emit_paren_dispatch_arms(
                         body_src_idx: #body_src_idx,
                         outer_bp: _outer_bp,
                     },
-                    action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
+                    action_kind:
+                        mettail_prattail::wpda_walker::ForkActionKind::PushWithTriggerTerminal,
                 }
             });
         }
@@ -1068,92 +1066,14 @@ pub fn emit_prefix_arms_for_category(
             }
         }
     }
-    // Pass 2c (CAT-A FIX 2026-05-13): implicit-cast descriptors for NonAtomic
-    // cross-cat unary cast rules. Shape: `tc = [Simple { ty: Base(Y) }]`,
-    // `sp = [Lit, Lit, Param, Lit, ...]` with `sp.len() >= 3`, source_cat
-    // Y != result_cat X. Calculator examples: IntToBool, BoolToFloat,
-    // StrToInt, FloatToBool, etc. (all `<Y>To<X> . a:Y |- "trigger" "(" a ")" : X`).
-    //
-    // Without this pass, X's prefix dispatch on tokens in FIRST(Y) only has
-    // a Pass-0 CrossCatLhs branch (push category_entry(Y) without wrapping).
-    // The parsed Y term then reaches an X-expecting FireAction (e.g.,
-    // `LtBool . a:Bool, b:Bool |- a "<" b : Bool` with `b` parsed as Int).
-    // The action's `arg.into_term::<Bool>()` returns None, silent-returns,
-    // and the builder underflow cascades to an outer rule's arity mismatch.
-    //
-    // The fix: add a CrossCatProjection-style descriptor (slot=0, Return-kind,
-    // CrossCatDelegate to source) so the cursor delegates to source-cat
-    // parsing AND wraps the result via the cast rule's FireAction on return.
-    // Mirrors the Pass 2a CrossCatProjection emission semantics.
-    //
-    // NOTE: this initial implementation is OVERLY BROAD — it caused regressions
-    // in 16 previously-passing tests. The scope needs further refinement (Plan
-    // agent investigating). Kept here per user direction "don't roll things
-    // back that might be corrected" — the Pass 2c FIXES `int(false > b < N)`
-    // first-input parsing, demonstrating the mechanism is right; only the
-    // scope is wrong.
-    for &(rule_idx, rule) in rules_in_category {
-        // Skip rules already handled by Pass 2a (sp.len()==1) or
-        // CrossCatPrefixUnary path (sp.len()==2).
-        let shape = classify_atomic(rule, language);
-        if !matches!(shape, AtomicShape::NonAtomic) {
-            continue;
-        }
-        // Cross-cat unary detection: single Simple foreign-cat param,
-        // sp.len() >= 3 (cast wrappers have trigger + "(" + param + ")" or similar).
-        let Some(tc) = rule.term_context.as_ref() else {
-            continue;
-        };
-        if tc.len() != 1 {
-            continue;
-        }
-        let mettail_ast::grammar::TermParam::Simple { ty, .. } = &tc[0] else {
-            continue;
-        };
-        let mettail_ast::types::TypeExpr::Base(source_ident) = ty else {
-            continue;
-        };
-        let source_cat_name = source_ident.to_string();
-        if source_cat_name == rule.category.to_string() {
-            continue;
-        }
-        let Some(sp) = rule.syntax_pattern.as_ref() else {
-            continue;
-        };
-        if sp.len() < 3 {
-            continue;
-        }
-
-        let source_src_idx = categories
-            .iter()
-            .position(|c| c == &source_cat_name)
-            .map(|i| i as u16)
-            .unwrap_or(0);
-        for ft in first_set_of_category(&source_cat_name, language) {
-            let pat_str = ft.pattern.to_string();
-            let guard_str = ft
-                .extra_guard
-                .as_ref()
-                .map(|g| g.to_string())
-                .unwrap_or_default();
-            let key = (pat_str, guard_str);
-            if !unified_buckets.contains_key(&key) {
-                unified_order.push(key.clone());
-            }
-            let entry = unified_buckets.entry(key).or_insert_with(|| UnifiedBucket {
-                pat: ft.pattern.clone(),
-                extra_guard: ft.extra_guard.clone(),
-                descs: Vec::new(),
-            });
-            // WPDS-architectural redesign (2026-05-13): Pass 2c emits
-            // ImplicitCast (NOT CrossCatProjection) so emit_unified_arm
-            // uses BP_TIER_PASS2C_SYNTHESIZED weight, ensuring direct
-            // user-declared casts win lex-min over Pass 2c chains.
-            entry
-                .descs
-                .push(UnifiedDescriptor::ImplicitCast { rule_idx, source_src_idx });
-        }
-    }
+    // Pass 2c intentionally does NOT emit source-FIRST delegates for
+    // terminal-bearing wrappers such as `BoolToInt . a:Bool |- "int" "(" a
+    // ")" : Int`. Those wrappers are not span-transparent projections: they
+    // require literal evidence on their own continuation, so treating them as
+    // zero-width CrossCatDelegate branches fabricates unsound SPPF packings
+    // and explodes the frontier before realization can reject them. Explicit
+    // wrappers still parse through their literal/binder arms; only Pass 2a
+    // transparent projections participate in source-FIRST cross-cat wrapping.
     for key in unified_order {
         let entry = unified_buckets
             .remove(&key)
@@ -1351,18 +1271,6 @@ enum UnifiedDescriptor {
     /// Per-tier weight: `BP_TIER_CROSSCAT_PROJECTION = 0.025`.
     /// Used for rules of shape `R . a:Y |- a : X` (sp.len()==1).
     CrossCatProjection { rule_idx: u16, source_src_idx: u16 },
-    /// WPDS-architectural redesign (2026-05-13) — Pass 2c implicit-cast
-    /// synthesized arm for cross-cat unary cast rules of shape
-    /// `R . a:Y |- "trigger" "(" a ")" : X` (sp.len() >= 3). Structurally
-    /// identical to CrossCatProjection (delegates to source_src_idx via
-    /// CrossCatDelegate, fires action on Return) but emitted at the strictly-
-    /// higher `BP_TIER_PASS2C_SYNTHESIZED = 0.15` so a direct user-declared
-    /// cast (atomic-tier 0.0) ALWAYS wins lex-min over a Pass 2c synthesized
-    /// chain. Without this distinction, both Pass 2a and Pass 2c emitted at
-    /// the same primary cost and `rule_idx` declaration-order tiebreak
-    /// arbitrarily picked the wrong path (e.g., `int(true)` parsed as
-    /// `FloatToInt(BoolToFloat(BoolLit))` instead of `BoolToInt(BoolLit)`).
-    ImplicitCast { rule_idx: u16, source_src_idx: u16 },
 }
 
 /// B7 (2026-05-07) — unified bucket entry. Replaces the separate
@@ -1401,12 +1309,15 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                         // GSS via the wrapping context (Return symbol on a
                         // pending RuleAt or the original CategoryEntry), so
                         // it restores correctly when this sub-parse unwinds.
-                        return WpdaStepAction::Push {
+                        return WpdaStepAction::PushWithEdgeKind {
                             symbol: StackSymbolV2::category_entry(#source_src_idx),
                             weight: lex_one(),
                             new_state: WpdaState::PrefixDispatch {
                                 pos: *pos,
                                 cur_bp: 0,
+                            },
+                            edge_kind: mettail_prattail::gss::EdgeKind::CrossCatLhs {
+                                source_src_idx: #source_src_idx,
                             },
                         };
                     }
@@ -1442,49 +1353,6 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                     }
                 }
             },
-            UnifiedDescriptor::ImplicitCast { rule_idx, source_src_idx } => {
-                // Pass 2c implicit-cast synthesized arm — same emission shape
-                // as CrossCatProjection (delegate to source via
-                // CrossCatDelegate, fire the cast action on the Return pop).
-                //
-                // Pass-2c token-soundness fix (§5, 2026-05-30): the
-                // `BP_TIER_PASS2C_SYNTHESIZED` (0.15) tier is RETAINED, but its
-                // role is now SOUND-branch disambiguation ONLY (prefer the
-                // minimal cast interpretation among SOUND ties), NOT a
-                // soundness crutch. The token-UNSOUND fabrication this wrap
-                // could produce — firing the cast action WITHOUT the cast's
-                // `"("`/`")"` being matched (e.g. `bool(0)` →
-                // `FloatToBool(IntToFloat(0))`) — is now rejected on EVIDENCE
-                // at realize time by `WpdaEngine::min_terminal_span` + the
-                // span filter in `realize_node_leave`, independent of weight.
-                // (The tier is kept rather than zeroed because removing it
-                // regresses legitimately-ambiguous SOUND chained-comparison
-                // cases like `int(b >= N <= b >= M)` whose canonical reading
-                // depends on this ordering — see lex_weight.rs.)
-                let rule_idx = *rule_idx;
-                let source_src_idx = *source_src_idx;
-                quote! {
-                    #pat if #guard => {
-                        // D-strings fix (2026-05-13): inner_cur_bp = 0
-                        // (Pass 2c implicit cast is at the start of a
-                        // fresh operand; no enclosing Pratt precedence
-                        // to enforce inside the sub-parse).
-                        return WpdaStepAction::Push {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: lex_w(
-                                mettail_prattail::automata::lex_weight::BP_TIER_PASS2C_SYNTHESIZED,
-                                #category_src_idx, #rule_idx,
-                            ),
-                            new_state: WpdaState::CrossCatDelegate {
-                                source_src_idx: #source_src_idx,
-                                inner_cur_bp: 0,
-                            },
-                        };
-                    }
-                }
-            },
         }
     } else {
         let branches: Vec<TokenStream> = bucket
@@ -1507,7 +1375,8 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                                 pos: *pos,
                                 cur_bp: 0,
                             },
-                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
+                            action_kind:
+                                mettail_prattail::wpda_walker::ForkActionKind::PushCrossCatLhs,
                         }
                     }
                 }
@@ -1544,41 +1413,6 @@ fn emit_unified_arm(category_src_idx: u16, bucket: &UnifiedBucket) -> TokenStrea
                             ),
                             // D-strings fix (2026-05-13): inner_cur_bp = 0
                             // (Pass 2a projection multi-branch case —
-                            // fresh-operand semantics).
-                            new_state: WpdaState::CrossCatDelegate {
-                                source_src_idx: #src_idx,
-                                inner_cur_bp: 0,
-                            },
-                            action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
-                        }
-                    }
-                }
-                UnifiedDescriptor::ImplicitCast {
-                    rule_idx,
-                    source_src_idx,
-                } => {
-                    // Pass 2c implicit-cast multi-branch arm — same emission
-                    // shape as CrossCatProjection.
-                    //
-                    // Pass-2c token-soundness fix (§5, 2026-05-30): the
-                    // `BP_TIER_PASS2C_SYNTHESIZED` (0.15) tier is RETAINED for
-                    // SOUND-branch disambiguation only (see the singleton
-                    // ImplicitCast arm above). Soundness is enforced
-                    // independently by the realize-time `min_terminal_span`
-                    // span filter, not by this weight.
-                    let rule_idx = *rule_idx;
-                    let src_idx = *source_src_idx;
-                    quote! {
-                        mettail_prattail::wpda_walker::ForkBranch {
-                            symbol: StackSymbolV2::rule_at(
-                                #category_src_idx, #rule_idx, 0, Some(_outer_bp),
-                            ).with_kind_return(),
-                            weight: lex_w(
-                                mettail_prattail::automata::lex_weight::BP_TIER_PASS2C_SYNTHESIZED,
-                                #category_src_idx, #rule_idx,
-                            ),
-                            // D-strings fix (2026-05-13): inner_cur_bp = 0
-                            // (Pass 2c implicit-cast multi-branch case —
                             // fresh-operand semantics).
                             new_state: WpdaState::CrossCatDelegate {
                                 source_src_idx: #src_idx,

@@ -104,10 +104,15 @@ pub struct CohortFrame<W: SemiringRef> {
 pub struct CohortShell<W: SemiringRef> {
     /// GSS-tip shared by all members post-`CategoryEntry` push.
     pub node: crate::gss::GssNodeId,
-    /// Top-of-stack of return frame edges. Phase F.13 chain_10000 Plan
-    /// D E6 Substage 2 (2026-05-26): arena-interned `EdgeStackId` (Copy
-    /// u32) replaces `Arc<Vec<GssEdgeId>>`. Walker mutation goes
-    /// through `walker.incoming_edge_stack_arena.intern_push/pop`.
+    /// Representative top-of-stack of return-frame edges for the shared shell.
+    ///
+    /// This is enough for shell-level dispatch classification, but not for
+    /// reconstructing a member cursor: deeper incoming-edge history is
+    /// branch evidence and lives in `CohortMemberState::incoming_edge_stack_id`.
+    /// Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
+    /// arena-interned `EdgeStackId` (Copy u32) replaces `Arc<Vec<GssEdgeId>>`.
+    /// Walker mutation goes through
+    /// `walker.incoming_edge_stack_arena.intern_push/pop`.
     pub incoming_edge_stack_id: crate::edge_stack_arena::EdgeStackId,
     /// Operational depth indicator (post Phase F.1).
     pub collection_depth: u8,
@@ -192,7 +197,7 @@ pub struct CohortShell<W: SemiringRef> {
 /// cursor. Storing only this minimum (instead of a full `BranchCursor`)
 /// is the structural memory win of lazy materialization. At chain_1000
 /// the per-cursor clone was ~3.2 KB (heaptrack); a `CohortMemberState`
-/// is ~64 B (depending on `W` size).
+/// is ~72 B (depending on `W` size).
 pub struct CohortMemberState<W: SemiringRef> {
     /// Cumulative weight at the dispatch site (= `parent.weight ×
     /// branch.weight` at register time; matches today's
@@ -209,6 +214,12 @@ pub struct CohortMemberState<W: SemiringRef> {
     pub last_action_output_cat: Option<u16>,
     /// Member-local `source_priority` for the Fork tiebreak chain.
     pub source_priority: u32,
+    /// Member-local full incoming-edge stack.
+    ///
+    /// The shell stores a representative stack head so one cohort can share a
+    /// dispatch action, but later pops expose deeper continuation history. That
+    /// history is branch evidence and must be restored per member.
+    pub incoming_edge_stack_id: crate::edge_stack_arena::EdgeStackId,
     /// Phase F.13 Stage L2a.2 (2026-05-25): per-member
     /// `cohort_revive_depth` captured at pause time. Members of a
     /// cohort can have distinct revive depths if they paused at
@@ -322,6 +333,7 @@ impl DivergenceClass {
             | WpdaStepAction::Idle => DivergenceClass::ObsInvariant,
             WpdaStepAction::AdvanceWithEffect { .. }
             | WpdaStepAction::Push { .. }
+            | WpdaStepAction::PushWithEdgeKind { .. }
             | WpdaStepAction::Pop { .. }
             | WpdaStepAction::Replace { .. }
             | WpdaStepAction::Fork { .. }
@@ -375,6 +387,7 @@ impl DivergenceClass {
             | WpdaStepAction::Idle => TomitaDivergence::ObsInvariantOverArcs,
             WpdaStepAction::AdvanceWithEffect { .. }
             | WpdaStepAction::Push { .. }
+            | WpdaStepAction::PushWithEdgeKind { .. }
             | WpdaStepAction::Pop { .. }
             | WpdaStepAction::Replace { .. }
             | WpdaStepAction::Fork { .. }
@@ -557,6 +570,7 @@ impl<W: SemiringRef + Clone> CohortMemberState<W> {
             pending_packing_weight: parent.pending_packing_weight.clone(),
             last_action_output_cat: parent.last_action_output_cat,
             source_priority: parent.source_priority,
+            incoming_edge_stack_id: parent.incoming_edge_stack_id,
             cohort_revive_depth: parent.cohort_revive_depth,
             lex_fork_path: std::sync::Arc::clone(&parent.lex_fork_path),
         }
@@ -598,7 +612,7 @@ pub fn materialize_branch_cursor<W: SemiringRef + Clone>(
         source_priority: state.source_priority,
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena-interned EdgeStackId (Copy u32) replaces Arc<Vec<GssEdgeId>>.
-        incoming_edge_stack_id: shell.incoming_edge_stack_id,
+        incoming_edge_stack_id: state.incoming_edge_stack_id,
         recovery_depth: shell.recovery_depth,
         // Phase F.13 Stage L4.1 (2026-05-25): Arc::clone (O(1)) — was
         // deep-clone pre-L4.1. The materialized cursor now shares the
@@ -1023,6 +1037,7 @@ mod tests {
             one(),
             one(),
             crate::sppf_stack_arena::STACK_ID_ROOT,
+            crate::edge_stack_arena::EDGE_STACK_ID_ROOT,
             0,
             None,
             None,
@@ -1040,6 +1055,42 @@ mod tests {
             Arc::new(Vec::new()),
             Arc::new(Vec::new()),
         )
+    }
+
+    fn cursor_with_edge_stack(
+        incoming_edge_stack_id: crate::edge_stack_arena::EdgeStackId,
+    ) -> crate::wpda_walker::BranchCursor<LexicographicWeight> {
+        let mut cursor = crate::wpda_walker::BranchCursor::seed_from_live(
+            7,
+            3,
+            one(),
+            WpdaState::PrefixDispatch { pos: 3, cur_bp: 0 },
+        );
+        cursor.incoming_edge_stack_id = incoming_edge_stack_id;
+        cursor
+    }
+
+    #[test]
+    fn cohort_member_captures_incoming_edge_stack() {
+        let stack_id = crate::edge_stack_arena::StackId(123);
+        let cursor = cursor_with_edge_stack(stack_id);
+        let member = CohortMemberState::from_branch_cursor(&cursor, one());
+        assert_eq!(member.incoming_edge_stack_id, stack_id);
+    }
+
+    #[test]
+    fn materialize_restores_member_incoming_edge_stack() {
+        let shell_cursor = cursor_with_edge_stack(crate::edge_stack_arena::StackId(1));
+        let shell = CohortShell::from_branch_cursor(
+            &shell_cursor,
+            crate::dispatch_cohort::DispatchKey::new(3, 7, 0, 2, 16),
+        );
+        let member_cursor = cursor_with_edge_stack(crate::edge_stack_arena::StackId(2));
+        let member = CohortMemberState::from_branch_cursor(&member_cursor, one());
+
+        let materialized = materialize_branch_cursor(&shell, &member);
+
+        assert_eq!(materialized.incoming_edge_stack_id, crate::edge_stack_arena::StackId(2));
     }
 
     #[test]

@@ -56,6 +56,10 @@ use crate::wpda_walker::{BranchCursor, BuilderDelta, LexForkStamp, PackedDispatc
 /// provenance axes (`lex_alt_idx`, `weight_src_idx`, `weight_rule_idx`,
 /// `lex_fork_stamp`) plus `cohort_origin` plus `sppf_top`. Cursors with
 /// the same TomitaKey but distinct ConfigKey arc-merge under this map.
+/// The full incoming-edge stack is branch history, not a shell axis:
+/// `incoming_edge_top` classifies the next shell action, while deeper
+/// stack entries must remain per-arc so later pops resume the correct
+/// continuation.
 ///
 /// Soundness: per the Exp 14 plan §2.4 (proof sketch), the engine's
 /// `step` function is pure of cursor state at every dispatch site —
@@ -163,8 +167,9 @@ impl<W: SemiringRef> TomitaShell<W> {
 /// fork), physical memory is shared via Arc; if not, each arc keeps
 /// its own.
 ///
-/// Size budget under Option A: ~100 B
-///   - 11 light fields (~52 B) — the original Substage 1 set
+/// Size budget under Option A: ~104 B
+///   - 12 light fields (~56 B) — the original Substage 1 set plus
+///     the per-arc incoming-edge stack handle
 ///   - 6 heavy field Arcs (~48 B = 6 × 8 B pointers) — NEW
 ///
 /// vs today's ~512 B `BranchCursor`. The per-arc cost increase (~48 B
@@ -180,6 +185,10 @@ pub struct FrontierArc<W: SemiringRef> {
     /// SPPF working-stack head (per-arc — distinct derivation histories
     /// produce different stack tops).
     pub sppf_stack_id: StackId,
+    /// Full incoming GSS-edge stack head. `TomitaKey` keeps only the top
+    /// edge for shell-action equivalence; this handle is per-arc because
+    /// deeper continuation history is revealed by later pops.
+    pub incoming_edge_stack_id: EdgeStackId,
     /// Stage 3.12 source-priority for Fork tiebreak.
     pub source_priority: u32,
     /// H12 cohort discriminator (matches `BranchCursor::cohort_origin`).
@@ -227,6 +236,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
         weight: W,
         pending_packing_weight: W,
         sppf_stack_id: StackId,
+        incoming_edge_stack_id: EdgeStackId,
         source_priority: u32,
         cohort_origin: Option<DispatchKey>,
         last_action_output_cat: Option<u16>,
@@ -249,6 +259,7 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
             weight,
             pending_packing_weight,
             sppf_stack_id,
+            incoming_edge_stack_id,
             source_priority,
             cohort_origin,
             last_action_output_cat,
@@ -276,9 +287,10 @@ impl<W: SemiringRef + Clone> FrontierArc<W> {
     /// arcs distinct; only same-disambiguator arcs may collapse.
     pub fn merge_disambiguator(
         &self,
-    ) -> (StackId, Option<DispatchKey>, u16, u16, u16, Option<LexForkStamp>) {
+    ) -> (StackId, EdgeStackId, Option<DispatchKey>, u16, u16, u16, Option<LexForkStamp>) {
         (
             self.sppf_stack_id,
+            self.incoming_edge_stack_id,
             self.cohort_origin.clone(),
             self.lex_alt_idx,
             self.weight_src_idx,
@@ -298,6 +310,7 @@ impl<W: SemiringRef + Clone + LexProvenance> FrontierArc<W> {
             weight: cursor.weight.clone(),
             pending_packing_weight: cursor.pending_packing_weight.clone(),
             sppf_stack_id: cursor.sppf_stack_id,
+            incoming_edge_stack_id: cursor.incoming_edge_stack_id,
             source_priority: cursor.source_priority,
             cohort_origin: cursor.cohort_origin.clone(),
             last_action_output_cat: cursor.last_action_output_cat,
@@ -338,7 +351,7 @@ pub fn materialize_branch_cursor_from_arc<W: SemiringRef + Clone>(
         node: shell.node,
         pos: shell.pos,
         inner_state: shell.inner_state.clone(),
-        incoming_edge_stack_id: shell.incoming_edge_stack_id,
+        incoming_edge_stack_id: arc.incoming_edge_stack_id,
         collection_stack_depth: shell.collection_depth,
         recovery_depth: shell.recovery_depth,
         // Per-arc divergent light axes.
@@ -768,6 +781,7 @@ mod tests {
             LexicographicWeight::default(),
             LexicographicWeight::default(),
             STACK_ID_ROOT,
+            EDGE_STACK_ID_ROOT,
             0,
             None,
             None,
@@ -802,6 +816,7 @@ mod tests {
             LexicographicWeight::default(),
             LexicographicWeight::default(),
             STACK_ID_ROOT,
+            EDGE_STACK_ID_ROOT,
             0,
             None,
             None,
@@ -996,6 +1011,14 @@ mod tests {
     }
 
     #[test]
+    fn arc_merge_disambiguator_distinguishes_incoming_edge_stack() {
+        let arc1 = fresh_arc();
+        let mut arc2 = fresh_arc();
+        arc2.incoming_edge_stack_id = StackId(1234);
+        assert_ne!(arc1.merge_disambiguator(), arc2.merge_disambiguator());
+    }
+
+    #[test]
     fn frontier_arc_from_cursor_captures_weight_lex_provenance() {
         let cursor = cursor_with_weight_and_stamp(
             LexicographicWeight::from_cost_with_lex(0.0, 7, 11, 3),
@@ -1005,6 +1028,14 @@ mod tests {
         assert_eq!(arc.lex_alt_idx, 3);
         assert_eq!(arc.weight_src_idx, 7);
         assert_eq!(arc.weight_rule_idx, 11);
+    }
+
+    #[test]
+    fn frontier_arc_from_cursor_captures_incoming_edge_stack() {
+        let mut cursor = cursor_with_weight_and_stamp(LexicographicWeight::default(), None);
+        cursor.incoming_edge_stack_id = StackId(99);
+        let arc = FrontierArc::from_cursor(&cursor);
+        assert_eq!(arc.incoming_edge_stack_id, StackId(99));
     }
 
     #[test]
@@ -1202,6 +1233,16 @@ mod tests {
         assert_eq!(cursor.binder_scope_marks[0].1.len(), 2);
         assert_eq!(cursor.optional_scope_marks, vec![5usize, 10usize]);
         assert_eq!(cursor.sppf_collection_arena.len(), 1);
+    }
+
+    #[test]
+    fn materialize_from_arc_restores_incoming_edge_stack() {
+        let mut shell = fresh_shell();
+        shell.incoming_edge_stack_id = StackId(1);
+        let mut arc = fresh_arc();
+        arc.incoming_edge_stack_id = StackId(2);
+        let cursor = materialize_branch_cursor_from_arc(&shell, &arc);
+        assert_eq!(cursor.incoming_edge_stack_id, StackId(2));
     }
 
     #[test]

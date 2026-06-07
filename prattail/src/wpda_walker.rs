@@ -423,6 +423,14 @@ pub enum WpdaStepAction<W: SemiringRef> {
         weight: W,
         new_state: WpdaState,
     },
+    /// WPDS push with caller-supplied edge semantics. Used when the pushed
+    /// symbol alone cannot distinguish the continuation kind.
+    PushWithEdgeKind {
+        symbol: StackSymbolV2,
+        weight: W,
+        new_state: WpdaState,
+        edge_kind: crate::gss::EdgeKind,
+    },
     /// WPDS pop: drop the frontier top, follow the predecessor edge.
     Pop { weight: W, new_state: WpdaState },
     /// WPDS replace: swap the top symbol for another (intracategory step).
@@ -635,7 +643,9 @@ fn project_continuation_record_for_action<W: SemiringRef>(
             // BuilderDelta is an enum w/ payload up to ~32 B.
             (header + state_size + 32, 1, 0)
         },
-        WpdaStepAction::Push { .. } => (header + symbol_size + w_size + state_size, 2, 0),
+        WpdaStepAction::Push { .. } | WpdaStepAction::PushWithEdgeKind { .. } => {
+            (header + symbol_size + w_size + state_size, 2, 0)
+        },
         WpdaStepAction::Pop { .. } => (header + w_size + state_size, 3, 0),
         WpdaStepAction::Replace { .. } => (header + symbol_size + w_size + state_size, 4, 0),
         WpdaStepAction::Fork { branches, .. } => {
@@ -870,8 +880,10 @@ pub struct WpdaWalker<W: SemiringRef, E: WpdaEngine<W>> {
     ///
     /// Written by `emit_fire_action` on successful action fires;
     /// consumed by `reconstruct_action_arg` for `SppfNode::Symbol` lookups.
+    /// Each entry carries the fired term's output category so category-shared
+    /// SPPF symbols cannot reconstruct a term produced by a different cat.
     /// Reset by `reset()`.
-    sppf_symbol_terms: std::collections::HashMap<crate::sppf::SppfId, Arc<dyn Any + Send + Sync>>,
+    sppf_symbol_terms: std::collections::HashMap<crate::sppf::SppfId, SppfSymbolTerm>,
     /// Phase F.13 (2026-05-20): walker statistics counters for
     /// algorithmic-bottleneck attribution. Gated by `walker-stats`
     /// Cargo feature; field doesn't exist when feature is off
@@ -1084,6 +1096,19 @@ impl<W: SemiringRef> ForkBranch<W> {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ForkTriggerTerminal {
+    kind: TokenKind,
+    text: String,
+    pos: usize,
+}
+
+#[derive(Clone)]
+struct SppfSymbolTerm {
+    value: Arc<dyn Any + Send + Sync>,
+    output_cat: Option<u16>,
+}
+
 /// Stage 3.12 / Class A.i (2026-05-01): per-Fork-branch action
 /// discriminator.
 ///
@@ -1114,6 +1139,20 @@ pub enum ForkActionKind {
     /// `emit_push_side_effects`. Pos advancement controlled by Fork's
     /// `consume_trigger: bool`.
     Push,
+
+    /// Push, but first mirror the consumed structural trigger token as a
+    /// branch-owned `TriggerTerminal`. This is the Fork equivalent of
+    /// `WpdaStepAction::ConsumeAndPush { trigger_mode:
+    /// ConsumeAsTriggerOnly }` for multi-rule binder-prefix ambiguity:
+    /// each branch owns the same consumed token under a different
+    /// `(cat, rule)` identity, so the eventual FireAction can claim the
+    /// correct trigger during SPPF walk-back.
+    PushWithTriggerTerminal,
+
+    /// Anonymous cross-category LHS delegation. Same stack mutation as
+    /// `Push`, but the pushed `CategoryEntry(source)` edge is tagged so
+    /// the pop side can preserve the source category for one infix pass.
+    PushCrossCatLhs,
 
     /// Opt-Group SKIP branch: emit `BuilderDelta::PushOptionalAbsent`,
     /// pop the cursor's outer RuleAt, push `replace_symbol` (the
@@ -2163,6 +2202,12 @@ struct ConfigKey {
     /// requires same stack word, which the GSS dedup obscures at the
     /// tip).
     incoming_edge: Option<crate::gss::GssEdgeId>,
+    /// Full incoming-edge stack handle. The top edge is sufficient for the
+    /// next pop target, but not for later pops after that target is exposed.
+    /// Multi-step binders can have identical next-pop edges while retaining
+    /// different deeper continuation histories; merging those cursors drops a
+    /// sound derivation before its outer rule can fire.
+    incoming_edge_stack: crate::edge_stack_arena::EdgeStackId,
     /// Phase 4 #5b (2026-05-12): collection-stack depth. Two cursors
     /// at the same `(state, node, pos, incoming_edge)` but different
     /// `collection_stack.len()` represent DISTINCT operational states
@@ -3534,6 +3579,8 @@ where
                         pos: c.pos,
                         state: c.inner_state.clone(),
                         gss_node_id: c.node,
+                        gss_top: self.gss.node(c.node).map(|n| n.symbol),
+                        sppf_top: self.sppf_stack_arena.top(c.sppf_stack_id),
                         weight: c.weight.clone(),
                         source_priority: c.source_priority,
                         pending_ops_len: c.recovery_deltas.len(),
@@ -3550,6 +3597,8 @@ where
                             pos: c.pos,
                             state: c.inner_state.clone(),
                             gss_node_id: c.node,
+                            gss_top: self.gss.node(c.node).map(|n| n.symbol),
+                            sppf_top: self.sppf_stack_arena.top(c.sppf_stack_id),
                             weight: c.weight.clone(),
                             source_priority: c.source_priority,
                             pending_ops_len: c.recovery_deltas.len(),
@@ -4659,11 +4708,8 @@ where
                     // is structurally redundant with cursor.sppf_stack
                     // for the realize-extract purpose.
                     if cursor_root != crate::sppf::SPPF_ID_NONE {
-                        if let Some(t) = self
-                            .realize_root_to_terms(cursor_root, Some(1))
-                            .into_iter()
-                            .next()
-                        {
+                        let realized = self.realize_root_to_terms(cursor_root, Some(1));
+                        if let Some(t) = realized.into_iter().next() {
                             weights.push(cursor_weight);
                             terms.push(t);
                             roots.push(cursor_root);
@@ -4950,6 +4996,37 @@ where
             .collect()
     }
 
+    fn packing_satisfies_min_terminal_span(
+        &self,
+        global_rule_idx: u32,
+        children: &[crate::sppf::SppfId],
+        sym_lo: u32,
+        sym_hi: u32,
+    ) -> bool {
+        let pcat = (global_rule_idx >> 16) as u16;
+        let plocal = (global_rule_idx & 0xFFFF) as u16;
+        let min_span = self.engine.min_terminal_span(pcat, plocal);
+        if min_span == 0 {
+            return true;
+        }
+        let sym_span = sym_hi.saturating_sub(sym_lo);
+        let child_span_sum: u32 = children
+            .iter()
+            .map(|&c| match self.sppf.node(c) {
+                Some(crate::sppf::SppfNode::Symbol { lo_pos, hi_pos, .. }) => {
+                    (*hi_pos).saturating_sub(*lo_pos)
+                },
+                Some(crate::sppf::SppfNode::Terminal { .. })
+                | Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => 1,
+                _ => 0,
+            })
+            .sum();
+        if sym_span < child_span_sum {
+            return true;
+        }
+        sym_span - child_span_sum >= min_span
+    }
+
     /// Internal helper: combine an SPPF node's children realizations
     /// into the node's own realization. Invoked at the Phase::Leave
     /// step of `realize_root_to_terms`.
@@ -5076,7 +5153,6 @@ where
                 // (production `LexicographicWeight`) `star = one` so
                 // this is identity; for non-idempotent W the multiplier
                 // captures the cycle's closed-semiring contribution.
-                let sym_span: u32 = (*sym_hi).saturating_sub(*sym_lo);
                 let mut out: Vec<(ActionArg, W)> = Vec::new();
                 for &p in self.sppf.packings_of(id) {
                     let p_color = colors.get(&p).copied();
@@ -5093,44 +5169,15 @@ where
                         rule_idx: prule, children, ..
                     }) = self.sppf.node(p)
                     {
-                        let pcat = (*prule >> 16) as u16;
-                        let plocal = (*prule & 0xFFFF) as u16;
-                        let min_span = self.engine.min_terminal_span(pcat, plocal);
-                        if min_span > 0 {
-                            let child_span_sum: u32 = children
-                                .iter()
-                                .map(|&c| match self.sppf.node(c) {
-                                    Some(crate::sppf::SppfNode::Symbol {
-                                        lo_pos, hi_pos, ..
-                                    }) => (*hi_pos).saturating_sub(*lo_pos),
-                                    Some(crate::sppf::SppfNode::Terminal { .. })
-                                    | Some(crate::sppf::SppfNode::TriggerTerminal { .. }) => 1,
-                                    _ => 0,
-                                })
-                                .sum();
-                            // Soundness filter applies ONLY when the result
-                            // Symbol carries a MEANINGFUL span that covers its
-                            // operands (sym_span >= child_span_sum). A
-                            // zero-width or under-covering span (sym_span <
-                            // child_span_sum) is a synthetic / recovery /
-                            // not-yet-finalized node whose lo/hi don't encode
-                            // real input extent — the span signal is unreliable
-                            // there, so we must NOT reject (doing so wrongly
-                            // dropped sound lambda `App`/`Lam` packings whose
-                            // Symbol had lo_pos==hi_pos==0). Restricting to
-                            // sym_span >= child_span_sum keeps the filter sound:
-                            // it fires only where the yield==span invariant is
-                            // actually observable.
-                            if sym_span >= child_span_sum {
-                                let slack = sym_span - child_span_sum;
-                                if slack < min_span {
-                                    // Token-unsound derivation: the rule claims
-                                    // to match in-span literals that occupy zero
-                                    // input (a fabricated cast). Drop this
-                                    // packing on evidence (yield != span).
-                                    continue;
-                                }
-                            }
+                        // Soundness filter applies ONLY when the result Symbol
+                        // carries a meaningful span that covers its operands.
+                        // Synthetic / recovery / not-yet-finalized nodes with
+                        // under-covering spans are accepted by the helper, as
+                        // in the original realization-only filter.
+                        if !self
+                            .packing_satisfies_min_terminal_span(*prule, children, *sym_lo, *sym_hi)
+                        {
+                            continue;
                         }
                     }
                     let memo_results = match memo.get(&p) {
@@ -5815,8 +5862,9 @@ where
             return false;
         }
 
-        self.all_structural_open_delimiters(tokens, root_lo)
-            && self.all_structural_close_delimiters(tokens, root_hi, semantic_cursor_pos)
+        let opens_ok = self.all_structural_open_delimiters(tokens, root_lo);
+        let closes_ok = self.all_structural_close_delimiters(tokens, root_hi, semantic_cursor_pos);
+        opens_ok && closes_ok
     }
 
     /// Stage 3.5b (2026-05-01): EOI-time variant of `commit_winner`.
@@ -6056,6 +6104,112 @@ where
         }
     }
 
+    fn category_changing_infix_source(
+        symbol: &StackSymbolV2,
+        new_state: &WpdaState,
+    ) -> Option<u16> {
+        if symbol.kind != SymbolKind::Return {
+            return None;
+        }
+        match new_state {
+            WpdaState::CrossCatDelegate { source_src_idx, .. }
+                if symbol.category_src_idx != *source_src_idx =>
+            {
+                Some(*source_src_idx)
+            },
+            _ => None,
+        }
+    }
+
+    fn branch_category_changing_infix_source(branch: &ForkBranch<W>) -> Option<u16> {
+        match &branch.action_kind {
+            ForkActionKind::LexAltInfixOp { result_src_idx, source_cat_src_idx, .. }
+                if result_src_idx != source_cat_src_idx =>
+            {
+                Some(*source_cat_src_idx)
+            },
+            _ => Self::category_changing_infix_source(&branch.symbol, &branch.new_state),
+        }
+    }
+
+    fn cross_cat_lhs_infix_evidence_source(&self, cursor: &BranchCursor<W>) -> Option<u16> {
+        if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+            return None;
+        }
+        let top = self.gss.node(cursor.node)?;
+        if top.symbol.kind != SymbolKind::CategoryEntry {
+            return None;
+        }
+        let edge_id = self
+            .incoming_edge_stack_arena
+            .top(cursor.incoming_edge_stack_id)?;
+        match self.gss.edge_kind(edge_id) {
+            Some(
+                crate::gss::EdgeKind::CrossCatLhs { source_src_idx }
+                | crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx },
+            ) if source_src_idx == top.symbol.category_src_idx => Some(source_src_idx),
+            _ => None,
+        }
+    }
+
+    fn guard_category_changing_infix(
+        &self,
+        cursor: &BranchCursor<W>,
+        action: WpdaStepAction<W>,
+    ) -> WpdaStepAction<W> {
+        if !matches!(cursor.inner_state, WpdaState::InfixLoop { .. }) {
+            return action;
+        }
+        let lhs_evidence = self.cross_cat_lhs_infix_evidence_source(cursor);
+        match action {
+            WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode } => {
+                if let Some(source_src_idx) =
+                    Self::category_changing_infix_source(&symbol, &new_state)
+                {
+                    if lhs_evidence != Some(source_src_idx) {
+                        if trace_actions_enabled() {
+                            eprintln!(
+                                "[wpds-action] suppress category-changing infix source={} result={} pos={} evidence={:?}",
+                                source_src_idx,
+                                symbol.category_src_idx,
+                                cursor.pos,
+                                lhs_evidence
+                            );
+                        }
+                        return WpdaStepAction::Advance(WpdaState::Unwinding);
+                    }
+                }
+                WpdaStepAction::ConsumeAndPush { symbol, weight, new_state, trigger_mode }
+            },
+            WpdaStepAction::Fork { mut branches, consume_trigger } => {
+                let before = branches.len();
+                branches.retain(|branch| {
+                    let Some(source_src_idx) = Self::branch_category_changing_infix_source(branch)
+                    else {
+                        return true;
+                    };
+                    lhs_evidence == Some(source_src_idx)
+                });
+                if branches.len() != before {
+                    if trace_actions_enabled() {
+                        eprintln!(
+                            "[wpds-action] suppress category-changing infix branches kept={} removed={} pos={} evidence={:?}",
+                            branches.len(),
+                            before.saturating_sub(branches.len()),
+                            cursor.pos,
+                            lhs_evidence
+                        );
+                    }
+                    if branches.is_empty() {
+                        return WpdaStepAction::Advance(WpdaState::Unwinding);
+                    }
+                }
+                WpdaStepAction::Fork { branches, consume_trigger }
+            },
+            other => other,
+        }
+    }
+
     /// Step 3 (Fork plan F5): per-cursor analog of `apply_action`. Mutates
     /// `cursor.{node,pos,weight,inner_state}` in place and logs walker-driven
     /// builder mutations into `cursor.recovery_deltas` instead of
@@ -6083,6 +6237,7 @@ where
         // Phase F.13 chain_10000 Lazy redesign L2 prep-2 (2026-05-27):
         // record per-variant call counts to identify the dominant
         // apply_action arm for L2-L3 graduation targeting.
+        let action = self.guard_category_changing_infix(cursor, action);
         #[cfg(feature = "walker-stats")]
         {
             let bucket = crate::walker_stats::apply_action_variant_index(&action);
@@ -6116,17 +6271,6 @@ where
                 self.cursor_resolution_check(cursor)
             },
             WpdaStepAction::Push { mut symbol, weight, new_state } => {
-                // Lazy redesign L2a prep (2026-05-27): record the residual
-                // Push EdgeKind (i.e., NOT covered by Substage 5's
-                // broadcast at wpda_walker.rs:7949-8071). Confirms L2a's
-                // 80% target before we ship the broadcast extension.
-                #[cfg(feature = "walker-stats")]
-                {
-                    let kind = crate::gss::EdgeKind::from_symbol(&symbol);
-                    let bucket = crate::walker_stats::pop_kind_bucket_index(&kind);
-                    self.stats.push_kind_histogram[bucket] =
-                        self.stats.push_kind_histogram[bucket].saturating_add(1);
-                }
                 // B12 / Candidate E (2026-05-07): cross-cat projection
                 // cycle defense for SINGLETON projection arms. Singleton
                 // bucket emits `WpdaStepAction::Push` (not Fork) when only
@@ -6169,7 +6313,60 @@ where
                 // Handles CollectionMarker (id alloc + bp patch + arg push)
                 // AND OptionalGroupAt(1) (scope open).
                 self.emit_push_side_effects(cursor, &mut symbol);
-                let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
+                let edge_kind =
+                    self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+                // Lazy redesign L2a prep (2026-05-27): record the residual
+                // Push EdgeKind (i.e., NOT covered by Substage 5's
+                // broadcast at wpda_walker.rs:7949-8071). Confirms L2a's
+                // 80% target before we ship the broadcast extension.
+                #[cfg(feature = "walker-stats")]
+                {
+                    let bucket = crate::walker_stats::pop_kind_bucket_index(&edge_kind);
+                    self.stats.push_kind_histogram[bucket] =
+                        self.stats.push_kind_histogram[bucket].saturating_add(1);
+                }
+                let _ = self.cursor_gss_push_with_kind(
+                    cursor,
+                    symbol,
+                    cursor.pos,
+                    weight.clone(),
+                    edge_kind,
+                );
+                self.multiply_cursor_weight(cursor, &weight);
+                self.set_cursor_inner_state(cursor, new_state);
+                self.cursor_resolution_check(cursor)
+            },
+            WpdaStepAction::PushWithEdgeKind { mut symbol, weight, new_state, edge_kind } => {
+                #[cfg(feature = "walker-stats")]
+                {
+                    let bucket = crate::walker_stats::pop_kind_bucket_index(&edge_kind);
+                    self.stats.push_kind_histogram[bucket] =
+                        self.stats.push_kind_histogram[bucket].saturating_add(1);
+                }
+                if matches!(&new_state, WpdaState::CrossCatDelegate { .. }) {
+                    if let Some(desc) = extract_proj_descriptor(cursor, &self.gss) {
+                        if cursor.visited_proj_descriptors.contains(&desc) {
+                            let msg = format!(
+                                "cross-cat projection cycle detected at \
+                                 descriptor (gss_node={}, sppf_stack={}, \
+                                 cat_src={}, cur_bp={}) — refusing to \
+                                 re-dispatch projection PushWithEdgeKind",
+                                desc.gss_node, desc.sppf_stack, desc.cat_src, desc.cur_bp,
+                            );
+                            self.set_cursor_inner_state(cursor, WpdaState::Error { message: msg });
+                            return CursorOutcome::Drop;
+                        }
+                        cursor.visited_proj_descriptors.insert(desc);
+                    }
+                }
+                self.emit_push_side_effects(cursor, &mut symbol);
+                let _ = self.cursor_gss_push_with_kind(
+                    cursor,
+                    symbol,
+                    cursor.pos,
+                    weight.clone(),
+                    edge_kind,
+                );
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -6190,19 +6387,17 @@ where
                 // Lazy redesign L2 prep (2026-05-27): record the popped
                 // EdgeKind so L2 can confirm dominance of convergent
                 // kinds before paying the broadcast-helper budget.
+                let (pred_id, popped_edge_kind) = self.cursor_gss_pop_via_edge(cursor);
                 #[cfg(feature = "walker-stats")]
-                if let Some(sym) = popped_symbol.as_ref() {
-                    let kind = crate::gss::EdgeKind::from_symbol(sym);
-                    let bucket = crate::walker_stats::pop_kind_bucket_index(&kind);
+                if let Some(kind) = popped_edge_kind.as_ref() {
+                    let bucket = crate::walker_stats::pop_kind_bucket_index(kind);
                     self.stats.pop_kind_histogram[bucket] =
                         self.stats.pop_kind_histogram[bucket].saturating_add(1);
                 }
-                let pred_id = self
-                    .cursor_gss_pop_via_edge(cursor)
-                    .unwrap_or(crate::gss::GSS_NODE_NONE);
                 self.apply_pop_body_to_cursor(
                     cursor,
                     pred_id,
+                    popped_edge_kind.as_ref(),
                     popped_symbol,
                     &weight,
                     new_state,
@@ -6271,7 +6466,15 @@ where
                 // Stage 3.9 / ι Phase 4 (2026-05-01): centralized Push-time
                 // side effects (CollectionMarker + OptionalGroupAt(1)).
                 self.emit_push_side_effects(cursor, &mut symbol);
-                let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
+                let edge_kind =
+                    self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+                let _ = self.cursor_gss_push_with_kind(
+                    cursor,
+                    symbol,
+                    cursor.pos,
+                    weight.clone(),
+                    edge_kind,
+                );
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
@@ -6355,7 +6558,15 @@ where
                     // failed to synthesize (should not happen). Treat as a
                     // plain consume+push so the parse still progresses.
                     self.emit_push_side_effects(cursor, &mut symbol);
-                    let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
+                    let edge_kind =
+                        self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+                    let _ = self.cursor_gss_push_with_kind(
+                        cursor,
+                        symbol,
+                        cursor.pos,
+                        weight.clone(),
+                        edge_kind,
+                    );
                     self.advance_cursor_pos(cursor, tokens, 1);
                     self.multiply_cursor_weight(cursor, &weight);
                     self.set_cursor_inner_state(cursor, new_state);
@@ -6404,7 +6615,15 @@ where
                     // synthesize (should not happen). Treat as a plain
                     // single-op consume+push so the parse still progresses.
                     self.emit_push_side_effects(cursor, &mut symbol);
-                    let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
+                    let edge_kind =
+                        self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+                    let _ = self.cursor_gss_push_with_kind(
+                        cursor,
+                        symbol,
+                        cursor.pos,
+                        weight.clone(),
+                        edge_kind,
+                    );
                     self.advance_cursor_pos(cursor, tokens, 1);
                     self.multiply_cursor_weight(cursor, &weight);
                     self.set_cursor_inner_state(cursor, new_state);
@@ -6606,7 +6825,15 @@ where
                 }
                 self.emit_push_side_effects(cursor, &mut symbol);
                 if !already_chained {
-                    let _ = self.cursor_gss_push_auto(cursor, symbol, cursor.pos, weight.clone());
+                    let edge_kind =
+                        self.edge_kind_for_push_transition(cursor.node, &symbol, &new_state);
+                    let _ = self.cursor_gss_push_with_kind(
+                        cursor,
+                        symbol,
+                        cursor.pos,
+                        weight.clone(),
+                        edge_kind,
+                    );
                 }
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.multiply_cursor_weight(cursor, &weight);
@@ -6618,13 +6845,12 @@ where
                 // edge-id (see Pop arm). Consume token first, then pop
                 // along the cursor's recorded path.
                 let popped_symbol = self.gss.node(cursor.node).map(|n| n.symbol);
-                let pred_id = self
-                    .cursor_gss_pop_via_edge(cursor)
-                    .unwrap_or(crate::gss::GSS_NODE_NONE);
+                let (pred_id, popped_edge_kind) = self.cursor_gss_pop_via_edge(cursor);
                 self.advance_cursor_pos(cursor, tokens, 1);
                 self.apply_pop_body_to_cursor(
                     cursor,
                     pred_id,
+                    popped_edge_kind.as_ref(),
                     popped_symbol,
                     &weight,
                     new_state,
@@ -6679,7 +6905,7 @@ where
                 // the Push arm at line ~2998 and Fork arms at ~3390.
                 let mut push_symbol = push_symbol;
                 self.emit_push_side_effects(cursor, &mut push_symbol);
-                let _ = self.cursor_gss_push_auto(cursor, push_symbol, cursor.pos, weight.clone());
+                self.cursor_gss_push_auto(cursor, push_symbol, cursor.pos, weight.clone());
                 self.multiply_cursor_weight(cursor, &weight);
                 self.set_cursor_inner_state(cursor, new_state);
                 self.cursor_resolution_check(cursor)
@@ -6719,7 +6945,9 @@ where
                 {
                     for b in &branches {
                         match &b.action_kind {
-                            ForkActionKind::Push { .. } => {
+                            ForkActionKind::Push
+                            | ForkActionKind::PushWithTriggerTerminal
+                            | ForkActionKind::PushCrossCatLhs => {
                                 self.stats.fork_kind_push =
                                     self.stats.fork_kind_push.saturating_add(1);
                             },
@@ -7123,7 +7351,38 @@ where
                     // `OptGroupAbsent` mirrors `apply_action::OptGroupAbsent`
                     // for the SKIP branch of an Opt-Group Fork.
                     match branch.action_kind {
-                        ForkActionKind::Push => {
+                        action_kind @ (ForkActionKind::Push
+                        | ForkActionKind::PushWithTriggerTerminal
+                        | ForkActionKind::PushCrossCatLhs) => {
+                            let trigger_terminal =
+                                if matches!(action_kind, ForkActionKind::PushWithTriggerTerminal) {
+                                    tokens
+                                        .peek_kind(cursor.pos)
+                                        .map(|kind| ForkTriggerTerminal {
+                                            kind,
+                                            text: tokens
+                                                .peek_text(cursor.pos)
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            pos: cursor.pos,
+                                        })
+                                } else {
+                                    None
+                                };
+                            let push_edge_kind =
+                                if matches!(action_kind, ForkActionKind::PushCrossCatLhs) {
+                                    Some(crate::gss::EdgeKind::CrossCatLhs {
+                                        source_src_idx: branch.symbol.category_src_idx,
+                                    })
+                                } else {
+                                    None
+                                };
+                            let push_branch = ForkBranch {
+                                symbol: branch.symbol,
+                                weight: branch.weight,
+                                new_state: branch.new_state,
+                                action_kind: ForkActionKind::Push,
+                            };
                             // Phase F.13 H12 Stage 1.5 (2026-05-21):
                             // allocate_fork_push_child returns
                             // Vec<BranchCursor<W>>:
@@ -7134,12 +7393,14 @@ where
                             //     fanout — one per worker snapshot.
                             let new_children = self.allocate_fork_push_child(
                                 &cursor,
-                                branch,
+                                push_branch,
                                 pos_after,
                                 child_recovery_depth,
                                 child_visited_recovery.clone(),
                                 child_visited_dispatch.clone(),
                                 child_visited_proj_descriptors.clone(),
+                                trigger_terminal,
+                                push_edge_kind,
                                 None,
                                 child_source_priority,
                             );
@@ -7234,8 +7495,8 @@ where
                             // Stage 3.12.6 (2026-05-02): pop along the
                             // child's recorded edge (its own history),
                             // not an arbitrary in-edge of child.node.
-                            let popped = self.cursor_gss_pop_via_edge(&mut child);
-                            if popped.is_none() {
+                            let (popped_to, _) = self.cursor_gss_pop_via_edge(&mut child);
+                            if popped_to == crate::gss::GSS_NODE_NONE {
                                 // GSS underflow: synthesize CategoryEntry(0)
                                 // sentinel so the subsequent push has a
                                 // valid predecessor.
@@ -7595,12 +7856,12 @@ where
                                 // First write in this child triggers Arc::make_mut.
                             };
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let pred_id = self
-                                .cursor_gss_pop_via_edge(&mut child)
-                                .unwrap_or(crate::gss::GSS_NODE_NONE);
+                            let (pred_id, popped_edge_kind) =
+                                self.cursor_gss_pop_via_edge(&mut child);
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
+                                popped_edge_kind.as_ref(),
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
@@ -7681,13 +7942,13 @@ where
                                 // First write in this child triggers Arc::make_mut.
                             };
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let pred_id = self
-                                .cursor_gss_pop_via_edge(&mut child)
-                                .unwrap_or(crate::gss::GSS_NODE_NONE);
+                            let (pred_id, popped_edge_kind) =
+                                self.cursor_gss_pop_via_edge(&mut child);
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
+                                popped_edge_kind.as_ref(),
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
@@ -8135,6 +8396,8 @@ where
                                 child_visited_recovery.clone(),
                                 child_visited_dispatch.clone(),
                                 child_visited_proj_descriptors.clone(),
+                                None,
+                                None,
                                 Some(lex_fork_stamp),
                                 child_source_priority,
                             );
@@ -8468,13 +8731,13 @@ where
                             self.emit_extend_binder_scope(&mut child, text);
                             // Capture popped_symbol before pop.
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let pred_id = self
-                                .cursor_gss_pop_via_edge(&mut child)
-                                .unwrap_or(crate::gss::GSS_NODE_NONE);
+                            let (pred_id, popped_edge_kind) =
+                                self.cursor_gss_pop_via_edge(&mut child);
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
+                                popped_edge_kind.as_ref(),
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
@@ -8639,13 +8902,13 @@ where
                             }
                             // Capture popped_symbol before pop.
                             let popped_symbol = self.gss.node(child.node).map(|n| n.symbol);
-                            let pred_id = self
-                                .cursor_gss_pop_via_edge(&mut child)
-                                .unwrap_or(crate::gss::GSS_NODE_NONE);
+                            let (pred_id, popped_edge_kind) =
+                                self.cursor_gss_pop_via_edge(&mut child);
                             child.pos = Self::child_next_pos(tokens, child.pos);
                             self.apply_pop_body_to_cursor(
                                 &mut child,
                                 pred_id,
+                                popped_edge_kind.as_ref(),
                                 popped_symbol,
                                 &branch.weight,
                                 branch.new_state.clone(),
@@ -8869,8 +9132,8 @@ where
                 // Stage 3.12.6 (2026-05-02): use edge-id-guided pop so
                 // the cursor's recorded predecessor is the one followed,
                 // not an arbitrary in-edge of the popped node.
-                let new_node_after_pop = self.cursor_gss_pop_via_edge(cursor);
-                if new_node_after_pop.is_none() {
+                let (new_node_after_pop, _) = self.cursor_gss_pop_via_edge(cursor);
+                if new_node_after_pop == crate::gss::GSS_NODE_NONE {
                     // GSS underflow — synthesize a CategoryEntry sentinel at
                     // pos for the cursor. Update cursor.node directly so the
                     // subsequent cursor_gss_push lands on it.
@@ -8901,14 +9164,15 @@ where
                 //   3. Pop the (now-on-top) outer RuleAt marker.
                 //   4. Push `replace_symbol` (advanced outer RuleAt).
                 // Stage 3.12.6 (2026-05-02): edge-id-guided pops.
-                let after_marker_pop = self.cursor_gss_pop_via_edge(cursor);
+                let (after_marker_pop, _) = self.cursor_gss_pop_via_edge(cursor);
                 self.emit_finalize_optional_scope_present(cursor);
-                let after_outer_pop = if after_marker_pop.is_some() {
-                    self.cursor_gss_pop_via_edge(cursor)
+                let after_outer_pop = if after_marker_pop != crate::gss::GSS_NODE_NONE {
+                    let (after_outer_pop, _) = self.cursor_gss_pop_via_edge(cursor);
+                    after_outer_pop
                 } else {
-                    None
+                    crate::gss::GSS_NODE_NONE
                 };
-                if after_outer_pop.is_none() {
+                if after_outer_pop == crate::gss::GSS_NODE_NONE {
                     let sentinel = self.gss.get_or_create_node(WpdaGssNode {
                         pos: cursor.pos,
                         symbol: StackSymbolV2::category_entry(0),
@@ -9388,7 +9652,7 @@ where
             // to ~500 (one per chain element, shared across all arcs at
             // the same TomitaKey).
             if let WpdaStepAction::Push { ref symbol, ref weight, ref new_state } = action {
-                let kind = crate::gss::EdgeKind::from_symbol(symbol);
+                let kind = self.edge_kind_for_push_transition(node.shell.node, symbol, new_state);
                 // Substage 5 graduated scope: InfixContinuation (chain-
                 // interior dominant) + PrefixRuleEntry (RuleAt push for
                 // prefix dispatch — no per-cursor side effects in the
@@ -9504,17 +9768,20 @@ where
                     let edge_id =
                         self.gss
                             .add_edge_kind(new_node_id, predecessor, weight.clone(), kind);
-                    let new_stack_id = self
+                    let shell_stack_id = self
                         .incoming_edge_stack_arena
                         .intern_push(node.shell.incoming_edge_stack_id, edge_id);
                     // Apply per-arc weight broadcast + shell mutate.
                     {
                         let shell_mut = Arc::make_mut(&mut node.shell);
                         shell_mut.node = new_node_id;
-                        shell_mut.incoming_edge_stack_id = new_stack_id;
+                        shell_mut.incoming_edge_stack_id = shell_stack_id;
                         shell_mut.inner_state = new_state.clone();
                     }
                     for arc in &mut node.arcs {
+                        arc.incoming_edge_stack_id = self
+                            .incoming_edge_stack_arena
+                            .intern_push(arc.incoming_edge_stack_id, edge_id);
                         arc.weight = arc.weight.times_ref(weight);
                         arc.pending_packing_weight = arc.pending_packing_weight.times_ref(weight);
                     }
@@ -10708,6 +10975,7 @@ where
                 incoming_edge: self
                     .incoming_edge_stack_arena
                     .top(cursor.incoming_edge_stack_id),
+                incoming_edge_stack: cursor.incoming_edge_stack_id,
                 // Phase 4 #5b (2026-05-12): include collection_stack
                 // depth so cursors with different operational shapes
                 // (e.g. one mid-binder-internal-collection, the other
@@ -11854,6 +12122,55 @@ where
     // arena post-commit, truncating/emptying collections belonging to other
     // (non-winner) derivations in an `Ambiguous([...])` result.
 
+    fn action_arg_trace_shape(arg: &ActionArg) -> &'static str {
+        match arg {
+            ActionArg::Token { .. } => "Token",
+            ActionArg::Ident { .. } => "Ident",
+            ActionArg::Term { type_name, .. } => *type_name,
+            ActionArg::BinderScope(_) => "BinderScope",
+            ActionArg::Collection { type_name, .. } => *type_name,
+            ActionArg::CollectionId(_) => "CollectionId",
+            ActionArg::Predicate(_) => "Predicate",
+            ActionArg::Optional(_) => "Optional",
+        }
+    }
+
+    fn sppf_trace_summary(&self, sid: crate::sppf::SppfId) -> String {
+        match self.sppf.node(sid) {
+            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. }) => {
+                format!(
+                    "{}:Symbol(nt={}, span=[{},{}], packings={:?})",
+                    sid,
+                    non_terminal_tag,
+                    lo_pos,
+                    hi_pos,
+                    self.sppf.packings_of(sid)
+                )
+            },
+            Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) => {
+                format!("{}:Packing(rule={:#x}, children={:?})", sid, rule_idx, children)
+            },
+            Some(crate::sppf::SppfNode::Terminal { token_kind, pos, .. }) => {
+                format!("{}:Terminal({:?}, {:?})", sid, token_kind, pos)
+            },
+            Some(crate::sppf::SppfNode::TriggerTerminal {
+                token_kind,
+                pos,
+                owner_cat,
+                owner_rule_idx,
+                ..
+            }) => format!(
+                "{}:Trigger({:?}, {:?}, owner={}:{})",
+                sid, token_kind, pos, owner_cat, owner_rule_idx
+            ),
+            Some(crate::sppf::SppfNode::CollectionId { id, items }) => {
+                format!("{}:CollectionId(id={}, items={:?})", sid, id, items)
+            },
+            Some(other) => format!("{}:{:?}", sid, other),
+            None => format!("{}:<missing>", sid),
+        }
+    }
+
     /// Phase F.3c.2 (2026-05-20): reconstruct an `ActionArg` from a single
     /// SPPF node id, using `cursor.sppf_symbol_terms` as the memo for
     /// previously-realized Symbols. Used by `fire_action_via_transient` to
@@ -11867,6 +12184,16 @@ where
         &self,
         cursor: &BranchCursor<W>,
         sid: crate::sppf::SppfId,
+    ) -> Option<ActionArg> {
+        let mut visiting = rustc_hash::FxHashSet::default();
+        self.reconstruct_action_arg_inner(cursor, sid, &mut visiting)
+    }
+
+    fn reconstruct_action_arg_inner(
+        &self,
+        cursor: &BranchCursor<W>,
+        sid: crate::sppf::SppfId,
+        visiting: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
     ) -> Option<ActionArg> {
         use crate::sppf::{PosOrSynth, SppfNode};
         match self.sppf.node(sid)? {
@@ -11891,7 +12218,7 @@ where
                     })
                 }
             },
-            SppfNode::Symbol { .. } => {
+            SppfNode::Symbol { non_terminal_tag, .. } => {
                 // Phase F.13 H1 (2026-05-20): look up in walker-global
                 // memo. SPPF SymbolIds are global (Symbol-dedup at
                 // `(nt, lo, hi)`), so any cursor that previously fired
@@ -11899,10 +12226,63 @@ where
                 // HashMap lookup replaces the per-cursor Vec scan; the
                 // `cursor` parameter is unused for this arm.
                 let _ = cursor;
-                self.sppf_symbol_terms.get(&sid).map(|arc| ActionArg::Term {
-                    value: Arc::clone(arc),
-                    type_name: "F3c2Reconstructed",
-                })
+                let trace_symbol = trace_actions_enabled();
+                if let Some(term) = self.sppf_symbol_terms.get(&sid) {
+                    if !term
+                        .output_cat
+                        .is_some_and(|cat| cat as u32 != *non_terminal_tag)
+                    {
+                        if trace_symbol {
+                            eprintln!(
+                                "[wpds-action] reconstruct symbol sid={} nt={} source=memo output_cat={:?}",
+                                sid, non_terminal_tag, term.output_cat
+                            );
+                        }
+                        return Some(ActionArg::Term {
+                            value: Arc::clone(&term.value),
+                            type_name: "F3c2Reconstructed",
+                        });
+                    }
+                    if trace_symbol {
+                        eprintln!(
+                            "[wpds-action] reconstruct symbol sid={} nt={} memo-cat-mismatch output_cat={:?}",
+                            sid, non_terminal_tag, term.output_cat
+                        );
+                    }
+                } else if trace_symbol {
+                    eprintln!(
+                        "[wpds-action] reconstruct symbol sid={} nt={} source=witness packings={:?}",
+                        sid,
+                        non_terminal_tag,
+                        self.sppf.packings_of(sid)
+                    );
+                }
+                self.realize_symbol_term_witness(cursor, sid, visiting)
+                    .and_then(|term| {
+                        if term
+                            .output_cat
+                            .is_some_and(|cat| cat as u32 != *non_terminal_tag)
+                        {
+                            if trace_symbol {
+                                eprintln!(
+                                    "[wpds-action] reconstruct symbol sid={} nt={} witness-cat-mismatch output_cat={:?}",
+                                    sid, non_terminal_tag, term.output_cat
+                                );
+                            }
+                            None
+                        } else {
+                            if trace_symbol {
+                                eprintln!(
+                                    "[wpds-action] reconstruct symbol sid={} nt={} source=witness output_cat={:?}",
+                                    sid, non_terminal_tag, term.output_cat
+                                );
+                            }
+                            Some(ActionArg::Term {
+                                value: term.value,
+                                type_name: "F3c2Witness",
+                            })
+                        }
+                    })
             },
             SppfNode::Packing { rule_idx, children, .. }
                 if *rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX =>
@@ -11911,7 +12291,7 @@ where
                 // as `ActionArg::Optional(Some(inner_args))`.
                 let inner: Option<Vec<ActionArg>> = children
                     .iter()
-                    .map(|&c| self.reconstruct_action_arg(cursor, c))
+                    .map(|&c| self.reconstruct_action_arg_inner(cursor, c, visiting))
                     .collect();
                 inner.map(|args| ActionArg::Optional(Some(args)))
             },
@@ -11946,6 +12326,250 @@ where
                 None
             },
         }
+    }
+
+    /// Materialize one token-sound semantic witness for an SPPF Symbol when
+    /// the parse-time symbol memo has no suitable entry. This is an existence
+    /// check for continuing the current branch; it does not mutate the SPPF
+    /// or choose the final parse result.
+    fn realize_symbol_term_witness(
+        &self,
+        cursor: &BranchCursor<W>,
+        symbol_id: crate::sppf::SppfId,
+        visiting: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
+    ) -> Option<SppfSymbolTerm> {
+        let (non_terminal_tag, sym_lo, sym_hi) = match self.sppf.node(symbol_id)? {
+            crate::sppf::SppfNode::Symbol { non_terminal_tag, lo_pos, hi_pos, .. } => {
+                (*non_terminal_tag, *lo_pos, *hi_pos)
+            },
+            _ => return None,
+        };
+        if !visiting.insert(symbol_id) {
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] witness symbol sid={} nt={} reason=cycle",
+                    symbol_id, non_terminal_tag
+                );
+            }
+            return None;
+        }
+        let packings: Vec<crate::sppf::SppfId> = self.sppf.packings_of(symbol_id).to_vec();
+        let mut found = None;
+        for packing_id in packings {
+            if let Some(crate::sppf::SppfNode::Packing { rule_idx, children, .. }) =
+                self.sppf.node(packing_id)
+            {
+                if !self.packing_satisfies_min_terminal_span(*rule_idx, children, sym_lo, sym_hi) {
+                    if trace_actions_enabled() {
+                        eprintln!(
+                            "[wpds-action] witness symbol sid={} nt={} packing={} reject=min-span node={}",
+                            symbol_id,
+                            non_terminal_tag,
+                            packing_id,
+                            self.sppf_trace_summary(packing_id)
+                        );
+                    }
+                    continue;
+                }
+            }
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] witness symbol sid={} nt={} try packing={} node={}",
+                    symbol_id,
+                    non_terminal_tag,
+                    packing_id,
+                    self.sppf_trace_summary(packing_id)
+                );
+            }
+            let Some(term) = self.realize_packing_term_witness(cursor, packing_id, visiting) else {
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] witness symbol sid={} nt={} packing={} result=none",
+                        symbol_id, non_terminal_tag, packing_id
+                    );
+                }
+                continue;
+            };
+            if term
+                .output_cat
+                .is_some_and(|cat| cat as u32 != non_terminal_tag)
+            {
+                if trace_actions_enabled() {
+                    eprintln!(
+                        "[wpds-action] witness symbol sid={} nt={} packing={} reject=output-cat output_cat={:?}",
+                        symbol_id, non_terminal_tag, packing_id, term.output_cat
+                    );
+                }
+                continue;
+            }
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] witness symbol sid={} nt={} packing={} result=some output_cat={:?}",
+                    symbol_id, non_terminal_tag, packing_id, term.output_cat
+                );
+            }
+            found = Some(term);
+            break;
+        }
+        visiting.remove(&symbol_id);
+        found
+    }
+
+    fn realize_packing_term_witness(
+        &self,
+        cursor: &BranchCursor<W>,
+        packing_id: crate::sppf::SppfId,
+        visiting: &mut rustc_hash::FxHashSet<crate::sppf::SppfId>,
+    ) -> Option<SppfSymbolTerm> {
+        let (rule_idx, children) = match self.sppf.node(packing_id)? {
+            crate::sppf::SppfNode::Packing { rule_idx, children, .. } => {
+                (*rule_idx, children.clone())
+            },
+            _ => return None,
+        };
+        if rule_idx == Self::OPTIONAL_PRESENT_RULE_IDX {
+            return None;
+        }
+        let cat = (rule_idx >> 16) as u16;
+        let local_rule_idx = (rule_idx & 0xFFFF) as u16;
+        let trace_this = trace_actions_enabled();
+        let entry = self.engine.action_for(cat, local_rule_idx)?;
+        let arity = entry.arity as usize;
+        let action_children: Vec<crate::sppf::SppfId> = children
+            .iter()
+            .copied()
+            .filter(|&c| {
+                !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
+            })
+            .collect();
+        if action_children.len() != arity || entry.expected_input_cats.len() != arity {
+            if trace_this {
+                eprintln!(
+                    "[wpds-action] witness packing={} reject=arity cat={} rule={} action_children={} arity={} expected_len={}",
+                    packing_id,
+                    cat,
+                    local_rule_idx,
+                    action_children.len(),
+                    arity,
+                    entry.expected_input_cats.len()
+                );
+            }
+            return None;
+        }
+        for (&sid, &expected_cat) in action_children.iter().zip(entry.expected_input_cats.iter()) {
+            if expected_cat == crate::wpda_runtime::ANY_CAT {
+                continue;
+            }
+            match self.sppf.node(sid) {
+                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                    if *non_terminal_tag == expected_cat as u32 => {},
+                _ => {
+                    if trace_this {
+                        eprintln!(
+                            "[wpds-action] witness packing={} reject=expected-cat cat={} rule={} sid={} expected={} node={}",
+                            packing_id,
+                            cat,
+                            local_rule_idx,
+                            sid,
+                            expected_cat,
+                            self.sppf_trace_summary(sid)
+                        );
+                    }
+                    return None;
+                },
+            }
+        }
+        let args: Option<Vec<ActionArg>> = action_children
+            .iter()
+            .map(|&sid| self.reconstruct_action_arg_inner(cursor, sid, visiting))
+            .collect();
+        let args = args?;
+        if trace_this {
+            let arg_shapes: Vec<&'static str> =
+                args.iter().map(Self::action_arg_trace_shape).collect();
+            eprintln!(
+                "[wpds-action] witness packing={} args cat={} rule={} shapes={:?}",
+                packing_id, cat, local_rule_idx, arg_shapes
+            );
+        }
+
+        let mut sb = SemanticBuilder::new();
+        let collection_ids = Self::collection_ids_in_args(&args);
+        Self::preallocate_collection_slots(&mut sb, &collection_ids);
+        for id in &collection_ids {
+            let items = self
+                .collection_items_for_action_children(&action_children, *id)
+                .unwrap_or(&[]);
+            for &item_sid in items {
+                if let Some(ActionArg::Term { value, .. }) =
+                    self.reconstruct_action_arg_inner(cursor, item_sid, visiting)
+                {
+                    sb.push_term_arc(value);
+                    sb.push_to_collection(*id);
+                }
+            }
+        }
+        for arg in &args {
+            match arg {
+                ActionArg::Token { kind, text, pos } => {
+                    sb.push_token(kind.clone(), text.clone(), *pos);
+                },
+                ActionArg::Ident { name, pos } => {
+                    sb.push_ident(name.clone(), *pos);
+                },
+                ActionArg::Term { value, .. } => {
+                    sb.push_term_arc(Arc::clone(value));
+                },
+                ActionArg::CollectionId(id) => {
+                    sb.push_collection_id(*id);
+                },
+                ActionArg::Predicate(p) => {
+                    sb.push_predicate_arc(Arc::clone(p));
+                },
+                ActionArg::Optional(_)
+                | ActionArg::Collection { .. }
+                | ActionArg::BinderScope(_) => {
+                    sb.push_raw_arg(arg.clone());
+                },
+            }
+        }
+        let pre_len = sb.len();
+        if pre_len < arity {
+            if trace_this {
+                eprintln!(
+                    "[wpds-action] witness packing={} reject=pre-underflow cat={} rule={} pre_len={} arity={}",
+                    packing_id, cat, local_rule_idx, pre_len, arity
+                );
+            }
+            return None;
+        }
+        let popped = sb.pop_args(arity);
+        (entry.action_fn)(&mut sb, popped);
+        let expected_len = pre_len.saturating_sub(arity).saturating_add(1);
+        if sb.len() != expected_len {
+            if trace_this {
+                eprintln!(
+                    "[wpds-action] witness packing={} reject=post-len cat={} rule={} post_len={} expected={}",
+                    packing_id,
+                    cat,
+                    local_rule_idx,
+                    sb.len(),
+                    expected_len
+                );
+            }
+            return None;
+        }
+        let output_cat = sb
+            .top_term_type_name()
+            .and_then(|tn| self.engine.cat_of_type_name(tn));
+        let value = sb.take_dyn_result()?;
+        if trace_this {
+            eprintln!(
+                "[wpds-action] witness packing={} success cat={} rule={} output_cat={:?}",
+                packing_id, cat, local_rule_idx, output_cat
+            );
+        }
+        Some(SppfSymbolTerm { value, output_cat })
     }
 
     fn collect_collection_ids_from_arg(arg: &ActionArg, seen: &mut [bool; 256], out: &mut Vec<u8>) {
@@ -12090,6 +12714,7 @@ where
         let entry = self.engine.action_for(cat_src_idx, local_rule_idx)?;
         let arity = entry.arity as usize;
         let action_fn = entry.action_fn;
+        let trace_this_action = trace_actions_enabled();
 
         // Filter TriggerTerminal children — same filter as
         // `realize_packing_call` (line 3739-3746). TriggerTerminals
@@ -12101,10 +12726,60 @@ where
                 !matches!(self.sppf.node(c), Some(crate::sppf::SppfNode::TriggerTerminal { .. }))
             })
             .collect();
+        if trace_this_action {
+            let child_summaries: Vec<String> = children
+                .iter()
+                .map(|&sid| self.sppf_trace_summary(sid))
+                .collect();
+            let action_child_summaries: Vec<String> = action_children
+                .iter()
+                .map(|&sid| self.sppf_trace_summary(sid))
+                .collect();
+            eprintln!(
+                "[wpds-action] transient start cat={} rule={} pos={} arity={} children={:?} action_children={:?}",
+                cat_src_idx,
+                local_rule_idx,
+                cursor.pos,
+                arity,
+                child_summaries,
+                action_child_summaries,
+            );
+        }
         if action_children.len() != arity {
             // Arity mismatch — action would fail; mirror persistent
             // path's behavior by returning None.
+            if trace_this_action {
+                eprintln!(
+                    "[wpds-action] transient reject cat={} rule={} reason=arity action_children={} expected={}",
+                    cat_src_idx,
+                    local_rule_idx,
+                    action_children.len(),
+                    arity,
+                );
+            }
             return None;
+        }
+        for (&sid, &expected_cat) in action_children.iter().zip(entry.expected_input_cats.iter()) {
+            if expected_cat == crate::wpda_runtime::ANY_CAT {
+                continue;
+            }
+            match self.sppf.node(sid) {
+                Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. })
+                    if *non_terminal_tag == expected_cat as u32 => {},
+                _ => {
+                    if trace_this_action {
+                        eprintln!(
+                            "[wpds-action] transient reject cat={} rule={} reason=expected-cat sid={} expected={} node={}",
+                            cat_src_idx,
+                            local_rule_idx,
+                            sid,
+                            expected_cat,
+                            self.sppf_trace_summary(sid),
+                        );
+                    }
+                    return None;
+                },
+            }
         }
 
         // Reconstruct ActionArgs.
@@ -12112,7 +12787,28 @@ where
             .iter()
             .map(|&sid| self.reconstruct_action_arg(cursor, sid))
             .collect();
-        let args = args?;
+        let args = match args {
+            Some(args) => args,
+            None => {
+                if trace_this_action {
+                    eprintln!(
+                        "[wpds-action] transient reject cat={} rule={} reason=reconstruct action_children={:?}",
+                        cat_src_idx,
+                        local_rule_idx,
+                        action_children
+                    );
+                }
+                return None;
+            },
+        };
+        if trace_this_action {
+            let arg_shapes: Vec<&'static str> =
+                args.iter().map(Self::action_arg_trace_shape).collect();
+            eprintln!(
+                "[wpds-action] transient args cat={} rule={} shapes={:?}",
+                cat_src_idx, local_rule_idx, arg_shapes
+            );
+        }
 
         // Build transient SB. Pre-allocate collection slots for every
         // CollectionId reachable in the action args. CollectionId can be
@@ -12164,15 +12860,38 @@ where
         // Fire. Mirror fire_action_for_on_builder's pre/post check.
         let pre_len = sb.len();
         if pre_len < arity {
+            if trace_this_action {
+                eprintln!(
+                    "[wpds-action] transient reject cat={} rule={} reason=pre-underflow pre_len={} arity={}",
+                    cat_src_idx, local_rule_idx, pre_len, arity
+                );
+            }
             return None;
         }
         let pre_collection_len = sb.collection_stack_len();
         let pre_action_len = sb.len();
         let popped = sb.pop_args(arity);
+        if trace_this_action {
+            let popped_shapes: Vec<&'static str> =
+                popped.iter().map(Self::action_arg_trace_shape).collect();
+            eprintln!(
+                "[wpds-action] transient pop cat={} rule={} popped={:?}",
+                cat_src_idx, local_rule_idx, popped_shapes
+            );
+        }
         action_fn(&mut sb, popped);
         let expected_len = pre_action_len.saturating_sub(arity).saturating_add(1);
         if sb.len() != expected_len {
             // Action elided (cross-cat-incompatible arg). Return None.
+            if trace_this_action {
+                eprintln!(
+                    "[wpds-action] transient reject cat={} rule={} reason=post-len post_len={} expected={}",
+                    cat_src_idx,
+                    local_rule_idx,
+                    sb.len(),
+                    expected_len,
+                );
+            }
             return None;
         }
         let post_collection_len = sb.collection_stack_len();
@@ -12185,6 +12904,12 @@ where
         // builder.stack as an Arc<dyn Any>. Mirror semantic with
         // realize_packing_call line 3955+.
         let result_arc = sb.take_dyn_result()?;
+        if trace_this_action {
+            eprintln!(
+                "[wpds-action] transient success cat={} rule={} output_cat={:?} drains={}",
+                cat_src_idx, local_rule_idx, output_cat, drains_count
+            );
+        }
         Some((result_arc, output_cat, drains_count))
     }
 
@@ -12388,8 +13113,7 @@ where
                         cat_src_idx, local_rule_idx,
                     );
                     let err = WpdaState::Error { message };
-                    cursor.inner_state = err.clone();
-                    self.state = err;
+                    cursor.inner_state = err;
                     cursor.last_action_output_cat = None;
                     return;
                 },
@@ -12407,12 +13131,18 @@ where
                 (_, Some((result_arc, output_cat, drains_count))) => {
                     // Successful fire. Update mirror + collection depth
                     // from transient's post-fire state.
-                    cursor.last_action_output_cat = output_cat;
                     cursor.collection_stack_depth = cursor
                         .collection_stack_depth
                         .saturating_sub(drains_count as u8);
                     // SPPF intern the Packing+Symbol first to get symbol_id
                     // for the memo key.
+                    let token_sound = self.packing_satisfies_min_terminal_span(
+                        global_rule_idx,
+                        &children,
+                        lo_pos,
+                        hi_pos,
+                    );
+                    cursor.last_action_output_cat = if token_sound { output_cat } else { None };
                     let packing_weight =
                         std::mem::replace(&mut cursor.pending_packing_weight, W::one_ref());
                     let packing_id =
@@ -12420,19 +13150,31 @@ where
                             .intern_packing(global_rule_idx, children, packing_weight);
                     let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
                     self.sppf.link_packing_to_symbol(symbol_id, packing_id);
+                    if trace_actions_enabled() {
+                        eprintln!(
+                            "[wpds-action] intern success cat={} rule={} token_sound={} symbol={} packing={}",
+                            cat_src_idx,
+                            local_rule_idx,
+                            token_sound,
+                            self.sppf_trace_summary(symbol_id),
+                            self.sppf_trace_summary(packing_id)
+                        );
+                    }
                     // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
                     // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
                     cursor.sppf_stack_id = self
                         .sppf_stack_arena
                         .intern_push(cursor.sppf_stack_id, symbol_id);
                     // Phase F.13 H1 (2026-05-20): write to walker-global
-                    // memo. Insert is idempotent — same SymbolId from a
-                    // different cursor yields an equivalent result_arc.
-                    // Using insert (not entry().or_insert) because the
-                    // fresh result is fully realized whereas a stale
-                    // entry from a prior parse (cleared by reset) would
-                    // not exist within a single parse session.
-                    self.sppf_symbol_terms.insert(symbol_id, result_arc);
+                    // memo only for token-sound packings. Token-unsound
+                    // synthesized cast packings remain in the SPPF so final
+                    // realization can reject them structurally, but they must
+                    // not become ActionArg::Term inputs to later semantic
+                    // actions.
+                    if token_sound {
+                        self.sppf_symbol_terms
+                            .insert(symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
+                    }
                     return;
                 },
             }
@@ -12447,6 +13189,15 @@ where
                 .intern_packing(global_rule_idx, children, packing_weight);
             let symbol_id = self.sppf.intern_symbol(cat_src_idx as u32, lo_pos, hi_pos);
             self.sppf.link_packing_to_symbol(symbol_id, packing_id);
+            if trace_actions_enabled() {
+                eprintln!(
+                    "[wpds-action] intern no-action cat={} rule={} symbol={} packing={}",
+                    cat_src_idx,
+                    local_rule_idx,
+                    self.sppf_trace_summary(symbol_id),
+                    self.sppf_trace_summary(packing_id)
+                );
+            }
             // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
             // arena.intern_push replaces Arc::make_mut(&mut sppf_stack).push.
             cursor.sppf_stack_id = self
@@ -13594,6 +14345,8 @@ where
         // the caller (mirrors `child_visited_dispatch`). Moved into the
         // worker cursor below.
         child_visited_proj_descriptors: im::OrdSet<ProjDescriptorKey>,
+        trigger_terminal: Option<ForkTriggerTerminal>,
+        push_edge_kind: Option<crate::gss::EdgeKind>,
         lex_fork_stamp: Option<LexForkStamp>,
         child_source_priority: u32,
     ) -> Vec<BranchCursor<W>> {
@@ -13652,7 +14405,13 @@ where
                     // returns false; fall through to per-cursor sub-parse
                     // so the cursor is not lost.
                     let member = crate::dispatch_cohort::CohortMember {
-                        return_frame: Self::parent_frame_with_lex_stamp(parent, lex_fork_stamp),
+                        return_frame: self.parent_frame_with_fork_metadata(
+                            parent,
+                            lex_fork_stamp,
+                            trigger_terminal.as_ref(),
+                            branch.symbol.category_src_idx,
+                            branch.symbol.rule_index_in_category,
+                        ),
                         weight_at_dispatch: parent.weight.times_ref(&branch.weight),
                     };
                     // Sig-B Blocker-2 §3d (2026-05-31, pgmcp experiment #9):
@@ -13727,7 +14486,13 @@ where
                             continue;
                         }
                         let synthetic_member = crate::dispatch_cohort::CohortMember {
-                            return_frame: Self::parent_frame_with_lex_stamp(parent, lex_fork_stamp),
+                            return_frame: self.parent_frame_with_fork_metadata(
+                                parent,
+                                lex_fork_stamp,
+                                trigger_terminal.as_ref(),
+                                branch.symbol.category_src_idx,
+                                branch.symbol.rule_index_in_category,
+                            ),
                             weight_at_dispatch: synthetic_weight_at_dispatch.clone(),
                         };
                         let revived = self.revive_cohort_member_with_snapshot(
@@ -13749,7 +14514,13 @@ where
                     // (dispatch_cohort.rs:412-432) and honors
                     // MAX_PENDING_COHORT_PER_KEY cap.
                     let future_member = crate::dispatch_cohort::CohortMember {
-                        return_frame: Self::parent_frame_with_lex_stamp(parent, lex_fork_stamp),
+                        return_frame: self.parent_frame_with_fork_metadata(
+                            parent,
+                            lex_fork_stamp,
+                            trigger_terminal.as_ref(),
+                            branch.symbol.category_src_idx,
+                            branch.symbol.rule_index_in_category,
+                        ),
                         weight_at_dispatch: synthetic_weight_at_dispatch,
                     };
                     let _ = self
@@ -13804,6 +14575,16 @@ where
         if let Some(stamp) = lex_fork_stamp {
             std::sync::Arc::make_mut(&mut child.lex_fork_path).push(stamp);
         }
+        if let Some(trigger) = trigger_terminal.as_ref() {
+            self.emit_push_trigger_terminal(
+                &mut child,
+                trigger.kind.clone(),
+                &trigger.text,
+                trigger.pos,
+                symbol.category_src_idx,
+                symbol.rule_index_in_category,
+            );
+        }
         self.emit_push_side_effects(&mut child, &mut symbol);
         if let WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } = &branch.new_state {
             let kind = crate::gss::EdgeKind::CrossCatProjection {
@@ -13814,19 +14595,36 @@ where
             };
             let _ =
                 self.cursor_gss_push_with_kind(&mut child, symbol, pos_after, branch.weight, kind);
+        } else if let Some(kind) = push_edge_kind {
+            let _ =
+                self.cursor_gss_push_with_kind(&mut child, symbol, pos_after, branch.weight, kind);
         } else {
             let _ = self.cursor_gss_push_auto(&mut child, symbol, pos_after, branch.weight);
         }
         vec![child]
     }
 
-    fn parent_frame_with_lex_stamp(
+    fn parent_frame_with_fork_metadata(
+        &mut self,
         parent: &BranchCursor<W>,
         stamp: Option<LexForkStamp>,
+        trigger_terminal: Option<&ForkTriggerTerminal>,
+        owner_cat: u16,
+        owner_rule_idx: u16,
     ) -> BranchCursor<W> {
         let mut frame = parent.clone();
         if let Some(stamp) = stamp {
             std::sync::Arc::make_mut(&mut frame.lex_fork_path).push(stamp);
+        }
+        if let Some(trigger) = trigger_terminal {
+            self.emit_push_trigger_terminal(
+                &mut frame,
+                trigger.kind.clone(),
+                &trigger.text,
+                trigger.pos,
+                owner_cat,
+                owner_rule_idx,
+            );
         }
         frame
     }
@@ -13875,24 +14673,28 @@ where
         // min_terminal_span filter rejects any token-unsound packing).
         let lo = self.sppf.span_lo(body_symbol_id)?;
         let hi = self.sppf.span_hi(body_symbol_id)?;
+        let global_rule_idx: u32 = ((coercion_cat as u32) << 16) | (coercion_rule as u32);
+        if !self.packing_satisfies_min_terminal_span(global_rule_idx, &[body_symbol_id], lo, hi) {
+            return None;
+        }
         // Fire the coercion action over [body_symbol_id] via the read-only
         // transient (the SAME path emit_fire_action uses). A probe cursor
         // suffices — reconstruct_action_arg reads sppf_symbol_terms by sid.
         let coercion_symbol = StackSymbolV2::rule_at(coercion_cat, coercion_rule, 0, None);
         let probe = self.make_probe_cursor();
-        let (result_arc, _output_cat, _drains) =
+        let (result_arc, output_cat, _drains) =
             self.fire_action_via_transient(&probe, coercion_symbol, &[body_symbol_id])?;
         // Intern Packing(coercion_rule, [body]) + Symbol(coercion_cat, lo, hi),
         // link, and store the realized Term keyed by the new Symbol id (so a
         // subsequent fire consuming THIS Symbol as a child reconstructs it).
-        let global_rule_idx: u32 = ((coercion_cat as u32) << 16) | (coercion_rule as u32);
         let packing_id =
             self.sppf
                 .intern_packing(global_rule_idx, vec![body_symbol_id], W::one_ref());
         let wrapped_symbol_id = self.sppf.intern_symbol(coercion_cat as u32, lo, hi);
         self.sppf
             .link_packing_to_symbol(wrapped_symbol_id, packing_id);
-        self.sppf_symbol_terms.insert(wrapped_symbol_id, result_arc);
+        self.sppf_symbol_terms
+            .insert(wrapped_symbol_id, SppfSymbolTerm { value: result_arc, output_cat });
         Some(wrapped_symbol_id)
     }
 
@@ -14032,6 +14834,20 @@ where
             .incoming_edge_stack_arena
             .len(cursor.incoming_edge_stack_id) as u32;
         cursor.inner_state = snap.worker_inner_state.clone();
+        if trace_actions_enabled() {
+            eprintln!(
+                "[wpds-action] cohort revive key=pos:{} src:{} bp:{} wrap=({},{}) dispatch_pos={} hi={} symbol={} state={:?}",
+                pos_at_dispatch,
+                source_src_idx,
+                inner_cur_bp,
+                wrap_cat,
+                wrap_rule,
+                pos_at_dispatch,
+                hi_pos,
+                self.sppf_trace_summary(symbol_id),
+                cursor.inner_state
+            );
+        }
         // Stage 1.5.3R-d: observability counter.
         self.dispatch_cohort_cache.cohort_cursors_emitted_total += 1;
         // Stage 1.5.3R-d: invariant — origin is set IFF depth is set.
@@ -14042,8 +14858,85 @@ where
         cursor
     }
 
+    #[inline(always)]
+    fn gss_node_is_root_sentinel(&self, node: crate::gss::GssNodeId) -> bool {
+        if node == crate::gss::GSS_NODE_NONE || (node == 0 && self.gss.node(0).is_none()) {
+            return true;
+        }
+        self.gss
+            .node(node)
+            .map(|n| {
+                n.symbol.kind == SymbolKind::CategoryEntry
+                    && n.symbol.category_src_idx == 0
+                    && self.gss.edges_from(node).is_empty()
+            })
+            .unwrap_or(false)
+    }
+
+    #[inline(always)]
+    fn auto_edge_kind_for_push(
+        &self,
+        predecessor: crate::gss::GssNodeId,
+        sym: &StackSymbolV2,
+    ) -> crate::gss::EdgeKind {
+        if sym.kind == SymbolKind::CategoryEntry {
+            if self.gss_node_is_root_sentinel(predecessor) {
+                crate::gss::EdgeKind::CategoryEntryRoot
+            } else {
+                crate::gss::EdgeKind::Generic
+            }
+        } else {
+            crate::gss::EdgeKind::from_symbol(sym)
+        }
+    }
+
+    #[inline(always)]
+    fn edge_kind_for_push_transition(
+        &self,
+        predecessor: crate::gss::GssNodeId,
+        sym: &StackSymbolV2,
+        new_state: &WpdaState,
+    ) -> crate::gss::EdgeKind {
+        if let WpdaState::CrossCatDelegate { source_src_idx, inner_cur_bp } = new_state {
+            crate::gss::EdgeKind::CrossCatProjection {
+                source_src_idx: *source_src_idx,
+                inner_cur_bp: *inner_cur_bp,
+                wrap_cat: sym.category_src_idx,
+                wrap_rule: sym.rule_index_in_category,
+            }
+        } else {
+            self.auto_edge_kind_for_push(predecessor, sym)
+        }
+    }
+
+    #[inline(always)]
+    fn auto_edge_kind_for_replace(
+        &self,
+        cursor: &BranchCursor<W>,
+        sym: &StackSymbolV2,
+    ) -> crate::gss::EdgeKind {
+        if sym.kind != SymbolKind::CategoryEntry {
+            return crate::gss::EdgeKind::from_symbol(sym);
+        }
+        let predecessor = self
+            .incoming_edge_stack_arena
+            .top(cursor.incoming_edge_stack_id)
+            .and_then(|edge_id| self.gss.edge_target(edge_id));
+        if predecessor
+            .map(|target| self.gss_node_is_root_sentinel(target))
+            .unwrap_or(false)
+        {
+            crate::gss::EdgeKind::CategoryEntryRoot
+        } else {
+            crate::gss::EdgeKind::Generic
+        }
+    }
+
     /// Phase F.13 H13 Step 0 (2026-05-21): `cursor_gss_push` variant that
-    /// AUTO-DERIVES the `EdgeKind` from the StackSymbolV2's SymbolKind.
+    /// AUTO-DERIVES the `EdgeKind` from the stack symbol and the concrete
+    /// predecessor context. CategoryEntryRoot is reserved for true root
+    /// sentinel pushes; non-root CategoryEntry continuations are
+    /// identity-strict Generic edges.
     /// This is the default path post-H13: every push site automatically
     /// gets a semantic-aware tag without per-site changes. Override with
     /// `cursor_gss_push_with_kind` when the caller has richer context
@@ -14056,7 +14949,7 @@ where
         pos: usize,
         w: W,
     ) -> crate::gss::GssNodeId {
-        let kind = crate::gss::EdgeKind::from_symbol(&sym);
+        let kind = self.auto_edge_kind_for_push(cursor.node, &sym);
         self.cursor_gss_push_with_kind(cursor, sym, pos, w, kind)
     }
 
@@ -14088,6 +14981,7 @@ where
         &mut self,
         cursor: &mut BranchCursor<W>,
         pred_id: crate::gss::GssNodeId,
+        popped_edge_kind: Option<&crate::gss::EdgeKind>,
         popped_symbol: Option<StackSymbolV2>,
         weight: &W,
         new_state: WpdaState,
@@ -14318,6 +15212,65 @@ where
         }
         self.multiply_cursor_weight(cursor, weight);
 
+        let mut effective_new_state = new_state;
+        if let Some(popped) = popped_symbol {
+            if popped.kind == SymbolKind::CategoryEntry {
+                // The generated Unwinding-CategoryEntry arm can only inspect
+                // the shared GSS node and historically used the first outgoing
+                // edge to guess the predecessor kind. That is unsound for a
+                // Tomita/GSS node with multiple outgoing edges: this cursor's
+                // exact predecessor is the edge followed by
+                // cursor_gss_pop_via_edge. Recompute the control state from
+                // that exact predecessor here.
+                match self.gss.node(pred_id).map(|n| n.symbol.kind) {
+                    Some(SymbolKind::CategoryEntry) => {
+                        effective_new_state = WpdaState::InfixLoop { cur_bp: 0 };
+                    },
+                    Some(SymbolKind::GroupingMarker) => {
+                        if !matches!(
+                            effective_new_state,
+                            WpdaState::GroupingClosePreservingInner { .. }
+                        ) {
+                            effective_new_state = WpdaState::Unwinding;
+                        }
+                    },
+                    Some(_) => {
+                        effective_new_state = WpdaState::Unwinding;
+                    },
+                    None if pred_id == crate::gss::GSS_NODE_NONE => {
+                        effective_new_state = WpdaState::InfixLoop { cur_bp: 0 };
+                    },
+                    None => {
+                        effective_new_state = WpdaState::Unwinding;
+                    },
+                }
+            }
+        }
+        if let (Some(crate::gss::EdgeKind::CrossCatLhs { source_src_idx }), Some(popped)) =
+            (popped_edge_kind, popped_symbol)
+        {
+            if popped.kind == SymbolKind::CategoryEntry
+                && pred_id != crate::gss::GSS_NODE_NONE
+                && matches!(
+                    &effective_new_state,
+                    WpdaState::InfixLoop { .. } | WpdaState::Unwinding
+                )
+            {
+                let source_entry = StackSymbolV2::category_entry(*source_src_idx);
+                // This is not a root-sentinel CategoryEntry push. It is a
+                // one-pass re-entry above this cursor's concrete predecessor,
+                // so the edge must remain identity-strict.
+                let _ = self.cursor_gss_push_with_kind(
+                    cursor,
+                    source_entry,
+                    cursor.pos,
+                    W::one_ref(),
+                    crate::gss::EdgeKind::CrossCatLhsReentry { source_src_idx: *source_src_idx },
+                );
+                effective_new_state = WpdaState::InfixLoop { cur_bp: 0 };
+            }
+        }
+
         // D-strings non-grouping cat fix (2026-05-13): when a cross-cat
         // infix Return just popped, the new GSS top may be a
         // `CategoryEntry` whose category is the OPERAND cat (e.g., Str
@@ -14402,9 +15355,9 @@ where
         // `cat_of_type_name` returns `None`, fall back to the popped
         // CategoryEntry's cat (preserves pre-D8 behavior for engines
         // that don't override the trait default — test mocks).
-        let resolved_new_state = match new_state {
+        let resolved_new_state = match &effective_new_state {
             WpdaState::GroupingClosePreservingInner { inner_cat_src_idx }
-                if inner_cat_src_idx == u16::MAX =>
+                if *inner_cat_src_idx == u16::MAX =>
             {
                 // Phase F.3b (2026-05-20): consume the walker-maintained
                 // mirror set by F.3a. Byte-equivalent to the prior
@@ -14416,7 +15369,7 @@ where
                     .unwrap_or_else(|| popped_symbol.map(|s| s.category_src_idx).unwrap_or(0u16));
                 WpdaState::GroupingClosePreservingInner { inner_cat_src_idx: resolved }
             },
-            other => other,
+            other => other.clone(),
         };
         // Phase 5.5 (2026-05-12): preserve Error state if emit_fire_action's
         // eager fire set it (arity underflow). Without this guard, the
@@ -14450,13 +15403,14 @@ where
     fn cursor_gss_pop_via_edge(
         &mut self,
         cursor: &mut BranchCursor<W>,
-    ) -> Option<crate::gss::GssNodeId> {
+    ) -> (crate::gss::GssNodeId, Option<crate::gss::EdgeKind>) {
         // Phase F.13 chain_10000 Plan D E6 Substage 2 (2026-05-26):
         // arena.top peeks pre-pop value; arena.intern_pop updates the
         // cursor's StackId to the predecessor chain (or ROOT for empty).
         let edge_id = self
             .incoming_edge_stack_arena
             .top(cursor.incoming_edge_stack_id);
+        let popped_edge_kind = edge_id.and_then(|e| self.gss.edge_kind(e));
         cursor.incoming_edge_stack_id = self
             .incoming_edge_stack_arena
             .intern_pop(cursor.incoming_edge_stack_id);
@@ -14485,53 +15439,82 @@ where
                     // (2026-05-26): arena.top replaces sppf_stack.last().
                     let symbol_id_opt = self.sppf_stack_arena.top(cursor.sppf_stack_id);
                     if let Some(symbol_id) = symbol_id_opt {
-                        // M4 (2026-05-30, re-landed): reconstruct the WIDENED
-                        // cohort key from the EdgeKind's wrap discriminator so
-                        // resolve() targets the SAME entry the worker
-                        // registered under (per distinct wrap rule).
-                        let key = crate::dispatch_cohort::DispatchKey::new(
-                            dispatch_pos_usize,
-                            source_src_idx,
-                            inner_cur_bp,
-                            wrap_cat,
-                            wrap_rule,
-                        );
-                        // Stage 1.5 (2026-05-21): construct a per-pop
-                        // WorkerSnapshot. The resolve() call accumulates
-                        // snapshots from sibling workers; end-of-step
-                        // drain fans out `paused × snapshots` revived
-                        // cursors per cache key.
-                        // Stage 1.5.3 (2026-05-21): retrieve the root
-                        // worker's pre-dispatch weight that was stashed
-                        // at register time. Falls back to one() if no
-                        // entry — unreachable in normal flow.
-                        let worker_pre = self
-                            .dispatch_cohort_cache
-                            .read_worker_pre(&key)
-                            .unwrap_or_else(W::one_ref);
-                        let snap = crate::dispatch_cohort::WorkerSnapshot {
-                            worker_inner_state: cursor.inner_state.clone(),
-                            worker_last_action_output_cat: cursor.last_action_output_cat,
-                            worker_pending_packing_weight: cursor.pending_packing_weight.clone(),
-                            worker_weight: cursor.weight.clone(),
-                            worker_pre_dispatch_weight: worker_pre,
+                        let symbol_cat = match self.sppf.node(symbol_id) {
+                            Some(crate::sppf::SppfNode::Symbol { non_terminal_tag, .. }) => {
+                                Some(*non_terminal_tag as u16)
+                            },
+                            _ => None,
                         };
-                        let outcome = self.dispatch_cohort_cache.resolve(
-                            key.clone(),
-                            symbol_id,
-                            cursor.pos,
-                            dispatch_pos_usize,
-                            snap,
-                        );
-                        match outcome {
-                            crate::dispatch_cohort::ResolveOutcome::FirstResolve => {
-                                self.pending_cohort_drain_keys.insert(key);
-                            },
-                            crate::dispatch_cohort::ResolveOutcome::SnapshotAppended => {
-                                // Drain already scheduled by FirstResolve.
-                                self.pending_cohort_drain_keys.insert(key);
-                            },
-                            crate::dispatch_cohort::ResolveOutcome::NoOp => {},
+                        // A CrossCatProjection key `source_src_idx` promises
+                        // that the delegated body resolves to that category.
+                        // A different SPPF top can exist on sibling paths
+                        // after cross-category infix continuation, but it is
+                        // not a valid body for this projection and must not
+                        // populate the cohort cache.
+                        if symbol_cat == Some(source_src_idx) {
+                            // M4 (2026-05-30, re-landed): reconstruct the WIDENED
+                            // cohort key from the EdgeKind's wrap discriminator so
+                            // resolve() targets the SAME entry the worker
+                            // registered under (per distinct wrap rule).
+                            let key = crate::dispatch_cohort::DispatchKey::new(
+                                dispatch_pos_usize,
+                                source_src_idx,
+                                inner_cur_bp,
+                                wrap_cat,
+                                wrap_rule,
+                            );
+                            // Stage 1.5 (2026-05-21): construct a per-pop
+                            // WorkerSnapshot. The resolve() call accumulates
+                            // snapshots from sibling workers; end-of-step
+                            // drain fans out `paused × snapshots` revived
+                            // cursors per cache key.
+                            // Stage 1.5.3 (2026-05-21): retrieve the root
+                            // worker's pre-dispatch weight that was stashed
+                            // at register time. Falls back to one() if no
+                            // entry — unreachable in normal flow.
+                            let worker_pre = self
+                                .dispatch_cohort_cache
+                                .read_worker_pre(&key)
+                                .unwrap_or_else(W::one_ref);
+                            let snap = crate::dispatch_cohort::WorkerSnapshot {
+                                worker_inner_state: cursor.inner_state.clone(),
+                                worker_last_action_output_cat: cursor.last_action_output_cat,
+                                worker_pending_packing_weight: cursor
+                                    .pending_packing_weight
+                                    .clone(),
+                                worker_weight: cursor.weight.clone(),
+                                worker_pre_dispatch_weight: worker_pre,
+                            };
+                            let outcome = self.dispatch_cohort_cache.resolve(
+                                key.clone(),
+                                symbol_id,
+                                cursor.pos,
+                                dispatch_pos_usize,
+                                snap,
+                            );
+                            if trace_actions_enabled() {
+                                eprintln!(
+                                    "[wpds-action] cohort resolve key=pos:{} src:{} bp:{} wrap=({},{}) hi={} symbol={} outcome={:?}",
+                                    dispatch_pos_usize,
+                                    source_src_idx,
+                                    inner_cur_bp,
+                                    wrap_cat,
+                                    wrap_rule,
+                                    cursor.pos,
+                                    self.sppf_trace_summary(symbol_id),
+                                    outcome
+                                );
+                            }
+                            match outcome {
+                                crate::dispatch_cohort::ResolveOutcome::FirstResolve => {
+                                    self.pending_cohort_drain_keys.insert(key);
+                                },
+                                crate::dispatch_cohort::ResolveOutcome::SnapshotAppended => {
+                                    // Drain already scheduled by FirstResolve.
+                                    self.pending_cohort_drain_keys.insert(key);
+                                },
+                                crate::dispatch_cohort::ResolveOutcome::NoOp => {},
+                            }
                         }
                     }
                 }
@@ -14557,7 +15540,7 @@ where
             cursor.cohort_revive_depth = 0;
             self.dispatch_cohort_cache.cohort_cursors_graduated_total += 1;
         }
-        target
+        (cursor.node, popped_edge_kind)
     }
 
     // Phase 5.6-tail follow-up (2026-05-12): `cursor_gss_pop_all`
@@ -14578,7 +15561,7 @@ where
         pos: usize,
         w: W,
     ) -> crate::gss::GssNodeId {
-        let kind = crate::gss::EdgeKind::from_symbol(&sym);
+        let kind = self.auto_edge_kind_for_replace(cursor, &sym);
         self.cursor_gss_replace_top_with_kind(cursor, sym, pos, w, kind)
     }
 
@@ -14783,6 +15766,8 @@ pub struct CursorSnapshot<W: SemiringRef> {
     pub pos: usize,
     pub state: WpdaState,
     pub gss_node_id: crate::gss::GssNodeId,
+    pub gss_top: Option<StackSymbolV2>,
+    pub sppf_top: Option<crate::sppf::SppfId>,
     pub weight: W,
     pub source_priority: u32,
     pub pending_ops_len: usize,
@@ -14952,12 +15937,13 @@ const TRACE_STEPS: u8 = 1;
 const TRACE_CURSORS: u8 = 2;
 const TRACE_MERGES: u8 = 4;
 const TRACE_DROPS: u8 = 8;
-const TRACE_ALL: u8 = TRACE_STEPS | TRACE_CURSORS | TRACE_MERGES | TRACE_DROPS;
+const TRACE_ACTIONS: u8 = 16;
+const TRACE_ALL: u8 = TRACE_STEPS | TRACE_CURSORS | TRACE_MERGES | TRACE_DROPS | TRACE_ACTIONS;
 
 /// Reads `PRATTAIL_TRACE` env var on construction:
 /// - empty/unset → all bits 0, no output (still cheap-skips).
 /// - `"1"` or `"all"` → all bits set.
-/// - comma list `"steps,cursors,merges,drops"` → bitwise OR of named flags.
+/// - comma list `"steps,cursors,merges,drops,actions"` → bitwise OR of named flags.
 fn parse_trace_env() -> u8 {
     let raw = std::env::var("PRATTAIL_TRACE").unwrap_or_default();
     if raw.is_empty() {
@@ -14973,10 +15959,17 @@ fn parse_trace_env() -> u8 {
             "cursors" => bits |= TRACE_CURSORS,
             "merges" => bits |= TRACE_MERGES,
             "drops" => bits |= TRACE_DROPS,
+            "actions" => bits |= TRACE_ACTIONS,
             _ => {},
         }
     }
     bits
+}
+
+#[inline]
+fn trace_actions_enabled() -> bool {
+    static GATE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *GATE.get_or_init(|| (parse_trace_env() & TRACE_ACTIONS) != 0)
 }
 
 /// Env-gated stderr trace consumer for ad-hoc debugging.
@@ -15032,8 +16025,8 @@ impl<W: SemiringRef + std::fmt::Debug> CursorObserver<W> for EnvTracingConsumer 
             );
             for c in &snapshot.cursors {
                 eprintln!(
-                    "[wpds-trace]   cursor[{}] pos={} state={:?} node={} src_pri={} ops_len={} coll_depth={}",
-                    c.idx, c.pos, c.state, c.gss_node_id,
+                    "[wpds-trace]   cursor[{}] pos={} state={:?} node={} top={:?} sppf_top={:?} src_pri={} ops_len={} coll_depth={}",
+                    c.idx, c.pos, c.state, c.gss_node_id, c.gss_top, c.sppf_top,
                     c.source_priority, c.pending_ops_len, c.collection_depth,
                 );
             }
@@ -16413,7 +17406,8 @@ mod tests {
     /// - `Ready` → emits `Push(CategoryEntry)` + → `PrefixDispatch`
     /// - `PrefixDispatch` + sees Integer token → `ConsumeAndPush(Return)` + → `Unwinding`
     /// - `Unwinding` + frontier is `Return` → `Pop` + → `Unwinding`
-    /// - `Unwinding` + frontier is `CategoryEntry` → `Pop` + → `Accepted`
+    /// - `Unwinding` + frontier is `CategoryEntry` → `Pop` + → `InfixLoop`
+    /// - `InfixLoop` + no operator candidate → `Advance(Unwinding)`
     /// - `Unwinding` + no frontier → `Accept`
     struct AtomicIntEngine;
 
@@ -16452,10 +17446,11 @@ mod tests {
                     },
                     Some(SymbolKind::CategoryEntry) => WpdaStepAction::Pop {
                         weight: LexicographicWeight::one(),
-                        new_state: WpdaState::Accepted,
+                        new_state: WpdaState::InfixLoop { cur_bp: 0 },
                     },
-                    _ => WpdaStepAction::Idle,
+                    _ => WpdaStepAction::Accept,
                 },
+                WpdaState::InfixLoop { .. } => WpdaStepAction::Advance(WpdaState::Unwinding),
                 _ => WpdaStepAction::Idle,
             }
         }

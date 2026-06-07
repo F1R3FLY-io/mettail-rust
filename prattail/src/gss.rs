@@ -401,10 +401,11 @@ pub enum EdgeKind {
     /// when cursor.node is GSS_NODE_NONE or 0). All such edges target
     /// the universal sentinel frame.
     CategoryEntryRoot,
-    /// Cross-cat projection Fork branch: walker emits a Push to
-    /// `CategoryEntry(source_src_idx)` to delegate to a sub-cat parse.
-    /// Convergent: post-pop returns to the outer dispatch site whose
-    /// `(source_src_idx, inner_cur_bp)` are payload.
+    /// Cross-cat projection branch: walker emits a push and transitions to
+    /// `CrossCatDelegate` to delegate to a source-category parse. This applies
+    /// to both forked and singleton fast-path emissions. Convergent: post-pop
+    /// returns to the outer dispatch site whose `(source_src_idx, inner_cur_bp)`
+    /// are payload.
     ///
     /// M4 (2026-05-30, re-landed): ALSO carries the WRAPPING rule's
     /// `(wrap_cat, wrap_rule)` so the resolve site
@@ -421,6 +422,21 @@ pub enum EdgeKind {
         wrap_cat: u16,
         wrap_rule: u16,
     },
+    /// Anonymous cross-category LHS delegation. Prefix dispatch pushed a
+    /// `CategoryEntry(source_src_idx)` so the source category can parse the
+    /// left operand before the operator is known.
+    ///
+    /// This edge is identity-strict: after the source LHS returns, the walker
+    /// temporarily re-pushes the source category above this edge's concrete
+    /// predecessor for one infix pass. The predecessor is therefore part of
+    /// the semantic continuation and must not be erased by EdgeKind-only
+    /// equivalence.
+    CrossCatLhs { source_src_idx: u16 },
+    /// One-shot continuation produced after a `CrossCatLhs` source operand
+    /// has returned. Infix dispatch may use this as evidence that a
+    /// category-changing operator is allowed, but popping this edge must not
+    /// re-enter again.
+    CrossCatLhsReentry { source_src_idx: u16 },
     /// PrefixDispatch consumed a literal and pushed a `RuleAt` frame
     /// to begin parsing the rule's items. Payload = (cat, rule, item position).
     PrefixRuleEntry {
@@ -607,7 +623,7 @@ impl<W: SemiringRef> WpdaGss<W> {
         // pass a specific EdgeKind.
         let edges = self.edges.entry(source).or_default();
         for (idx, existing) in edges.iter_mut().enumerate() {
-            if existing.target == target {
+            if existing.target == target && existing.kind == EdgeKind::Generic {
                 existing.weight = existing.weight.plus_ref(&weight);
                 return pack_edge_id(source, idx);
             }
@@ -630,12 +646,8 @@ impl<W: SemiringRef> WpdaGss<W> {
     ) -> GssEdgeId {
         let edges = self.edges.entry(source).or_default();
         for (idx, existing) in edges.iter_mut().enumerate() {
-            if existing.target == target {
+            if existing.target == target && existing.kind == kind {
                 existing.weight = existing.weight.plus_ref(&weight);
-                // Dedup-on-plus: keep the existing edge's kind.
-                // (If the existing was Generic and new is specific,
-                // it would be valid to upgrade — defer to a later
-                // iteration to keep semantics simple here.)
                 return pack_edge_id(source, idx);
             }
         }
@@ -1107,6 +1119,41 @@ mod tests {
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target, root);
         assert_eq!(edges[0].weight.primary.0, 2.0);
+    }
+
+    #[test]
+    fn test_wpds_gss_edge_identity_includes_edge_kind() {
+        let mut g: WpdaGss<LexicographicWeight> = WpdaGss::new();
+        let target = g.get_or_create_node(WpdaGssNode {
+            pos: 0,
+            symbol: StackSymbolV2::category_entry(0),
+        });
+        let source = g.get_or_create_node(WpdaGssNode {
+            pos: 1,
+            symbol: StackSymbolV2::rule_at(0, 1, 0, None),
+        });
+
+        let root_edge =
+            g.add_edge_kind(source, target, lex(1.0, 0, 0), EdgeKind::CategoryEntryRoot);
+        let lhs_kind = EdgeKind::CrossCatLhs { source_src_idx: 2 };
+        let lhs_edge = g.add_edge_kind(source, target, lex(1.0, 0, 0), lhs_kind.clone());
+        let lhs_reentry_kind = EdgeKind::CrossCatLhsReentry { source_src_idx: 2 };
+        let lhs_reentry_edge =
+            g.add_edge_kind(source, target, lex(1.0, 0, 0), lhs_reentry_kind.clone());
+        let generic_edge = g.add_edge(source, target, lex(1.0, 0, 0));
+        let lhs_duplicate = g.add_edge_kind(source, target, lex(2.0, 0, 0), lhs_kind.clone());
+
+        assert_ne!(root_edge, lhs_edge);
+        assert_ne!(lhs_edge, lhs_reentry_edge);
+        assert_ne!(root_edge, generic_edge);
+        assert_ne!(lhs_edge, generic_edge);
+        assert_ne!(lhs_reentry_edge, generic_edge);
+        assert_eq!(lhs_duplicate, lhs_edge);
+        assert_eq!(g.edge_count(), 4);
+        assert_eq!(g.edge_kind(root_edge), Some(EdgeKind::CategoryEntryRoot));
+        assert_eq!(g.edge_kind(lhs_edge), Some(lhs_kind));
+        assert_eq!(g.edge_kind(lhs_reentry_edge), Some(lhs_reentry_kind));
+        assert_eq!(g.edge_kind(generic_edge), Some(EdgeKind::Generic));
     }
 
     #[test]

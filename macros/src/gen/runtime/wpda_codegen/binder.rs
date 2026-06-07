@@ -964,6 +964,40 @@ pub(crate) fn lookup_src_idx(name: &str, categories: &[String]) -> Option<u16> {
     categories.iter().position(|c| c == name).map(|i| i as u16)
 }
 
+fn first_param_cat_from_positions(positions: &[BinderPosition]) -> Option<&str> {
+    for position in positions {
+        match position {
+            BinderPosition::ParamParse { cat, .. } => return Some(cat.as_str()),
+            BinderPosition::BinderListLoop { collection_param_cat: Some(cat), .. } => {
+                return Some(cat.as_str());
+            },
+            BinderPosition::BinderListLoop { inner_positions, .. }
+            | BinderPosition::OptionalGroup { positions: inner_positions, .. } => {
+                if let Some(cat) = first_param_cat_from_positions(inner_positions) {
+                    return Some(cat);
+                }
+            },
+            BinderPosition::Literal(_)
+            | BinderPosition::BinderIdent
+            | BinderPosition::GuardSlot => {},
+        }
+    }
+    None
+}
+
+/// Category carried in the initial `BinderRule` state.
+///
+/// For true abstraction binders this is the abstraction body category. For
+/// multi-parameter non-binder rules there is no abstraction body, but cohort
+/// equivalence still needs the first parsed parameter category instead of the
+/// result category.
+pub(crate) fn binder_initial_body_cat(shape: &BinderShape) -> Option<&str> {
+    shape
+        .body_cat
+        .as_deref()
+        .or_else(|| first_param_cat_from_positions(&shape.positions))
+}
+
 /// Phase 5 + F7 (2026-04-28): emit prefix-dispatch arms that recognize the
 /// FIRST literal of each multi-step rule. On match, the arm pushes a
 /// `RuleAt(1)` marker symbol and transitions to `BinderRule { ... }`.
@@ -1043,10 +1077,9 @@ pub(crate) fn emit_binder_prefix_arms(
             // need for Fork.
             let entry = &entries[0];
             let rule_idx = entry.rule_i as u16;
-            let body_src_idx = match &entry.shape.body_cat {
-                Some(name) => lookup_src_idx(name, categories).unwrap_or(result_src_idx),
-                None => result_src_idx,
-            };
+            let body_src_idx = binder_initial_body_cat(&entry.shape)
+                .and_then(|name| lookup_src_idx(name, categories))
+                .unwrap_or(result_src_idx);
             // Phase F.8 generalized (2026-06-04): binder-rule leading
             // literals are structural syntax. They do not become semantic
             // action args, but they must be present as span-only SPPF
@@ -1088,10 +1121,9 @@ pub(crate) fn emit_binder_prefix_arms(
             .iter()
             .map(|entry| {
                 let rule_idx = entry.rule_i as u16;
-                let body_src_idx = match &entry.shape.body_cat {
-                    Some(name) => lookup_src_idx(name, categories).unwrap_or(result_src_idx),
-                    None => result_src_idx,
-                };
+                let body_src_idx = binder_initial_body_cat(&entry.shape)
+                    .and_then(|name| lookup_src_idx(name, categories))
+                    .unwrap_or(result_src_idx);
                 quote! {
                     mettail_prattail::wpda_walker::ForkBranch {
                         symbol: StackSymbolV2::rule_at(
@@ -1106,8 +1138,11 @@ pub(crate) fn emit_binder_prefix_arms(
                             body_src_idx: #body_src_idx,
                             outer_bp: _outer_bp,
                         },
-                        // Stage 3.12 / Class A.i (2026-05-01): default Push action.
-                        action_kind: mettail_prattail::wpda_walker::ForkActionKind::Push,
+                        // Mirror the singleton ConsumeAndPush structural
+                        // trigger path: each ambiguous trigger branch owns
+                        // the consumed keyword under its rule identity.
+                        action_kind:
+                            mettail_prattail::wpda_walker::ForkActionKind::PushWithTriggerTerminal,
                     }
                 }
             })

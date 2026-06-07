@@ -734,6 +734,37 @@ fn test_factorial_with_negation() {
 }
 
 #[test]
+fn test_factorial_ambiguous_negation_preserves_both_parse_alternatives() {
+    use calc::Int;
+
+    mettail_runtime::clear_var_cache();
+    let alts = Int::parse_via_wpda_all("-3!").expect("-3! should parse through WPDA");
+
+    assert!(
+        alts.iter()
+            .any(|t| matches!(t, Int::Fact(a) if matches!(a.as_ref(), Int::NumLit(-3)))),
+        "expected atomic-negative branch Fact(NumLit(-3)); got {:?}",
+        alts
+    );
+    assert!(
+        alts.iter().any(|t| {
+            matches!(
+                t,
+                Int::Neg(a)
+                    if matches!(a.as_ref(), Int::Fact(b) if matches!(b.as_ref(), Int::NumLit(3)))
+            )
+        }),
+        "expected prefix-negative branch Neg(Fact(NumLit(3))); got {:?}",
+        alts
+    );
+}
+
+#[test]
+fn test_factorial_ambiguous_negation_rejects_invalid_branch_by_evidence() {
+    calc_normal_form("-3!", "-6");
+}
+
+#[test]
 fn test_factorial_with_parentheses() {
     mettail_runtime::clear_var_cache();
     let result = Int::parse("(3 + 2)!").expect("should parse (3 + 2)!");
@@ -1870,7 +1901,7 @@ fn debug_chained_comparisons() {
 
 #[test]
 fn debug_display_chained_comparison() {
-    use mettail_languages::calculator::{Bool, Int};
+    use mettail_languages::calculator::Bool;
 
     // Construct GtBool(NeBool(BVar(x), BoolLit(true)), BVar(y))
     mettail_runtime::clear_var_cache();

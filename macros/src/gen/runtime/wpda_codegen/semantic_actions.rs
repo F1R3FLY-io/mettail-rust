@@ -201,13 +201,13 @@ pub fn emit_min_terminal_span_body(
 /// two rules share `(from, to)` (Ambiguous — §2.4c emits one splice job per
 /// coercion).
 ///
-/// **The rule set MIRRORS the live Pass-2a / Pass-2c synthesis EXACTLY**
-/// (`prefix.rs` `classify_atomic`'s `CrossCatProjection` arm — sp.len()==1,
-/// single Simple `Base(Y)` param, `Param(name)` matching, source≠result — and
-/// the Pass-2c `ImplicitCast` enumeration — NonAtomic, single Simple `Base(Y)`
-/// param, sp.len()≥3, source≠result). This is the HARD-CONSTRAINT guarantee
-/// that the splice's interposed coercion ≡ the coercion the live forward
-/// dispatch would have synthesized — never an invented coercion/weight.
+/// **The rule set MIRRORS the live span-transparent synthesis EXACTLY**:
+/// `prefix.rs` `classify_atomic`'s `CrossCatProjection` arm — sp.len()==1,
+/// single Simple `Base(Y)` param, `Param(name)` matching, source≠result.
+/// Terminal-bearing wrappers are excluded because they are not transparent
+/// coercions; their literal evidence must be parsed by their own continuation.
+/// This is the HARD-CONSTRAINT guarantee that the splice's interposed coercion
+/// is never an invented terminal-bearing cast.
 ///
 /// Emitted as a `match (from_cat, to_cat)` returning a `&'static [(u16,u16)]`
 /// (interned per arm), default `&[]`. Sibling of `min_terminal_span`'s
@@ -219,6 +219,7 @@ pub fn emit_single_hop_coercion_body(
 ) -> TokenStream {
     use mettail_ast::grammar::{SyntaxExpr, TermParam};
     use mettail_ast::types::TypeExpr;
+    let _ = language;
     // Collect `(from_cat, to_cat) -> Vec<rule_idx>` so co-bridging rules
     // accumulate into one arm (Ambiguous).
     let mut table: std::collections::BTreeMap<(u16, u16), Vec<u16>> =
@@ -255,13 +256,7 @@ pub fn emit_single_hop_coercion_body(
                     sp.first(),
                     Some(SyntaxExpr::Param(syn_name)) if syn_name == param_name
                 );
-            // Pass-2c ImplicitCast: NonAtomic trigger-bearing cast,
-            // sp.len()>=3 (`<Y>To<X> . a:Y |- "t" "(" a ")" : X`). Mirror the
-            // `classify_atomic(rule) == NonAtomic` gate the Pass-2c emission
-            // uses so we never double-count a Pass-2a/CrossCatPrefixUnary rule.
-            let is_pass2c =
-                sp.len() >= 3 && matches!(classify_atomic(rule, language), AtomicShape::NonAtomic);
-            if !(is_pass2a || is_pass2c) {
+            if !is_pass2a {
                 continue;
             }
             let from_cat = categories

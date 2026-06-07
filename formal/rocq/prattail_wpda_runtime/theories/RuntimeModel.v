@@ -29,6 +29,8 @@ Inductive edge_kind : Type :=
   | EdgeGeneric
   | EdgeCrossCatProjection
       (source : nat) (bp : nat) (wrap_cat : nat) (wrap_rule : nat)
+  | EdgeCrossCatLhs (source : nat)
+  | EdgeCrossCatLhsReentry (source : nat)
   | EdgeOther (tag : nat).
 
 Lemma edge_kind_eq_dec : forall x y : edge_kind, {x = y} + {x <> y}.
@@ -47,6 +49,106 @@ Proof.
   unfold edge_kind_equivalent in Heq.
   inversion Heq.
   split; reflexivity.
+Qed.
+
+Theorem cross_cat_lhs_edge_equiv_preserves_source :
+  forall s1 s2,
+    edge_kind_equivalent (EdgeCrossCatLhs s1) (EdgeCrossCatLhs s2) ->
+    s1 = s2.
+Proof.
+  intros s1 s2 Heq.
+  unfold edge_kind_equivalent in Heq.
+  now inversion Heq.
+Qed.
+
+Theorem cross_cat_lhs_reentry_edge_equiv_preserves_source :
+  forall s1 s2,
+    edge_kind_equivalent
+      (EdgeCrossCatLhsReentry s1)
+      (EdgeCrossCatLhsReentry s2) ->
+    s1 = s2.
+Proof.
+  intros s1 s2 Heq.
+  unfold edge_kind_equivalent in Heq.
+  now inversion Heq.
+Qed.
+
+Definition lhs_reentry_after_pop (e : edge_kind) : option edge_kind :=
+  match e with
+  | EdgeCrossCatLhs source => Some (EdgeCrossCatLhsReentry source)
+  | _ => None
+  end.
+
+Theorem cross_cat_lhs_pop_reenters_once :
+  forall source,
+    lhs_reentry_after_pop (EdgeCrossCatLhs source) =
+    Some (EdgeCrossCatLhsReentry source).
+Proof. reflexivity. Qed.
+
+Theorem cross_cat_lhs_reentry_is_one_shot :
+  forall source,
+    lhs_reentry_after_pop (EdgeCrossCatLhsReentry source) = None.
+Proof. reflexivity. Qed.
+
+Definition cross_cat_lhs_infix_evidence
+    (edge : edge_kind)
+    (top_cat : nat) : option nat :=
+  match edge with
+  | EdgeCrossCatLhs source
+  | EdgeCrossCatLhsReentry source =>
+      if source =? top_cat then Some source else None
+  | _ => None
+  end.
+
+Definition category_changing_infix
+    (source_cat result_cat : nat) : bool :=
+  negb (source_cat =? result_cat).
+
+Definition category_changing_infix_allowed
+    (edge : edge_kind)
+    (top_cat source_cat result_cat : nat) : bool :=
+  if category_changing_infix source_cat result_cat then
+    match cross_cat_lhs_infix_evidence edge top_cat with
+    | Some witnessed_source => witnessed_source =? source_cat
+    | None => false
+    end
+  else true.
+
+Theorem same_category_infix_needs_no_lhs_evidence :
+  forall edge top_cat source_cat,
+    category_changing_infix_allowed edge top_cat source_cat source_cat = true.
+Proof.
+  intros edge top_cat source_cat.
+  unfold category_changing_infix_allowed, category_changing_infix.
+  now rewrite Nat.eqb_refl.
+Qed.
+
+Theorem category_changing_infix_requires_lhs_evidence :
+  forall edge top_cat source_cat result_cat,
+    category_changing_infix source_cat result_cat = true ->
+    category_changing_infix_allowed
+      edge top_cat source_cat result_cat = true ->
+    cross_cat_lhs_infix_evidence edge top_cat = Some source_cat.
+Proof.
+  intros edge top_cat source_cat result_cat Hchanging Hallowed.
+  unfold category_changing_infix_allowed in Hallowed.
+  rewrite Hchanging in Hallowed.
+  destruct (cross_cat_lhs_infix_evidence edge top_cat) as [witnessed |] eqn:Hev.
+  - apply Nat.eqb_eq in Hallowed.
+    subst witnessed.
+    reflexivity.
+  - discriminate Hallowed.
+Qed.
+
+Theorem generic_edge_rejects_category_changing_infix :
+  forall top_cat source_cat result_cat,
+    category_changing_infix source_cat result_cat = true ->
+    category_changing_infix_allowed
+      EdgeGeneric top_cat source_cat result_cat = false.
+Proof.
+  intros top_cat source_cat result_cat Hchanging.
+  unfold category_changing_infix_allowed.
+  now rewrite Hchanging.
 Qed.
 
 Record equiv_key : Type := {
@@ -133,6 +235,7 @@ Record config_key : Type := {
   ck_node : nat;
   ck_pos : nat;
   ck_incoming_edge : option nat;
+  ck_incoming_edge_stack : nat;
   ck_collection_depth : nat;
   ck_origin : option equiv_key;
   ck_sppf_top : option nat;
@@ -165,6 +268,7 @@ Definition config_with_lex_stamp
      ck_node := ck_node k;
      ck_pos := ck_pos k;
      ck_incoming_edge := ck_incoming_edge k;
+     ck_incoming_edge_stack := ck_incoming_edge_stack k;
      ck_collection_depth := ck_collection_depth k;
      ck_origin := ck_origin k;
      ck_sppf_top := ck_sppf_top k;
@@ -180,6 +284,7 @@ Definition lex_fork_child_config
      ck_node := ck_node k;
      ck_pos := next_pos;
      ck_incoming_edge := ck_incoming_edge k;
+     ck_incoming_edge_stack := ck_incoming_edge_stack k;
      ck_collection_depth := ck_collection_depth k;
      ck_origin := ck_origin k;
      ck_sppf_top := ck_sppf_top k;
@@ -256,6 +361,59 @@ Proof.
   intros [].
   - reflexivity.
   - reflexivity.
+Qed.
+
+Definition config_with_incoming_edge_stack
+    (k : config_key)
+    (stack : nat) : config_key :=
+  {| ck_control := ck_control k;
+     ck_node := ck_node k;
+     ck_pos := ck_pos k;
+     ck_incoming_edge := ck_incoming_edge k;
+     ck_incoming_edge_stack := stack;
+     ck_collection_depth := ck_collection_depth k;
+     ck_origin := ck_origin k;
+     ck_sppf_top := ck_sppf_top k;
+     ck_lex_alt := ck_lex_alt k;
+     ck_weight_src := ck_weight_src k;
+     ck_weight_rule := ck_weight_rule k;
+     ck_lex_stamp := ck_lex_stamp k |}.
+
+Theorem config_with_incoming_edge_stack_sets_stack :
+  forall k stack,
+    ck_incoming_edge_stack
+      (config_with_incoming_edge_stack k stack) =
+    stack.
+Proof. reflexivity. Qed.
+
+Theorem distinct_incoming_edge_stacks_prevent_config_merge :
+  forall k1 k2,
+    ck_incoming_edge_stack k1 <> ck_incoming_edge_stack k2 ->
+    k1 <> k2.
+Proof.
+  intros k1 k2 Hdiff Heq.
+  apply Hdiff.
+  now rewrite Heq.
+Qed.
+
+Record parse_alt_key : Type := {
+  pak_surface : nat;
+  pak_semantic : nat
+}.
+
+Definition parse_alt_equivalent (a b : parse_alt_key) : Prop := a = b.
+
+Theorem same_surface_distinct_semantic_prevents_alt_merge :
+  forall surface sem1 sem2,
+    sem1 <> sem2 ->
+    ~ parse_alt_equivalent
+        {| pak_surface := surface; pak_semantic := sem1 |}
+        {| pak_surface := surface; pak_semantic := sem2 |}.
+Proof.
+  intros surface sem1 sem2 Hneq Heq.
+  unfold parse_alt_equivalent in Heq.
+  apply Hneq.
+  now inversion Heq.
 Qed.
 
 Theorem lex_fork_falls_through_when_no_branches :
@@ -636,4 +794,87 @@ Lemma merge_weight_assoc :
     merge_weight w1 (merge_weight w2 w3).
 Proof.
   unfold merge_weight. intros. lia.
+Qed.
+
+Record weighted_frontier_item : Type := {
+  wfi_weight : nat;
+  wfi_node : nat
+}.
+
+Definition frontier_minimal
+    (picked : weighted_frontier_item)
+    (frontier : list weighted_frontier_item) : Prop :=
+  In picked frontier /\
+  forall item,
+    In item frontier ->
+    wfi_weight picked <= wfi_weight item.
+
+Definition lazy_force_step
+    (frontier forced : list weighted_frontier_item) : Prop :=
+  length forced <= 1 /\
+  forall item,
+    In item forced ->
+    In item frontier.
+
+Definition priority_force_step
+    (frontier forced : list weighted_frontier_item) : Prop :=
+  lazy_force_step frontier forced /\
+  forall picked,
+    forced = [picked] ->
+    frontier_minimal picked frontier.
+
+Theorem singleton_force_is_lazy :
+  forall frontier picked,
+    In picked frontier ->
+    lazy_force_step frontier [picked].
+Proof.
+  intros frontier picked Hin.
+  unfold lazy_force_step.
+  split.
+  - simpl. lia.
+  - intros item Hitem.
+    simpl in Hitem.
+    destruct Hitem as [Heq | Hnil].
+    + now rewrite <- Heq.
+    + contradiction.
+Qed.
+
+Theorem empty_force_is_lazy :
+  forall frontier,
+    lazy_force_step frontier [].
+Proof.
+  intros frontier.
+  unfold lazy_force_step.
+  split.
+  - simpl. lia.
+  - intros item Hitem. contradiction.
+Qed.
+
+Theorem priority_force_no_better_remaining :
+  forall frontier picked item,
+    priority_force_step frontier [picked] ->
+    In item frontier ->
+    wfi_weight picked <= wfi_weight item.
+Proof.
+  intros frontier picked item Hstep Hin.
+  unfold priority_force_step in Hstep.
+  destruct Hstep as [_ Hmin].
+  specialize (Hmin picked eq_refl).
+  unfold frontier_minimal in Hmin.
+  destruct Hmin as [_ Hle].
+  now apply Hle.
+Qed.
+
+Theorem priority_force_preserves_ambiguity_until_demand :
+  forall frontier forced item,
+    priority_force_step frontier forced ->
+    In item forced ->
+    In item frontier.
+Proof.
+  intros frontier forced item Hstep Hin.
+  unfold priority_force_step in Hstep.
+  destruct Hstep as [Hlazy _].
+  unfold lazy_force_step in Hlazy.
+  destruct Hlazy as [_ Hmember].
+  now apply Hmember.
 Qed.
