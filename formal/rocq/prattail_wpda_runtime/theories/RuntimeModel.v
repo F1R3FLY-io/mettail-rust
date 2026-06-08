@@ -997,6 +997,148 @@ Proof.
   - reflexivity.
 Qed.
 
+Inductive eoi_cursor_class : Type :=
+  | EoiAccepting
+  | EoiPrefix
+  | EoiPrematureAccepted
+  | EoiDead.
+
+Definition eoi_accepting_class (class : eoi_cursor_class) : bool :=
+  match class with
+  | EoiAccepting => true
+  | _ => false
+  end.
+
+Definition eoi_prefix_class (class : eoi_cursor_class) : bool :=
+  match class with
+  | EoiPrefix => true
+  | _ => false
+  end.
+
+Definition eoi_survives_premature_filter
+    (class : eoi_cursor_class) : bool :=
+  match class with
+  | EoiPrematureAccepted => false
+  | _ => true
+  end.
+
+Fixpoint count_eoi_classes
+    (predicate : eoi_cursor_class -> bool)
+    (classes : list eoi_cursor_class) : nat :=
+  match classes with
+  | [] => 0
+  | class :: rest =>
+      (if predicate class then 1 else 0) +
+      count_eoi_classes predicate rest
+  end.
+
+Inductive lazy_eoi_frame : Type :=
+  | LazyEoiConcrete (class : eoi_cursor_class)
+  | LazyEoiCohort (members : list eoi_cursor_class).
+
+Definition materialized_eoi_frame
+    (frame : lazy_eoi_frame) : list eoi_cursor_class :=
+  match frame with
+  | LazyEoiConcrete class => [class]
+  | LazyEoiCohort members => members
+  end.
+
+Definition lazy_eoi_frame_count
+    (predicate : eoi_cursor_class -> bool)
+    (frame : lazy_eoi_frame) : nat :=
+  match frame with
+  | LazyEoiConcrete class => if predicate class then 1 else 0
+  | LazyEoiCohort members => count_eoi_classes predicate members
+  end.
+
+Fixpoint lazy_eoi_count
+    (predicate : eoi_cursor_class -> bool)
+    (frames : list lazy_eoi_frame) : nat :=
+  match frames with
+  | [] => 0
+  | frame :: rest =>
+      lazy_eoi_frame_count predicate frame +
+      lazy_eoi_count predicate rest
+  end.
+
+Definition materialized_eoi_count
+    (predicate : eoi_cursor_class -> bool)
+    (frames : list lazy_eoi_frame) : nat :=
+  count_eoi_classes predicate (flat_map materialized_eoi_frame frames).
+
+Definition lazy_eoi_physical_frontier_len
+    (frames : list lazy_eoi_frame) : nat :=
+  length frames.
+
+Lemma count_eoi_classes_app :
+  forall predicate xs ys,
+    count_eoi_classes predicate (xs ++ ys) =
+    count_eoi_classes predicate xs +
+    count_eoi_classes predicate ys.
+Proof.
+  intros predicate xs ys.
+  induction xs as [|x xs IH].
+  - reflexivity.
+  - simpl. rewrite IH. now destruct (predicate x).
+Qed.
+
+Lemma lazy_eoi_frame_count_matches_materialized :
+  forall predicate frame,
+    lazy_eoi_frame_count predicate frame =
+    count_eoi_classes predicate (materialized_eoi_frame frame).
+Proof.
+  intros predicate frame.
+  destruct frame as [class | members].
+  - simpl. now destruct (predicate class).
+  - reflexivity.
+Qed.
+
+Theorem lazy_eoi_count_matches_eager_materialization :
+  forall predicate frames,
+    lazy_eoi_count predicate frames =
+    materialized_eoi_count predicate frames.
+Proof.
+  intros predicate frames.
+  induction frames as [|frame rest IH].
+  - reflexivity.
+  - simpl.
+    unfold materialized_eoi_count in *.
+    simpl.
+    rewrite count_eoi_classes_app.
+    rewrite <- (lazy_eoi_frame_count_matches_materialized predicate frame).
+    rewrite <- IH.
+    reflexivity.
+Qed.
+
+Theorem lazy_eoi_accepting_count_matches_eager_materialization :
+  forall frames,
+    lazy_eoi_count eoi_accepting_class frames =
+    materialized_eoi_count eoi_accepting_class frames.
+Proof.
+  apply lazy_eoi_count_matches_eager_materialization.
+Qed.
+
+Theorem lazy_eoi_prefix_count_matches_eager_materialization :
+  forall frames,
+    lazy_eoi_count eoi_prefix_class frames =
+    materialized_eoi_count eoi_prefix_class frames.
+Proof.
+  apply lazy_eoi_count_matches_eager_materialization.
+Qed.
+
+Theorem lazy_eoi_survivor_count_matches_eager_materialization :
+  forall frames,
+    lazy_eoi_count eoi_survives_premature_filter frames =
+    materialized_eoi_count eoi_survives_premature_filter frames.
+Proof.
+  apply lazy_eoi_count_matches_eager_materialization.
+Qed.
+
+Theorem lazy_eoi_snapshot_preserves_physical_frontier :
+  forall frames,
+    lazy_eoi_physical_frontier_len frames = length frames.
+Proof. reflexivity. Qed.
+
 Theorem beam_size_matches_ambiguity_budget :
   forall budget actual_frontier_len,
     cursor_bound_check

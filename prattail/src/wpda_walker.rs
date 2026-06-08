@@ -2720,6 +2720,20 @@ struct LazyContinuationQueue<W: SemiringRef> {
     next_sequence: usize,
 }
 
+struct EoiCursorCandidate<W: SemiringRef> {
+    cursor: BranchCursor<W>,
+    weight: W,
+    root: crate::sppf::SppfId,
+}
+
+struct EoiResolutionSnapshot<W: SemiringRef> {
+    accepting: Vec<EoiCursorCandidate<W>>,
+    prefix_trailing_candidates: Vec<(usize, W, crate::sppf::SppfId)>,
+    logical_count: usize,
+    surviving_after_premature_filter: usize,
+    max_dead_pos: usize,
+}
+
 impl<W: SemiringRef> LazyContinuationQueue<W> {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -4418,27 +4432,84 @@ where
         Err(WpdaMaxStepsExceeded { position: self.pos })
     }
 
-    /// Stage 3.5b (2026-05-01): WPDS-correct end-of-input resolution.
-    ///
-    /// Inspects the post-`run_to_end_of_input` configuration and produces
-    /// a `WpdaResolveResult<W>`. The decision tree:
-    ///
-    /// 1. **Live mode (deterministic, singleton branch_cursors)**:
-    ///    - `state == Accepted`: the live builder already holds the result;
-    ///      pop it and return `Accepted { weight, term }`.
-    ///    - `state == Error { message }`: return `ParseError { message, position: self.pos }`.
-    ///    - Anything else: incomplete parse → `ParseError`.
-    ///
-    /// 2. **Fanout mode (branch_cursors populated)**:
-    ///    - Filter to cursors at `pos == tokens.len()` AND in an
-    ///      "accepting configuration" (`is_accepting_config`).
-    ///    - Zero accepting → `ParseError`.
-    ///    - One accepting → commit + `Accepted`.
-    ///    - ≥2 accepting → fold weights via `Semiring::plus` to find
-    ///      the lex-min weight; tied indices keep source-order; if
-    ///      exactly one ties, commit it; if ≥2 tie, emit ambiguity
-    ///      warning + commit earliest source-ordered + return
-    ///      `AcceptedAmbiguous`.
+    // Stage 3.5b (2026-05-01): WPDS-correct end-of-input resolution.
+    //
+    // Inspects the post-`run_to_end_of_input` configuration and produces
+    // a `WpdaResolveResult<W>`. Fanout resolution now snapshots lazy
+    // cohort members one at a time rather than expanding the live
+    // frontier before classification.
+    #[inline]
+    fn cursor_sppf_root(&self, cursor: &BranchCursor<W>) -> crate::sppf::SppfId {
+        self.sppf_stack_arena
+            .top(cursor.sppf_stack_id)
+            .unwrap_or(crate::sppf::SPPF_ID_NONE)
+    }
+
+    fn push_eoi_resolution_candidate(
+        &self,
+        snapshot: &mut EoiResolutionSnapshot<W>,
+        cursor: BranchCursor<W>,
+        tokens: &dyn WpdaTokenSource,
+    ) where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        let eof = tokens.eof_node();
+        snapshot.logical_count = snapshot.logical_count.saturating_add(1);
+        snapshot.max_dead_pos = snapshot.max_dead_pos.max(cursor.pos);
+        if !matches!(cursor.inner_state, WpdaState::Accepted) || cursor.pos >= eof {
+            snapshot.surviving_after_premature_filter =
+                snapshot.surviving_after_premature_filter.saturating_add(1);
+        }
+        if !self.is_accepting_config(&cursor, tokens) {
+            return;
+        }
+        let root = self.cursor_sppf_root(&cursor);
+        if self.is_logical_eoi(cursor.pos, tokens) {
+            snapshot.accepting.push(EoiCursorCandidate {
+                weight: cursor.weight.clone(),
+                root,
+                cursor,
+            });
+        } else if cursor.pos < eof {
+            snapshot
+                .prefix_trailing_candidates
+                .push((cursor.pos, cursor.weight.clone(), root));
+        }
+    }
+
+    fn eoi_resolution_snapshot(&self, tokens: &dyn WpdaTokenSource) -> EoiResolutionSnapshot<W>
+    where
+        W: 'static + IdempotentSemiring + StarSemiringRef,
+    {
+        let mut snapshot = EoiResolutionSnapshot {
+            accepting: Vec::new(),
+            prefix_trailing_candidates: Vec::new(),
+            logical_count: 0,
+            surviving_after_premature_filter: 0,
+            max_dead_pos: 0,
+        };
+        for frame in &self.branch_cursors {
+            match frame {
+                crate::cohort_lazy::Frame::Concrete(cursor) => {
+                    self.push_eoi_resolution_candidate(&mut snapshot, cursor.clone(), tokens);
+                },
+                crate::cohort_lazy::Frame::Cohort(cf) => {
+                    for member in &cf.members {
+                        let cursor =
+                            crate::cohort_lazy::materialize_branch_cursor(&cf.shell, member);
+                        self.push_eoi_resolution_candidate(&mut snapshot, cursor, tokens);
+                    }
+                },
+            }
+        }
+        if snapshot.logical_count == 0 {
+            snapshot.max_dead_pos = self.pos;
+        }
+        snapshot
+    }
+
+    /// Resolve the final parse result without eagerly expanding lazy
+    /// cohort frames at the parse boundary.
     pub fn resolve_at_end_of_input(&mut self, tokens: &dyn WpdaTokenSource) -> WpdaResolveResult<W>
     where
         W: 'static + IdempotentSemiring + StarSemiringRef,
@@ -4505,11 +4576,10 @@ where
                 return WpdaResolveResult::AmbiguityBudget { budget, actual, position };
             }
         }
-        // Phase F.13 Stage L3.6 (2026-05-25): force-materialize all
-        // remaining cohort frames at EOI so resolution operates on
-        // concrete cursors. The full ambiguity multiset is preserved
-        // (each member becomes an independent concrete cursor).
-        self.force_materialize_cohort_frames();
+        // Lazy EOI (2026-06-08): do not force-materialize cohorts at the
+        // parse boundary. Fanout resolution below snapshots logical
+        // candidates member-by-member and commits only the selected cursor;
+        // expanding every cohort here is an avoidable state-space spike.
         // Phase 5.6-tail-B (2026-05-12): the pre-tail deterministic-mode fast-path
         // returned directly using `self.builder.take_dyn_result()`. Under
         // always-eager Arc::make_mut (Phase 5.3+), all mutations land on
@@ -4610,11 +4680,11 @@ where
         // produced a SHORT parse without consuming all input. Per the
         // user mandate's rule-out-by-evidence clause
         // (feedback_never_disambiguate_early), such cursors are not
-        // semantically valid acceptances and must be dropped here, BEFORE
-        // the `accepting_indices` filter — otherwise the downstream
-        // multi-cursor unfold would still emit terms from these cursors
-        // via the SPPF root path if `is_accepting_config` returns true on
-        // their (stale) builder shape.
+        // semantically valid acceptances and must be excluded before the
+        // final accepting-candidate set is built; otherwise the downstream
+        // multi-cursor unfold would still emit terms from these cursors via
+        // the SPPF root path if `is_accepting_config` returns true on their
+        // stale shape.
         //
         // Generality: applies to any grammar with lex-ambiguous atomic
         // literals sharing prefixes with operator triggers (e.g.,
@@ -4624,120 +4694,70 @@ where
         // Ambiguous([...]) and the evaluator chooses based on evidence
         // (which alt evaluates to a non-Err normal form).
         //
-        // This filter complements the existing `accepting_indices`
-        // filter at line ~2825 (`is_logical_eoi && is_accepting_config`)
-        // by removing premature cursors from `branch_cursors` itself —
-        // ensuring that any downstream commit_winner_at_eoi or SPPF
-        // root extraction operates on the surviving (EOI-reached) set.
+        // This filter complements the final logical-EOI candidate filter
+        // (`is_logical_eoi && is_accepting_config`) by keeping premature
+        // cursors out of the accepted result set. The lazy snapshot records
+        // the same evidence without mutating `branch_cursors`.
         // Cluster H (2026-05-29): capture every VALID-PREFIX cursor's
-        // `(pos, weight, sppf_root)` BEFORE the Phase E Fix A retain (and
-        // before the accepting_indices filter consumes/commits cursors).
+        // `(pos, weight, sppf_root)` during the same logical snapshot.
         // A valid-prefix cursor is `is_accepting_config` (so its
         // configuration genuinely accepts — Accepted / InfixLoop /
         // Unwinding-at-entry) but parked STRICTLY before logical EOI.
         // This single capture feeds both salvage sites below (the Phase E
         // empty-branch case where the prefix is `Accepted`, and the
-        // `accepting_indices == 0` case where the prefix sits in
+        // zero-accepting case where the prefix sits in
         // `InfixLoop` waiting for an operator that never came — e.g.
         // `Float "1.5 2.5"`). Realization (`realize_root_to_terms`) needs
         // only the root id (reads the SPPF arena, not the cursor), so the
         // captured root id survives any later cursor mutation.
-        let prefix_trailing_candidates: Vec<(usize, W, crate::sppf::SppfId)> = {
-            let eof = tokens.eof_node();
-            self.branch_cursors
-                .iter()
-                .filter_map(|frame| {
-                    let c = frame.as_concrete_expect();
-                    if !self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c, tokens) {
-                        let root = self
-                            .sppf_stack_arena
-                            .top(c.sppf_stack_id)
-                            .unwrap_or(crate::sppf::SPPF_ID_NONE);
-                        // Defensive: only `pos < eof` (a true prefix).
-                        if c.pos < eof {
-                            return Some((c.pos, c.weight.clone(), root));
-                        }
-                    }
-                    None
-                })
-                .collect()
-        };
-        {
-            let eof = tokens.eof_node();
-            let len_before = self.branch_cursors.len();
-            // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-            self.branch_cursors.retain(|frame| {
-                let c = frame.as_concrete_expect();
-                !matches!(c.inner_state, WpdaState::Accepted) || c.pos >= eof
-            });
-            // No further work if all were premature.
-            if self.branch_cursors.is_empty() && len_before > 0 {
-                // Cluster H (2026-05-29): before reporting the generic
-                // "premature lex-Fork acceptance" failure, salvage the
-                // VALID-PREFIX / trailing-tokens case. The retain above
-                // dropped every cursor in `WpdaState::Accepted` with
-                // `pos < eof`. If those dropped cursors include at least
-                // one whose configuration is genuinely accepting
-                // (`is_accepting_config`) and whose SPPF root realizes to
-                // a term, this is NOT a premature lex-Fork — it is a
-                // proper prefix parse with unconsumed trailing tokens.
-                //
-                // Crucially, this arm is reached only when NO cursor
-                // survived the retain, i.e. NO cursor reached logical
-                // EOI. So there is no longer-and-complete parse competing
-                // with the prefix; surfacing the prefix does not violate
-                // max-munch disambiguation (the Phase E Fix A drop still
-                // wins whenever a full-EOI cursor coexists, because then
-                // `branch_cursors` is non-empty and this arm is skipped).
-                //
-                // `resolve_prefix_with_trailing` picks the
-                // FURTHEST-reaching prefix (max `pos` = longest accepted
-                // prefix) and carries ALL cursors tied at that furthest
-                // position so genuine prefix ambiguity is preserved.
-                if let Some(trailing) =
-                    self.resolve_prefix_with_trailing(&prefix_trailing_candidates)
-                {
-                    return trailing;
-                }
-                return WpdaResolveResult::ParseError {
-                    message: "all Accepted cursors had unconsumed input \
-                              (premature lex-Fork acceptance)"
-                        .to_string(),
-                    position: self.pos,
-                };
+        let snapshot = self.eoi_resolution_snapshot(tokens);
+        // No further work if every logical cursor would have been removed
+        // by the premature-Accepted filter. This mirrors the old
+        // materialize-then-retain path without expanding lazy cohorts or
+        // mutating `branch_cursors`.
+        if snapshot.logical_count > 0 && snapshot.surviving_after_premature_filter == 0 {
+            // Cluster H (2026-05-29): before reporting the generic
+            // "premature lex-Fork acceptance" failure, salvage the
+            // VALID-PREFIX / trailing-tokens case. If the dropped cursors
+            // include at least one genuinely accepting configuration whose
+            // SPPF root realizes to a term, this is a proper prefix parse
+            // with unconsumed trailing tokens.
+            //
+            // `resolve_prefix_with_trailing` picks the FURTHEST-reaching
+            // prefix (max `pos` = longest accepted prefix) and carries ALL
+            // cursors tied at that furthest position so genuine prefix
+            // ambiguity is preserved.
+            if let Some(trailing) =
+                self.resolve_prefix_with_trailing(&snapshot.prefix_trailing_candidates)
+            {
+                return trailing;
             }
+            return WpdaResolveResult::ParseError {
+                message: "all Accepted cursors had unconsumed input \
+                          (premature lex-Fork acceptance)"
+                    .to_string(),
+                position: self.pos,
+            };
         }
-        // Fanout mode: resolve over branch_cursors.
+        let EoiResolutionSnapshot {
+            accepting,
+            prefix_trailing_candidates,
+            max_dead_pos,
+            ..
+        } = snapshot;
+        // Fanout mode: resolve over the lazy logical-cursor snapshot.
         // Stage 3.5b (2026-05-01): use `pos >= tokens.len()` rather than
         // `pos == tokens.len()`. Real-grammar codegen never advances pos
         // past tokens.len() on real input (ConsumeAndPop is gated by
         // peek_kind), but synthetic test scripts can; treating "past
         // EOI" as "at EOI" makes resolution robust to either case.
-        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-        let accepting_indices: Vec<usize> = (0..self.branch_cursors.len())
-            .filter(|&i| {
-                let c = self.branch_cursors[i].as_concrete_expect();
-                // Stage 3.12 fix (2026-05-02): use `is_logical_eoi` so a
-                // cursor parked at trailing `Token::Eof` (the natural
-                // rule-end exit) accepts. The pre-3.12 `pos >= tokens.len()`
-                // was unreachable in nondeterministic mode because the engine's
-                // `Accept` arm doesn't advance past EOF.
-                self.is_logical_eoi(c.pos, tokens) && self.is_accepting_config(c, tokens)
-            })
-            .collect();
-        let max_dead_pos = self
-            .branch_cursors
-            .iter()
-            .map(|frame| frame.as_concrete_expect().pos)
-            .max()
-            .unwrap_or(self.pos);
-        match accepting_indices.len() {
+        match accepting.len() {
             0 => {
                 // Cluster H (2026-05-29): no cursor reached logical EOI,
                 // but a VALID-PREFIX cursor may still exist (captured in
-                // `prefix_trailing_candidates` above, BEFORE the Phase E
-                // retain). This is the trailing-tokens case where the
-                // accepting prefix sits in `InfixLoop` — e.g.
+                // `snapshot.prefix_trailing_candidates` above). This is
+                // the trailing-tokens case where the accepting prefix sits
+                // in `InfixLoop` — e.g.
                 // `Float "1.5 2.5"`: `1.5` is a complete FloatLit but the
                 // cursor is waiting for a binary operator, sees `2.5`
                 // (not an operator), and dies without ever transitioning
@@ -4763,17 +4783,12 @@ where
                 // facade uses `realize_root_to_terms(winner_sppf_root)` to
                 // recover the Vec<Cat>. The C7b cycle-fallback (Accepted
                 // with empty terms but valid root) is preserved.
-                let winner_idx = accepting_indices[0];
-                // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-                let winner_cursor = self.branch_cursors[winner_idx].as_concrete_expect();
-                let winner_weight = winner_cursor.weight.clone();
-                // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
-                // sppf_stack.last() superseded by arena.top(id).
-                let winner_sppf_root = self
-                    .sppf_stack_arena
-                    .top(winner_cursor.sppf_stack_id)
-                    .unwrap_or(crate::sppf::SPPF_ID_NONE);
-                self.commit_winner_at_eoi(winner_idx);
+                let EoiCursorCandidate {
+                    cursor,
+                    weight: winner_weight,
+                    root: winner_sppf_root,
+                } = accepting.into_iter().next().expect("len checked above");
+                self.commit_winner_cursor(cursor);
                 // Phase F.0 (2026-05-17): replace self.builder.take_dyn_result
                 // with realize_root_to_terms. The fallback case (Accepted
                 // with empty terms but valid root) is preserved.
@@ -4811,21 +4826,13 @@ where
                 // alongside C10. Each accepting cursor contributes its own
                 // builder term + SPPF root. M7c multi-result semantics
                 // are preserved via the per-cursor loop.
-                let mut weights: Vec<W> = Vec::with_capacity(accepting_indices.len());
+                let mut weights: Vec<W> = Vec::with_capacity(accepting.len());
                 let mut terms: Vec<Arc<dyn std::any::Any + Send + Sync>> =
-                    Vec::with_capacity(accepting_indices.len());
-                let mut roots: Vec<crate::sppf::SppfId> =
-                    Vec::with_capacity(accepting_indices.len());
-                for &idx in &accepting_indices {
-                    // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-                    let cursor = self.branch_cursors[idx].as_concrete_expect();
-                    let cursor_weight = cursor.weight.clone();
-                    // Phase F.13 chain_10000 Plan D E3 Substage 2 (2026-05-26):
-                    // sppf_stack.last() superseded by arena.top(id).
-                    let cursor_root = self
-                        .sppf_stack_arena
-                        .top(cursor.sppf_stack_id)
-                        .unwrap_or(crate::sppf::SPPF_ID_NONE);
+                    Vec::with_capacity(accepting.len());
+                let mut roots: Vec<crate::sppf::SppfId> = Vec::with_capacity(accepting.len());
+                for candidate in &accepting {
+                    let cursor_weight = candidate.weight.clone();
+                    let cursor_root = candidate.root;
                     // Phase F.0 (2026-05-17): extract via SPPF realize
                     // instead of cloning cursor.builder. cursor.builder
                     // is structurally redundant with cursor.sppf_stack
@@ -4844,8 +4851,8 @@ where
                 // `walker.state()`, etc.). Done BEFORE the empty-terms
                 // check so synthetic test mocks that produce no Terms
                 // still observe walker.state transitioning to Accepted.
-                let winner_idx = accepting_indices[0];
-                self.commit_winner_at_eoi(winner_idx);
+                let winner_cursor = accepting[0].cursor.clone();
+                self.commit_winner_cursor(winner_cursor);
                 if weights.is_empty() {
                     return WpdaResolveResult::ParseError {
                         message: "accepting cursors had no extractable terms".to_string(),
@@ -5988,18 +5995,6 @@ where
         let opens_ok = self.all_structural_open_delimiters(tokens, root_lo);
         let closes_ok = self.all_structural_close_delimiters(tokens, root_hi, semantic_cursor_pos);
         opens_ok && closes_ok
-    }
-
-    /// Stage 3.5b (2026-05-01): EOI-time variant of `commit_winner`.
-    ///
-    /// Identical to `commit_winner` semantically (replays winner's
-    /// recovery_deltas, donates collection_stack, splices winner's
-    /// `(node, pos, weight, inner_state)` into the live walker), but
-    /// invoked exclusively from `resolve_at_end_of_input` rather than
-    /// mid-stream from `step_fanout`. The implementation delegates to
-    /// `commit_winner` to keep replay logic single-source.
-    fn commit_winner_at_eoi(&mut self, winner_idx: usize) {
-        self.commit_winner(winner_idx);
     }
 
     // ─── Internal step handler ──────────────────────────────────────────────
@@ -9546,24 +9541,6 @@ where
         OrphanRevivalOutcome::Injected(injected)
     }
 
-    fn force_materialize_cohort_frames(&mut self) {
-        // Fast path: nothing to do if all frames are already concrete.
-        if self.branch_cursors.iter().all(|f| f.is_concrete()) {
-            return;
-        }
-        let mut materialized: Vec<crate::cohort_lazy::Frame<W>> =
-            Vec::with_capacity(self.branch_cursors.len());
-        for frame in std::mem::take(&mut self.branch_cursors) {
-            match frame {
-                crate::cohort_lazy::Frame::Concrete(_) => materialized.push(frame),
-                crate::cohort_lazy::Frame::Cohort(cf) => {
-                    materialized.extend(crate::cohort_lazy::materialize_cohort_to_frames(*cf));
-                },
-            }
-        }
-        self.branch_cursors = materialized;
-    }
-
     /// After `apply_action_to_cursor` updates `cursor.inner_state`, classify
     /// whether the cursor has reached a "branch is done" state that signals
     /// `Resolved` to the fanout driver. Otherwise return `Alive`.
@@ -10254,7 +10231,7 @@ where
                 //    `CategoryEntry(source)` with the RESOLVED wrap; the
                 //    member's next walker step fires its cast action →
                 //    `apply_pop_body_to_cursor` splices the body →
-                //    `is_accepting_config` true → `accepting_indices > 0`.
+                //    `is_accepting_config` true → accepted EOI candidate.
                 //
                 //    Soundness (§3c): only ADDS sound cursors; structural §2
                 //    predicate (no heuristic); `K_sib` NOT removed (its own
@@ -11313,26 +11290,12 @@ where
     // The standalone helper became orphaned and was reported by the
     // compiler as dead code throughout Phases 3-5.
 
-    /// Step 3 (Fork plan F6): commit the winning branch.
+    /// Commit an already-owned concrete cursor selected at EOI.
     ///
-    /// Replays the winner's `recovery_deltas` against the live
-    /// `SemanticBuilder` in insertion order, then splices the winner's
-    /// `(node, pos, weight, inner_state)` into the walker's live state.
-    ///
-    /// Stage 3.9 / ι Phase 4 (2026-05-01): preserves the always-non-empty
-    /// `branch_cursors` invariant by writing the post-commit singleton
-    /// back to `branch_cursors[0]` (with cleared `recovery_deltas`
-    /// and `collection_stack` since those have already replayed onto the
-    /// live builder). Pre-Phase-4 this method called `clear()`; that
-    /// would now violate L4.
-    fn commit_winner(&mut self, winner_idx: usize) {
-        // Phase F.13 Stage L3.6 (2026-05-25): force-materialize cohort
-        // frames before commit. commit_winner picks one cursor as the
-        // winner; cohort frames must materialize so the winner is a
-        // concrete cursor that can be unwrapped via into_concrete.
-        self.force_materialize_cohort_frames();
-        // Phase F.13 Stage L3.1 (2026-05-25): unwrap Frame::Concrete.
-        let winner = self.branch_cursors.swap_remove(winner_idx).into_concrete();
+    /// Lazy EOI resolution snapshots logical candidates, then hands the
+    /// selected concrete cursor here. Sibling evidence is dropped without
+    /// first expanding unrelated cohort members.
+    fn commit_winner_cursor(&mut self, winner: BranchCursor<W>) {
         self.branch_cursors.clear();
         // Phase 5.5 (2026-05-12): install winner.builder as the live
         // SemanticBuilder. The winner cursor's `Arc<SemanticBuilder>`
@@ -11366,7 +11329,7 @@ where
         // Always install the winner's builder over self.builder. Under
         // Phase 5.6-tail-B's always-eager Arc::make_mut path,
         // winner.builder is the authoritative live state for BOTH the
-        // deterministic singleton at commit_winner_at_eoi and the nondeterministic
+        // deterministic singleton at EOI commit and the nondeterministic
         // fanout-winner. `Arc::try_unwrap` keeps the underlying
         // SemanticBuilder if the winner is the last Arc holder (the
         // post-commit singleton at the bottom of this function REPLACES
@@ -16968,6 +16931,45 @@ mod tests {
     }
 
     #[test]
+    fn eoi_parse_error_does_not_materialize_lazy_cohort() {
+        let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
+        w.deterministic = false;
+        w.pos = 7;
+        w.state = WpdaState::AmbiguityFanout { branches: vec![10] };
+
+        let key = crate::dispatch_cohort::DispatchKey::new(0, 1, 0, 0, 0);
+        let shell_cursor = queue_cursor(0, lex(1.0, 0, 0));
+        let shell = std::sync::Arc::new(crate::cohort_lazy::CohortShell::from_branch_cursor(
+            &shell_cursor,
+            key,
+        ));
+        let mut cohort = crate::cohort_lazy::CohortFrame::new(shell);
+        for (member_id, cost) in [(1_u64, 1.0), (2, 2.0), (3, 3.0)] {
+            let member_cursor = queue_cursor(0, lex(cost, member_id as u16, 0));
+            cohort.push_member(
+                crate::cohort_lazy::CohortMemberState::from_branch_cursor_with_member_id(
+                    &member_cursor,
+                    member_cursor.weight.clone(),
+                    member_id,
+                ),
+            );
+        }
+        w.branch_cursors = vec![crate::cohort_lazy::Frame::Cohort(Box::new(cohort))];
+
+        match w.resolve_at_end_of_input(&empty_tokens()) {
+            WpdaResolveResult::ParseError { message, position } => {
+                assert_eq!(message, "no accepting branch reached end of input");
+                assert_eq!(position, 0);
+            },
+            other => panic!("expected ParseError, got {:?}", other),
+        }
+        assert!(
+            matches!(w.branch_cursors.as_slice(), [crate::cohort_lazy::Frame::Cohort(_)]),
+            "EOI parse-error classification must not force lazy cohort members"
+        );
+    }
+
+    #[test]
     fn process_event_inspect_yields_no_change() {
         let mut w: WpdaWalker<LexicographicWeight, _> = WpdaWalker::new(IdleEngine, 0);
         let t = w.process_event(WpdaEvent::Inspect, &empty_tokens());
@@ -17254,13 +17256,13 @@ mod tests {
                                                                    // which prematurely collapsed the cursor frontier). This
                                                                    // synthetic test's script has no Term-pushing actions (only Pop
                                                                    // transitions), so resolve returns ParseError "empty result"
-                                                                   // — but commit_winner_at_eoi DID fire and set walker.state +
+                                                                   // — but EOI commit DID fire and set walker.state +
                                                                    // walker.weight from the lex-min winner. The test verifies the
                                                                    // selection logic via state/weight inspection.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
-        // commit_winner_at_eoi sets self.state = winner.inner_state
+        // EOI commit sets self.state = winner.inner_state
         // (Accepted in this scripted test) and self.weight via times.
         assert_eq!(*w.state(), WpdaState::Accepted, "post-resolve walker state must be Accepted",);
         let final_weight = w.weight();
@@ -17473,7 +17475,7 @@ mod tests {
         let _ = w.process_event(WpdaEvent::Step, &empty_tokens()); // Fork
                                                                    // Stage 3.5b (2026-05-01): use new EOI-aware resolution API.
                                                                    // Synthetic test (no Term push) — resolve returns ParseError
-                                                                   // but commit_winner_at_eoi DID fire and set walker.state from
+                                                                   // but EOI commit DID fire and set walker.state from
                                                                    // the winner's inner_state.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
@@ -18230,7 +18232,7 @@ mod tests {
                                                                    // Stage 3.5b (2026-05-01): nested Fork lex-min winner is now
                                                                    // selected at end-of-input via resolve_at_end_of_input.
                                                                    // Synthetic test (no Term push) — resolve returns ParseError
-                                                                   // but commit_winner_at_eoi DID fire and set walker.state.
+                                                                   // but EOI commit DID fire and set walker.state.
         w.run_to_end_of_input(100, &empty_tokens())
             .expect("max_steps not exceeded");
         let _ = w.resolve_at_end_of_input(&empty_tokens());
@@ -18405,7 +18407,7 @@ mod tests {
     /// Cleanup 4 (Stage 3.5b 2026-05-01 update): a losing branch's
     /// recovery_deltas must NOT replay against the live builder.
     /// Two branches each `ConsumeAndPush` with `capture_token: true` +
-    /// `Pop`. Lex-min picks rule_idx=0; commit_winner_at_eoi replays only
+    /// `Pop`. Lex-min picks rule_idx=0; EOI commit replays only
     /// the winner's PushToken delta. The losing cursor's PushToken
     /// delta is discarded with the cursor at resolve time.
     ///
@@ -18414,7 +18416,7 @@ mod tests {
     /// - Each cursor's Pop transitions to InfixLoop at EOI → parked
     ///   Resolved.
     /// - resolve_at_end_of_input picks lex-min winner (cursor[0]).
-    /// - commit_winner_at_eoi replays winner's deltas → builder
+    /// - EOI commit replays winner's deltas → builder
     ///   acquires winner's PushToken arg.
     /// - take_dyn_result inside resolve sees `ActionArg::Token` (not a
     ///   Term), returns None → resolve returns ParseError. That's
@@ -18480,7 +18482,7 @@ mod tests {
                                                               // Drive until parked at EOI. Both cursors reach pos=1=EOI in
                                                               // InfixLoop after their Pop.
         w.run_to_end_of_input(100, &token_src).expect("max_steps");
-        // Resolve fires commit_winner_at_eoi(0) on the lex-min winner.
+        // Resolve commits the lex-min winner at EOI.
         // The winner's recovery_deltas replays exactly once; the
         // loser's deltas are discarded with its cursor.
         let _ = w.resolve_at_end_of_input(&token_src);
@@ -20097,7 +20099,7 @@ mod tests {
         let mut w = WpdaWalker::new(engine, 0);
         w.set_mutable_token_source(&mut mutable_src);
         // Drive to end-of-input (sets up parked frontier in AmbiguityFanout),
-        // then resolve to fire commit_winner_at_eoi which replays the winner's
+        // then resolve to commit the EOI winner, replaying its
         // recovery_deltas onto walker.recovery_events.
         let _ = w.run_to_end_of_input(50, &read_src);
         if seed_caches_before_resolve {
