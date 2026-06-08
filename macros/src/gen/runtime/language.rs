@@ -2165,6 +2165,52 @@ fn generate_language_struct_multi(
         })
         .collect();
 
+    let weighted_parse_tries: Vec<TokenStream> = parse_order
+        .iter()
+        .map(|cat| {
+            let variant = format_ident!("{}", cat);
+            let try_block = quote! {
+                match #cat::parse_via_wpda_all_with_weights(input) {
+                    Ok((terms, weights)) => {
+                        if terms.len() != weights.len() {
+                            if first_err.is_none() {
+                                first_err = Some(format!(
+                                    "{} parser returned {} terms but {} weights",
+                                    stringify!(#cat),
+                                    terms.len(),
+                                    weights.len(),
+                                ));
+                            }
+                        } else {
+                            for (t, weight) in terms.into_iter().zip(weights.into_iter()) {
+                                successes.push((
+                                    #inner_enum_name::#variant(t),
+                                    weight.primary.value(),
+                                ));
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        if first_err.is_none() { first_err = Some(e.to_string()); }
+                    },
+                }
+            };
+            let cat_name = cat.to_string();
+            if uses_first_tok_filter
+                && native_cat_names.contains(&cat_name)
+                && !cats_with_foreign_nt_first.contains(&cat_name)
+            {
+                quote! {
+                    if !matches!(first_tok, Some(Token::Ident(_))) {
+                        #try_block
+                    }
+                }
+            } else {
+                try_block
+            }
+        })
+        .collect();
+
     // Lexer probe: only emitted for languages with non-native categories.
     // All-native languages (e.g. Calculator) skip this and try all parsers unconditionally.
     let lexer_probe: TokenStream = if uses_first_tok_filter {
@@ -3141,6 +3187,89 @@ fn generate_language_struct_multi(
                 }
             }
 
+            /// Parse without clearing var cache and retain WPDA parse/evidence
+            /// weights for lazy weighted evaluation.
+            ///
+            /// The returned seed ids use the same extraction-semantic quotient
+            /// as `Term::rewrite_seed_ids`, so callers can feed them directly
+            /// to `AscentResults::normal_forms_reachable_from_weighted_seeds_iter`
+            /// without introducing dangling seed ids.
+            pub fn parse_preserving_vars_with_weighted_seed_ids(
+                input: &str,
+            ) -> Result<(#term_name, Vec<mettail_runtime::WeightedSeedId>), std::string::String> {
+                #lexer_probe
+
+                let mut successes: Vec<(#inner_enum_name, f64)> = Vec::new();
+                let mut first_err = None;
+                #(#weighted_parse_tries)*
+                if successes.len() > 1 {
+                    let any_non_spurious = successes.iter()
+                        .any(|(s, _)| !s.is_uniformly_auto_injected());
+                    if any_non_spurious {
+                        let mut filtered = Vec::with_capacity(successes.len());
+                        for (s, weight) in successes.into_iter() {
+                            if !s.is_uniformly_auto_injected() {
+                                filtered.push((s, weight));
+                            }
+                        }
+                        successes = filtered;
+                    }
+                }
+                if successes.len() > 1 {
+                    let mut index_by_key: std::collections::HashMap<Vec<u8>, usize> =
+                        std::collections::HashMap::with_capacity(successes.len());
+                    let mut deduped: Vec<(#inner_enum_name, f64)> =
+                        Vec::with_capacity(successes.len());
+                    for (s, weight) in successes.into_iter() {
+                        let key = s.semantic_fingerprint();
+                        if let Some(&idx) = index_by_key.get(&key) {
+                            if weight.total_cmp(&deduped[idx].1) == std::cmp::Ordering::Less {
+                                deduped[idx] = (s, weight);
+                            }
+                        } else {
+                            index_by_key.insert(key, deduped.len());
+                            deduped.push((s, weight));
+                        }
+                    }
+                    successes = deduped;
+                }
+                if successes.is_empty() {
+                    return Err(first_err.unwrap_or_else(|| "Parse error".to_string()));
+                }
+
+                let mut seed_index_by_key: std::collections::HashMap<Vec<u8>, usize> =
+                    std::collections::HashMap::with_capacity(successes.len());
+                let mut weighted_seeds: Vec<mettail_runtime::WeightedSeedId> =
+                    Vec::with_capacity(successes.len());
+                for (alt, weight) in successes.iter() {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::hash::{Hash, Hasher};
+
+                    let key = alt.extraction_semantic_fingerprint();
+                    let mut h = DefaultHasher::new();
+                    alt.hash(&mut h);
+                    let seed = (h.finish(), format!("{}", alt), *weight);
+                    if let Some(&idx) = seed_index_by_key.get(&key) {
+                        if weight.total_cmp(&weighted_seeds[idx].2) ==
+                            std::cmp::Ordering::Less
+                        {
+                            weighted_seeds[idx] = seed;
+                        }
+                    } else {
+                        seed_index_by_key.insert(key, weighted_seeds.len());
+                        weighted_seeds.push(seed);
+                    }
+                }
+
+                let term = match successes.len() {
+                    1 => #term_name(successes.into_iter().next().expect("checked non-empty").0),
+                    _ => #term_name(#inner_enum_name::from_alternatives(
+                        successes.into_iter().map(|(s, _)| s).collect()
+                    )),
+                };
+                Ok((term, weighted_seeds))
+            }
+
             /// Drain accumulated weight corrections from semantic disambiguation.
             ///
             /// Parse assembly no longer chooses one semantically distinct
@@ -3688,6 +3817,14 @@ fn generate_language_trait_impl_multi(
             }
 
             #try_direct_eval_method
+
+            fn parse_term_with_weighted_seed_ids(
+                &self,
+                input: &str,
+            ) -> Result<(Box<dyn mettail_runtime::Term>, Vec<mettail_runtime::WeightedSeedId>), std::string::String> {
+                #language_name::parse_preserving_vars_with_weighted_seed_ids(input)
+                    .map(|(t, seeds)| (Box::new(t) as Box<dyn mettail_runtime::Term>, seeds))
+            }
 
             fn normalize_term(&self, term: &dyn mettail_runtime::Term) -> Box<dyn mettail_runtime::Term> {
                 if let Some(typed) = term.as_any().downcast_ref::<#term_name>() {

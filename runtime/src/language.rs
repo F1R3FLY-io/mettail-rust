@@ -17,6 +17,12 @@ use crate::LanguageMetadata;
 /// at runtime.
 pub type SeedFacts = HashMap<String, Vec<Vec<String>>>;
 
+/// Runtime seed id plus display text and priority weight.
+///
+/// Lower weights are explored first by weighted prefix traversal. The display
+/// component is diagnostic only; it must not be used as an equivalence key.
+pub type WeightedSeedId = (u64, String, f64);
+
 // =============================================================================
 // Type Inference Types
 // =============================================================================
@@ -175,6 +181,18 @@ pub trait Term: fmt::Display + fmt::Debug + Send + Sync {
     fn rewrite_seed_ids(&self) -> Vec<(u64, String)> {
         vec![(self.term_id(), format!("{}", self))]
     }
+
+    /// Weighted variant of `rewrite_seed_ids`.
+    ///
+    /// Terms do not generally store parse/evidence weights, so the default
+    /// exposes neutral weight. Parser surfaces that still have access to
+    /// derivation weights should return their own weighted seed list.
+    fn rewrite_weighted_seed_ids(&self) -> Vec<WeightedSeedId> {
+        self.rewrite_seed_ids()
+            .into_iter()
+            .map(|(id, display)| (id, display, 0.0))
+            .collect()
+    }
 }
 
 /// A trait that all languages must implement
@@ -192,6 +210,20 @@ pub trait Language: Send + Sync {
 
     /// Parse a term for environment storage (does NOT clear var cache)
     fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>, String>;
+
+    /// Parse a term and return weighted rewrite seeds for lazy evaluation.
+    ///
+    /// The default falls back to neutral weights for languages whose generated
+    /// parser does not expose derivation weights. Multi-category generated
+    /// languages override this to preserve WPDA parse/evidence weights.
+    fn parse_term_with_weighted_seed_ids(
+        &self,
+        input: &str,
+    ) -> Result<(Box<dyn Term>, Vec<WeightedSeedId>), String> {
+        let term = self.parse_term(input)?;
+        let seeds = term.rewrite_weighted_seed_ids();
+        Ok((term, seeds))
+    }
 
     /// Run Ascent on a term and return results
     fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String>;

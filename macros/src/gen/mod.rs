@@ -551,7 +551,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 /// Otherwise uses the slice path — byte-identical to
                 /// `parse_via_wpda`. The `_all_with_source` facade
                 /// variant accepts either source.
-                pub fn parse_via_wpda_all(input: &str) -> Result<Vec<#cat>, ParseError> {
+                pub fn parse_via_wpda_all_with_weights(
+                    input: &str,
+                ) -> Result<
+                    (
+                        Vec<#cat>,
+                        Vec<mettail_prattail::automata::lex_weight::LexicographicWeight>,
+                    ),
+                    ParseError,
+                > {
                     mettail_prattail::hang_dump::install_hang_dump_handler();
                     // M6c.4 + M6c.7.2 (2026-05-14): route through
                     // LatticeTokenSource when dag.has_ambiguity().
@@ -588,7 +596,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         };
                         let mut pos = 0usize;
                         return match #parse_via_wpda_all_with_source_fn(&source, &mut pos, 0) {
-                            Ok((terms, _weights)) => {
+                            Ok((terms, weights)) => {
                                 // M6c.8.3 (2026-05-14): use the source's
                                 // `eof_node()` instead of
                                 // `dag.nodes.len() - 1`. M6c.7.1
@@ -617,7 +625,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                         hint: None,
                                     });
                                 }
-                                Ok(terms)
+                                Ok((terms, weights))
                             }
                             Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                                 expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -661,7 +669,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         .collect();
                     let mut pos = 0usize;
                     match #parse_via_wpda_all_fn(&kinds, &texts, &mut pos, 0) {
-                        Ok((terms, _weights)) => {
+                        Ok((terms, weights)) => {
                             if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                                 return Err(ParseError::TrailingTokens {
                                     found: format_token_friendly(&tokens[pos].0),
@@ -680,7 +688,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                                     hint: None,
                                 });
                             }
-                            Ok(terms)
+                            Ok((terms, weights))
                         }
                         Err(WpdaParseError::EmptyResult) => Err(ParseError::UnexpectedEof {
                             expected: Cow::Borrowed("a complete parse — WPDS produced no result"),
@@ -736,6 +744,16 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                             })
                         }
                     }
+                }
+
+                /// M8 compatibility wrapper that returns only terms.
+                ///
+                /// Use `parse_via_wpda_all_with_weights` when downstream
+                /// evaluation needs WPDA parse/evidence weights for lazy
+                /// priority traversal.
+                pub fn parse_via_wpda_all(input: &str) -> Result<Vec<#cat>, ParseError> {
+                    Self::parse_via_wpda_all_with_weights(input)
+                        .map(|(terms, _weights)| terms)
                 }
             };
             let _ = parse_fn;

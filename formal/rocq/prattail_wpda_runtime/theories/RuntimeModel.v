@@ -2599,3 +2599,43 @@ Proof.
       reflexivity.
     + apply Nat.leb_gt in Hle. lia.
 Qed.
+
+Record parse_weighted_seed_model : Type := {
+  pwsm_seed : nat;
+  pwsm_parse_weight : nat;
+  pwsm_parse_sequence : nat;
+  pwsm_eval_normals : list eval_term_info_model
+}.
+
+Definition parse_seed_to_weighted_eval_seed
+    (seed : parse_weighted_seed_model)
+    : weighted_seed_normal_forms_model :=
+  {| wsnfm_seed := pwsm_seed seed;
+     wsnfm_weight := pwsm_parse_weight seed;
+     wsnfm_sequence := pwsm_parse_sequence seed;
+     wsnfm_normals := pwsm_eval_normals seed |}.
+
+Definition lazy_parse_weighted_evaluation_prefix
+    (seeds : list parse_weighted_seed_model)
+    (demand : nat)
+    : list eval_term_info_model :=
+  lazy_weighted_seed_normal_forms_observation
+    (map parse_seed_to_weighted_eval_seed seeds)
+    demand.
+
+Definition eager_parse_weighted_evaluation_prefix
+    (seeds : list parse_weighted_seed_model)
+    : list eval_term_info_model :=
+  eager_weighted_seed_normal_forms
+    (map parse_seed_to_weighted_eval_seed seeds).
+
+Theorem parse_weighted_seed_prefix_matches_evaluation_prefix :
+  forall seeds demand,
+    lazy_parse_weighted_evaluation_prefix seeds demand =
+    firstn demand (eager_parse_weighted_evaluation_prefix seeds).
+Proof.
+  intros seeds demand.
+  unfold lazy_parse_weighted_evaluation_prefix,
+    eager_parse_weighted_evaluation_prefix.
+  apply lazy_weighted_seed_normal_forms_is_eager_prefix.
+Qed.

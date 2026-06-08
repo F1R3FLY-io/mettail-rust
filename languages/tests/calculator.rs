@@ -844,6 +844,63 @@ fn test_factorial_ambiguous_language_seeds_all_alternatives_for_ascent() {
 }
 
 #[test]
+fn weighted_parse_evidence_orders_evaluation_prefix() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let (term, weighted_seeds) = lang
+        .parse_term_with_weighted_seed_ids("-3!")
+        .expect("weighted parse should succeed");
+    let calc_term = term
+        .as_any()
+        .downcast_ref::<calc::CalculatorTerm>()
+        .expect("calculator term");
+    let plain_seeds = calc_term.rewrite_seed_ids();
+    let weighted_ids_and_displays: Vec<_> = weighted_seeds
+        .iter()
+        .map(|(id, display, _)| (*id, display.clone()))
+        .collect();
+
+    assert_eq!(
+        weighted_ids_and_displays, plain_seeds,
+        "weighted parse seeds must use the same extraction quotient as rewrite_seed_ids",
+    );
+    assert!(
+        weighted_seeds.len() >= 2,
+        "expected at least atomic-negative and prefix-negative weighted seeds; got {:?}",
+        weighted_seeds
+    );
+
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let weighted_seed_ids: Vec<_> = weighted_seeds
+        .iter()
+        .map(|(id, _, weight)| (*id, *weight))
+        .collect();
+    let first_weighted = results
+        .normal_form_reachable_from_weighted_seeds(&weighted_seed_ids)
+        .expect("weighted traversal should find a normal form");
+    let expected_first = weighted_seeds
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, (seed_id, _, weight))| {
+            results
+                .normal_form_reachable_from_weighted_seeds(&[(*seed_id, *weight)])
+                .map(|nf| (idx, *weight, nf.display.clone()))
+        })
+        .min_by(|left, right| {
+            left.1
+                .total_cmp(&right.1)
+                .then_with(|| left.0.cmp(&right.0))
+        })
+        .expect("at least one weighted seed should reach a normal form");
+
+    assert_eq!(
+        first_weighted.display, expected_first.2,
+        "weighted traversal must use parse/evidence weights for bounded-prefix order; seeds={:?}",
+        weighted_seeds
+    );
+}
+
+#[test]
 fn test_factorial_ambiguous_negation_rejects_invalid_branch_by_evidence() {
     calc_normal_form("-3!", "-6");
 }
@@ -959,8 +1016,7 @@ fn test_env_substitute_preserves_unchanged_ambiguous_sibling() {
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
     let binding = CalculatorTerm(CalculatorTermInner::Int(Int::NumLit(1)));
-    lang.add_to_env(env.as_mut(), "x", &binding)
-        .expect("add x");
+    lang.add_to_env(env.as_mut(), "x", &binding).expect("add x");
 
     let x = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
         mettail_runtime::get_or_create_var("x"),
@@ -982,12 +1038,12 @@ fn test_env_substitute_preserves_unchanged_ambiguous_sibling() {
         other => panic!("expected Ambiguous after substitution, got {:?}", other),
     };
 
-    let has_one = alts.iter().any(|alt| {
-        matches!(alt, CalculatorTermInner::Int(Int::NumLit(1)))
-    });
-    let has_seven = alts.iter().any(|alt| {
-        matches!(alt, CalculatorTermInner::Int(Int::NumLit(7)))
-    });
+    let has_one = alts
+        .iter()
+        .any(|alt| matches!(alt, CalculatorTermInner::Int(Int::NumLit(1))));
+    let has_seven = alts
+        .iter()
+        .any(|alt| matches!(alt, CalculatorTermInner::Int(Int::NumLit(7))));
     assert!(
         has_one && has_seven,
         "substitution must preserve changed and unchanged semantic siblings, got {:?}",
