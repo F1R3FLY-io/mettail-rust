@@ -277,6 +277,26 @@ Definition config_with_lex_stamp
      ck_weight_rule := ck_weight_rule k;
      ck_lex_stamp := Some stamp |}.
 
+Record lex_provenance : Type := {
+  lp_alt : nat;
+  lp_src : nat;
+  lp_rule : nat
+}.
+
+Definition cohort_shell_lex_from_parent
+    (parent_weight : lex_provenance) : lex_provenance :=
+  {| lp_alt := lp_alt parent_weight;
+     lp_src := lp_src parent_weight;
+     lp_rule := lp_rule parent_weight |}.
+
+Theorem cohort_shell_preserves_parent_lex_provenance :
+  forall parent_weight,
+    cohort_shell_lex_from_parent parent_weight = parent_weight.
+Proof.
+  intros [alt src rule].
+  reflexivity.
+Qed.
+
 Definition lex_fork_child_config
     (k : config_key)
     (stamp next_pos : nat) : config_key :=

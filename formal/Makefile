@@ -16,6 +16,7 @@ FORMAL_MEMORY_HIGH_BYTES ?= 30064771072
 FORMAL_TASKS_MAX ?= 128
 FORMAL_CAPPED_TARGET ?= check-inner
 FORMAL_CARGO_BUILD_JOBS ?= 1
+FORMAL_CARGO_TARGET_DIR ?= $(FORMAL_TMPDIR)/cargo-target
 FORMAL_CAPPED_RUN ?= 0
 
 .PHONY: check check-inner check-uncapped check-capped check-memory-cap require-capped clean prepare-tmp
@@ -72,7 +73,7 @@ check-capped: check-memory-cap
 		-p MemorySwapMax=0 \
 		-p TasksMax=$(FORMAL_TASKS_MAX) \
 		--working-directory="$(abspath $(REPO_ROOT))" \
-		env PATH="$(PATH)" TMPDIR="$(TMPDIR)" CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" CARGO_INCREMENTAL=0 FORMAL_CAPPED_RUN=1 \
+		env PATH="$(PATH)" TMPDIR="$(TMPDIR)" CARGO_TARGET_DIR="$(FORMAL_CARGO_TARGET_DIR)" CARGO_BUILD_JOBS="$(FORMAL_CARGO_BUILD_JOBS)" CARGO_INCREMENTAL=0 FORMAL_CAPPED_RUN=1 \
 		make -C formal -j1 $(FORMAL_CAPPED_TARGET)
 
 prepare-tmp:

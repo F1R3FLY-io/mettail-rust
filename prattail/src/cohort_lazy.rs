@@ -44,7 +44,7 @@
 //! drains them through the Tomita frontier, and force-materializes them at
 //! resolver/merge safety-net boundaries.
 
-use crate::automata::semiring::SemiringRef;
+use crate::automata::semiring::{LexProvenance, SemiringRef};
 use crate::dispatch_cohort::{DispatchKey, WorkerSnapshot};
 use crate::sppf::SppfId;
 use crate::wpda_walker::BranchCursor;
@@ -485,7 +485,7 @@ impl<W: SemiringRef> From<BranchCursor<W>> for Frame<W> {
     }
 }
 
-impl<W: SemiringRef> CohortShell<W> {
+impl<W: SemiringRef + LexProvenance> CohortShell<W> {
     /// Phase F.13 Stage L2 (2026-05-25): construct a `CohortShell`
     /// snapshot from a `BranchCursor` at cohort formation time. All
     /// 15 `~_obs` axes are copied / Arc-bumped from `parent` into the
@@ -527,9 +527,9 @@ impl<W: SemiringRef> CohortShell<W> {
             incoming_edge_stack_id: parent.incoming_edge_stack_id,
             collection_depth: parent.collection_stack_depth,
             cohort_origin: parent.cohort_origin.clone(),
-            lex_alt_idx: 0, // populated from parent.weight via LexProvenance trait (Stage L3 wiring)
-            weight_src_idx: 0, // ditto
-            weight_rule_idx: 0, // ditto
+            lex_alt_idx: parent.weight.lex_alt_idx(),
+            weight_src_idx: parent.weight.lex_src_idx(),
+            weight_rule_idx: parent.weight.lex_rule_idx(),
             lex_fork_stamp: parent.lex_fork_path.last().copied(),
             binder_scope_marks: binder_scope_marks_arc,
             optional_scope_marks: optional_scope_marks_arc,
@@ -1091,6 +1091,21 @@ mod tests {
         let materialized = materialize_branch_cursor(&shell, &member);
 
         assert_eq!(materialized.incoming_edge_stack_id, crate::edge_stack_arena::StackId(2));
+    }
+
+    #[test]
+    fn cohort_shell_preserves_parent_lex_provenance() {
+        let mut cursor = cursor_with_edge_stack(crate::edge_stack_arena::EDGE_STACK_ID_ROOT);
+        cursor.weight = LexicographicWeight::from_cost_with_lex(0.0, 7, 11, 3);
+
+        let shell = CohortShell::from_branch_cursor(
+            &cursor,
+            crate::dispatch_cohort::DispatchKey::new(3, 7, 0, 2, 16),
+        );
+
+        assert_eq!(shell.lex_alt_idx, 3);
+        assert_eq!(shell.weight_src_idx, 7);
+        assert_eq!(shell.weight_rule_idx, 11);
     }
 
     #[test]

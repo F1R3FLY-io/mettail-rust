@@ -1409,7 +1409,10 @@ impl<W: SemiringRef> DispatchCohortCache<W> {
     /// `pending_cohort.len() >= MAX_PENDING_COHORT_PER_KEY`. The
     /// caller falls through to per-cursor sub-parse (no correctness
     /// loss; just no sharing for the overflow members).
-    pub fn pause_cohort_member(&mut self, key: DispatchKey, member: CohortMember<W>) -> bool {
+    pub fn pause_cohort_member(&mut self, key: DispatchKey, member: CohortMember<W>) -> bool
+    where
+        W: crate::automata::semiring::LexProvenance,
+    {
         // Phase F.13 Stage L6 (2026-05-25): cap raised from 4 to 16
         // (matching MAX_WORKER_SNAPSHOTS_PER_KEY). cap=256 empirically
         // rejected — chain_10000 grew past 22 GB at 2:54 (near
