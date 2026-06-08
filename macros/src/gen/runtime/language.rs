@@ -760,12 +760,13 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
 
             /// Substitute environment bindings into the term.
             /// For Ambiguous terms, substitutes each alternative independently and
-            /// keeps only those that made progress (Display changed). Deduplicates by Display.
+            /// preserves every semantically distinct result. Substitution progress
+            /// is not rejection evidence: an unchanged sibling can still be a
+            /// valid alternative and must survive until evaluation/rewrite evidence
+            /// proves otherwise.
             pub fn substitute_env(&self, env: &#env_name) -> Self {
                 match self {
                     #inner_enum_name::Ambiguous(alts) => {
-                        let orig_displays: Vec<std::string::String> = alts.iter().map(|a| format!("{}", a)).collect();
-
                         // Substitute each alternative (including cross-category resolution)
                         let results: Vec<Self> = alts.iter().map(|alt| {
                             let substituted = match alt {
@@ -783,26 +784,16 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                             cross_resolved
                         }).collect();
 
-                        let result_displays: Vec<std::string::String> = results.iter().map(|r| format!("{}", r)).collect();
-
-                        // Keep only alternatives that made substitution progress
-                        let progressed: Vec<usize> = (0..results.len())
-                            .filter(|&i| result_displays[i] != orig_displays[i])
-                            .collect();
-
-                        let kept: Vec<Self> = if progressed.is_empty() {
-                            results  // None progressed — keep all
-                        } else {
-                            progressed.into_iter().map(|i| results[i].clone()).collect()
-                        };
-
-                        // Phase F.13 Stage 2.2 (2026-05-22): semantic-key dedup
+                        // Semantic-key dedup
                         // (NOT Display-dedup). Display equivalence is
                         // NOT observational equivalence — see
-                        // from_alternatives commentary above.
+                        // from_alternatives commentary above. Substitution
+                        // progress is also not observational equivalence:
+                        // keeping only changed alternatives prematurely
+                        // discards unchanged siblings.
                         let mut seen_keys: std::collections::HashSet<Vec<u8>> =
                             std::collections::HashSet::new();
-                        let unique: Vec<Self> = kept.into_iter()
+                        let unique: Vec<Self> = results.into_iter()
                             .filter(|a| {
                                 seen_keys.insert(a.semantic_fingerprint())
                             })

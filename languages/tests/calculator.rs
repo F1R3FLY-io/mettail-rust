@@ -928,7 +928,8 @@ fn test_ternary_display_roundtrip() {
 #[test]
 fn test_env_int_substitute_and_exec() {
     // Variables parsed ambiguously across Float/Int, but env has Int bindings.
-    // After substitution, only the Int alternative makes progress → disambiguation collapses to Int.
+    // Substitution should make the Int path evaluable without requiring substitution-time
+    // disambiguation; semantic rejection is handled by later evidence.
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
@@ -948,6 +949,50 @@ fn test_env_int_substitute_and_exec() {
         .map(|nf| nf.display.as_str())
         .collect();
     assert!(displays.contains(&"3"), "expected \"3\" among {:?}", displays);
+}
+
+#[test]
+fn test_env_substitute_preserves_unchanged_ambiguous_sibling() {
+    use calc::{CalculatorTerm, CalculatorTermInner, Int};
+
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let binding = CalculatorTerm(CalculatorTermInner::Int(Int::NumLit(1)));
+    lang.add_to_env(env.as_mut(), "x", &binding)
+        .expect("add x");
+
+    let x = mettail_runtime::OrdVar(mettail_runtime::Var::Free(
+        mettail_runtime::get_or_create_var("x"),
+    ));
+    let term = CalculatorTerm(CalculatorTermInner::Ambiguous(vec![
+        CalculatorTermInner::Int(Int::IVar(x)),
+        CalculatorTermInner::Int(Int::NumLit(7)),
+    ]));
+
+    let substituted = lang
+        .substitute_env(&term, env.as_ref())
+        .expect("substitute_env");
+    let substituted = substituted
+        .as_any()
+        .downcast_ref::<CalculatorTerm>()
+        .expect("CalculatorTerm");
+    let alts = match &substituted.0 {
+        CalculatorTermInner::Ambiguous(alts) => alts,
+        other => panic!("expected Ambiguous after substitution, got {:?}", other),
+    };
+
+    let has_one = alts.iter().any(|alt| {
+        matches!(alt, CalculatorTermInner::Int(Int::NumLit(1)))
+    });
+    let has_seven = alts.iter().any(|alt| {
+        matches!(alt, CalculatorTermInner::Int(Int::NumLit(7)))
+    });
+    assert!(
+        has_one && has_seven,
+        "substitution must preserve changed and unchanged semantic siblings, got {:?}",
+        alts
+    );
 }
 
 #[test]

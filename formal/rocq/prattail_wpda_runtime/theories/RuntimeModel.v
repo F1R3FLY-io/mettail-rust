@@ -2225,6 +2225,41 @@ Proof.
   - reflexivity.
 Qed.
 
+Record substitution_alt_model : Type := {
+  sam_before : exact_parse_alternative_model;
+  sam_after : exact_parse_alternative_model
+}.
+
+Definition substitution_after_alts
+    (alts : list substitution_alt_model)
+    : list exact_parse_alternative_model :=
+  map sam_after alts.
+
+Definition substitution_result_keys
+    (alts : list substitution_alt_model)
+    : list semantic_key :=
+  map epam_semantic_key
+    (exact_key_dedup_list (substitution_after_alts alts)).
+
+Theorem ambiguous_substitution_preserves_changed_and_unchanged_siblings :
+  forall before_changed after_changed unchanged,
+    epam_semantic_key before_changed <> epam_semantic_key after_changed ->
+    epam_semantic_key after_changed <> epam_semantic_key unchanged ->
+    substitution_result_keys
+      [{| sam_before := before_changed; sam_after := after_changed |};
+       {| sam_before := unchanged; sam_after := unchanged |}] =
+      [epam_semantic_key after_changed; epam_semantic_key unchanged].
+Proof.
+  intros before_changed after_changed unchanged _ Hdistinct.
+  unfold substitution_result_keys, substitution_after_alts.
+  simpl.
+  destruct (semantic_key_eq_dec
+              (epam_semantic_key after_changed)
+              (epam_semantic_key unchanged)) as [Heq | _].
+  - contradiction.
+  - reflexivity.
+Qed.
+
 Definition hash_only_pair_dedup
     (hash : semantic_key -> nat)
     (left right : exact_parse_alternative_model)
